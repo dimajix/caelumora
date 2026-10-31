@@ -652,11 +652,12 @@ An application reads through **readers** (`SessionReader`, `ChannelReader`, `Par
 `WorkspaceReader`, issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): the
 part of the views an agent's work reads through, which the views implement. A turn is handed a
 reader of its session (`ActorRuntime::session_view`), never a view, so that it reaches no policy, no
-manager and no context through what it reads. What a plugin offers an agent's work of its kind it
-binds to the views of every piece of work (`RuntimeBuilder::extend_readers`): a trait of the
-plugin's, made from those views, and so acting as the work reads, which a component asks its
-situation for (`Situation::extension`, which asks `ActorRuntime::extension_of`) - the skills'
-`SkillCatalogue`, the artifacts' `ArtifactPublisher`.
+manager and no context through what it reads. What a system service offers an agent's work of its
+kind it binds to the views of every piece of work as its extensions
+(`RuntimeBuilder::extend_readers`, `extend_writers`): traits of the plugin's, made from those views,
+and so acting in the work's context - a reader the situation hands out (`Situation::reader`), a
+writer the turn (`Turn::writer`); see
+[PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work).
 
 ## Users
 

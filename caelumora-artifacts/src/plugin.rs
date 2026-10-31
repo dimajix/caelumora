@@ -1,15 +1,14 @@
-//! How artifacts are joined to the runtime (issue 328): the store of their
-//! kind, the `ArtifactManager` with the storages of content (issue 282) and
-//! the section `artifacts` of the configuration, as a service - what the
-//! views and the routes reach it by - and as a member of a scope, the
-//! `ArtifactPublisher` bound to the views of an application's work - what
-//! the component publishes through (issue 516) -, and the `artifact_tool`
-//! component.
+//! How artifacts are joined to the runtime (issue 328): the store of their kind, the
+//! `ArtifactManager` with the storages of content (issue 282) and the section `artifacts` of the
+//! configuration, as a service - what the views and the routes reach it by - and as a member of a
+//! scope, the `ArtifactPublisher` bound to the views of an application's work where a storage of
+//! content is configured - what the component publishes through (issue 516) -, and the
+//! `artifact_tool` component.
 
 use crate::artifact::Artifact;
 use crate::component;
+use crate::extension::ArtifactPublisher;
 use crate::manager::{ArtifactManager, ArtifactsConfig};
-use crate::publisher::ArtifactPublisher;
 use crate::{NAMESPACE, PROMPTS};
 use anyhow::Result;
 use caelumora_runtime::plugin::Plugin;
@@ -32,10 +31,14 @@ impl Plugin for ArtifactsPlugin {
         let config: ArtifactsConfig = runtime.config(ARTIFACTS)?;
         let artifacts = runtime.entity_store::<Artifact>()?;
         let manager = ArtifactManager::new(runtime, artifacts, &config)?;
+        // Bound only where something can be published: a storage of content is configured.
+        let configured = manager.is_configured();
         let manager = Arc::new(manager);
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
-        runtime.extend_readers::<dyn ArtifactPublisher, _>(|views| Arc::new(views.clone()));
+        runtime.extend_writers::<dyn ArtifactPublisher, _>(move |views| {
+            configured.then(|| Arc::new(views.clone()) as Arc<dyn ArtifactPublisher>)
+        });
         runtime.prompts().add(NAMESPACE, PROMPTS)?;
         component::register(runtime.components());
         Ok(())

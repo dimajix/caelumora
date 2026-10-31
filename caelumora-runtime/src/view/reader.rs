@@ -1,11 +1,10 @@
 //! What an application reads of its session (issue 516): the readers, each the part of a view an
-//! agent's work reads through, and the extensions a plugin of the core binds to the views of a
-//! piece of work. The views implement the readers and keep their full surface for the frontends;
-//! an application is handed a reader, never a view, so it reaches no policy, no manager and no
-//! context through it.
+//! agent's work reads through. The views implement them and keep their full surface for the
+//! frontends; an application is handed a reader, never a view, so it reaches no policy, no
+//! manager and no context through it.
 
 use super::WorkspaceView;
-use super::{ChannelView, ParticipantView, PrivateNotesElsewhere, SessionView, ViewResult, Views};
+use super::{ChannelView, ParticipantView, PrivateNotesElsewhere, SessionView, ViewResult};
 use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId};
@@ -20,15 +19,10 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PublishedNotes;
 use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
-use caelumora_model::type_map::{ErasedArc, TypeKey};
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::value::text::{Briefing, Description, Summary};
 use caelumora_model::workspace::WorkspaceId;
-use std::any::TypeId;
-use std::collections::HashMap;
-use std::fmt;
-use std::sync::Arc;
 
 /// A session as an agent's work reads it from its channel (`SessionView`).
 #[async_trait]
@@ -161,40 +155,6 @@ pub trait WorkspaceReader: Send + Sync {
 
     /// Whether the reader may change its files.
     async fn may_write(&self) -> bool;
-}
-
-/// What the plugins of the core bind to the views of an application's work (issue 516), each by
-/// the type of what it binds: a service of the plugin's, made from the views, and so acting in
-/// their viewer's name. An application asks its runtime for it (`ActorRuntime::extension_of`); it
-/// names the service's trait, never the plugin's manager or the views.
-#[derive(Default)]
-pub(crate) struct ReaderExtensions {
-    binders: HashMap<TypeId, Binder>,
-}
-
-type Binder = Arc<dyn Fn(&Views) -> ErasedArc + Send + Sync>;
-
-impl fmt::Debug for ReaderExtensions {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ReaderExtensions").field("binders", &self.binders.len()).finish()
-    }
-}
-
-impl ReaderExtensions {
-    /// Binds `T` to the views of every piece of work by `bind`. A `T` bound before is replaced.
-    pub(crate) fn insert<T, F>(&mut self, bind: F)
-    where
-        T: ?Sized + Send + Sync + 'static,
-        F: Fn(&Views) -> Arc<T> + Send + Sync + 'static,
-    {
-        let binder: Binder = Arc::new(move |views| ErasedArc::of(bind(views)));
-        self.binders.insert(TypeKey::of::<T>().id, binder);
-    }
-
-    /// What is bound as the type `key` names, made from `views`, if anything is.
-    pub(crate) fn bind(&self, key: TypeKey, views: &Views) -> Option<ErasedArc> {
-        self.binders.get(&key.id).map(|bind| bind(views))
-    }
 }
 
 #[async_trait]

@@ -44,11 +44,11 @@ use caelumora_runtime::channel::ChannelLoop;
 use caelumora_runtime::session::SessionLoop;
 use caelumora_runtime::testing::{asked_for, shown, TestRuntime, World, STAFF};
 use caelumora_runtime::view::Viewer;
-use caelumora_skills::catalogue::SkillCatalogue;
 use caelumora_skills::component::{
     SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
     SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,
 };
+use caelumora_skills::extension::{SkillReader, SkillWriter};
 use caelumora_skills::manager::{SkillError, SkillManager};
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_skills::skill::{self, Skill, SkillBody};
@@ -609,6 +609,23 @@ async fn an_agent_lists_the_skills_its_owners_roles_clear_it_for_as_they_are_at_
     world.take_roles(world.alice).await;
     let after = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
     assert_eq!(listed(after), 0, "not any more, at the next call");
+    drop(turn);
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 516: what a work reads of skills is handed out where it reads, what it writes by only
+/// where it acts - a prompt part cannot write a skill.
+#[tokio::test]
+async fn a_skills_writer_is_handed_out_where_the_work_acts_its_reader_where_it_reads() {
+    let world = world().await;
+    let (session, helper) = with_an_agent(&world).await;
+    let mut state = AgentChannelState::default();
+    let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    assert!(turn.situation().reader::<dyn SkillReader>().await.is_some(), "read where it reads");
+    assert!(turn.situation().reader::<dyn SkillWriter>().await.is_none(), "but not written by");
+    assert!(turn.situation().has_writer::<dyn SkillWriter>().await, "though there is one");
+    assert!(turn.writer::<dyn SkillWriter>().await.is_some(), "written where it acts");
+    assert!(turn.writer::<dyn SkillReader>().await.is_none(), "a reader is no writer");
     drop(turn);
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

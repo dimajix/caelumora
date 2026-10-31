@@ -1,4 +1,4 @@
-use super::{ChannelRuntime, Services};
+use super::{ChannelRuntime, Face, Services};
 use crate::actor::ActorManager;
 use crate::agent::state::AgentStateHandle;
 use crate::attachment::{AttachmentManager, AttachmentResult};
@@ -32,7 +32,7 @@ use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
 use caelumora_model::tool::{ToolCall, ToolMedia};
-use caelumora_model::type_map::{ErasedArc, TypeKey};
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::Workspace;
 use chrono::Utc;
@@ -349,21 +349,43 @@ impl ActorRuntime {
         Ok(Some(Box::new(session)))
     }
 
-    /// The extension of the type `key` names that a plugin of the core binds to the views of the
-    /// actor's work for `initiator` at `classification` (`RuntimeBuilder::extend_readers`, issue
-    /// 516): the plugin's service, acting as `session_view` reads. Its session is reached as
-    /// `session_view` reaches it - asking `GetSession` - and not handed out. `None` if no plugin
-    /// binds one, if the actor may not read its session, or while the channel is not attached to
-    /// it.
-    pub async fn extension_of(
+    /// The reader `T` a plugin binds to the views of the actor's work for `initiator` at
+    /// `classification` (`RuntimeBuilder::extend_readers`, issue 516): what of the plugin's service
+    /// the work reads by, acting as `session_view` reads. Its session is reached as `session_view`
+    /// reaches it - asking `GetSession` - and not handed out. `None` if no plugin binds one, if it
+    /// is not offered there, if the actor may not read its session, or while the channel is not
+    /// attached to it.
+    pub async fn reader<T: ?Sized + Send + Sync + 'static>(
         &self,
         initiator: ActorId,
         classification: Classification,
-        key: TypeKey,
-    ) -> Option<ErasedArc> {
+    ) -> Option<Arc<T>> {
+        self.extension(Face::Reader, initiator, classification).await
+    }
+
+    /// The writer `T` a plugin binds to the views of the actor's work
+    /// (`RuntimeBuilder::extend_writers`): what of the plugin's service the work acts by, made as
+    /// `reader` makes a reader.
+    pub async fn writer<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        initiator: ActorId,
+        classification: Classification,
+    ) -> Option<Arc<T>> {
+        self.extension(Face::Writer, initiator, classification).await
+    }
+
+    /// The extension `T`, bound as `face` (`reader`, `writer`).
+    async fn extension<T: ?Sized + Send + Sync + 'static>(
+        &self,
+        face: Face,
+        initiator: ActorId,
+        classification: Classification,
+    ) -> Option<Arc<T>> {
         let views = self.views_of_work(initiator, classification)?;
         views.session(self.session_id).await.ok()?;
-        self.runtime.runtime_manager.reader_extensions().bind(key, &views)
+        let made =
+            self.runtime.runtime_manager.extensions().made(face, TypeKey::of::<T>(), &views)?;
+        made.get::<T>().cloned()
     }
 
     /// The views a piece of work of the actor reads through, for `initiator`, from its channel at

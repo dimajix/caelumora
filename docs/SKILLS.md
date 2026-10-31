@@ -44,7 +44,7 @@ Two questions, apart:
     reading: what the owner may read, the agent may follow. Besides, the skill's classification must
     flow into the channel (`may_publish`): a skill classified above the channel is not loaded there.
 
-The skills an agent may load where it is are `SkillCatalogue::usable_skills`: of those it may read,
+The skills an agent may load where it is are `SkillReader::usable_skills`: of those it may read,
 each it may use whose classification flows into its channel, and of those, for every name, the one
 found from its channel - the session's before the owner's before the global one. Filtered first and
 chosen after, so a skill of the session the agent may not use does not hide the global one of its
@@ -115,9 +115,9 @@ given to it to its remote agent with its next call.
 *   **The `SkillManager`** (`caelumora_skills::manager`) is the one writer: it makes, changes,
     deletes, restores and purges skills - stored first, then announced to whoever may read the
     skill. The plugin offers it as a service of the runtime, which the views and the routes reach;
-    an agent's tools reach skills through the `SkillCatalogue` the plugin binds to the views of
-    every piece of work of an application (`Situation::extension`, issue 516), as the work reads,
-    and never the manager.
+    an agent's work reads skills through the `SkillReader` and writes them through the `SkillWriter`
+    the plugin binds to the views of every piece of work of an application (`Situation::reader`,
+    `Turn::writer`, issue 516), in the work's context, and never reaches the manager.
 *   **REST** lets a user manage skills (see [REST-SERVER.md](REST-SERVER.md)); one of a session's
     scope is written by an agent in it.
 *   **The web UI** lists them and shows one on a page of its own, where its owner edits it (see
@@ -131,12 +131,12 @@ The crate `caelumora-skills` holds all of it, in layers by feature (issue 323, c
 features the entity, its body, digest and snapshot (`skill`) and the wire types (`api`), which a
 client reads; `runtime` adds the `SkillManager` (`manager`), the views as an extension trait on the
 runtime's `Views` (`view::SkillViews`), what an agent's work does with skills
-(`catalogue::SkillCatalogue`), the questions of who may change and use a skill as an extension
-trait on the `AccessPolicy` (`access::SkillAccess`), the `skills` component
-(`component`) and `SkillsPlugin` (`plugin`), which joins them to the runtime; `server` adds the
-routes and how a `SkillError` is answered (`routes`). Its tests run in the world of the security
-suite (`tests/skills.rs`). `caelumora-app` lists the plugin with its routes, `caelumora-tui` with
-the feature `runtime` alone.
+(`extension::SkillReader`, `SkillWriter`), the questions of who may change and use a skill as an
+extension trait on the `AccessPolicy` (`access::SkillAccess`), the `skills` component (`component`)
+and `SkillsPlugin` (`plugin`), which joins them to the runtime; `server` adds the routes and how a
+`SkillError` is answered (`routes`). Its tests run in the world of the security suite
+(`tests/skills.rs`). `caelumora-app` lists the plugin with its routes, `caelumora-tui` with the
+feature `runtime` alone.
 
 ## Not decided yet
 

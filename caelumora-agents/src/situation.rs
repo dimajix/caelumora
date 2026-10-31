@@ -21,7 +21,6 @@ use caelumora_model::secret::Secrets;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
-use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::work::Work;
 use caelumora_model::workspace::Workspace;
@@ -111,16 +110,20 @@ impl<'a> Situation<'a> {
         self.runtime.session_view(self.initiator(), self.work.classification.clone()).await
     }
 
-    /// The service `T` a plugin of the core binds to the views of the work
-    /// (`ActorRuntime::extension_of`, issue 516): the plugin's, acting as
-    /// the work reads - the skills' `SkillCatalogue`, say. `None` if no
-    /// plugin binds one, or where the work reaches no session or may not
-    /// read it.
-    pub async fn extension<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+    /// The reader `T` a plugin binds to the views of the work (`ActorRuntime::reader`, issue 516):
+    /// what of the plugin's service the work reads by - the skills' `SkillReader`, say -, in its
+    /// context. Asked for where it is used and not kept: it acts in the context of the call. `None`
+    /// if no plugin binds one, if it is not offered here, or where the work reaches no session or
+    /// may not read it. What acts is the turn's (`Turn::writer`).
+    pub async fn reader<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.runtime.reader(self.initiator(), self.work.classification.clone()).await
+    }
+
+    /// Whether a turn of this work would be given the writer `T` a plugin binds (`Turn::writer`):
+    /// what a tool provider asks before it offers what acts by it (issue 516), handed nothing.
+    pub async fn has_writer<T: ?Sized + Send + Sync + 'static>(&self) -> bool {
         let classification = self.work.classification.clone();
-        let key = TypeKey::of::<T>();
-        let erased = self.runtime.extension_of(self.initiator(), classification, key).await?;
-        erased.get::<T>().cloned()
+        self.runtime.writer::<T>(self.initiator(), classification).await.is_some()
     }
 
     /// The agent's channel as the work reads it from there (`session`,

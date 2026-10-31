@@ -1,6 +1,7 @@
 //! `RuntimeManager`: the runtime of a process - the services and managers everything in it shares,
 //! made once by the `RuntimeBuilder`.
 
+use super::extension::Extensions;
 use super::Services;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
@@ -15,7 +16,6 @@ use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::scoped::ScopedEntities;
 use crate::seed::{self, SeedSection};
-use crate::view::ReaderExtensions;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -84,7 +84,7 @@ pub struct RuntimeManager {
     /// kinds that declare it (`ComponentKind::uses`), and the views.
     pub(super) services: Services,
     /// What the plugins bind to the views of an application's work (issue 516).
-    pub(super) reader_extensions: ReaderExtensions,
+    pub(super) extensions: Extensions,
     /// The texts given to models (issue 57), also among the `services`:
     /// what the runtime itself words for a model - what an agent saw, as
     /// its context is resolved again.
@@ -188,9 +188,9 @@ impl RuntimeManager {
     }
 
     /// What the plugins bind to the views of an application's work (issue 516), which the actor's
-    /// runtime binds as its work asks (`ActorRuntime::extension_of`).
-    pub(crate) fn reader_extensions(&self) -> &ReaderExtensions {
-        &self.reader_extensions
+    /// runtime makes as its work asks (`ActorRuntime::reader_of`, `writer_of`).
+    pub(super) fn extensions(&self) -> &Extensions {
+        &self.extensions
     }
 
     /// The texts given to models (issue 57).

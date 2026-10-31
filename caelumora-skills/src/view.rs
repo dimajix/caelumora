@@ -1,7 +1,7 @@
 //! Skills as a user reaches them (issue 22): among the skills they may read - the plugin's views,
 //! an extension of the runtime's (`SkillViews`, issue 323). What an agent's work loads and writes
-//! is the `SkillCatalogue`'s (issue 516). A node decides nothing: whoever changes or loads it asks
-//! again.
+//! is the `SkillReader`'s and the `SkillWriter`'s (`extension`, issue 516). A node decides nothing:
+//! whoever changes or loads it asks again.
 
 use crate::access::SkillAccess;
 use crate::manager::{SkillError, SkillManager, SkillResult};

@@ -897,3 +897,30 @@ service and the application never holds an entry it may not recall.
   core per work, asked for where it is used, declared by the kinds that need it. The workspace
   and secrets become the core's own extensions; memory one of its own after this issue. Decision
   10 taken.
+- **2026-10-31** — Step 5b.1 done on the branch: the pattern of an extension. A plugin binds a
+  reader or a writer to the views of every piece of work (`RuntimeBuilder::extend_readers`,
+  `extend_writers`), a binding answering none where it is not offered; the core keeps them as its
+  `Extensions` (`runtime/extension.rs`), by type and face. `ActorRuntime::reader` and `writer`
+  make one for a work, asking `GetSession` as `session_view` does; a component asks its
+  situation for a reader (`Situation::reader`), its turn for a writer (`Turn::writer`), and the
+  situation answers whether there is a writer without handing it out (`has_writer`). A component
+  kind declares what it reads and writes by (`ComponentKind::reads`, `writes`), and a runtime in
+  which a declared face is bound by no plugin is not built - the declaration guards the build
+  alone, since the situation and the turn know no kinds. Skills read through the `SkillReader`
+  and write through the `SkillWriter`; the `ArtifactPublisher` is a writer, bound only where a
+  storage of content is configured, and `is_configured` is gone. The faces of a system service
+  lie in a module `extension` of its crate, in both. PLUGINS.md states the pattern (*What a
+  system service offers an agent's work*), ARCHITECTURE.md the system service and where the core
+  ends. Differs from the
+  plan in names: `Situation::reader`, `Turn::writer` and `Situation::has_writer` for
+  `Situation::extension`, `Turn::extension` and `Situation::offers`, and the typed
+  `ActorRuntime::reader` and `writer` for an erased `extension_of` with a face - so that the face
+  is said where one is asked for, and a reader asked of the turn is not a `None` that surprises;
+  the erased form comes back in step 3, where `ActorRuntime` is a trait object. And "a writer is
+  a `…Writer`" knows an exception where what it does names it better: the `ArtifactPublisher`.
+  Stored data: none.
+- **2026-10-31** — Step 5b.1 accepted, its questions answered as recommended: the declaration of
+  an extension guards the build alone, to be looked at again in step 3, where the core builds the
+  components; `ArtifactPublisher` keeps its name; the readers of the session stay the core's, the
+  readers of a system service its extensions; and `artifact_tool` names the missing workspace
+  before the missing storage, and answers `NotConfigured` where it is given no publisher.

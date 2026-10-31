@@ -8,6 +8,7 @@ use super::container::Planned;
 use super::{
     config_of_params, ComponentContext, ComponentError, ComponentResult, NoParams, Params,
 };
+use crate::runtime::Face;
 use crate::{command, moderator};
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::scope::Scope;
@@ -29,10 +30,11 @@ use std::sync::Arc;
 /// The facets a component provides, by type.
 pub type ComponentFacets = TypeMap;
 
-/// A component kind as it is registered: its name, the parameters it takes, the facets it provides
-/// and those of others it needs - which is how a component's params are checked, components that
-/// provide a facet are found, and what a container accepts is known, before anything is built. The
-/// container checks that the factory kept to it.
+/// A component kind as it is registered: its name, the parameters it takes, the facets it
+/// provides, the services it uses, the facets of others it needs and the extensions it reads and
+/// writes by - which is how a component's params are checked, components that provide a facet are
+/// found, what a container accepts is known, and a runtime that lacks an extension is refused,
+/// before anything is built. The container checks that the factory kept to it.
 #[derive(Debug, Clone)]
 pub struct ComponentKind {
     name: String,
@@ -40,6 +42,7 @@ pub struct ComponentKind {
     provides: Vec<TypeKey>,
     uses: Vec<TypeKey>,
     needs: Vec<TypeKey>,
+    extensions: Vec<(Face, TypeKey)>,
     operator_only: bool,
 }
 
@@ -60,6 +63,7 @@ impl ComponentKind {
             provides: Vec::new(),
             uses: Vec::new(),
             needs: Vec::new(),
+            extensions: Vec::new(),
             operator_only: false,
         }
     }
@@ -105,6 +109,21 @@ impl ComponentKind {
         self.needs.push(TypeKey::of::<T>());
         self
     }
+
+    /// Declares that components of this kind read by the reader `T` a plugin binds to the work
+    /// they serve (`RuntimeBuilder::extend_readers`, issue 516): the runtime is not built where no
+    /// plugin binds it.
+    pub fn reads<T: ?Sized + 'static>(mut self) -> Self {
+        self.extensions.push((Face::Reader, TypeKey::of::<T>()));
+        self
+    }
+
+    /// Declares that components of this kind act by the writer `T` a plugin binds to the work they
+    /// serve (`RuntimeBuilder::extend_writers`), as `reads` declares a reader.
+    pub fn writes<T: ?Sized + 'static>(mut self) -> Self {
+        self.extensions.push((Face::Writer, TypeKey::of::<T>()));
+        self
+    }
 }
 
 type ComponentFactory = Box<
@@ -122,14 +141,15 @@ pub(super) struct Registration {
     provides: Vec<TypeKey>,
     pub(super) uses: Vec<TypeKey>,
     pub(super) needs: Vec<TypeKey>,
+    extensions: Vec<(Face, TypeKey)>,
     operator_only: bool,
     factory: ComponentFactory,
 }
 
 impl Registration {
     fn of(kind: ComponentKind, factory: ComponentFactory) -> (String, Self) {
-        let ComponentKind { name, params, provides, uses, needs, operator_only } = kind;
-        (name, Self { params, provides, uses, needs, operator_only, factory })
+        let ComponentKind { name, params, provides, uses, needs, extensions, operator_only } = kind;
+        (name, Self { params, provides, uses, needs, extensions, operator_only, factory })
     }
 }
 
@@ -220,6 +240,14 @@ impl ComponentRegistry {
         command::register_all(&mut registry);
         moderator::register_all(&mut registry);
         registry
+    }
+
+    /// The extensions the registered kinds declare they need (`ComponentKind::reads`, `writes`),
+    /// each with the name of the kind.
+    pub(crate) fn extensions_declared(&self) -> impl Iterator<Item = (&str, Face, TypeKey)> {
+        self.kinds.iter().flat_map(|(name, registration)| {
+            registration.extensions.iter().map(move |(face, key)| (name.as_str(), *face, *key))
+        })
     }
 
     /// Registers `kind` with a factory that builds without waiting.

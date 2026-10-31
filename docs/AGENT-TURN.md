@@ -225,12 +225,15 @@ no session, an error where it may not read what it reaches. The channel as it st
 what an operation in the channel is given as its properties (`AttachmentManager::copy`) - is
 `Situation::channel`. What is done with the workspace's files goes through a handle instead, named
 after the handle: its terminal, to read them (`Situation::workspace_terminal`), and to change them
-or run commands, the turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`). What a plugin of
-the core offers the work of its kind - the skills' `SkillCatalogue`, the artifacts'
-`ArtifactPublisher` - is `Situation::extension`: the plugin's service, bound to the views of the
-work, asking `GetSession` as `session_view` does, and `None` where the work reaches no session or
-may not read it (issue 516). All are reached through the actor's `ActorRuntime`, which the situation
-and the turn hold and which their components never see: they are given their methods (issue 370).
+or run commands, the turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`). A system
+service's extensions are cut the same way (issue 516, see
+[PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)): what the work reads by is the
+situation's to hand out (`Situation::reader`, the skills' `SkillReader`), what it acts by the turn's
+(`Turn::writer`, the `SkillWriter`, the `ArtifactPublisher`) - each bound to the views of the work,
+asking `GetSession` as `session_view` does, `None` where the work reaches no session or may not read
+it, and asked for where it is used. All are reached through the actor's `ActorRuntime`, which the
+situation and the turn hold and which their components never see: they are given their methods
+(issue 370).
 
 ### Beginning and ending a turn
 

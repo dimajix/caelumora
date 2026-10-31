@@ -23,8 +23,7 @@
 //!
 //! An application is handed readers of the views (`reader`, issue 516): what
 //! of them an agent's work reads - never a view, through which it would reach
-//! the policies, the managers and the viewer's context -, and what a plugin of
-//! the core binds to the views of its work (`ReaderExtensions`).
+//! the policies, the managers and the viewer's context.
 //!
 //! A node answers with a snapshot (`caelumora_model::snapshot`, issue 80)
 //! for a client that lists and offers: the node's data with its questions
@@ -45,7 +44,6 @@ pub use channel::{ChannelView, ParticipantView};
 pub use context::{AgentContextError, AgentContextView};
 pub use group::GroupView;
 pub use project::ProjectView;
-pub(crate) use reader::ReaderExtensions;
 pub use reader::{ChannelReader, ParticipantReader, SessionReader, WorkspaceReader};
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;

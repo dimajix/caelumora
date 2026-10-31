@@ -92,30 +92,35 @@ its routes - can be a **plugin**: a crate linked into the program, not loaded at
 323). It implements `Plugin` and registers what it brings with the `RuntimeBuilder` when the runtime
 is built: its component kinds, the store of its kind, which the configured backend opens for any
 kind, its manager as a service of the runtime, which its views and its routes reach, what an
-application's work does with its kind, bound to the views of that work (`extend_readers`, issue
-516), the members of a scope, and its sections of the configuration and of the seed. On the REST
-side, `RestPlugin` adds its routes, served behind the same login as the core's. A plugin's views are
-an extension trait on the runtime's `Views`, built from what they open, and what a channel's view
-lists of its kind one on `ChannelView`. Which plugins are in is the program's choice:
-`caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the core leaves open -
-the model; the core knows none. A plugin is one crate, cut into layers by Cargo features rather than
-crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second
-`caelumora-artifacts`, which depends on the core's workspaces; `caelumora-mcp`
-([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`, `caelumora-ollama`, `caelumora-decision`,
-`caelumora-compaction` and `caelumora-workspace-tools` are ones that bring component kinds alone,
-`caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres` ones that bring
-backends alone, and `caelumora-comfyui` one that brings a section of the configuration and a
-service besides its component kind.
+application's work does with its kind, bound to the views of that work (`extend_readers`,
+`extend_writers`, issue 516), the members of a scope, and its sections of the configuration and of
+the seed. On the REST side, `RestPlugin` adds its routes, served behind the same login as the
+core's. A plugin's views are an extension trait on the runtime's `Views`, built from what they open,
+and what a channel's view lists of its kind one on `ChannelView`. Which plugins are in is the
+program's choice: `caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the
+core leaves open - the model; the core knows none. A plugin is one crate, cut into layers by Cargo
+features rather than crates. The first is `caelumora-skills`
+([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
+the core's workspaces; `caelumora-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
+`caelumora-ollama`, `caelumora-decision`, `caelumora-compaction` and `caelumora-workspace-tools` are
+ones that bring component kinds alone, `caelumora-open-terminal`, `caelumora-store-json` and
+`caelumora-store-postgres` ones that bring backends alone, and `caelumora-comfyui` one that brings a
+section of the configuration and a service besides its component kind.
 The agents are a plugin too, an essential one (issue 370): `caelumora-agents` registers the kinds of
 agent, whose actors the channel builds (`AgentKinds`), and the kinds of their components; without
 it, the program is a chat between users. The plugins whose components serve an agent's facets -
-tools, models, external agents - build on it, and a plugin that defines facets of its own for
-others to serve is built on in turn: `caelumora-skills` serves the `KnowledgeRestorer` of
-`caelumora-compaction`. Which plugin is trusted as the core and which is an application on it,
-trusted for nothing, is said in [Principles](#principles) and listed in
-[PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the core calls a plugin, the plugin answers in the
-core's error types, not in its own: the core decides by the types it knows what a person is told
-of an error.
+tools, models, external agents - build on it, and a plugin that defines facets of its own for others
+to serve is built on in turn: `caelumora-skills` serves the `KnowledgeRestorer` of
+`caelumora-compaction`. A service with a manager of its own that extends the core - skills and
+artifacts, which plugins bring, the workspace and secrets, which the core brings itself - is a
+**system service**: it runs on the core's side, its manager decides with the core's policies, its
+views serve the frontends, and what an agent's work does with its kind it offers as extensions, a
+reader handed out where the work reads and a writer where it acts
+([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Which plugin is trusted as
+the core and which is an application on it, trusted for nothing, is said in
+[Principles](#principles) and listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the core
+calls a plugin, the plugin answers in the core's error types, not in its own: the core decides by
+the types it knows what a person is told of an error.
 
 Details: [PLUGINS.md](PLUGINS.md).
 
@@ -425,23 +430,28 @@ The design repeats a few decisions; new code follows them.
     not its actor's runtime; an actor gets its own channel, not the session.
 *   **The core decides, applications ask.** As the frontends map what the runtime decides, the
     applications ask it. The runtime is the core, to the applications what an operating system's
-    kernel is to its programs. A plugin that brings what is the core's - a backend, a kind of
+    kernel is to its programs - a modular one: its own services are sessions, channels with their
+    history, the attachments of their messages and their approver, actors and their state, and
+    persistence, with what they need around them - security, the event bus, projects -; the
+    workspace, secrets, skills, artifacts and memory are system services that extend it (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - so far skills and
+    artifacts as extensions; the workspace and secrets are still reached through `ActorRuntime`, and
+    memory through the agent's state. A plugin that brings what is the core's - a backend, a kind of
     entity with its manager, views and routes, a component of a channel - is trusted as the core;
-    what runs an agent or serves its facets is an **application** on the core, trusted for
-    nothing: `caelumora-agents`, and the plugins that bring components for an agent (which plugin
-    stands where is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). An application is given
-    the core's interface - an actor its `ActorRuntime`, a component its `ComponentContext` and the
+    what runs an agent or serves its facets is an **application** on the core, trusted for nothing:
+    `caelumora-agents`, and the plugins that bring components for an agent (which plugin stands
+    where is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). An application is given the
+    core's interface - an actor its `ActorRuntime`, a component its `ComponentContext` and the
     `Turn` it is called with -, and the core checks every call of it in the name of the actor it
-    made the interface for. An application builds no `SecurityContext`, asks no policy and holds
-    no manager, no store and no controller of the core: what it needs decided, it asks the core to
+    made the interface for. An application builds no `SecurityContext`, asks no policy and holds no
+    manager, no store and no controller of the core: what it needs decided, it asks the core to
     decide. What the core cannot enforce it does not pretend to: a tool whose effect lies outside
-    the system runs if the application runs it, and an agent's own record - its transcript - is
-    the application's; the core's record of a conversation is the channel's history, taken at its
-    door. Today the code keeps part of this as a rule, not by the compiler: an application holds
+    the system runs if the application runs it, and an agent's own record - its transcript - is the
+    application's; the core's record of a conversation is the channel's history, taken at its door.
+    Today the code keeps part of this as a rule, not by the compiler: an application holds
     controllers and could reach the core's services through its components' context (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)); that it names no
-    context, policy, view or manager of the core or of a plugin `scripts/application-names.sh`
-    checks.
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)); that it names no context,
+    policy, view or manager of the core or of a plugin `scripts/application-names.sh` checks.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

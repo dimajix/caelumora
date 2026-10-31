@@ -2,7 +2,7 @@
 //! procedures written down for it to follow - and how a skill reaches it.
 //!
 //! - **The catalogue**, a prompt part: name and description of every skill
-//!   the agent may load where it is (`SkillCatalogue::usable_skills`), in the system
+//!   the agent may load where it is (`SkillReader::usable_skills`), in the system
 //!   prompt by default (parameter `position`) - it changes rarely, and the
 //!   model has to know what it could load. Classified as the join of the
 //!   skills it lists.
@@ -31,7 +31,7 @@
 //! compaction summarises is given again, as it is now - where it may still
 //! be loaded (`KnowledgeRestorer`, issue 323).
 
-use crate::catalogue::SkillCatalogue;
+use crate::extension::{SkillReader, SkillWriter};
 use crate::manager::SkillError;
 use crate::skill::{Skill, SkillId};
 use crate::NAMESPACE;
@@ -115,17 +115,25 @@ fn joined(skills: &[Skill], bound: &Classification) -> Classification {
     })
 }
 
-/// The skills `situation` reaches, as the plugin binds them to the views of its work
-/// (`Situation::extension`, issue 516); `None` for work that reaches no session, which has none.
-async fn catalogue_of(situation: &Situation<'_>) -> Option<Arc<dyn SkillCatalogue>> {
-    situation.extension::<dyn SkillCatalogue>().await
+/// The skills `situation` may load, as the plugin binds their reader to the views of its work
+/// (`Situation::reader`, issue 516); `None` for work that reaches no session, which has none.
+async fn reader_in(situation: &Situation<'_>) -> Option<Arc<dyn SkillReader>> {
+    situation.reader::<dyn SkillReader>().await
 }
 
-/// The skills `turn` reaches (`catalogue_of`).
-async fn skills_of(turn: &Turn<'_>) -> Result<Arc<dyn SkillCatalogue>, ToolError> {
-    catalogue_of(&turn.situation()).await.ok_or_else(|| {
-        ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string())
-    })
+/// The skills a tool of `turn` may load (`reader_in`).
+async fn tool_reader(turn: &Turn<'_>) -> Result<Arc<dyn SkillReader>, ToolError> {
+    reader_in(&turn.situation()).await.ok_or_else(no_session)
+}
+
+/// What a tool of `turn` writes skills by (`Turn::writer`, issue 516).
+async fn tool_writer(turn: &Turn<'_>) -> Result<Arc<dyn SkillWriter>, ToolError> {
+    turn.writer::<dyn SkillWriter>().await.ok_or_else(no_session)
+}
+
+/// What a tool answers in a turn that reaches no session.
+fn no_session() -> ToolError {
+    ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string())
 }
 
 /// What `create_skill` is called with.
@@ -322,7 +330,7 @@ impl PromptProvider for SkillsComponent {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        let Some(skills) = catalogue_of(situation).await else {
+        let Some(skills) = reader_in(situation).await else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
         let skills = skills.usable_skills().await?;
@@ -385,7 +393,7 @@ impl ToolProvider for SkillsComponent {
     ) -> ToolResult<ToolOutput> {
         match name {
             LIST_SKILLS_TOOL_NAME => {
-                let skills = skills_of(turn).await?.usable_skills().await?;
+                let skills = tool_reader(turn).await?.usable_skills().await?;
                 let listed: Vec<Value> = skills.iter().map(|s| serde_json::json!({ "name": s.name.name.as_str(), "description": s.description.as_str(), "skill_id": s.id })).collect();
                 Ok(ToolOutput::classified(
                     serde_json::json!({ "skills": listed }),
@@ -398,7 +406,7 @@ impl ToolProvider for SkillsComponent {
                     name: String,
                 }
                 let Load { name } = arguments(params)?;
-                let skill = skills_of(turn).await?.usable_skill_named(name.trim()).await?;
+                let skill = tool_reader(turn).await?.usable_skill_named(name.trim()).await?;
                 // Its text is given after the step's results, as a skill a
                 // user loads is (issue 389): the transcript holds every skill
                 // as what it is, for a compaction to give it again. The
@@ -426,7 +434,7 @@ impl ToolProvider for SkillsComponent {
             }
             CREATE_SKILL_TOOL_NAME => {
                 let Create { name, description, body, scope } = arguments(params)?;
-                let skills = skills_of(turn).await?;
+                let skills = tool_writer(turn).await?;
                 let scope = match SkillScope::of(&scope)? {
                     SkillScope::Session => {
                         Scope::SessionScope { session_id: turn.situation().session_id() }
@@ -452,8 +460,8 @@ impl ToolProvider for SkillsComponent {
                         "give a new description, new steps, or both".to_string(),
                     ));
                 }
-                let skills = skills_of(turn).await?;
-                let skill = skills.usable_skill_named(name.trim()).await?;
+                let skill = tool_reader(turn).await?.usable_skill_named(name.trim()).await?;
+                let skills = tool_writer(turn).await?;
                 // What the turn saw goes into the skill: raised to it first,
                 // so that nothing of it is ever held lower.
                 let raised = skill
@@ -528,7 +536,7 @@ impl AgentCommandProvider for SkillsComponent {
             command: name.to_string(),
             reason: reason.to_string(),
         };
-        let skills = catalogue_of(&turn.situation())
+        let skills = reader_in(&turn.situation())
             .await
             .ok_or_else(|| failed("the agent is in no session"))?;
         match name {
@@ -604,7 +612,7 @@ impl KnowledgeRestorer for SkillsComponent {
             warn!("Agent {}: the skills it had loaded could not be read again: {:#}", agent, e);
             CompactionError::KnowledgeUnreadable
         };
-        let skills = catalogue_of(&turn.situation()).await.ok_or(CompactionError::NoSession)?;
+        let skills = reader_in(&turn.situation()).await.ok_or(CompactionError::NoSession)?;
         let usable = skills.usable_skills().await.map_err(|e| unreadable(&e))?;
         given
             .iter()
@@ -629,7 +637,9 @@ pub fn register(registry: &mut ComponentRegistry) {
                 .provides::<dyn PromptProvider>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn AgentCommandProvider>()
-                .provides::<dyn KnowledgeRestorer>(),
+                .provides::<dyn KnowledgeRestorer>()
+                .reads::<dyn SkillReader>()
+                .writes::<dyn SkillWriter>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;

@@ -57,10 +57,10 @@ a plugin
 *   asks for the store of its kind (`entity_store::<T>()`), checked by the runtime's policies. The
     configured backend keeps any kind in one storage - whoever asks for the kind again is given a
     store over the same storage - and a kind whose name another kind has is refused;
-*   reaches the core's services it needs for its manager - the event bus, the policies, the
-    secrets, the controllers - and offers its manager as a service (`provide`), which its views
-    read through (`Views::service`) and its routes take when they are built; what an agent's work
-    does with its kind it binds to the views of an application's work (`extend_readers`, below);
+*   reaches the core's services it needs for its manager - the event bus, the policies, the secrets,
+    the controllers - and offers its manager as a service (`provide`), which its views read through
+    (`Views::service`) and its routes take when they are built; what an agent's work does with its
+    kind it binds to the views of an application's work (`extend_readers`, `extend_writers`, below);
 *   registers its component kinds (`components()`), as `register_all` does for the core's;
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
     namespace of its own, from a file it compiles in - the agents' `agents`, from
@@ -92,11 +92,9 @@ What a channel's view lists of its kind - the artifacts published in it, say - i
 on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`): whether the
 viewer reads the channel stays the channel's to decide (issue 328). What lies in a project is listed
 the same way, by an extension trait on `ProjectView` (issue 467). What an agent's work does with its
-kind - loads a skill, publishes an artifact - the plugin offers as a trait of its own, which it
-binds to the views of every piece of work of an application (`RuntimeBuilder::extend_readers`):
-made from those views, it acts as the work reads. The application asks its situation for it
-(`Situation::extension`, which asks `ActorRuntime::extension_of`) and names neither the views nor
-the manager (issue 516).
+kind - loads a skill, publishes an artifact - the plugin offers as its extensions, a reader and a
+writer (see
+[What a system service offers an agent's work](#what-a-system-service-offers-an-agents-work)).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
 plugin that brings component kinds alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`
@@ -118,6 +116,36 @@ no agent; a plugin whose components serve an agent's facets tests them with the 
 agents' plugin and a model that is not to be asked as the default (issues 370, 373). Naming that
 default is the program's, and in a test, `TestAgents` stands in for the program.
 
+## What a system service offers an agent's work
+
+A service with a manager of its own that extends the core - skills and artifacts, which plugins
+bring; the workspace and secrets, which the core brings itself, once they are extensions too - is a
+**system service** (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): it
+runs on the core's side, its manager decides and keeps, asking the core's policies extended by
+questions of its own (`SkillAccess`), never rules of its own, and its views serve the frontends.
+What an agent's work does with its kind it offers as **extensions**, by one pattern:
+
+*   **Two faces.** What the work reads by is a **reader** (`SkillReader`), handed out where it reads
+    (`Situation::reader`); what it acts by is a **writer** (`SkillWriter`, `ArtifactPublisher`),
+    handed out where it acts (`Turn::writer`). So a prompt part cannot write a skill, as the
+    workspace's terminal is read through the situation and changed through the turn. Whether there
+    is a writer, without being given it, the situation answers (`has_writer`) - for a tool provider
+    that offers what acts by it.
+*   **Bound by the plugin, per work.** The plugin binds each face to the views of a piece of work
+    (`RuntimeBuilder::extend_readers`, `extend_writers`), as its own views are built from them, so
+    that it acts in the work's context; a binding may answer none where it is not offered - the
+    artifacts' writer where no storage of content is configured. The core opens the views as it
+    opens the work's session, asking `GetSession`. No method of a face takes a context or an
+    identity, and what it hands out is data, not an object of the core.
+*   **Asked for where it is used, never kept.** A face acts in the context of the call that asked
+    for it - the rights as they are at each call -, so a component asks for it again each time.
+*   **Declared.** A component kind declares the faces it reads and writes by
+    (`ComponentKind::reads`, `writes`); a runtime in which a declared face is bound by no plugin is
+    not built. The declaration guards the build alone: a face is handed to whichever component asks
+    for it, as the situation and the turn know no kinds.
+*   **Named alike.** A reader is a `…Reader`, a writer a `…Writer`, unless what it does names it
+    better (`ArtifactPublisher`).
+
 ## What a component kind outside the core may use
 
 A component kind in a crate of its own uses the runtime through what a component of the core uses
@@ -126,22 +154,22 @@ a plugin depends on:
 
 *   **To register it:** `ComponentRegistry::register` or `register_async`, `ComponentKind` with the
     parameters it takes (`params`, a struct that implements `Params`), the facets it `provides`,
-    those of others it `needs` and the services it `uses`, `ComponentFacets`, and
-    `config_of_params` to read its `params`. A kind that declares no parameters takes none: every
-    one it is given is refused ([COMPONENTS.md](COMPONENTS.md#parameters)).
-*   **While it is built:** the `ComponentContext` - in whose name it is built, the core's to set
-    and not given out (issue 516) -, `service::<T>()`, the services of the runtime it declared,
-    and `all` and `one`, the facets of others it declared it needs. What a container accepts
-    follows from these declarations
-    ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service that decides for the
-    core - a policy, one of the core's managers, a store - is the core's, and a component of an
-    application does not declare it: what it needs decided it asks of the core, through the
-    `Turn` and the `Situation` it is called with (`may_reclassify`, `may_copy_information`,
-    `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`, issue 516), and what it
-    reads it reads through the readers (`Situation::session_view`, `SessionReader`). What it
-    needs of another plugin it declares as the trait that plugin offers for it, or, of a plugin
-    of the core, asks its situation for, as the trait the plugin binds to the views of the work
-    (`Situation::extension`).
+    those of others it `needs`, the services it `uses` and the extensions it `reads` and `writes`
+    by, `ComponentFacets`, and `config_of_params` to read its `params`. A kind that declares no
+    parameters takes none: every one it is given is refused
+    ([COMPONENTS.md](COMPONENTS.md#parameters)).
+*   **While it is built:** the `ComponentContext` - in whose name it is built, the core's to set and
+    not given out (issue 516) -, `service::<T>()`, the services of the runtime it declared, and
+    `all` and `one`, the facets of others it declared it needs. What a container accepts follows
+    from these declarations ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service
+    that decides for the core - a policy, one of the core's managers, a store - is the core's, and a
+    component of an application does not declare it: what it needs decided it asks of the core,
+    through the `Turn` and the `Situation` it is called with (`may_reclassify`,
+    `may_copy_information`, `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`,
+    issue 516), and what it reads it reads through the readers (`Situation::session_view`,
+    `SessionReader`). What it needs of another plugin it declares as the trait that plugin offers
+    for it, or, of a system service, as the extension it reads or writes by: a reader its situation
+    hands out (`Situation::reader`), a writer its turn (`Turn::writer`).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,

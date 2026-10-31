@@ -158,6 +158,16 @@ impl<'a> Turn<'a> {
         )
     }
 
+    /// The writer `T` a plugin binds to the views of the turn's work (`ActorRuntime::writer`, issue
+    /// 516): what of the plugin's service a tool acts by - the skills' `SkillWriter`, say -, in the
+    /// work's context. Asked for where it is used and not kept, as `Situation::reader` is. `None`
+    /// if no plugin binds one, if it is not offered here, or where the work reaches no session or
+    /// may not read it.
+    pub async fn writer<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        let situation = self.situation();
+        self.runtime.writer(situation.initiator(), situation.classification()).await
+    }
+
     /// The workspace of the agent's session and its terminal, for what
     /// `need` asks - reading its files, or changing them too -, if the turn
     /// may use it in its channel (`ActorRuntime::workspace_terminal`, issue

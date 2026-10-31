@@ -4,7 +4,7 @@
 //! features it is the entity (`skill`) and the wire types (`api`), which a
 //! client reads; `runtime` adds the one writer of skills (`manager`), how
 //! a viewer reaches them (`view`), what an agent's work does with them
-//! (`catalogue`, issue 516), the questions of who may use and change one
+//! (`extension`, issue 516), the questions of who may use and change one
 //! (`access`), the `skills` component and the plugin that joins all of it
 //! to the runtime (`plugin`); `server` adds the routes.
 
@@ -22,9 +22,9 @@ pub const PROMPTS: &str = include_str!("prompts.yaml");
 #[cfg(feature = "runtime")]
 pub mod access;
 #[cfg(feature = "runtime")]
-pub mod catalogue;
-#[cfg(feature = "runtime")]
 pub mod component;
+#[cfg(feature = "runtime")]
+pub mod extension;
 #[cfg(feature = "runtime")]
 pub mod manager;
 #[cfg(feature = "runtime")]

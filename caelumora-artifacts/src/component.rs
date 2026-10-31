@@ -14,8 +14,8 @@
 //! is checked again all the same, and fails and says so. The result is
 //! classified as the artifact, which is classified as the workspace.
 
+use crate::extension::ArtifactPublisher;
 use crate::manager::ArtifactError;
-use crate::publisher::ArtifactPublisher;
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
@@ -146,13 +146,12 @@ impl ToolProvider for ArtifactTool {
     /// workspace in its channel, and a storage of content is configured
     /// (issues 290, 282).
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        // No publisher is bound where the work reaches no session; `usable_workspace` then refuses
-        // the tool.
-        let publisher = situation.extension::<dyn ArtifactPublisher>().await;
-        if publisher.is_some_and(|publisher| !publisher.is_configured()) {
+        // A work that reaches no workspace is told so first; one that does is given no publisher
+        // only where no storage of content is configured.
+        usable_workspace(situation).await?;
+        if !situation.has_writer::<dyn ArtifactPublisher>().await {
             return Err("no storage of content is configured".to_string());
         }
-        usable_workspace(situation).await?;
         Ok(self.tools())
     }
 
@@ -194,11 +193,8 @@ impl ToolProvider for ArtifactTool {
             .map_err(ArtifactError::from)?;
         let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await?;
         let content = terminal.read(&at).await?;
-        let publisher = turn
-            .situation()
-            .extension::<dyn ArtifactPublisher>()
-            .await
-            .ok_or(ArtifactError::NotJoined)?;
+        let publisher =
+            turn.writer::<dyn ArtifactPublisher>().await.ok_or(ArtifactError::NotConfigured)?;
         let (artifact, number) = publisher
             .publish(channel, content, &workspace.classification, &name, description)
             .await?;
@@ -226,7 +222,8 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(
             ComponentKind::new(ARTIFACT_TOOL_KIND)
                 .params::<ArtifactToolConfig>()
-                .provides::<dyn ToolProvider>(),
+                .provides::<dyn ToolProvider>()
+                .writes::<dyn ArtifactPublisher>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;

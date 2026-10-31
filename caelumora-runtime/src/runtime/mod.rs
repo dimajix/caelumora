@@ -10,15 +10,19 @@
 //!   its session, and a handle to the channel itself (issues 360, 361).
 //! - An `ActorRuntime` (`actor`) is what an actor runs with: the services
 //!   every actor needs and what concerns this actor alone (issues 69, 359).
+//! - What the plugins bind to the views of an application's work is kept as
+//!   its extensions (`extension`, issue 516).
 
 mod actor;
 mod builder;
 mod channel;
+mod extension;
 mod manager;
 
 pub use actor::{ActorRuntime, CallPermit, OwnRecord};
 pub use builder::RuntimeBuilder;
 pub use channel::ChannelRuntime;
+pub(crate) use extension::Face;
 pub use manager::RuntimeManager;
 
 use caelumora_model::type_map::TypeMap;

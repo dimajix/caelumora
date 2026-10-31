@@ -130,6 +130,12 @@ Components are wired the way Spring Boot wires beans.
 *   **A kind declares the facets of others it needs** (`ComponentKind::needs`), as the
     `policy_moderator` needs a `ResponderPolicy`. Its factory may ask for those and no other; one
     it does not declare is refused, naming it (`ComponentError::Undeclared`).
+*   **A kind declares the extensions it reads and writes by** (`ComponentKind::reads`, `writes`):
+    the faces of a system service a plugin binds to the work a component serves, which it is handed
+    while it works, not while it is built (issue 516, see
+    [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). A runtime in which a
+    declared one is bound by no plugin is not built; unlike `uses` and `needs`, it refuses nothing
+    to a component that did not declare it.
 *   **A component asks for what it needs, by type** (`context.all::<dyn PromptProvider>()`, or
     `one`). This builds the components that provide the facet on demand, recursively, and returns
     every *other* one in the order of the configuration.

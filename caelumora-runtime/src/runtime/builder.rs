@@ -1,6 +1,7 @@
 //! `RuntimeBuilder`: what makes the `RuntimeManager` of a process - the core's services and
 //! managers first, then what each plugin registers (issue 323).
 
+use super::extension::{Extensions, Face};
 use super::{RuntimeManager, Services};
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
@@ -18,7 +19,7 @@ use crate::plugin::Plugin;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
-use crate::view::{ReaderExtensions, Views};
+use crate::view::Views;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::{bail, Context, Result};
@@ -74,7 +75,7 @@ pub struct RuntimeBuilder {
     scope_holders: Arc<ScopeHolders>,
     services: Services,
     /// What the plugins bind to the views of an application's work (issue 516).
-    reader_extensions: ReaderExtensions,
+    extensions: Extensions,
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
     prompts: PromptCatalogue,
@@ -248,7 +249,7 @@ impl RuntimeBuilder {
             scope_members,
             scope_holders,
             services,
-            reader_extensions: ReaderExtensions::default(),
+            extensions: Extensions::default(),
             prompts,
             prompt_variants: config.prompts.clone(),
             sections: config.plugins.clone(),
@@ -394,15 +395,27 @@ impl RuntimeBuilder {
         self.services.insert(service);
     }
 
-    /// Binds `T` to the views of every piece of work of an application
-    /// (`ActorRuntime::extension_of`, issue 516): a plugin's service, made by `bind` from the
-    /// views, so that it acts as the work reads. A `T` bound before is replaced.
+    /// Binds the reader `T` to the views of every piece of work of an application
+    /// (`ActorRuntime::reader_of`, issue 516): what of a plugin's service the work reads by, made
+    /// by `bind` from the views - `None` where it is not offered -, so that it acts in the work's
+    /// context. A `T` bound before is replaced.
     pub fn extend_readers<T, F>(&mut self, bind: F)
     where
         T: ?Sized + Send + Sync + 'static,
-        F: Fn(&Views) -> Arc<T> + Send + Sync + 'static,
+        F: Fn(&Views) -> Option<Arc<T>> + Send + Sync + 'static,
     {
-        self.reader_extensions.insert(bind);
+        self.extensions.insert(Face::Reader, bind);
+    }
+
+    /// Binds the writer `T` to the views of every piece of work of an application
+    /// (`ActorRuntime::writer_of`, issue 516): what of a plugin's service the work acts by, made
+    /// as `extend_readers` makes a reader.
+    pub fn extend_writers<T, F>(&mut self, bind: F)
+    where
+        T: ?Sized + Send + Sync + 'static,
+        F: Fn(&Views) -> Option<Arc<T>> + Send + Sync + 'static,
+    {
+        self.extensions.insert(Face::Writer, bind);
     }
 
     /// The service `T`, if the core or a plugin registered before provides
@@ -456,6 +469,16 @@ impl RuntimeBuilder {
         if let Some(name) = self.sections.keys().next() {
             bail!("The configuration has a section '{name}' that no plugin claims");
         }
+        let unbound = self
+            .component_registry
+            .extensions_declared()
+            .find(|(_, face, key)| !self.extensions.binds(*face, *key));
+        if let Some((kind, face, key)) = unbound {
+            bail!(
+                "The component kind '{kind}' needs the {face} {}, which no plugin binds",
+                key.name()
+            );
+        }
         self.component_registry.set_defaults(&self.component_defaults)?;
         // The default variant first: the others fall back to it.
         let (defaults, variants): (Vec<_>, Vec<_>) = self
@@ -497,7 +520,7 @@ impl RuntimeBuilder {
             actors: Arc::new(ActorManager::new()),
             scoped,
             services: self.services,
-            reader_extensions: self.reader_extensions,
+            extensions: self.extensions,
             prompts,
             seed_sections: self.seed_sections,
         })
@@ -507,6 +530,8 @@ impl RuntimeBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::{ComponentFacets, ComponentKind};
+    use crate::testing::TestRuntime;
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::user_provider::Credential;
     use std::fs;
@@ -542,6 +567,52 @@ mod tests {
             let message = format!("{refused:#}");
             assert!(names.iter().all(|name| message.contains(name)), "{yaml:?} gave: {message}");
         }
+    }
+
+    /// Issue 516: a component kind that needs an extension no plugin binds keeps the runtime from
+    /// being built - bound as the other face, it is not bound for it -, whether or not the binding
+    /// offers it anywhere.
+    #[test]
+    fn the_runtime_is_not_built_where_a_kind_needs_an_extension_no_plugin_binds() {
+        trait Ledger: Send + Sync {}
+        /// Binds a `Ledger` that is offered nowhere, as the face it holds, if any.
+        struct BindsLedger(Option<Face>);
+        impl Plugin for BindsLedger {
+            fn name(&self) -> &'static str {
+                "ledger"
+            }
+            fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
+                match self.0 {
+                    Some(Face::Reader) => runtime.extend_readers::<dyn Ledger, _>(|_| None),
+                    Some(Face::Writer) => runtime.extend_writers::<dyn Ledger, _>(|_| None),
+                    None => {}
+                }
+                Ok(())
+            }
+        }
+        let built = |binds: &BindsLedger| {
+            TestRuntime {
+                components: Box::new(|registry| {
+                    registry.register(
+                        ComponentKind::new("ledger_reader").reads::<dyn Ledger>(),
+                        |_, _| Ok(ComponentFacets::empty()),
+                    );
+                }),
+                plugins: vec![binds],
+                ..Default::default()
+            }
+            .try_build()
+            .map(|_| ())
+        };
+
+        let refused = built(&BindsLedger(None)).expect_err("bound by none");
+        let message = format!("{refused:#}");
+        assert!(
+            message.contains("'ledger_reader'") && message.contains("reader Ledger"),
+            "{message}"
+        );
+        assert!(built(&BindsLedger(Some(Face::Writer))).is_err(), "a writer is no reader");
+        built(&BindsLedger(Some(Face::Reader))).expect("bound, though offered nowhere");
     }
 
     /// Issue 57: the variants of the texts the configuration names are read
