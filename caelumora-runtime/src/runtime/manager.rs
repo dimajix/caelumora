@@ -83,7 +83,7 @@ pub struct RuntimeManager {
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`), and the views.
     pub(super) services: Services,
-    /// What the plugins and the core bind to an application's work (issue 516).
+    /// What the plugins and the core bind to an agent's work (issue 516).
     pub(super) extensions: Extensions,
     /// The texts given to models (issue 57), also among the `services`:
     /// what the runtime itself words for a model - what an agent saw, as
@@ -187,8 +187,8 @@ impl RuntimeManager {
         &self.services
     }
 
-    /// What the plugins and the core bind to an application's work (issue 516), which the actor's
-    /// runtime makes as its work asks (`ActorRuntime::reader`, `writer`).
+    /// What the plugins and the core bind to an agent's work (issue 516), which the actor's runtime
+    /// makes as its work asks (`ActorRuntime::reader`, `writer`).
     pub(super) fn extensions(&self) -> &Extensions {
         &self.extensions
     }

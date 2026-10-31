@@ -57,9 +57,9 @@ impl RemoteEndpoint {
         Some(url)
     }
 
-    /// `text` - a message of a library that writes the URL into its own -
-    /// with the URL shown instead: as written, as a parser normalizes it,
-    /// and as a client sends it, its credentials moved into a header.
+    /// `text` - a message of a client crate that writes the URL into its own - with the URL shown
+    /// instead: as written, as a parser normalizes it, and as a client sends it, its credentials
+    /// moved into a header.
     pub fn redact_in(&self, text: &str) -> String {
         let mut forms = vec![self.url.clone()];
         if let Ok(mut parsed) = Url::parse(&self.url) {

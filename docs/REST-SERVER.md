@@ -1,8 +1,8 @@
 # REST Server
 
 `caelumora-rest-server` makes the runtime available over HTTP: a REST API, two server-sent event
-streams, and the login that guards both. It is a library; the program that serves it is
-`caelumora-app`, under `/api`, with the web UI beside it. It decides nothing itself - what a user
+streams, and the login that guards both. It is a crate the program links; the program that serves it
+is `caelumora-app`, under `/api`, with the web UI beside it. It decides nothing itself - what a user
 may see or do is decided by the runtime, and the server maps the answers to responses. The browser
 frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
 [SECURITY.md](SECURITY.md), and its configuration (`server`, `auth`) in
@@ -54,7 +54,7 @@ A plugin that serves routes of its own (issue 323) implements `RestPlugin`, a `P
 need - its manager among the runtime's services - into a state of their own, so that a handler does
 not reach it through the runtime at every request. `routes::api` merges the routes of every plugin
 the program lists behind the same login as the core's (`require_auth`). A handler builds on the
-public modules of this library - `auth`, `error`, `state`, `sse` -, answers its errors as the core's
+public modules of this crate - `auth`, `error`, `state`, `sse` -, answers its errors as the core's
 do (a plugin implements `From<…> for ApiError` for its own error types, see [Errors](#errors)), and
 its paths are the plugin's to choose, as long as no core route has them.
 

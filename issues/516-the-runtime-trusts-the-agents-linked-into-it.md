@@ -498,7 +498,7 @@ needs the one before:
    `runtime/src/plugin.rs`, `runtime/src/view/{session,channel,workspace}.rs`, every program's
    `plugin.rs`, `caelumora-skills/src/{view,component,api,plugin}.rs`, the same of artifacts,
    `caelumora-app/src/main.rs`, `caelumora-tui`.
-6. **The crate.** `caelumora-api` made of the moved modules and the traits; the programs depend
+6. **The crate.** `caelumora-api` made of the moved modules and the traits; the libraries depend
    on it and the model; `caelumora-runtime` implements it; the dependency check in the pre-commit
    hook and CI. Files: `Cargo.toml` of the workspace and of every crate, the moved modules, the
    `use` lines. Behaviour: none.
@@ -566,21 +566,15 @@ and prompt parts that read, `caelumora-workspace-tools/src/workspace_prompt_prov
 **5b. `ActorRuntime` the trait.** Planned anew after 5a, in *Step 5b: the core and its
 extensions* below: a slim trait, extended by one generic pattern, in three steps of its own.
 
-**5c. Applications register as applications.** A trait `Application`, beside `Plugin`, with one
-method, `register(&self, application: &mut ApplicationBuilder) -> Result<()>`; the
-`ApplicationBuilder` offers what the applications register today and nothing else:
-`components()`, `agent_kinds()`, `prompts()`, `config::<C>(name)`, and `provide(service)` for a
-service of its own to its own kinds (`caelumora-comfyui`'s workflows). `RuntimeBuilder::
-application(&dyn Application)` registers one; the binaries list plugins and applications apart.
-A `Plugin` keeps the `RuntimeBuilder`. Files: `caelumora-runtime/src/{plugin,runtime/builder}.rs`,
-the `plugin.rs` of `caelumora-agents`, `-mcp`, `-a2a`, `-ollama`, `-comfyui`,
-`-workspace-tools`, `-compaction`, `caelumora-app/src/main.rs`, `caelumora-tui`.
+**5c. Libraries register as libraries.** Planned anew after 5b, in *Step 5c: libraries* below:
+what was called an application is a library of the agent side, and it registers apart from the
+plugins of the core.
 
 **5d. Skills and artifacts cut in two.** The plugin of each (store, manager, views, routes, scope
-member) stays a `Plugin`; its component becomes an `Application` of the same crate, behind a
-feature of its own, and reaches the manager only through a trait of the crate's API layer, which
-the plugin binds to a reading (`RuntimeBuilder::extend_readers::<dyn T>(fn(&Views) -> Arc<T>)`)
-and the component asks of the reader (`session.extension::<dyn T>()`):
+member) stays a `Plugin`; its component becomes a `Library` of the same crate, behind a feature of
+its own, and reaches the manager only through a trait of the crate's API layer, which the plugin
+binds to a reading (`RuntimeBuilder::extend_readers::<dyn T>(fn(&Views) -> Arc<T>)`) and the
+component asks of the reader (`session.extension::<dyn T>()`):
 
 - `SkillCatalogue`: `usable_skills`, `usable_skill_named(name)`, `create(name, scope, description,
   body, classification)` with a scope of `Session` or `Owner` - whose owner the plugin knows -,
@@ -592,8 +586,8 @@ component,plugin}.rs`, the same of artifacts, `Cargo.toml` of both, `caelumora-r
 mod.rs`.
 
 Step 5 buys nothing a test sees: it is the shape step 6 needs, where the trait, the readers, the
-`Application` and the API layers move into `caelumora-api`. Done without step 6, it costs the
-`Box`es and the trait beside the struct and enforces nothing the script of step 4 does not.
+`Library` and the API layers move into `caelumora-api`. Done without step 6, it costs the `Box`es
+and the trait beside the struct and enforces nothing the script of step 4 does not.
 
 ## Step 5b: the core and its extensions
 
@@ -712,7 +706,40 @@ left out where the core collects an agent's commands -, `workspace_terminal`, `w
 Memory becomes a system service of its own after this issue, in an issue of its own: its
 entries leave the agent's state, a reader hands out only those that may be recalled where the
 work reads, and a writer stages what the turn remembers, so that the flow rule stands in the
-service and the application never holds an entry it may not recall.
+service and the agent side never holds an entry it may not recall.
+
+## Step 5c: libraries
+
+Decided with the maintainer on 2026-10-31, after 5b. What runs an agent or brings components for
+its facets is no application - `caelumora-comfyui` is a building block an agent uses through a
+facet it defines, not a whole program -, and the word is the binaries' (`caelumora-app`). The level
+is the **agent side**, a crate on it a **library**: `caelumora-agents`, which brings the kinds of
+agent and the built-in components, and the crates that bring components for an agent's facets.
+The core and its **plugins** keep their names; *service* stays the system service's and the
+runtime's `Services`, *extension* the face a system service binds to an agent's work. Two
+constructs, not one: a plugin is given the whole `RuntimeBuilder`, a library a builder that offers
+what a library registers and nothing else, and from step 6 on their traits lie in different
+crates - the plugin's in `caelumora-runtime`, the library's in `caelumora-api`, which a library
+links alone. One trait whose implementor declared its own level would let it decide its own trust.
+
+### The steps of 5c
+
+1. **The word.** *Application* becomes *library* or *the agent side* wherever it names the level -
+   the documents, the comments, `scripts/application-names.sh` as `scripts/library-names.sh` and
+   the pre-commit hook -, and *an agent's work* where it named the work of an agent; where it names
+   the binaries or the program that serves the API, it stays. No behaviour changes.
+2. **The trait.** `Library` (`name`, `register(&self, library: &mut LibraryBuilder)`), beside
+   `Plugin`; the `LibraryBuilder` offers `components()` - a `LibraryComponents`, which registers
+   kinds as a library's -, `agent_kinds()`, `prompts()`, `config::<C>(name)` and `provide(service)`
+   for a service of its own to its own kinds; `RuntimeBuilder::library(&dyn Library)` registers
+   one, the binaries, `TestRuntime` and `World` list libraries apart from plugins. Beside it
+   (decision 15): the runtime is not built where a kind of a library provides a facet the core
+   builds in its own name (`Moderator`, `ChannelCommandProvider`) or uses a service no library
+   provides but the texts (`PromptCatalogue`) - so that a library's components reach no service of
+   the core either.
+   Libraries: `caelumora-agents`, `-mcp`, `-a2a`, `-ollama`, `-comfyui`, `-workspace-tools`,
+   `-compaction`; `caelumora-decision`, the stores and `caelumora-open-terminal` stay plugins,
+   `caelumora-skills` and `caelumora-artifacts` both until 5d.
 
 ## Decisions for the maintainer
 
@@ -736,7 +763,9 @@ service and the application never holds an entry it may not recall.
 9. The names of step 5: `ParticipantRuntime` for the struct, `ActorRuntime` staying the
    applications' word for the trait (recommended); `Application` and `ApplicationBuilder`;
    `SkillCatalogue`, `ArtifactPublisher`; `extension` and `extend_readers` for what a plugin binds
-   to a reading.
+   to a reading. Answered by the steps of 5b and by decision 14: `ParticipantRuntime` and
+   `ActorRuntime` as recommended, `SkillReader` (decision 12), and a `Library` with its
+   `LibraryBuilder` in place of the `Application`.
 10. Where the core ends (see *Step 5b*): sessions, channels with their attachments and their
     approver, actors and their state, persistence, security, the event bus and projects; the
     workspace, secrets, skills, artifacts and memory are extensions. Taken on 2026-10-31; amended
@@ -754,17 +783,24 @@ service and the application never holds an entry it may not recall.
     with the ids and the classification apart. Taken on 2026-10-31: both; `ActorRuntime` keeps its
     name, as other actors of applications may come; an agent's command that a command of its
     session hides is refused without naming the component that provides it.
+14. What registers on the agent side, and what it is called (*Step 5c: libraries*). Taken on
+    2026-10-31: a `Library`, apart from the core's `Plugin` - two constructs, as their builders and,
+    from step 6, their crates differ; *service* and *extension* keep their meaning.
+15. Whether the runtime refuses to be built where a component kind of a library provides a facet
+    the core builds in its own name or uses a service of the core but the texts, and whether a
+    library registers its kinds through a type of its own (`LibraryComponents`) rather than a
+    method of the registry any plugin could call. Taken on 2026-10-31: both, as recommended.
 
 ## Done when
 
 - The documents state the principle, the three levels and what the cut enforces.
-- No program crate depends on `caelumora-runtime`, checked by the pre-commit hook and CI; no
-  program code names `SecurityContext`, a policy, a manager, a store or a controller.
+- No library depends on `caelumora-runtime`, checked by the pre-commit hook and CI; no library
+  names `SecurityContext`, a policy, a manager, a store or a controller.
 - The door builds the context it decides by; `Envelope` and `Work` carry none; the `Actor` trait
   answers none.
 - Whether a tool call, a result, a tool set or an agent's command is admitted is decided in the
   kernel; the agents' security suite states it.
-- A program is registered as a `Program`, a module as a `Plugin`; `caelumora-skills` and
+- A library is registered as a `Library`, a plugin as a `Plugin`; `caelumora-skills` and
   `caelumora-artifacts` are cut into both.
 - The API crate holds exactly what the list above names, and the kernel implements it.
 
@@ -1076,3 +1112,17 @@ service and the application never holds an entry it may not recall.
   reader of the agent's own channel is `Situation::channel`, as on the trait (decision 11
   revised), and CODING-GUIDELINES names the readers the interface of an application calls by the
   entity's name. Stored data: none.
+- **2026-10-31** — Step 5c planned anew with the maintainer (*Step 5c: libraries*, decision 14):
+  the agent side is made of libraries, which register apart from the plugins; the word is changed
+  first, in a step of its own.
+- **2026-10-31** — Step 5c.1 done on the branch: the word. Where *application* named the level, the
+  documents and the comments say *library* or *the agent side* - "The core decides, the agent side
+  asks" in ARCHITECTURE.md, which tells a library apart from the binaries -, and *an agent's work*
+  where they named the work of an agent; `scripts/application-names.sh` is
+  `scripts/library-names.sh`, and the pre-commit hook runs it so. Where *application* names the
+  program that installs the logging or serves the API, it says *program*, and the media types
+  stay. Where *library* meant a crate in general - the REST server, the crates that only emit log
+  records, a client crate that writes a URL into its errors -, the documents and comments say
+  *crate*, so that *library* names the agent side alone. The open parts of this issue follow:
+  decision 9 is marked answered, step 5d names a `Library`, step 6, the plan of memory and *Done
+  when* the libraries and the agent side. No behaviour changes; stored data: none.

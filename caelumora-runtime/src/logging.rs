@@ -1,8 +1,8 @@
 //! The spans the runtime opens itself.
 //!
-//! The whole workspace logs through `tracing`; the runtime only emits records.
-//! Which subscriber writes them, where and how, is the application's decision:
-//! the binaries install it with `caelumora_logging::init` (issue 330).
+//! The whole workspace logs through `tracing`; the runtime only emits records. Which subscriber
+//! writes them, where and how, is the program's decision: the binaries install it with
+//! `caelumora_logging::init` (issue 330).
 //!
 //! Operations that cross actors are tied together by the ids of their
 //! `EventContext`, which the spans carry as fields under the same names:

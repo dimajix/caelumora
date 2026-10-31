@@ -21,9 +21,9 @@
 //! session, reached through its situation (`Situation::session`); a
 //! frontend's root is [`SessionManager::views`].
 //!
-//! An application is handed readers of the views (`reader`, issue 516): what
-//! of them an agent's work reads - never a view, through which it would reach
-//! the policies, the managers and the viewer's context.
+//! The agent side is handed readers of the views (`reader`, issue 516): what of them an agent's
+//! work reads - never a view, through which it would reach the policies, the managers and the
+//! viewer's context.
 //!
 //! A node answers with a snapshot (`caelumora_model::snapshot`, issue 80)
 //! for a client that lists and offers: the node's data with its questions

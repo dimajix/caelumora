@@ -27,21 +27,20 @@ two steps:
     agent's components and the kinds of agent (issue 370) -, and `build` makes the runtime. The
     program names the default kinds of singles after its plugins registered (`set_default_kind`).
 
-A plugin stands on one of two levels of trust (see
-[ARCHITECTURE.md](ARCHITECTURE.md#principles)). One that brings what is the core's - a backend, a
-kind of entity with its manager, views and routes, a component of a channel such as the
-`ResponderPolicy` of `caelumora-decision` - is trusted as the core and is given what the core has:
-the stores, the policies, the secrets, the controllers, the system's context. One that runs an
-agent or brings components for an agent's facets is an application, trusted for nothing: the
-agents' plugin, `caelumora-mcp`, `caelumora-a2a`, `caelumora-ollama`, `caelumora-comfyui`,
-`caelumora-workspace-tools` and `caelumora-compaction`. `caelumora-skills` and
-`caelumora-artifacts` stand on both: their manager, views and routes are the core's, their
-components an application's. An application reaches the core through the interface the core gives
-an actor and its components (see
+A plugin stands on one of two levels of trust (see [ARCHITECTURE.md](ARCHITECTURE.md#principles)).
+One that brings what is the core's - a backend, a kind of entity with its manager, views and routes,
+a component of a channel such as the `ResponderPolicy` of `caelumora-decision` - is trusted as the
+core and is given what the core has: the stores, the policies, the secrets, the controllers, the
+system's context. One that runs an agent or brings components for an agent's facets is a library of
+the agent side, trusted for nothing: the agents' plugin, `caelumora-mcp`, `caelumora-a2a`,
+`caelumora-ollama`, `caelumora-comfyui`, `caelumora-workspace-tools` and `caelumora-compaction`.
+`caelumora-skills` and `caelumora-artifacts` stand on both: their manager, views and routes are the
+core's, their components a library's. A library reaches the core through the interface the core
+gives an actor and its components (see
 [What a component kind outside the core may use](#what-a-component-kind-outside-the-core-may-use)),
 and may offer a service of its own to its own kinds - `caelumora-comfyui` its workflows -, which
 decides nothing of the core's. Both levels register as a `Plugin`, and "plugin" in this document
-covers both, until applications register on their own (issue
+covers both, until libraries register on their own (issue
 [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)).
 
 A test builds the runtime with `testing::TestRuntime`, naming the plugins it needs (issue 375). A
@@ -60,7 +59,7 @@ a plugin
 *   reaches the core's services it needs for its manager - the event bus, the policies, the secrets,
     the controllers - and offers its manager as a service (`provide`), which its views read through
     (`Views::service`) and its routes take when they are built; what an agent's work does with its
-    kind it binds to the views of an application's work (`extend_readers`, `extend_writers`, below);
+    kind it binds to the views of that work (`extend_readers`, `extend_writers`, below);
 *   registers its component kinds (`components()`), as `register_all` does for the core's;
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
     namespace of its own, from a file it compiles in - the agents' `agents`, from
@@ -168,13 +167,13 @@ a plugin depends on:
     `all` and `one`, the facets of others it declared it needs. What a container accepts follows
     from these declarations ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service
     that decides for the core - a policy, one of the core's managers, a store - is the core's, and a
-    component of an application does not declare it: what it needs decided it asks of the core,
-    through the `Turn` and the `Situation` it is called with (`may_reclassify`,
-    `may_copy_information`, `copy_attachment`; the executor's `admit_tool_call`, issue 516), and
-    what it reads it reads through the readers (`Situation::session`, `SessionReader`). What it
-    needs of another plugin it declares as the trait that plugin offers for it, or, of a system
-    service, as the extension it reads or writes by: a reader its situation hands out
-    (`Situation::reader`), a writer its turn (`Turn::writer`).
+    component of a library does not declare it: what it needs decided it asks of the core, through
+    the `Turn` and the `Situation` it is called with (`may_reclassify`, `may_copy_information`,
+    `copy_attachment`; the executor's `admit_tool_call`, issue 516), and what it reads it reads
+    through the readers (`Situation::session`, `SessionReader`). What it needs of another plugin it
+    declares as the trait that plugin offers for it, or, of a system service, as the extension it
+    reads or writes by: a reader its situation hands out (`Situation::reader`), a writer its turn
+    (`Turn::writer`).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,

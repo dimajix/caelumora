@@ -393,22 +393,21 @@ rights. In three parts:
     caller, its owner as owner and its principal - its owner - as principal: the one it speaks in
     when nobody asked (`Agent::security_context`) and the one of a turn, the request's continued as
     the agent. The core builds the context it decides by, at every check, from the agent's record
-    and its owner's roles as its controllers hold them; the agent, an application (see
+    and its owner's roles as its controllers hold them; the agent, on the agent side (see
     [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). The channel's door
-    builds the context it admits an envelope in (see
-    [What enters a channel](#what-enters-a-channel)), the agent's runtime the context of every
-    call its work makes of the core (`ActorRuntime`), from the participant the channel resolved,
-    with the initiator the work names - for the record. A piece of work has one
-    context: the views a turn navigates and the components it calls ask in the turn's; a
-    component's own is only for what it reads while it is built. So what
-    the agent reads, the tools it calls, the credentials they reach with and the clearance it is
-    judged by are its owner's, whoever asked - within its session too: it reaches another channel if
-    its owner may read it or it takes part in it itself, and copies from it what the flow rule lets
-    into its own; what it knows itself - its memory, its private notes - it reaches through itself,
-    by the flow rule alone. An agent must not see more than the person responsible for it, and it
-    passes on whatever it read to whoever it answers next - so what it may read is fixed by its
-    owner, not by who happens to ask.
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). The channel's door builds
+    the context it admits an envelope in (see [What enters a channel](#what-enters-a-channel)), the
+    agent's runtime the context of every call its work makes of the core (`ActorRuntime`), from the
+    participant the channel resolved, with the initiator the work names - for the record. A piece of
+    work has one context: the views a turn navigates and the components it calls ask in the turn's;
+    a component's own is only for what it reads while it is built. So what the agent reads, the
+    tools it calls, the credentials they reach with and the clearance it is judged by are its
+    owner's, whoever asked - within its session too: it reaches another channel if its owner may
+    read it or it takes part in it itself, and copies from it what the flow rule lets into its own;
+    what it knows itself - its memory, its private notes - it reaches through itself, by the flow
+    rule alone. An agent must not see more than the person responsible for it, and it passes on
+    whatever it read to whoever it answers next - so what it may read is fixed by its owner, not by
+    who happens to ask.
 2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`, which asks
     the core what is the core's, `ActorRuntime::admit_tool_call`): the policy, the owner's rules
     for the place - evaluated in their name, as their own answer - and the
@@ -541,12 +540,12 @@ handed out of the runtime to nobody - the `Moderator` trait that is handed actor
 `ChannelLoop::user_actor` and acts through that actor's own methods, never the control methods.
 
 **What is linked into the program is trusted by its level** (see
-[ARCHITECTURE.md](ARCHITECTURE.md#principles)): a plugin that brings what is the core's as the
-core, an application for nothing. So the core checks every call of the interface it gives an
-application in the name of the actor it made it for; a decision an application needs - whether a
-tool call is admitted, whether its tool set may be offered, whether it may recall what it read
-elsewhere - is a call of the core, decided by the core; and what touches the core's resources - a
-secret, the workspace, what is kept - is checked once more where it is touched, in the same name.
+[ARCHITECTURE.md](ARCHITECTURE.md#principles)): a plugin that brings what is the core's as the core,
+a library of the agent side for nothing. So the core checks every call of the interface it gives the
+agent side in the name of the actor it made it for; a decision a library needs - whether a tool call
+is admitted, whether its tool set may be offered, whether it may recall what it read elsewhere - is
+a call of the core, decided by the core; and what touches the core's resources - a secret, the
+workspace, what is kept - is checked once more where it is touched, in the same name.
 
 ### What enters a channel
 
@@ -648,7 +647,7 @@ own permission when it acts. Where it acts in a channel, it asks first whether t
 the channel, as the views reach one: `view::channel_reading`, the one place that decides how a
 channel is read.
 
-An application reads through **readers** (`SessionReader`, `ChannelReader`, `ParticipantReader`,
+The agent side reads through **readers** (`SessionReader`, `ChannelReader`, `ParticipantReader`,
 issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): the part of the views
 an agent's work reads through, which the views implement. A turn is handed a reader of its session
 (`ActorRuntime::session`), never a view, so that it reaches no policy, no manager and no
@@ -739,12 +738,11 @@ process environment; the `secrets` section sets the chain, each provider a backe
 add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
 
 Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted. A
-component of an application holds no `SecretManager`: it is handed the secrets that may be read in
-the name of the work it serves (`Secrets`, bound by the core, `ActorRuntime::secrets`, issue 516),
-and each read is checked in that name.
-The ownership policy allows every one: a secret is a key and a value, with no owner and no access
-list to decide by. So whoever writes a component that names a secret decides which credential it
-uses and where it is sent. Until secrets have an owner
+component of a library holds no `SecretManager`: it is handed the secrets that may be read in the
+name of the work it serves (`Secrets`, bound by the core, `ActorRuntime::secrets`, issue 516), and
+each read is checked in that name. The ownership policy allows every one: a secret is a key and a
+value, with no owner and no access list to decide by. So whoever writes a component that names a
+secret decides which credential it uses and where it is sent. Until secrets have an owner
 ([310](../issues/310-secrets-have-no-owner.md)), only the seed and the configuration - whoever runs
 the server - may write personalities and components that name secrets; nothing may let users write
 them.

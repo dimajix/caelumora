@@ -1,9 +1,9 @@
 //! How artifacts are joined to the runtime (issue 328): the store of their kind, the
 //! `ArtifactManager` with the storages of content (issue 282) and the section `artifacts` of the
 //! configuration, as a service - what the views and the routes reach it by - and as a member of a
-//! scope, the `ArtifactPublisher` bound to the views of an application's work where a storage of
-//! content is configured - what the component publishes through (issue 516) -, and the
-//! `artifact_tool` component.
+//! scope, the `ArtifactPublisher` bound to the views of an agent's work where a storage of content
+//! is configured - what the component publishes through (issue 516) -, and the `artifact_tool`
+//! component.
 
 use crate::artifact::Artifact;
 use crate::component;

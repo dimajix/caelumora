@@ -77,7 +77,7 @@ pub struct RuntimeBuilder {
     scope_members: Vec<Arc<dyn ScopedKind>>,
     scope_holders: Arc<ScopeHolders>,
     services: Services,
-    /// What the plugins and the core bind to an application's work (issue 516).
+    /// What the plugins and the core bind to an agent's work (issue 516).
     extensions: Extensions,
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
@@ -412,10 +412,9 @@ impl RuntimeBuilder {
         self.services.insert(service);
     }
 
-    /// Binds the reader `T` to every piece of work of an application (`ActorRuntime::reader`, issue
-    /// 516): what of a plugin's service the work reads by, made by `bind` from the work's session
-    /// as the work reads it - `None` where it is not offered -, so that it acts in the work's
-    /// context.
+    /// Binds the reader `T` to every piece of work of an agent (`ActorRuntime::reader`, issue 516):
+    /// what of a plugin's service the work reads by, made by `bind` from the work's session as the
+    /// work reads it - `None` where it is not offered -, so that it acts in the work's context.
     ///
     /// # Errors
     /// If `T` is bound already - by the core, or by a plugin registered before: no plugin replaces
@@ -429,8 +428,8 @@ impl RuntimeBuilder {
         self.extensions.insert(Face::Reader, bind)
     }
 
-    /// Binds the writer `T` to every piece of work of an application (`ActorRuntime::writer`): what
-    /// of a plugin's service the work acts by, made as `extend_readers` makes a reader.
+    /// Binds the writer `T` to every piece of work of an agent (`ActorRuntime::writer`): what of a
+    /// plugin's service the work acts by, made as `extend_readers` makes a reader.
     ///
     /// # Errors
     /// As `extend_readers`.

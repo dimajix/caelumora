@@ -1,7 +1,7 @@
-//! What an application reads of its session (issue 516): the readers, each the part of a view an
+//! What the agent side reads of its session (issue 516): the readers, each the part of a view an
 //! agent's work reads through. The views implement them and keep their full surface for the
-//! frontends; an application is handed a reader, never a view, so it reaches no policy, no
-//! manager and no context through it.
+//! frontends; the agent side is handed a reader, never a view, so it reaches no policy, no manager
+//! and no context through it.
 
 use super::{ChannelView, ParticipantView, PrivateNotesElsewhere, SessionView, ViewResult};
 use crate::terminal::ByteStream;

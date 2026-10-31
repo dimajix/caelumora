@@ -1,8 +1,8 @@
 //! The extensions of the core (issue 516): what a plugin, or the core itself, binds to the session
-//! of an application's work as the work reads it - a reader, which the work reads by, or a writer,
-//! which it acts by -, each a service made from that reading, so that it acts in the work's
-//! context. A component kind declares the extensions it needs (`ComponentKind::reads`, `writes`),
-//! and the runtime is not built where one is bound by none.
+//! of an agent's work as the work reads it - a reader, which the work reads by, or a writer, which
+//! it acts by -, each a service made from that reading, so that it acts in the work's context. A
+//! component kind declares the extensions it needs (`ComponentKind::reads`, `writes`), and the
+//! runtime is not built where one is bound by none.
 
 use crate::view::SessionView;
 use anyhow::{bail, Result};
@@ -32,8 +32,8 @@ impl fmt::Display for Face {
     }
 }
 
-/// What the plugins and the core bind to an application's work, each by the type of what it binds
-/// and as the face it is, once.
+/// What the plugins and the core bind to an agent's work, each by the type of what it binds and as
+/// the face it is, once.
 #[derive(Default)]
 pub(super) struct Extensions {
     bindings: HashMap<TypeId, (Face, Binding)>,

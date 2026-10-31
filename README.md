@@ -20,7 +20,8 @@ The project is organized as a Rust workspace with the following crates:
 - **`caelumora-agents`**: What an agent does in a channel: its cognitive cycle, tools, prompts and
   model.
 - **`caelumora-rest-api`**: The request and response types of the REST interface.
-- **`caelumora-rest-server`**: REST interface for interacting with the system, as a library.
+- **`caelumora-rest-server`**: REST interface for interacting with the system, as a crate the
+  program links.
 - **`caelumora-app`**: The program: the REST interface under `/api` and the web UI.
 - **`caelumora-tui`**: Terminal User Interface for Caelumora.
 - **`caelumora-logging`**: The setup of the log, shared by `caelumora-app` and `caelumora-tui`.

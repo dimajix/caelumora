@@ -10,10 +10,10 @@
 //!   its session, and a handle to the channel itself (issues 360, 361).
 //! - A `ParticipantRuntime` (`actor`) is what a participant's actor runs with: the context it
 //!   acts in and what concerns this actor alone (issues 69, 359, 516).
-//! - An `ActorRuntime` (`agent`) is what the actor of an agent of an application runs with: the
+//! - An `ActorRuntime` (`agent`) is what the actor of an agent runs with, on the agent side: the
 //!   one interface its kind is given, which the core's `AgentRuntime` serves (issue 516).
-//! - What the plugins bind to the views of an application's work is kept as
-//!   its extensions (`extension`, issue 516).
+//! - What the plugins bind to the views of an agent's work is kept as its extensions (`extension`,
+//!   issue 516).
 
 mod actor;
 mod agent;

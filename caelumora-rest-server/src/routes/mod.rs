@@ -181,10 +181,9 @@ pub fn change_error(error: Error, code: &'static str) -> ApiError {
     }
 }
 
-/// The routes of the API: the core's and those of `plugins`, as the API
-/// serves them below the path the application nests them at (issue 323).
-/// Everything except `/auth/login` and `/auth/logout` requires a session
-/// (see `crate::auth`), the plugins' routes too.
+/// The routes of the API: the core's and those of `plugins`, as the API serves them below the path
+/// the program nests them at (issue 323). Everything except `/auth/login` and `/auth/logout`
+/// requires a session (see `crate::auth`), the plugins' routes too.
 pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
     let protected = Router::new()
         .route("/templates", get(templates::list_templates))

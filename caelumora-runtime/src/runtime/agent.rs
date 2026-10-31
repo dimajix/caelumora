@@ -1,4 +1,4 @@
-//! `ActorRuntime`: the interface the core gives the actor of an agent of an application (issue
+//! `ActorRuntime`: the interface the core gives the actor of an agent, on the agent side (issue
 //! 516) - and `AgentRuntime`, the core's implementation of it.
 
 use super::{Face, ParticipantRuntime, RuntimeManager};
@@ -56,12 +56,11 @@ pub enum OwnRecord {
     Memory,
 }
 
-/// What the actor of an agent of an application runs with (issue 516): the one interface its
-/// kind is given by the core (`AgentKinds::register`). Who the agent is and its channel as they
-/// are now, its state, the attachments of its messages, its session to read, what the core
-/// decides of its work, and the extensions plugins bind to that work - each asked of the core in
-/// the agent's name, which the core builds at every call. It hands out no controller, no store
-/// and no policy.
+/// What the actor of an agent runs with, on the agent side (issue 516): the one interface its kind
+/// is given by the core (`AgentKinds::register`). Who the agent is and its channel as they are now,
+/// its state, the attachments of its messages, its session to read, what the core decides of its
+/// work, and the extensions plugins bind to that work - each asked of the core in the agent's name,
+/// which the core builds at every call. It hands out no controller, no store and no policy.
 #[async_trait]
 pub trait ActorRuntime: Send + Sync + Debug {
     /// The agent as an actor.

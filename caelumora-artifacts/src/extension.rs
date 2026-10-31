@@ -1,6 +1,6 @@
-//! What an agent's work does with artifacts (issue 516): publishes a file as a version of one -
-//! the plugin's service an application reaches, a writer bound by the plugin to the views of every
-//! piece of work where a storage of content is configured, and handed out where the work acts
+//! What an agent's work does with artifacts (issue 516): publishes a file as a version of one - the
+//! plugin's service a library reaches, a writer bound by the plugin to the views of every piece of
+//! work where a storage of content is configured, and handed out where the work acts
 //! (`Turn::writer`), so that it acts in the work's context. The `artifact_tool` component names
 //! this trait, never the `ArtifactManager` or the views.
 

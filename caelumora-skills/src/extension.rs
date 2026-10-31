@@ -1,7 +1,7 @@
 //! What an agent's work does with skills (issue 516): the skills it may load where it reads from
-//! (`SkillReader`), and those of its owner it writes (`SkillWriter`) - the plugin's service an
-//! application reaches, its two faces bound by the plugin to the views of every piece of work, so
-//! that they act in the work's context: the reader handed out where the work reads
+//! (`SkillReader`), and those of its owner it writes (`SkillWriter`) - the plugin's service a
+//! library reaches, its two faces bound by the plugin to the views of every piece of work, so that
+//! they act in the work's context: the reader handed out where the work reads
 //! (`Situation::reader`), the writer where it acts (`Turn::writer`). The component of skills names
 //! these traits, never the `SkillManager` or the views.
 

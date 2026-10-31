@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// concerns this actor alone - the controllers of its session and its channel, its channel's
 /// events, the access policy and the managers the core's actors use. It is made for one participant
 /// (`ChannelRuntime::participant_runtime`) and hands out nothing about others. The actors of the
-/// core - the user's and the approver's - hold it; an agent's actor, an application's, is given
+/// core - the user's and the approver's - hold it; an agent's actor, on the agent side, is given
 /// the `ActorRuntime` of its agent (`AgentRuntime`), which answers what only an agent asks - its
 /// state, its session to read, what the core decides of its work - and asks this runtime for the
 /// rest. What is the core's alone - the controllers, the commands of the session, the channel's
@@ -89,7 +89,7 @@ impl ParticipantRuntime {
     }
 
     /// The access policy of the process - the core's alone, as its other policy and its secrets
-    /// are: what an actor of an application needs decided it asks its `ActorRuntime` (issue 516).
+    /// are: what an actor of the agent side needs decided it asks its `ActorRuntime` (issue 516).
     pub(crate) fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
         self.runtime.runtime_manager.access_policy()
     }

@@ -922,20 +922,19 @@ too. The loop is reached through it only by the user's and the approver's actors
 by the runtime of an agent, all in the runtime (`pub(crate)`, see
 [CODING-GUIDELINES.md](CODING-GUIDELINES.md#runtimes-and-their-entities)).
 
-The actor of an agent is an application's, and is given less (issue 516): its kind's factory
-(`AgentKinds::register`) is handed an `Arc<dyn ActorRuntime>` alone, which the core's
-`AgentRuntime` serves. It holds the agent's participant runtime, the controllers of the agent and
-of its personality and the agent's own state, and answers what only an agent asks itself: who the
-agent and its personality are as they are now (`agent`, `personality`), the ids of its session and
-its channel and the channel's classification; its state in the channel, its transcript and its
-own state (`agent_state`, `reserve_memory_id`, `apply_agent_state`); the attachments of its
-messages; its session and its channel to read, as readers at the classification of a piece of
-work (`session`, `channel`), from which the session's other channels are read as the
-confidentiality rules allow (see [MEMORY.md](MEMORY.md#reading-other-channels)); what the core
-decides of its work; the extensions bound to it; and its components (`build_components`). No
-controller, no registry and no store leaves it. Whether a command of an agent is hidden by a
-command of its session the core decides as it builds the actor: an agent whose command has the name
-of one of the session's is refused (issue 37).
+The actor of an agent is on the agent side, and is given less (issue 516): its kind's factory
+(`AgentKinds::register`) is handed an `Arc<dyn ActorRuntime>` alone, which the core's `AgentRuntime`
+serves. It holds the agent's participant runtime, the controllers of the agent and of its
+personality and the agent's own state, and answers what only an agent asks itself: who the agent and
+its personality are as they are now (`agent`, `personality`), the ids of its session and its channel
+and the channel's classification; its state in the channel, its transcript and its own state
+(`agent_state`, `reserve_memory_id`, `apply_agent_state`); the attachments of its messages; its
+session and its channel to read, as readers at the classification of a piece of work (`session`,
+`channel`), from which the session's other channels are read as the confidentiality rules allow (see
+[MEMORY.md](MEMORY.md#reading-other-channels)); what the core decides of its work; the extensions
+bound to it; and its components (`build_components`). No controller, no registry and no store leaves
+it. Whether a command of an agent is hidden by a command of its session the core decides as it
+builds the actor: an agent whose command has the name of one of the session's is refused (issue 37).
 
 The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot
 reach them. Components are not given their actor's runtime either, only what their

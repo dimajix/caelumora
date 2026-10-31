@@ -46,11 +46,11 @@ against this list, rule by rule, before it is reported (the self-review of
     `AccessPolicy` itself (see [SECURITY.md](SECURITY.md)). A plugin does the same through
     extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
     adds nothing about its kind to the core (see [PLUGINS.md](PLUGINS.md)).
-*   An application - `caelumora-agents`, a crate that brings an agent's components - names no
-    `SecurityContext`, policy, view, manager or controller of the core or of a plugin, nor the
-    runtime of a participant: it asks the core through `ActorRuntime`, `Situation` and `Turn`, and
-    reads through the readers
-    ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/application-names.sh` checks it).
+*   A library of the agent side - `caelumora-agents`, a crate that brings an agent's components -
+    names no `SecurityContext`, policy, view, manager or controller of the core or of a plugin, nor
+    the runtime of a participant: it asks the core through `ActorRuntime`, `Situation` and `Turn`,
+    and reads through the readers ([ARCHITECTURE.md](ARCHITECTURE.md#principles);
+    `scripts/library-names.sh` checks it).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-runtime/tests/security_suite.rs`, an agent's in
     `caelumora-agents/tests/security_suite.rs`, see
@@ -341,8 +341,8 @@ holds (`Session`, `Channel`) share their work by three rules:
     forwarder to a workspace or a manager.
 *   **One name, one kind of thing.** In the core, `channel()` and `session()` return the entity's
     document as it is now; `channel_loop()` and `session_loop()` the running object above; loading
-    any stored entity is `load_…` (`ActorRuntime::load_channel_state`). On the interface of an
-    application - `ActorRuntime`, `Situation` -, which holds no document of the core, `channel` and
+    any stored entity is `load_…` (`ActorRuntime::load_channel_state`). On the interface of the
+    agent side - `ActorRuntime`, `Situation` -, which holds no document of the core, `channel` and
     `session` are the readers of the entity, in the name of a piece of work (`ChannelReader`,
     `SessionReader`, issue 516).
 *   **Found by id, by name, for someone.** What a running object holds is found by its id under the
@@ -373,7 +373,7 @@ A type takes the services it works with - the `AccessPolicy`, the stores, the ev
     takes `&Policies` (`may_reach`, `channel_reading`); who hands them out lends `policies()` beside
     `access_policy()` and `confidentiality()` for whoever asks one. A component of the core is the
     exception: it takes each policy as a service of its own from its `ComponentContext`, where the
-    services are found by their type; one of an application holds none (issue 516).
+    services are found by their type; one of a library holds none (issue 516).
 *   **No threading next to the owner.** A service is not passed into a function beside the object
     that already holds it; the function becomes a method of that object, or takes the object.
 *   **Accessors lend.** An accessor returns `&Arc<dyn …>` or `&dyn …`; whoever keeps the service
@@ -494,9 +494,9 @@ the server answers every error with problem details, as described in
 *   Every crate logs through `tracing` (`tracing::{debug, info, warn, error, trace}`), never through
     `log` or `println!`. Records from dependencies that still use `log` are forwarded into
     `tracing`.
-*   Libraries never install a subscriber. The programs install it with `caelumora_logging::init`;
-    `caelumora-logging` is the one place of the setup and the only crate that depends on
-    `tracing-subscriber` (issue 330).
+*   No crate but the programs installs a subscriber. The programs install it with
+    `caelumora_logging::init`; `caelumora-logging` is the one place of the setup and the only crate
+    that depends on `tracing-subscriber` (issue 330).
 *   `RUST_LOG` selects the records; the configuration's `logging` section sets the format (`text`,
     the default, or `json`) and an optional file (see [CONFIGURATION.md](CONFIGURATION.md)). The
     REST server logs to stderr, the TUI to `local/tui.log`, so that log lines do not break its

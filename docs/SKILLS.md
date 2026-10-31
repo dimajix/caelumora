@@ -116,7 +116,7 @@ given to it to its remote agent with its next call.
     deletes, restores and purges skills - stored first, then announced to whoever may read the
     skill. The plugin offers it as a service of the runtime, which the views and the routes reach;
     an agent's work reads skills through the `SkillReader` and writes them through the `SkillWriter`
-    the plugin binds to the views of every piece of work of an application (`Situation::reader`,
+    the plugin binds to the views of every piece of work of an agent (`Situation::reader`,
     `Turn::writer`, issue 516), in the work's context, and never reaches the manager.
 *   **REST** lets a user manage skills (see [REST-SERVER.md](REST-SERVER.md)); one of a session's
     scope is written by an agent in it.
