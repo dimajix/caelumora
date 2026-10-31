@@ -9,7 +9,7 @@ use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
 use caelumora_runtime::remote::ExpiringCache;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
@@ -80,6 +80,8 @@ struct McpToolConfig {
     #[serde(default)]
     pub destination: Option<Classification>,
 }
+
+impl Params for McpToolConfig {}
 
 impl McpError {
     /// Why the server's tools are unavailable after this error, in general

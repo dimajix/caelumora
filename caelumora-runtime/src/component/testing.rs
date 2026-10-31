@@ -2,7 +2,9 @@
 //! provide them, configurations and the context they are built with.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
-use super::{ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry};
+use super::{
+    ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, Params,
+};
 use crate::runtime::Services;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::security::{AccessPolicy, AllowAllPolicy, Policies, SecurityContext};
@@ -97,6 +99,8 @@ pub struct ModelConfig {
     #[serde(default)]
     prompt_texts: Option<String>,
 }
+
+impl Params for ModelConfig {}
 
 /// A registry with the single `Choice`, the kinds `declared` and `other` that provide it - `other`
 /// configured with `ModelConfig` -, and how often `declared` was built.

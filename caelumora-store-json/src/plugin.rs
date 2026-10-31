@@ -6,6 +6,7 @@ use anyhow::Result;
 use caelumora_model::store::PersistenceBackend;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::component::ComponentError;
+use caelumora_runtime::component::Params;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use std::sync::Arc;
@@ -13,6 +14,8 @@ use std::sync::Arc;
 /// The backend `json` of the stores (`JsonFileStore`), as a plugin.
 #[derive(Debug, Default)]
 pub struct JsonStorePlugin;
+
+impl Params for JsonStoreConfig {}
 
 impl Plugin for JsonStorePlugin {
     fn name(&self) -> &'static str {

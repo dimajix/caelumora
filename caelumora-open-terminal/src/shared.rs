@@ -14,7 +14,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::{service_of, ComponentError, ComponentResult};
+use caelumora_runtime::component::{service_of, ComponentError, ComponentResult, Params};
 use caelumora_runtime::terminal::{
     default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider,
     TerminalResult, WorkspacePath,
@@ -42,6 +42,8 @@ struct SharedStorageConfig {
     #[serde(default = "default_max_run_secs")]
     max_run_secs: u64,
 }
+
+impl Params for SharedStorageConfig {}
 
 impl SharedStorageConfig {
     /// Its `mount`, if it is absolute and stays where it says.

@@ -32,7 +32,7 @@ use caelumora_model::store::StoreError;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::name::ScopedName;
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult,
+    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, ComponentResult, Params,
 };
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::WorkspacePath;
@@ -62,6 +62,8 @@ struct ArtifactToolConfig {
     #[serde(default)]
     description: Option<String>,
 }
+
+impl Params for ArtifactToolConfig {}
 
 #[derive(Debug)]
 pub struct ArtifactTool {

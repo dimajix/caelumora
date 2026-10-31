@@ -37,7 +37,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::workspace::WorkspaceId;
 use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::{ComponentError, ComponentResult};
+use caelumora_runtime::component::{ComponentError, ComponentResult, Params};
 use caelumora_runtime::terminal::{
     default_max_run_secs, max_run, CommandKey, Terminal, TerminalError, TerminalProvider,
     TerminalResult,
@@ -101,13 +101,10 @@ fn default_idle_stop_secs() -> u64 {
     900
 }
 
-impl DockerStorageConfig {
-    /// Nothing if its fields fit: an image is named, the network gives a
-    /// container an address of its own, and a container may stay unused a
-    /// while.
-    ///
+impl Params for DockerStorageConfig {
     /// # Errors
-    /// `ComponentError::InvalidConfig` naming what does not fit.
+    /// `ComponentError::InvalidConfig` naming what does not fit: no image is named, the network
+    /// gives a container no address of its own, or a container may not stay unused a while.
     fn check(&self) -> ComponentResult<()> {
         let invalid = |why: String| Err(ComponentError::InvalidConfig(why));
         if self.image.trim().is_empty() {
@@ -132,7 +129,6 @@ pub(crate) fn register_backend(backends: &mut Backends) {
     backends.register::<dyn TerminalProvider, _, _>(
         "open_terminal_docker",
         |storage, config: DockerStorageConfig, _| {
-            config.check()?;
             let max_run = max_run(config.max_run_secs)?;
             let provider = DockerProvider::new(
                 storage,
@@ -823,7 +819,6 @@ mod tests {
         let config: DockerStorageConfig =
             config_of_params(&json!({ "image": "ghcr.io/open-webui/open-terminal:0.14.0" }))
                 .expect("a container per workspace");
-        config.check().expect("fits");
         assert_eq!(
             (
                 config.image.as_str(),
@@ -842,8 +837,7 @@ mod tests {
         ] {
             let mut params = json!({ "image": "ghcr.io/open-webui/open-terminal:0.14.0" });
             params.as_object_mut().unwrap().extend(wrong.as_object().unwrap().clone());
-            let config: DockerStorageConfig = config_of_params(&params).unwrap();
-            let refused = config.check().unwrap_err().to_string();
+            let refused = config_of_params::<DockerStorageConfig>(&params).unwrap_err().to_string();
             assert!(refused.contains(why), "{refused}");
         }
         let storages = [(

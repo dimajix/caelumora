@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -34,6 +34,8 @@ struct StaticSystemPromptConfig {
     #[serde(default = "default_classification")]
     classification: Classification,
 }
+
+impl Params for StaticSystemPromptConfig {}
 
 fn default_classification() -> Classification {
     Classification::PUBLIC

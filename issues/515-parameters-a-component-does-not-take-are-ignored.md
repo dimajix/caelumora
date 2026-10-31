@@ -107,3 +107,7 @@ personality, bundle or session that does no longer builds.
   kind only an operator configures is refused as such whatever its params; a test of
   `caelumora-app` gives every kind of the program a parameter none takes, so that a struct of
   parameters without `deny_unknown_fields` is found.
+- **2026-10-30** — The struct of a kind's or a backend's parameters implements `Params`, whose
+  `check` - what the values must meet beyond their types - `config_of_params` runs: one way in
+  place of the `of` and `check` methods of some structs, and the values are checked where the
+  names are, before anything is built and before a request writes them.

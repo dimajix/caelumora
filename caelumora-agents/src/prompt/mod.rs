@@ -29,7 +29,7 @@ use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptText
 use caelumora_model::store::StoreError;
 use caelumora_runtime::component::{
     config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentRegistry,
-    ComponentResult,
+    ComponentResult, Params,
 };
 use caelumora_runtime::view::ViewError;
 use serde::Deserialize;
@@ -67,6 +67,8 @@ pub(crate) struct PositionConfig {
     position: Option<PromptPosition>,
 }
 
+impl Params for PositionConfig {}
+
 impl PositionConfig {
     /// The position `params` configure, `default` - the kind's - if they
     /// name none.
@@ -93,6 +95,8 @@ pub(crate) struct ChannelPartConfig {
     #[serde(default)]
     pub(crate) changes_only: bool,
 }
+
+impl Params for ChannelPartConfig {}
 
 /// What a [`PromptProvider`] contributes: the text of its part, the
 /// knowledge from other places it contains, recorded with the turn's

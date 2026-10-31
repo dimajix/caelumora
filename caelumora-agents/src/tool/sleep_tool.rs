@@ -16,6 +16,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use caelumora_runtime::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+    ComponentResult, Params,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -46,20 +47,16 @@ fn default_seconds() -> f64 {
     DEFAULT_SECONDS
 }
 
-impl SleepToolConfig {
-    /// The configuration `params` give.
-    ///
+impl Params for SleepToolConfig {
     /// # Errors
-    /// `InvalidConfig` if they are not its parameters, or `seconds` is no
-    /// time `sleep` waits.
-    fn of(params: &Value) -> Result<Self, ComponentError> {
-        let config: Self = config_of_params(params)?;
-        if duration(config.seconds).is_none() {
+    /// `InvalidConfig` if `seconds` is no time `sleep` waits.
+    fn check(&self) -> ComponentResult<()> {
+        if duration(self.seconds).is_none() {
             return Err(ComponentError::InvalidConfig(format!(
                 "parameter 'seconds' must be a number between 0 and {MAX_SECONDS}"
             )));
         }
-        Ok(config)
+        Ok(())
     }
 }
 
@@ -169,7 +166,7 @@ pub fn register(registry: &mut ComponentRegistry) {
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let SleepToolConfig { seconds, requires_approval } =
-                SleepToolConfig::of(&descriptor.params)?;
+                config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(SleepToolProvider::new(
                 seconds,

@@ -5,7 +5,9 @@
 //! singles (issue 445).
 
 use super::container::Planned;
-use super::{config_of_params, ComponentContext, ComponentError, ComponentResult, NoParams};
+use super::{
+    config_of_params, ComponentContext, ComponentError, ComponentResult, NoParams, Params,
+};
 use crate::{command, moderator};
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::scope::Scope;
@@ -14,7 +16,6 @@ use caelumora_model::store::EntityStore;
 use caelumora_model::type_map::{TypeKey, TypeMap};
 use caelumora_model::value::name::{Name, ScopedName};
 use futures::future::BoxFuture;
-use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::Value;
 use std::any::TypeId;
@@ -43,11 +44,11 @@ pub struct ComponentKind {
 }
 
 /// How the params of a component of a kind are checked: read as the configuration the kind
-/// declared (`ComponentKind::params`).
+/// declared (`ComponentKind::params`), which checks its values (`Params::check`).
 type ParamsCheck = fn(&Value) -> ComponentResult<()>;
 
-/// Whether `params` are a `C`.
-fn check_params<C: DeserializeOwned>(params: &Value) -> ComponentResult<()> {
+/// Whether `params` are a `C` whose values it finds right.
+fn check_params<C: Params>(params: &Value) -> ComponentResult<()> {
     config_of_params::<C>(params).map(drop)
 }
 
@@ -74,11 +75,10 @@ impl ComponentKind {
         self
     }
 
-    /// Declares that components of this kind take the parameters `C`, which their factory reads
-    /// with `config_of_params`: a struct `#[serde(deny_unknown_fields)]`, so that one it does not
-    /// know is refused. A kind that declares none takes none. The registry checks a component's
-    /// params as it plans its configuration, before anything is built.
-    pub fn params<C: DeserializeOwned>(mut self) -> Self {
+    /// Declares that components of this kind take the parameters `C` (`Params`), which their
+    /// factory reads with `config_of_params`. A kind that declares none takes none. The registry
+    /// checks a component's params before anything is built.
+    pub fn params<C: Params>(mut self) -> Self {
         self.params = check_params::<C>;
         self
     }
@@ -299,8 +299,8 @@ impl ComponentRegistry {
     /// # Errors
     /// `ComponentError::InvalidConfig` naming the component if one is a `ref` or builds on a
     /// default, has an id another of them has too, has an unknown kind or params its kind does not
-    /// take, provides no single, or provides one that another of them provides too; nothing is
-    /// taken then.
+    /// take or finds wrong (`Params::check`), provides no single, or provides one that another of
+    /// them provides too; nothing is taken then.
     pub fn set_defaults(&mut self, config: &ComponentConfig) -> ComponentResult<()> {
         self.defaults = self.defaults_of(config)?;
         Ok(())
@@ -445,7 +445,8 @@ impl ComponentRegistry {
     /// wrapped with the `ref`, for one `context` may not read or whose store fails;
     /// `ComponentError::DuplicateId`, `ComponentError::UnsupportedKind`,
     /// `ComponentError::InvalidConfig` for two components of a single, one nobody asks for, or one
-    /// whose params its kind does not take - wrapped with it, and with the `ref` that brings it -;
+    /// whose params its kind does not take or finds wrong - wrapped with it, and with the `ref`
+    /// that brings it -;
     /// and `ComponentError::OperatorOnly`, wrapped with the component, for one of a kind only an
     /// operator configures, written in `config` itself. That one is refused before the params are
     /// checked: whatever its params, a request may not write it.
@@ -553,7 +554,8 @@ impl ComponentRegistry {
     }
 
     /// Whether the params of every component of `planned` are those its kind takes
-    /// (`ComponentKind::params`): one it does not take is refused before anything is built.
+    /// (`ComponentKind::params`), with values it finds right (`Params::check`): one it does not
+    /// take, or a value it finds wrong, is refused before anything is built.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` for the first whose params are not, and
@@ -1191,6 +1193,60 @@ mod tests {
                 let message = error.to_string();
                 assert!(named.iter().all(|name| message.contains(name)), "{message}");
             }
+        }
+        assert_eq!(built.load(Ordering::SeqCst), 0, "nothing is built");
+    }
+
+    /// What its kind finds wrong of the values it is given (`Params::check`) is refused as a
+    /// parameter it does not take is: before anything is built, and before a request writes it.
+    #[tokio::test]
+    async fn a_value_its_kind_finds_wrong_is_refused_before_anything_is_built() {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct BoundedConfig {
+            #[serde(default)]
+            limit: u32,
+        }
+        impl Params for BoundedConfig {
+            fn check(&self) -> ComponentResult<()> {
+                if self.limit == 0 {
+                    return Err(ComponentError::InvalidConfig(
+                        "parameter 'limit' must be at least 1".to_string(),
+                    ));
+                }
+                Ok(())
+            }
+        }
+        let (mut registry, built) = choices();
+        let counted = Arc::clone(&built);
+        registry.register(
+            ComponentKind::new("bounded").params::<BoundedConfig>().provides::<dyn Choice>(),
+            move |descriptor, _| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let mut facets = ComponentFacets::empty();
+                facets.insert::<dyn Choice>(Arc::new(Name(descriptor.id.clone())));
+                Ok(facets)
+            },
+        );
+        let registry = Arc::new(registry);
+        let config = ComponentConfig {
+            component_nodes: vec![descriptor("mine", "bounded", json!({ "limit": 0 }))],
+        };
+        for refused in [
+            ComponentContainer::from_config(&config, ASKED, &registry, &test_context())
+                .await
+                .map(|_| ())
+                .expect_err("not built"),
+            registry
+                .require_acceptable(&config, ASKED, &SecurityContext::default())
+                .await
+                .expect_err("not written"),
+        ] {
+            let message = refused.to_string();
+            assert!(
+                message.contains("'mine' (bounded)") && message.contains("'limit' must be"),
+                "{message}"
+            );
         }
         assert_eq!(built.load(Ordering::SeqCst), 0, "nothing is built");
     }

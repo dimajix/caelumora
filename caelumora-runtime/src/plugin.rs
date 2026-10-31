@@ -34,7 +34,7 @@ pub trait Plugin: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{service_of, NoParams};
+    use crate::component::{service_of, NoParams, Params};
     use crate::component::{ComponentContainer, ComponentContext, ComponentFacets, ComponentKind};
     use crate::runtime::RuntimeManager;
     use crate::seed::SeedSection;
@@ -245,6 +245,8 @@ mod tests {
     struct VaultConfig {
         secret: String,
     }
+
+    impl Params for VaultConfig {}
 
     impl Plugin for Vault {
         fn name(&self) -> &'static str {

@@ -48,7 +48,7 @@ use caelumora_runtime::command::help_command::HelpCommandProvider;
 use caelumora_runtime::command::CommandError;
 use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::ComponentKind;
-use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentRegistry};
+use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentRegistry, Params};
 use caelumora_runtime::testing::TestRuntime;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -510,6 +510,8 @@ struct AskingConfig {
     #[serde(default)]
     sensitive: bool,
 }
+
+impl Params for AskingConfig {}
 
 fn register_asking_tool(registry: &mut ComponentRegistry) {
     registry.register(

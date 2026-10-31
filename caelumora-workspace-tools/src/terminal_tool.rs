@@ -49,7 +49,7 @@ use caelumora_model::question::Answers;
 use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
 use caelumora_runtime::workspace::WorkspaceManager;
 use serde::Deserialize;
@@ -92,6 +92,8 @@ pub(crate) struct TerminalToolConfig {
     #[serde(default)]
     pub(crate) description: Option<String>,
 }
+
+impl Params for TerminalToolConfig {}
 
 #[derive(Debug)]
 pub struct TerminalTool {

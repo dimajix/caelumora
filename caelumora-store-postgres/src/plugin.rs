@@ -8,6 +8,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::store::PersistenceBackend;
 use caelumora_runtime::backend::Backends;
 use caelumora_runtime::component::service_of;
+use caelumora_runtime::component::Params;
 use caelumora_runtime::plugin::Plugin;
 use caelumora_runtime::runtime::RuntimeBuilder;
 use std::sync::Arc;
@@ -17,6 +18,8 @@ use std::sync::Arc;
 /// runtime.
 #[derive(Debug, Default)]
 pub struct PostgresStorePlugin;
+
+impl Params for PostgresStoreConfig {}
 
 impl Plugin for PostgresStorePlugin {
     fn name(&self) -> &'static str {

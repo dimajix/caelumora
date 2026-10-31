@@ -27,7 +27,7 @@
 use crate::actor::Actor;
 use crate::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentImpl, ComponentKind,
-    ComponentRegistry,
+    ComponentRegistry, ComponentResult, Params,
 };
 use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing, Undecided};
 use async_trait::async_trait;
@@ -36,7 +36,6 @@ use caelumora_model::actor::{
 };
 use caelumora_model::message::Message;
 use serde::Deserialize;
-use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::slice;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -111,19 +110,16 @@ fn default_context_messages() -> usize {
     DEFAULT_CONTEXT_MESSAGES
 }
 
-impl PolicyModeratorConfig {
-    /// The configuration `params` give.
-    ///
+impl Params for PolicyModeratorConfig {
     /// # Errors
-    /// `InvalidConfig` if they are not its parameters, or `max_span_depth` is negative.
-    fn of(params: &Value) -> Result<Self, ComponentError> {
-        let config: Self = config_of_params(params)?;
-        if config.max_span_depth < 0 {
+    /// `InvalidConfig` if `max_span_depth` is negative.
+    fn check(&self) -> ComponentResult<()> {
+        if self.max_span_depth < 0 {
             return Err(ComponentError::InvalidConfig(
                 "parameter 'max_span_depth' must be a number of at least 0".to_string(),
             ));
         }
-        Ok(config)
+        Ok(())
     }
 }
 
@@ -522,7 +518,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 mentions_replace_policy,
                 on_undecided,
                 context_messages,
-            } = PolicyModeratorConfig::of(&descriptor.params)?;
+            } = config_of_params::<PolicyModeratorConfig>(&descriptor.params)?;
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
@@ -972,7 +968,9 @@ mod tests {
 
     #[test]
     fn whose_mentions_replace_the_policy_is_configured() {
-        let of = |params| PolicyModeratorConfig::of(&params).map(|c| c.mentions_replace_policy);
+        let of = |params| {
+            config_of_params::<PolicyModeratorConfig>(&params).map(|c| c.mentions_replace_policy)
+        };
         assert_eq!(
             of(serde_json::json!({})).unwrap(),
             MentionsReplacePolicy::Anyone,
@@ -1175,7 +1173,8 @@ mod tests {
 
     #[test]
     fn whom_to_ask_when_the_policy_could_not_choose_is_configured() {
-        let of = |params| PolicyModeratorConfig::of(&params).map(|c| c.on_undecided);
+        let of =
+            |params| config_of_params::<PolicyModeratorConfig>(&params).map(|c| c.on_undecided);
         assert_eq!(of(serde_json::json!({})).unwrap(), OnUndecided::None, "nobody by default");
         assert_eq!(of(serde_json::json!({ "on_undecided": "all" })).unwrap(), OnUndecided::All);
         assert!(of(serde_json::json!({ "on_undecided": "some" })).is_err());

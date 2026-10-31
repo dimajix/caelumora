@@ -37,7 +37,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
 use futures::stream::once;
 use futures::StreamExt;
@@ -91,6 +91,8 @@ struct A2aAgentConfig {
     #[serde(default)]
     prompt_texts: Option<PromptVariant>,
 }
+
+impl Params for A2aAgentConfig {}
 
 impl A2aAgentConfig {
     fn timeout(&self) -> Duration {

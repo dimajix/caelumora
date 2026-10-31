@@ -57,6 +57,7 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
 use caelumora_runtime::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+    ComponentResult, Params,
 };
 use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use chrono::Utc;
@@ -696,24 +697,24 @@ struct OllamaClientConfig {
     vision: Option<bool>,
 }
 
-impl OllamaClientConfig {
-    /// The parameters `params`, refused if one is unknown or not supported.
-    fn of(params: &Value) -> Result<Self, ComponentError> {
-        let config: Self = config_of_params(params)?;
+impl Params for OllamaClientConfig {
+    /// # Errors
+    /// `InvalidConfig` if a parameter is not supported: `endpoint.auth`, or a `context_size` of 0.
+    fn check(&self) -> ComponentResult<()> {
         // A secret is resolved for whoever acts, and a model is asked
         // without knowing who that is.
-        if config.endpoint.auth.is_some() {
+        if self.endpoint.auth.is_some() {
             return Err(ComponentError::InvalidConfig(
                 "'endpoint.auth' is not supported: Ollama is reached without authentication"
                     .to_string(),
             ));
         }
-        if config.context_size == Some(0) {
+        if self.context_size == Some(0) {
             return Err(ComponentError::InvalidConfig(
                 "'context_size' must be at least 1".to_string(),
             ));
         }
-        Ok(config)
+        Ok(())
     }
 }
 
@@ -1031,7 +1032,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             let running_context_sizes = Arc::clone(&running_context_sizes);
             let vision = Arc::clone(&vision);
             async move {
-                let config = OllamaClientConfig::of(&descriptor.params)?;
+                let config = config_of_params::<OllamaClientConfig>(&descriptor.params)?;
                 context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
                 let images = match config.vision {
                     Some(sees) => sees,
@@ -1191,19 +1192,20 @@ mod tests {
             (SenderFormat::Xml, SenderStyle::Name)
         );
         assert!(
-            OllamaClientConfig::of(&json!({ "sender_format": "header" })).is_err(),
+            config_of_params::<OllamaClientConfig>(&json!({ "sender_format": "header" })).is_err(),
             "only the formats there are"
         );
     }
 
     #[test]
     fn a_misspelt_parameter_is_refused() {
-        assert!(OllamaClientConfig::of(&json!({ "modle": "qwen3:8b" })).is_err());
+        assert!(config_of_params::<OllamaClientConfig>(&json!({ "modle": "qwen3:8b" })).is_err());
         assert!(
-            OllamaClientConfig::of(&json!({ "base_url": DEFAULT_BASE_URL })).is_err(),
+            config_of_params::<OllamaClientConfig>(&json!({ "base_url": DEFAULT_BASE_URL }))
+                .is_err(),
             "the server is the endpoint's url"
         );
-        assert!(OllamaClientConfig::of(
+        assert!(config_of_params::<OllamaClientConfig>(
             &json!({ "endpoint": { "url": DEFAULT_BASE_URL, "timeout": 5 } })
         )
         .is_err());
@@ -1211,7 +1213,7 @@ mod tests {
 
     #[test]
     fn the_server_is_reached_as_the_endpoint_says_but_without_authentication() {
-        let config = OllamaClientConfig::of(
+        let config = config_of_params::<OllamaClientConfig>(
             &json!({ "endpoint": { "url": "http://gpu:11434", "timeout_secs": 5 } }),
         )
         .unwrap();
@@ -1219,7 +1221,7 @@ mod tests {
             (config.endpoint.url.as_str(), config.endpoint.timeout_secs),
             ("http://gpu:11434", Some(5))
         );
-        let refused = OllamaClientConfig::of(
+        let refused = config_of_params::<OllamaClientConfig>(
             &json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "TOKEN" } } }),
         );
         assert!(refused.is_err_and(|e| e.to_string().contains("not supported")));
@@ -1312,7 +1314,7 @@ mod tests {
     }
 
     fn client_with(params: Value) -> OllamaClient {
-        let config = OllamaClientConfig::of(&params).unwrap();
+        let config = config_of_params::<OllamaClientConfig>(&params).unwrap();
         OllamaClient::new(
             config,
             false,
@@ -1554,9 +1556,11 @@ mod tests {
 
     #[test]
     fn a_context_size_of_nothing_is_refused() {
-        assert!(OllamaClientConfig::of(&json!({ "context_size": 0 })).is_err());
+        assert!(config_of_params::<OllamaClientConfig>(&json!({ "context_size": 0 })).is_err());
         assert_eq!(
-            OllamaClientConfig::of(&json!({ "context_size": 65536 })).unwrap().context_size,
+            config_of_params::<OllamaClientConfig>(&json!({ "context_size": 65536 }))
+                .unwrap()
+                .context_size,
             Some(65536)
         );
     }

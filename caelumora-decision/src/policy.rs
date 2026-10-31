@@ -40,7 +40,7 @@ use caelumora_model::secret::SecretManager;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_runtime::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult,
+    ComponentResult, Params,
 };
 use caelumora_runtime::moderator::{ResponderPolicy, Undecided};
 use serde::{Deserialize, Serialize};
@@ -105,12 +105,12 @@ impl DecisionPolicyConfig {
             ..ModelProfile::default()
         }
     }
+}
 
-    /// Nothing if the threshold is a probability and at least one may be
-    /// asked to respond.
-    ///
+impl Params for DecisionPolicyConfig {
     /// # Errors
-    /// `ComponentError::InvalidConfig` otherwise.
+    /// `ComponentError::InvalidConfig` if the threshold is no probability or nobody may be asked
+    /// to respond.
     fn check(&self) -> ComponentResult<()> {
         if !(0.0..=1.0).contains(&self.threshold) {
             return Err(ComponentError::InvalidConfig(format!(
@@ -404,7 +404,6 @@ pub fn register(registry: &mut ComponentRegistry) {
             .operator_only(),
         |descriptor, context| {
             let config: DecisionPolicyConfig = config_of_params(&descriptor.params)?;
-            config.check()?;
             let catalogue = context.service::<PromptCatalogue>()?;
             catalogue.require_variant(config.prompt_texts)?;
             let prompts = PromptTexts::new(Arc::clone(catalogue), config.prompt_texts);
@@ -818,9 +817,7 @@ mod tests {
 
     #[test]
     fn its_parameters_are_checked() {
-        let checked = |params: Value| {
-            config_of_params::<DecisionPolicyConfig>(&params).and_then(|config| config.check())
-        };
+        let checked = |params: Value| config_of_params::<DecisionPolicyConfig>(&params).map(drop);
         assert!(checked(json!({})).is_ok(), "every one has a default");
         assert!(checked(json!({ "threshold": 1.5 })).is_err());
         assert!(checked(json!({ "max_responders": 0 })).is_err());

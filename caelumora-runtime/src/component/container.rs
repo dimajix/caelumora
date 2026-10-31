@@ -337,9 +337,9 @@ impl ComponentContainer {
     /// `ComponentError::DuplicateId` if two entries of `config` share an id, or two of the
     /// components they stand for do - wrapped with the `ref` that brings the second -;
     /// `ComponentError::InvalidConfig` if two provide a facet of which there is one, or - wrapped
-    /// with its entry - one provides no facet of the closure or has params its kind does not take,
-    /// refused before anything is built; whatever resolving a `ref` or building a component
-    /// reports, wrapped with its id and kind.
+    /// with its entry - one provides no facet of the closure or has params its kind does not take
+    /// or finds wrong, refused before anything is built; whatever resolving a `ref` or building a
+    /// component reports, wrapped with its id and kind.
     pub async fn from_config(
         config: &ComponentConfig,
         asked: &[TypeKey],
@@ -367,9 +367,9 @@ impl ComponentContainer {
     ) -> ComponentResult<Self> {
         let own_defaults = registry.defaults_of(defaults)?;
         let planned = registry.plan(config, &own_defaults, &context.security_context).await?;
-        // Refused before anything is built: params a kind does not take
-        // (issue 515), and what nobody asks for, which would read its
-        // owner's secrets for nothing (issue 337).
+        // Refused before anything is built: params a kind does not take or
+        // finds wrong (issue 515), and what nobody asks for, which would read
+        // its owner's secrets for nothing (issue 337).
         registry.require_buildable(&planned, &own_defaults, asked)?;
         let graph = Arc::new(Graph {
             registry: Arc::clone(registry),

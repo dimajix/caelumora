@@ -112,6 +112,20 @@ impl ComponentError {
 
 pub type ComponentResult<T> = Result<T, ComponentError>;
 
+/// What a component kind or a backend type takes as its parameters (issue 515): a struct
+/// `#[serde(deny_unknown_fields)]`, read from its params by `config_of_params` - which refuses a
+/// parameter it does not know - and checked there beyond the types of its fields.
+pub trait Params: DeserializeOwned {
+    /// Whether the values go together - a share within its bounds, a number at least 1 -, beyond
+    /// what the types of the fields say; nothing to check unless its kind or type says otherwise.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` naming the parameter that is not what it should be.
+    fn check(&self) -> ComponentResult<()> {
+        Ok(())
+    }
+}
+
 /// A component's `params` read as its configuration `T`; left out, they are
 /// read as an empty object, so that a `T` whose fields all have a default
 /// is built from them.
@@ -123,10 +137,10 @@ pub type ComponentResult<T> = Result<T, ComponentError>;
 ///
 /// # Errors
 /// `ComponentError::InvalidConfig` if they are no object - a list would be
-/// read by the order of `T`'s fields -, a parameter is `null`, or they are
+/// read by the order of `T`'s fields -, a parameter is `null`, they are
 /// not a `T`, naming the parameter that is not what it should be, where it
-/// is one.
-pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<T> {
+/// is one, or `T` finds them wrong (`Params::check`).
+pub fn config_of_params<T: Params>(params: &Value) -> ComponentResult<T> {
     let empty = Value::Object(Map::new());
     let params = match params {
         Value::Null => &empty,
@@ -144,14 +158,16 @@ pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<
             ))
         }
     };
-    serde_path_to_error::deserialize(params).map_err(|e| {
+    let config: T = serde_path_to_error::deserialize(params).map_err(|e| {
         let path = e.path().to_string();
         let message = match path.as_str() {
             "." => format!("invalid parameters: {}", e.inner()),
             parameter => format!("invalid parameter '{parameter}': {}", e.inner()),
         };
         ComponentError::InvalidConfig(message)
-    })
+    })?;
+    config.check()?;
+    Ok(config)
 }
 
 /// The parameters of what takes none - a component kind that declares none
@@ -160,6 +176,8 @@ pub fn config_of_params<T: DeserializeOwned>(params: &Value) -> ComponentResult<
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NoParams {}
+
+impl Params for NoParams {}
 
 /// Whether `T` is among the facets `declared` to be asked for.
 ///
@@ -187,6 +205,7 @@ mod tests {
             #[serde(default)]
             limit: u32,
         }
+        impl Params for Config {}
         assert_eq!(
             config_of_params::<Config>(&Value::Null).unwrap().limit,
             0,
@@ -219,6 +238,7 @@ mod tests {
             #[serde(default)]
             title: Option<String>,
         }
+        impl Params for Config {}
         assert!(config_of_params::<Config>(&json!({})).unwrap().title.is_none());
         let message =
             config_of_params::<Config>(&json!({ "title": null })).unwrap_err().to_string();

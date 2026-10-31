@@ -29,7 +29,7 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_runtime::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult,
+    ComponentResult, Params,
 };
 use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
 use caelumora_runtime::view::WorkspaceView;
@@ -59,6 +59,8 @@ struct WorkspacePromptConfig {
     #[serde(default = "default_instruction_files")]
     instruction_files: Vec<String>,
 }
+
+impl Params for WorkspacePromptConfig {}
 
 fn default_instruction_files() -> Vec<String> {
     vec!["AGENTS.md".to_string(), "CLAUDE.md".to_string()]

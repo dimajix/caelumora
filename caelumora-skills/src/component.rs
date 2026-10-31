@@ -57,7 +57,7 @@ use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
+    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
 use caelumora_runtime::view::SessionView;
 use chrono::Utc;
@@ -105,6 +105,8 @@ struct SkillsConfig {
     #[serde(default)]
     requires_approval: ApprovalMode,
 }
+
+impl Params for SkillsConfig {}
 
 /// The classification of what `skills` hold together, within `bound` -
 /// the turn's: their join where it surely flows there, else the bound.

@@ -18,7 +18,9 @@
 //! the ways of registering a component kind (issue 515). A backend's is given nothing but its name
 //! and its parameters, and there is one way to register it.
 
-use crate::component::{config_of_params, service_of, ComponentError, ComponentResult, NoParams};
+use crate::component::{
+    config_of_params, service_of, ComponentError, ComponentResult, NoParams, Params,
+};
 use crate::plugin::Plugin;
 use crate::runtime::Services;
 use crate::{content, terminal};
@@ -34,12 +36,17 @@ use caelumora_model::user::User;
 use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
 use caelumora_model::user_provider::file::FileUserConfig;
 use caelumora_model::user_provider::UserProvider;
-use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
+
+// The parameters of the core's backends whose types the model defines, which knows nothing of
+// `Params`.
+impl Params for FileSecretConfig {}
+impl Params for FileUserConfig {}
+impl Params for AcceptAnyConfig {}
 
 /// The backends a section of the configuration names, by their names - the
 /// storages of workspaces, the storages of content -, which what lies there
@@ -199,13 +206,13 @@ impl Backends {
     }
 
     /// Registers `factory` as what makes the backends of the type `kind` for the service `T`, from
-    /// its parameters `C` - `NoParams` for one that takes none -, in place of one registered
-    /// before. The parameters are read with `config_of_params` before `factory` is called: a
-    /// struct `#[serde(deny_unknown_fields)]`, so that one the type does not take is refused.
+    /// its parameters `C` (`Params`) - `NoParams` for one that takes none -, in place of one
+    /// registered before. The parameters are read and checked with `config_of_params` before
+    /// `factory` is called.
     pub fn register<T, C, F>(&mut self, kind: &str, factory: F)
     where
         T: ?Sized + 'static,
-        C: DeserializeOwned + 'static,
+        C: Params + 'static,
         F: Fn(&str, C, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
     {
         let factory: BackendFactory<T> = Box::new(move |name, params, services| {
@@ -346,6 +353,8 @@ mod tests {
     struct FixedConfig {
         greeting: String,
     }
+
+    impl Params for FixedConfig {}
 
     fn greeters() -> Backends {
         let mut backends = Backends::new();

@@ -271,15 +271,17 @@ personalities:                   # of the seed
 
 ### Parameters
 
-A kind declares the parameters it takes as one struct (`ComponentKind::params`), which its factory
-reads with `config_of_params`; a kind that declares none takes none. The registry checks a
-component's params against its kind before a container builds anything - of a component a `ref`
-brings too, and of one that builds on a default, with the default's params merged -, and the
-defaults of the singles as they are set: a parameter misspelt, set on the wrong component or moved
-to another kind is refused before anything is built, and a request that writes it is refused
-before the verb. A request that writes a kind only an operator configures itself is refused as
-such, whatever the params. That every kind of the program refuses a parameter it does not take -
-that no struct of parameters lacks `deny_unknown_fields` - a test of `caelumora-app` checks.
+A kind declares the parameters it takes as one struct (`ComponentKind::params`), which implements
+`Params` and which its factory reads with `config_of_params`; a kind that declares none takes none.
+The registry reads a component's params as its kind's struct before a container builds anything -
+of a component a `ref` brings too, and of one that builds on a default, with the default's params
+merged -, and the defaults of the singles as they are set, and has the struct check its values
+(`Params::check`): a parameter misspelt, set on the wrong component or moved to another kind, or a
+value its kind finds wrong, is refused before anything is built, and a request that writes it is
+refused before the verb. A request that writes a kind only an operator configures itself is
+refused as such, whatever the params. That every kind of the program refuses a parameter it does
+not take - that no struct of parameters lacks `deny_unknown_fields` - a test of `caelumora-app`
+checks.
 
 ### Factories and tags
 
@@ -359,9 +361,10 @@ They follow one convention:
     something is checked.
 *   **Configuration:** what a kind takes is a struct named after the kind, without `Provider`, with
     `Config` (`CompactionConfig`, `WorkspacePromptConfig`), `#[serde(deny_unknown_fields)]`,
-    declared with `ComponentKind::params`; a check beyond its fields' types is a method of the
-    struct (`CompactionConfig::of`, which reads and checks). Prompt providers that take only their
-    position share `PositionConfig`, those that tell of their channel `ChannelPartConfig`.
+    declared with `ComponentKind::params`; it implements `Params`, and a check beyond its fields'
+    types is its `Params::check` (`CompactionConfig`), which `config_of_params` runs. Prompt
+    providers that take only their position share `PositionConfig`, those that tell of their
+    channel `ChannelPartConfig`.
 *   **Parameters:** the turn is always the parameter `turn`.
 
 What components share lives beside the facet: `tool::text_argument` and `id_argument` for tool

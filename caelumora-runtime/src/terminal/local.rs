@@ -11,6 +11,7 @@ use super::{
     TerminalError, TerminalProvider, TerminalResult, WorkspacePath,
 };
 use crate::backend::Backends;
+use crate::component::Params;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
@@ -49,6 +50,8 @@ struct LocalStorageConfig {
     #[serde(default = "default_max_run_secs")]
     max_run_secs: u64,
 }
+
+impl Params for LocalStorageConfig {}
 
 /// Registers the storage `local` with `backends`.
 pub(super) fn register_backend(backends: &mut Backends) {
