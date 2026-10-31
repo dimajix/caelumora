@@ -18,17 +18,13 @@ use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::context::{ContextResolver, ModelProfile};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::secret::Secrets;
-use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::work::Work;
-use caelumora_model::workspace::Workspace;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::terminal::Terminal;
-use caelumora_runtime::view::{ChannelReader, SessionReader, ViewResult, WorkspaceReader};
-use caelumora_runtime::workspace::WorkspaceResult;
+use caelumora_runtime::view::{ChannelReader, SessionReader, ViewResult};
 use std::sync::Arc;
 
 /// The situation of the work under way of an agent in its channel, to
@@ -110,55 +106,30 @@ impl<'a> Situation<'a> {
         self.runtime.session_view(self.initiator(), self.work.classification.clone()).await
     }
 
-    /// The reader `T` a plugin binds to the views of the work (`ActorRuntime::reader`, issue 516):
+    /// The reader `T` a plugin or the core binds to the work (`ActorRuntime::reader`, issue 516):
     /// what of the plugin's service the work reads by - the skills' `SkillReader`, say -, in its
     /// context. Asked for where it is used and not kept: it acts in the context of the call. `None`
-    /// if no plugin binds one, if it is not offered here, or where the work reaches no session or
-    /// may not read it. What acts is the turn's (`Turn::writer`).
+    /// if none is bound, if it is not offered here, or where the work reaches no session or may not
+    /// read it. What acts is the turn's (`Turn::writer`).
     pub async fn reader<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         self.runtime.reader(self.initiator(), self.work.classification.clone()).await
     }
 
-    /// Whether a turn of this work would be given the writer `T` a plugin binds (`Turn::writer`):
+    /// Whether a turn of this work would be given the writer `T` bound to it (`Turn::writer`):
     /// what a tool provider asks before it offers what acts by it (issue 516), handed nothing.
     pub async fn has_writer<T: ?Sized + Send + Sync + 'static>(&self) -> bool {
         let classification = self.work.classification.clone();
         self.runtime.writer::<T>(self.initiator(), classification).await.is_some()
     }
 
-    /// The agent's channel as the work reads it from there (`session`,
-    /// `SessionReader::channel`, issue 399): its participants, its notes, its
-    /// workspace. `None` where the work reaches no session.
+    /// The agent's channel as the work reads it from there (`session`, `SessionReader::channel`,
+    /// issue 399): its participants, its notes. `None` where the work reaches no session.
     ///
     /// # Errors
     /// What following the views to it reports.
     pub async fn channel_view(&self) -> ViewResult<Option<Box<dyn ChannelReader>>> {
         let Some(session) = self.session_view().await? else { return Ok(None) };
         session.channel(self.channel_id()).await.map(Some)
-    }
-
-    /// The workspace of the agent's session the work may use in its channel,
-    /// as its views see it (`ChannelReader::workspace`, issue 290): what a
-    /// component tells of it, or offers to do on it. `None` where there is
-    /// none it may use - also where the work reaches no session.
-    ///
-    /// # Errors
-    /// What following the views to it reports.
-    pub async fn workspace_view(&self) -> ViewResult<Option<Box<dyn WorkspaceReader>>> {
-        let Some(channel) = self.channel_view().await? else { return Ok(None) };
-        channel.workspace().await
-    }
-
-    /// The workspace of the agent's session and its terminal, to read its
-    /// files, if the work may use it in its channel
-    /// (`ActorRuntime::workspace_terminal`, issue 344) - what a component
-    /// that only reads looks at. Changing the files, and running commands,
-    /// is a turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`).
-    ///
-    /// # Errors
-    /// As `ActorRuntime::workspace_terminal`.
-    pub async fn workspace_terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        self.runtime.workspace_terminal(self.initiator(), Grant::Read).await
     }
 
     /// The agent's state in this channel as it stands: what components read

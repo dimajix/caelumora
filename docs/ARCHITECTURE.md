@@ -112,10 +112,10 @@ it, the program is a chat between users. The plugins whose components serve an a
 tools, models, external agents - build on it, and a plugin that defines facets of its own for others
 to serve is built on in turn: `caelumora-skills` serves the `KnowledgeRestorer` of
 `caelumora-compaction`. A service with a manager of its own that extends the core - skills and
-artifacts, which plugins bring, the workspace and secrets, which the core brings itself - is a
-**system service**: it runs on the core's side, its manager decides with the core's policies, its
-views serve the frontends, and what an agent's work does with its kind it offers as extensions, a
-reader handed out where the work reads and a writer where it acts
+artifacts, which plugins bring, the workspace, which the core brings itself - is a **system
+service**: it runs on the core's side, its manager decides with the core's policies, its views serve
+the frontends, and what an agent's work does with its kind it offers as extensions, a reader handed
+out where the work reads and a writer where it acts
 ([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Which plugin is trusted as
 the core and which is an application on it, trusted for nothing, is said in
 [Principles](#principles) and listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the core
@@ -432,24 +432,24 @@ The design repeats a few decisions; new code follows them.
     applications ask it. The runtime is the core, to the applications what an operating system's
     kernel is to its programs - a modular one: its own services are sessions, channels with their
     history, the attachments of their messages and their approver, actors and their state, and
-    persistence, with what they need around them - security, the event bus, projects -; the
-    workspace, secrets, skills, artifacts and memory are system services that extend it (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - so far skills and
-    artifacts as extensions; the workspace and secrets are still reached through `ActorRuntime`, and
-    memory through the agent's state. A plugin that brings what is the core's - a backend, a kind of
-    entity with its manager, views and routes, a component of a channel - is trusted as the core;
-    what runs an agent or serves its facets is an **application** on the core, trusted for nothing:
-    `caelumora-agents`, and the plugins that bring components for an agent (which plugin stands
-    where is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). An application is given the
-    core's interface - an actor its `ActorRuntime`, a component its `ComponentContext` and the
-    `Turn` it is called with -, and the core checks every call of it in the name of the actor it
-    made the interface for. An application builds no `SecurityContext`, asks no policy and holds no
-    manager, no store and no controller of the core: what it needs decided, it asks the core to
-    decide. What the core cannot enforce it does not pretend to: a tool whose effect lies outside
-    the system runs if the application runs it, and an agent's own record - its transcript - is the
-    application's; the core's record of a conversation is the channel's history, taken at its door.
-    Today the code keeps part of this as a rule, not by the compiler: an application holds
-    controllers and could reach the core's services through its components' context (issue
+    persistence, with what they need around them - security with the secrets bound to a context, the
+    event bus, projects -; the workspace, skills, artifacts and memory are system services that
+    extend it (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - so far
+    the workspace, skills and artifacts as extensions; memory is still reached through the agent's
+    state. A plugin that brings what is the core's - a backend, a kind of entity with its manager,
+    views and routes, a component of a channel - is trusted as the core; what runs an agent or
+    serves its facets is an **application** on the core, trusted for nothing: `caelumora-agents`,
+    and the plugins that bring components for an agent (which plugin stands where is listed in
+    [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). An application is given the core's interface - an
+    actor its `ActorRuntime`, a component its `ComponentContext` and the `Turn` it is called with -,
+    and the core checks every call of it in the name of the actor it made the interface for. An
+    application builds no `SecurityContext`, asks no policy and holds no manager, no store and no
+    controller of the core: what it needs decided, it asks the core to decide. What the core cannot
+    enforce it does not pretend to: a tool whose effect lies outside the system runs if the
+    application runs it, and an agent's own record - its transcript - is the application's; the
+    core's record of a conversation is the channel's history, taken at its door. Today the code
+    keeps part of this as a rule, not by the compiler: an application holds controllers and could
+    reach the core's services through its components' context (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)); that it names no context,
     policy, view or manager of the core or of a plugin `scripts/application-names.sh` checks.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something

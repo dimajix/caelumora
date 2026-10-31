@@ -81,6 +81,11 @@ impl ChannelView {
         &self.session
     }
 
+    /// The document, as it was when the channel was reached.
+    pub(crate) fn document(&self) -> &Arc<Channel> {
+        &self.channel
+    }
+
     /// The workspace of the session, if the viewer may use it in this
     /// channel (issue 251, decision 10): as a current participant, the channel
     /// using it, and it and the channel flowing both ways. Nothing

@@ -8,8 +8,8 @@
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::situation::Situation;
 use crate::tool::{
-    arguments, described, page_of, tool_text, usable_workspace, ToolError, ToolOutput,
-    ToolProvider, ToolResult,
+    arguments, described, page_of, tool_text, usable_workspace, workspace_writer, ToolError,
+    ToolOutput, ToolProvider, ToolResult,
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
@@ -23,6 +23,7 @@ use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegi
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
 use caelumora_runtime::view::ChannelReader;
+use caelumora_runtime::workspace::{WorkspaceReader, WorkspaceWriter};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -81,8 +82,8 @@ pub struct AttachmentTool {
 
 impl AttachmentTool {
     /// The provider, its texts from `prompts`. What it attaches it has its turn copy
-    /// (`Turn::copy_attachment`), and it writes no larger file into a workspace than the turn may
-    /// put there (`Turn::max_file_bytes`, issue 516).
+    /// (`Turn::copy_attachment`), and it writes no larger file into a workspace than a workspace
+    /// takes (`WorkspaceWriter::max_file_bytes`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
@@ -278,13 +279,13 @@ impl ToolProvider for AttachmentTool {
                 let CopyTo { reference, path } = arguments(params)?;
                 // A workspace used in the channel takes what the channel holds: the attachment's
                 // label flows into it as the channel's does.
-                let (workspace, terminal) = turn.workspace_terminal(Grant::Write).await?;
+                let writer = workspace_writer(turn).await?;
+                let (workspace, terminal) = writer.terminal(Grant::Write).await?;
                 let (attachment, content) = attachment_content(turn, &reference).await?;
                 let at = WorkspacePath::parse(
                     &path.unwrap_or_else(|| format!("{COPIED_TO}/{}", attachment.name.as_str())),
                 )?;
-                let max_file_bytes = turn.max_file_bytes();
-                let written = terminal.write(&at, content, max_file_bytes).await?;
+                let written = terminal.write(&at, content, writer.max_file_bytes()).await?;
                 Ok(ToolOutput::classified(
                     json!({ "ref": reference, "path": at.to_string(), "bytes": written }),
                     workspace.classification,
@@ -329,7 +330,10 @@ impl ToolProvider for AttachmentTool {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(ATTACHMENT_TOOL_KIND).provides::<dyn ToolProvider>(),
+            ComponentKind::new(ATTACHMENT_TOOL_KIND)
+                .provides::<dyn ToolProvider>()
+                .reads::<dyn WorkspaceReader>()
+                .writes::<dyn WorkspaceWriter>(),
         ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;

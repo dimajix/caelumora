@@ -43,12 +43,12 @@ impl Plugin for SkillsPlugin {
         ));
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
-        runtime.extend_readers::<dyn SkillReader, _>(|views| {
-            Some(Arc::new(views.clone()) as Arc<dyn SkillReader>)
-        });
-        runtime.extend_writers::<dyn SkillWriter, _>(|views| {
-            Some(Arc::new(views.clone()) as Arc<dyn SkillWriter>)
-        });
+        runtime.extend_readers::<dyn SkillReader, _, _>(|session| async move {
+            Some(Arc::new(session.views().clone()) as Arc<dyn SkillReader>)
+        })?;
+        runtime.extend_writers::<dyn SkillWriter, _, _>(|session| async move {
+            Some(Arc::new(session.views().clone()) as Arc<dyn SkillWriter>)
+        })?;
         runtime.seed_section(SKILLS, Arc::new(SeededSkills(skills)))?;
         runtime.prompts().add(NAMESPACE, PROMPTS)?;
         component::register(runtime.components());

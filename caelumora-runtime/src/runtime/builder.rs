@@ -19,9 +19,11 @@ use crate::plugin::Plugin;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
-use crate::view::Views;
+use crate::view::SessionView;
 use crate::workspace::reaper::CommandReaper;
-use crate::workspace::WorkspaceManager;
+use crate::workspace::{
+    UsableWorkspace, WorkspaceManager, WorkspaceReader, WorkspaceUse, WorkspaceWriter,
+};
 use anyhow::{bail, Context, Result};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::component::ComponentConfig;
@@ -39,6 +41,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -74,7 +77,7 @@ pub struct RuntimeBuilder {
     scope_members: Vec<Arc<dyn ScopedKind>>,
     scope_holders: Arc<ScopeHolders>,
     services: Services,
-    /// What the plugins bind to the views of an application's work (issue 516).
+    /// What the plugins and the core bind to an application's work (issue 516).
     extensions: Extensions,
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
@@ -226,6 +229,7 @@ impl RuntimeBuilder {
         prompts.add(CORE, CORE_PROMPTS)?;
         let component_registry =
             ComponentRegistry::built_in(Arc::clone(&entity_stores.component_bundles));
+        let extensions = Self::core_extensions()?;
         Ok(Self {
             persistence,
             entity_stores,
@@ -249,13 +253,27 @@ impl RuntimeBuilder {
             scope_members,
             scope_holders,
             services,
-            extensions: Extensions::default(),
+            extensions,
             prompts,
             prompt_variants: config.prompts.clone(),
             sections: config.plugins.clone(),
             claimed: BTreeSet::new(),
             seed_sections: BTreeMap::new(),
         })
+    }
+
+    /// The core's own extensions (issue 516): the workspace a work may use in its channel, as a
+    /// reader and a writer.
+    fn core_extensions() -> Result<Extensions> {
+        let mut extensions = Extensions::default();
+        extensions.insert::<dyn WorkspaceReader, _, _>(Face::Reader, |session| async move {
+            let usable = UsableWorkspace::of_work(&session).await?;
+            Some(Arc::new(usable) as Arc<dyn WorkspaceReader>)
+        })?;
+        extensions.insert::<dyn WorkspaceWriter, _, _>(Face::Writer, |session| async move {
+            WorkspaceUse::of_work(&session).map(|used| Arc::new(used) as Arc<dyn WorkspaceWriter>)
+        })?;
+        Ok(extensions)
     }
 
     /// The builder of the runtime as `config` describes it, with `plugins`
@@ -395,27 +413,35 @@ impl RuntimeBuilder {
         self.services.insert(service);
     }
 
-    /// Binds the reader `T` to the views of every piece of work of an application
-    /// (`ActorRuntime::reader_of`, issue 516): what of a plugin's service the work reads by, made
-    /// by `bind` from the views - `None` where it is not offered -, so that it acts in the work's
-    /// context. A `T` bound before is replaced.
-    pub fn extend_readers<T, F>(&mut self, bind: F)
+    /// Binds the reader `T` to every piece of work of an application (`ActorRuntime::reader`, issue
+    /// 516): what of a plugin's service the work reads by, made by `bind` from the work's session
+    /// as the work reads it - `None` where it is not offered -, so that it acts in the work's
+    /// context.
+    ///
+    /// # Errors
+    /// If `T` is bound already - by the core, or by a plugin registered before: no plugin replaces
+    /// what another binds.
+    pub fn extend_readers<T, F, Fut>(&mut self, bind: F) -> Result<()>
     where
         T: ?Sized + Send + Sync + 'static,
-        F: Fn(&Views) -> Option<Arc<T>> + Send + Sync + 'static,
+        F: Fn(SessionView) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Option<Arc<T>>> + Send + 'static,
     {
-        self.extensions.insert(Face::Reader, bind);
+        self.extensions.insert(Face::Reader, bind)
     }
 
-    /// Binds the writer `T` to the views of every piece of work of an application
-    /// (`ActorRuntime::writer_of`, issue 516): what of a plugin's service the work acts by, made
-    /// as `extend_readers` makes a reader.
-    pub fn extend_writers<T, F>(&mut self, bind: F)
+    /// Binds the writer `T` to every piece of work of an application (`ActorRuntime::writer`): what
+    /// of a plugin's service the work acts by, made as `extend_readers` makes a reader.
+    ///
+    /// # Errors
+    /// As `extend_readers`.
+    pub fn extend_writers<T, F, Fut>(&mut self, bind: F) -> Result<()>
     where
         T: ?Sized + Send + Sync + 'static,
-        F: Fn(&Views) -> Option<Arc<T>> + Send + Sync + 'static,
+        F: Fn(SessionView) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Option<Arc<T>>> + Send + 'static,
     {
-        self.extensions.insert(Face::Writer, bind);
+        self.extensions.insert(Face::Writer, bind)
     }
 
     /// The service `T`, if the core or a plugin registered before provides
@@ -583,11 +609,14 @@ mod tests {
             }
             fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
                 match self.0 {
-                    Some(Face::Reader) => runtime.extend_readers::<dyn Ledger, _>(|_| None),
-                    Some(Face::Writer) => runtime.extend_writers::<dyn Ledger, _>(|_| None),
-                    None => {}
+                    Some(Face::Reader) => {
+                        runtime.extend_readers::<dyn Ledger, _, _>(|_| async { None })
+                    }
+                    Some(Face::Writer) => {
+                        runtime.extend_writers::<dyn Ledger, _, _>(|_| async { None })
+                    }
+                    None => Ok(()),
                 }
-                Ok(())
             }
         }
         let built = |binds: &BindsLedger| {

@@ -36,9 +36,9 @@ impl Plugin for ArtifactsPlugin {
         let manager = Arc::new(manager);
         runtime.provide(Arc::clone(&manager));
         runtime.scope_member(manager);
-        runtime.extend_writers::<dyn ArtifactPublisher, _>(move |views| {
-            configured.then(|| Arc::new(views.clone()) as Arc<dyn ArtifactPublisher>)
-        });
+        runtime.extend_writers::<dyn ArtifactPublisher, _, _>(move |session| async move {
+            configured.then(|| Arc::new(session.views().clone()) as Arc<dyn ArtifactPublisher>)
+        })?;
         runtime.prompts().add(NAMESPACE, PROMPTS)?;
         component::register(runtime.components());
         Ok(())

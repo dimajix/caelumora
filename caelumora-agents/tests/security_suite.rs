@@ -4011,6 +4011,9 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
         ["alice as helper: GetSession(alice's) yes", "alice as helper: GetChannel(alice's) yes"];
     assert_eq!(read, checks(&reaching), "reaching the channel as its owner, nothing of its own");
     assert_eq!(attached, checks(&reaching), "nor attaching it");
+    // The workspace's writer is handed out as the session is reached (issue 516), then writing
+    // into the workspace asks what it asks.
+    let handed = ["alice as helper: GetSession(alice's) yes"];
     let writing = [
         "alice as helper: GetWorkspace(alice's) yes",
         "alice as helper: Publish yes",
@@ -4019,8 +4022,8 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
     ];
     assert_eq!(
         copied,
-        checks(&[&reaching[..], &writing[..], &reaching[..]].concat()),
-        "copying: what writing into the workspace asks, then reading it"
+        checks(&[&handed[..], &reaching[..], &writing[..], &reaching[..]].concat()),
+        "copying: the writer handed out, what writing into the workspace asks, then reading it"
     );
     drop(turn);
     world.manager.stop(&alice, session.id()).await.unwrap();

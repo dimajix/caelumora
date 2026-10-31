@@ -52,20 +52,16 @@ use caelumora_model::memory::{MemoryChange, MemoryOrigin};
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::note::NoteChange;
 use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::security::Grant;
 use caelumora_model::tool::Tool;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 #[cfg(test)]
 use caelumora_model::work::Work;
-use caelumora_model::workspace::Workspace;
 use caelumora_runtime::actor::Answering;
 use caelumora_runtime::agent::state::AgentStateHandle;
 use caelumora_runtime::attachment::AttachmentResult;
 use caelumora_runtime::runtime::{ActorRuntime, OwnRecord};
-use caelumora_runtime::terminal::{Shell, Terminal};
 use caelumora_runtime::transport::EventSender;
-use caelumora_runtime::workspace::WorkspaceResult;
 use std::sync::{Arc, LazyLock};
 use tool_calls::ToolCalls;
 
@@ -158,38 +154,14 @@ impl<'a> Turn<'a> {
         )
     }
 
-    /// The writer `T` a plugin binds to the views of the turn's work (`ActorRuntime::writer`, issue
+    /// The writer `T` a plugin or the core binds to the turn's work (`ActorRuntime::writer`, issue
     /// 516): what of the plugin's service a tool acts by - the skills' `SkillWriter`, say -, in the
     /// work's context. Asked for where it is used and not kept, as `Situation::reader` is. `None`
-    /// if no plugin binds one, if it is not offered here, or where the work reaches no session or
-    /// may not read it.
+    /// if none is bound, if it is not offered here, or where the work reaches no session or may not
+    /// read it.
     pub async fn writer<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         let situation = self.situation();
         self.runtime.writer(situation.initiator(), situation.classification()).await
-    }
-
-    /// The workspace of the agent's session and its terminal, for what
-    /// `need` asks - reading its files, or changing them too -, if the turn
-    /// may use it in its channel (`ActorRuntime::workspace_terminal`, issue
-    /// 344): what a tool acts on.
-    ///
-    /// # Errors
-    /// As `ActorRuntime::workspace_terminal`.
-    pub async fn workspace_terminal(
-        &self,
-        need: Grant,
-    ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        self.runtime.workspace_terminal(self.situation().initiator(), need).await
-    }
-
-    /// The workspace of the agent's session and its shell as its channel
-    /// sees it (`ActorRuntime::workspace_shell`, issue 344): where a tool
-    /// runs commands.
-    ///
-    /// # Errors
-    /// As [`Self::workspace_terminal`].
-    pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        self.runtime.workspace_shell(self.situation().initiator()).await
     }
 
     /// `attachment`, one of the agent's channel, copied in the turn's name for what the agent
@@ -207,12 +179,6 @@ impl<'a> Turn<'a> {
     pub async fn may_reclassify(&self, record: OwnRecord, classification: &Classification) -> bool {
         let (initiator, within) = (self.situation().initiator(), self.situation().classification());
         self.runtime.may_reclassify(initiator, record, classification, &within).await
-    }
-
-    /// The largest file the turn may put into its session's workspace, as the process is
-    /// configured (`ActorRuntime::max_file_bytes`).
-    pub fn max_file_bytes(&self) -> u64 {
-        self.runtime.max_file_bytes()
     }
 
     /// Which turn this is (issue 235).

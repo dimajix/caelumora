@@ -3,7 +3,6 @@
 //! frontends; an application is handed a reader, never a view, so it reaches no policy, no
 //! manager and no context through it.
 
-use super::WorkspaceView;
 use super::{ChannelView, ParticipantView, PrivateNotesElsewhere, SessionView, ViewResult};
 use crate::terminal::ByteStream;
 use async_trait::async_trait;
@@ -21,8 +20,7 @@ use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
-use caelumora_model::value::text::{Briefing, Description, Summary};
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_model::value::text::{Briefing, Summary};
 
 /// A session as an agent's work reads it from its channel (`SessionView`).
 #[async_trait]
@@ -83,9 +81,6 @@ pub trait ChannelReader: Send + Sync {
     /// The session it was reached through.
     fn session(&self) -> &dyn SessionReader;
 
-    /// The workspace of the session, if the reader may use it in this channel (issue 290).
-    async fn workspace(&self) -> ViewResult<Option<Box<dyn WorkspaceReader>>>;
-
     /// Its participants, each as the reader may see them.
     async fn participants(&self) -> Vec<Box<dyn ParticipantReader>>;
 
@@ -133,28 +128,6 @@ pub trait ParticipantReader: Send + Sync {
     /// What of the participant is public to everyone in the channel (issue 176); `None` for one
     /// that no longer exists.
     async fn describe(&self) -> ViewResult<Option<ActorDescription>>;
-}
-
-/// The workspace of a session as an agent's work sees it in its channel (`WorkspaceView`).
-#[async_trait]
-pub trait WorkspaceReader: Send + Sync {
-    /// The workspace read.
-    fn id(&self) -> WorkspaceId;
-
-    /// Its name, unique where it lies.
-    fn name(&self) -> &str;
-
-    /// What it holds, in a line; `None` if nobody said.
-    fn description(&self) -> Option<&Description>;
-
-    /// How its files are classified.
-    fn classification(&self) -> &Classification;
-
-    /// Whether commands can be run in it (issue 344).
-    fn has_shell(&self) -> bool;
-
-    /// Whether the reader may change its files.
-    async fn may_write(&self) -> bool;
 }
 
 #[async_trait]
@@ -231,11 +204,6 @@ impl ChannelReader for ChannelView {
         ChannelView::session(self)
     }
 
-    async fn workspace(&self) -> ViewResult<Option<Box<dyn WorkspaceReader>>> {
-        let workspace = ChannelView::workspace(self).await?;
-        Ok(workspace.map(|workspace| Box::new(workspace) as Box<dyn WorkspaceReader>))
-    }
-
     async fn participants(&self) -> Vec<Box<dyn ParticipantReader>> {
         let participants = ChannelView::participants(self).await;
         participants
@@ -294,32 +262,5 @@ impl ParticipantReader for ParticipantView {
 
     async fn describe(&self) -> ViewResult<Option<ActorDescription>> {
         ParticipantView::describe(self).await
-    }
-}
-
-#[async_trait]
-impl WorkspaceReader for WorkspaceView {
-    fn id(&self) -> WorkspaceId {
-        WorkspaceView::id(self)
-    }
-
-    fn name(&self) -> &str {
-        WorkspaceView::name(self)
-    }
-
-    fn description(&self) -> Option<&Description> {
-        WorkspaceView::description(self)
-    }
-
-    fn classification(&self) -> &Classification {
-        WorkspaceView::classification(self)
-    }
-
-    fn has_shell(&self) -> bool {
-        WorkspaceView::has_shell(self)
-    }
-
-    async fn may_write(&self) -> bool {
-        WorkspaceView::may_write(self).await
     }
 }

@@ -317,14 +317,14 @@ A running object - `SessionLoop`, `ChannelLoop`, `ActorRuntime` - and the stored
     attributes are read from the channel's controller, which the runtime holds as the session's
     (issue 374); what only the running channel can answer - its users for the questions of a tool
     call (issue 370) - is asked of the channel; the session's workspace is asked of its
-    `WorkspaceController`, reached through the session's loop, with the session and the channel as
-    their controllers hold them (`workspace_terminal`, `workspace_shell`). Both answer `None` or
-    refuse while the channel is being built or once it is gone, so that the caller still decides
-    what that means. The public API of `ChannelLoop` is the frontends'; it acts in a user's name too
-    (`ChannelLoop::user_actor`), and is not an actor's. What an actor needs of its channel and does
-    not find on its `ActorRuntime` is added there. `ActorRuntime::channel_loop` stays the runtime's
-    (`pub(crate)`): for the user's and the approver's actors, which act for a person as the
-    frontends do, and for the views.
+    `WorkspaceController`, reached through the session's loop - for the workspace's writer with the
+    session and the channel as their controllers hold them, for its reader as its views reached them
+    (`WorkspaceWriter`, `WorkspaceReader`). Both answer `None` or refuse while the channel is being
+    built or once it is gone, so that the caller still decides what that means. The public API of
+    `ChannelLoop` is the frontends'; it acts in a user's name too (`ChannelLoop::user_actor`), and
+    is not an actor's. What an actor needs of its channel and does not find on its `ActorRuntime` is
+    added there. `ActorRuntime::channel_loop` stays the runtime's (`pub(crate)`): for the user's and
+    the approver's actors, which act for a person as the frontends do, and for the views.
 *   **A loop gives out what it holds; a manager is given coordinates and properties.** An operation
     of a manager or a controller on what lies in a channel takes the channel by its coordinates - an
     id, an `Address<Channel>` - or by its document (`Session`, `Channel`), the properties it needs;

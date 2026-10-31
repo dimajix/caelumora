@@ -35,8 +35,10 @@ use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentRe
 use caelumora_runtime::content::ContentError;
 use caelumora_runtime::runtime::{ActorRuntime, CallPermit};
 use caelumora_runtime::terminal::TerminalError;
-use caelumora_runtime::view::{ViewError, WorkspaceReader};
-use caelumora_runtime::workspace::WorkspaceError;
+use caelumora_runtime::view::ViewError;
+use caelumora_runtime::workspace::{
+    WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter,
+};
 use chrono::Utc;
 use providers::ToolProviders;
 use serde::de::DeserializeOwned;
@@ -45,6 +47,7 @@ use serde_json::Value;
 use std::fmt::Debug;
 use std::future::Future;
 use std::iter;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -594,22 +597,24 @@ pub trait ToolProvider: Send + Sync + Debug {
     }
 }
 
-/// The workspace the tools of a set on it may be offered on in `situation`
-/// (issue 290): the one of the agent's session the work may use in its
-/// channel (`Situation::workspace_view`). `Err` with why the set is unavailable,
-/// in general terms: there is none, or it cannot be read now - which is
-/// logged.
+/// The workspace the tools of a set on it may be offered on in `situation` (issue 290): the one of
+/// the agent's session the work may use in its channel, as the core binds its reader to the work
+/// (`Situation::reader`, issue 516). `Err` with why the set is unavailable, in general terms: there
+/// is none it may use - also where reading it failed.
 pub async fn usable_workspace(
     situation: &Situation<'_>,
-) -> Result<Box<dyn WorkspaceReader>, String> {
-    match situation.workspace_view().await {
-        Ok(Some(workspace)) => Ok(workspace),
-        Ok(None) => Err(WorkspaceError::NotUsableInChannel.to_string()),
-        Err(error) => {
-            warn!("Reading the workspace an agent may use in its channel failed: {error}");
-            Err("its workspace cannot be read now".to_string())
-        }
-    }
+) -> Result<Arc<dyn WorkspaceReader>, String> {
+    let workspace = situation.reader::<dyn WorkspaceReader>().await;
+    workspace.ok_or_else(|| WorkspaceError::NotUsableInChannel.to_string())
+}
+
+/// The writer of the workspace a tool of `turn` reads and changes the files of and runs commands in
+/// (`Turn::writer`, issue 516): a tool's one way to them.
+///
+/// # Errors
+/// `NotUsableInChannel` where the work may use none.
+pub async fn workspace_writer(turn: &Turn<'_>) -> WorkspaceResult<Arc<dyn WorkspaceWriter>> {
+    turn.writer::<dyn WorkspaceWriter>().await.ok_or(WorkspaceError::NotUsableInChannel)
 }
 
 /// What a rule derived from a call of the tool `name` with `params` is

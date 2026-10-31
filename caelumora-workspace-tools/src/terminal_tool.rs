@@ -17,16 +17,16 @@
 //! A turn is offered the tools that may be called on the workspace its
 //! channel may use (issue 290): none where there is none, none that change
 //! where its access list grants reading alone, no shell where its storage
-//! gives none. The workspace is reached through the turn's channel on every
-//! call all the same (`Turn::workspace_terminal`, issue 344), before
-//! anything is sent,
-//! in its context (issue 296): as a participant of the channel, where the channel uses it, its
-//! access list lets the agent read it - change it, for the shell and the tools that
-//! write (issue 23) - and it and the channel flow both ways. A result is
-//! classified as the workspace. Which calls need approval is configured as for `mcp_tool`
-//! (`requires_approval`, an `ApprovalMode`): all, none, or all but those
-//! that only read; `command_output`, `kill_command` and `publish_file`
-//! never ask.
+//! gives none. The workspace is reached through the workspace's writer the
+//! turn hands out on every call all the same (`WorkspaceWriter::terminal`,
+//! issues 344, 516), before anything is sent, in its context (issue 296):
+//! as a participant of the channel, where the channel uses it, its access
+//! list lets the agent read it - change it, for the shell and the tools
+//! that write (issue 23) - and it and the channel flow both ways. A result
+//! is classified as the workspace. Which calls need approval is configured
+//! as for `mcp_tool` (`requires_approval`, an `ApprovalMode`): all, none,
+//! or all but those that only read; `command_output`, `kill_command` and
+//! `publish_file` never ask.
 
 pub use files::{
     DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, PUBLISH_FILE, READ_FILE, REPLACE_IN_FILE,
@@ -39,8 +39,8 @@ use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    described, proposed_matcher, tool_text, usable_workspace, ApprovalMode, ToolError, ToolOutput,
-    ToolProvider, ToolResult,
+    described, proposed_matcher, tool_text, usable_workspace, workspace_writer, ApprovalMode,
+    ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_model::approval::ToolMatcher;
@@ -51,6 +51,7 @@ use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibili
 use caelumora_runtime::component::{
     config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
+use caelumora_runtime::workspace::{WorkspaceReader, WorkspaceWriter};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -106,8 +107,8 @@ pub struct TerminalTool {
 }
 
 impl TerminalTool {
-    /// The tool, configured by `config`, its texts from `prompts`. It writes no larger file than
-    /// its turn may put into the workspace (`Turn::max_file_bytes`, issue 516).
+    /// The tool, configured by `config`, its texts from `prompts`. It writes no larger file than a
+    /// workspace takes (`WorkspaceWriter::max_file_bytes`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
@@ -239,9 +240,10 @@ impl ToolProvider for TerminalTool {
         let Some((need, is_shell)) = needs(name) else {
             return Err(ToolError::UnknownTool(name.to_string()));
         };
+        let writer = workspace_writer(turn).await?;
         let (workspace, value) = match is_shell {
             true => {
-                let (workspace, shell) = turn.workspace_shell().await?;
+                let (workspace, shell) = writer.shell().await?;
                 let shell = shell.ok_or_else(|| {
                     ToolError::ExecutionFailed(
                         "the workspace's storage gives it no shell".to_string(),
@@ -250,9 +252,18 @@ impl ToolProvider for TerminalTool {
                 (workspace, shell::execute(self, name, params, shell).await?)
             }
             false => {
-                let (workspace, terminal) = turn.workspace_terminal(need).await?;
-                let value =
-                    files::execute(self, name, params, terminal.as_ref(), &workspace, turn).await?;
+                let (workspace, terminal) = writer.terminal(need).await?;
+                let max_file_bytes = writer.max_file_bytes();
+                let value = files::execute(
+                    self,
+                    name,
+                    params,
+                    terminal.as_ref(),
+                    &workspace,
+                    max_file_bytes,
+                    turn,
+                )
+                .await?;
                 (workspace, value)
             }
         };
@@ -265,7 +276,9 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(
             ComponentKind::new(TERMINAL_TOOL_KIND)
                 .params::<TerminalToolConfig>()
-                .provides::<dyn ToolProvider>(),
+                .provides::<dyn ToolProvider>()
+                .reads::<dyn WorkspaceReader>()
+                .writes::<dyn WorkspaceWriter>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;

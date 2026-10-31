@@ -89,8 +89,13 @@ impl SessionView {
         &self.views
     }
 
+    /// Its loop, if it runs.
+    pub(crate) fn running(&self) -> Option<&Arc<SessionLoop>> {
+        self.running.as_ref()
+    }
+
     /// The document, as it was when the session was reached.
-    pub(super) fn as_session(&self) -> &Arc<Session> {
+    pub(crate) fn as_session(&self) -> &Arc<Session> {
         &self.session
     }
 

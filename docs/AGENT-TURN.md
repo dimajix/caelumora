@@ -218,14 +218,14 @@ modification does not take it over: a changed message stays in the turn it was p
 Beside its state, a turn reaches its session through its readers (`Situation::session_view`), from
 which components read other channels as the confidentiality rules allow - at the classification the
 turn began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The readers only read: its
-session, its channel and the workspace it may use there (`Situation::session_view`, `channel_view`,
-`workspace_view`) are the readers of views (`SessionReader`, `ChannelReader`, `WorkspaceReader`,
-issue 516), named `…_view` after what they show, and answer alike - nothing where the work reaches
-no session, an error where it may not read what it reaches. The channel as it stands - its document,
-what an operation in the channel is given as its properties (`AttachmentManager::copy`) - is
-`Situation::channel`. What is done with the workspace's files goes through a handle instead, named
-after the handle: its terminal, to read them (`Situation::workspace_terminal`), and to change them
-or run commands, the turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`). A system
+session and its channel (`Situation::session_view`, `channel_view`) are the readers of views
+(`SessionReader`, `ChannelReader`, issue 516), named `…_view` after what they show, and answer
+alike - nothing where the work reaches no session, an error where it may not read what it reaches.
+The channel as it stands - its document, what an operation in the channel is given as its properties
+(`AttachmentManager::copy`) - is `Situation::channel`. What is done with the workspace's files goes
+through a handle instead, named after the handle: its terminal, to read them, through the reader of
+the workspace the situation hands out (`WorkspaceReader::terminal`), and to change them or run
+commands, through its writer the turn hands out (`WorkspaceWriter::terminal_for`, `shell`). A system
 service's extensions are cut the same way (issue 516, see
 [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)): what the work reads by is the
 situation's to hand out (`Situation::reader`, the skills' `SkillReader`), what it acts by the turn's

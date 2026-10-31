@@ -1,5 +1,5 @@
 //! The shell tools of `terminal_tool`: commands in the workspace, through
-//! the `Shell` the turn's channel hands out (`Turn::workspace_shell`),
+//! the `Shell` the workspace's writer hands out (`WorkspaceWriter::shell`),
 //! which sees the commands started in that channel alone.
 //!
 //! A call dropped while it waits for its command - the turn cancelled or

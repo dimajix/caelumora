@@ -60,12 +60,14 @@ it (see [CHANNELS.md](CHANNELS.md#its-workspace)). A channel uses it where
 So a session for a request can have a channel with the person who asked, classified below the
 workspace or with the switch off, and channels with helpers that work on its files. A view of a
 channel offers the workspace only where it may be used there, and says nothing of it otherwise.
-Using it in a channel is asked by its `WorkspaceController`, which the running session holds, of
-the session and the channel as they are then (`WorkspaceController::terminal_in`, `shell_in`): as
-the views ask - whether the caller may read the session and the channel, whether the workspace is
-usable there - and for changing files `WriteWorkspace`. Whoever holds the running session hands the
-documents over: an actor's `ActorRuntime` (`workspace_terminal`, `workspace_shell`), the REST server
-from the session it opened.
+Using it in a channel is asked by its `WorkspaceController`, which the running session holds, of the
+session and the channel as they are then (`WorkspaceController::terminal_in`, `shell_in`): as the
+views ask - whether the caller may read the session and the channel, whether the workspace is usable
+there - and for changing files `WriteWorkspace`. Whoever holds the running session hands the
+documents over: for an agent's work the core's extension of the workspace - a reader the situation
+hands out (`WorkspaceReader`: what is usable there, its files to read), a writer the turn
+(`WorkspaceWriter`: its files to change, its shell), each asked at every use (issue 516) -, the REST
+server from the session it opened.
 
 ## Storages
 

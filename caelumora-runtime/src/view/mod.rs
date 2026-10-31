@@ -44,7 +44,7 @@ pub use channel::{ChannelView, ParticipantView};
 pub use context::{AgentContextError, AgentContextView};
 pub use group::GroupView;
 pub use project::ProjectView;
-pub use reader::{ChannelReader, ParticipantReader, SessionReader, WorkspaceReader};
+pub use reader::{ChannelReader, ParticipantReader, SessionReader};
 pub use session::{PrivateNotesElsewhere, SessionView};
 pub use workspace::WorkspaceView;
 

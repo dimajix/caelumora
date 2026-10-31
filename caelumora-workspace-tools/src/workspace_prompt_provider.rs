@@ -5,8 +5,8 @@
 //!
 //! It says what is there, whatever tools a personality has to work on it,
 //! so a personality with several gets it once. Read afresh at the start of
-//! every turn through the agent's views: the workspace the channel may use
-//! now (`Situation::workspace_view`). In the system prompt by default
+//! every turn through the core's reader of it: the workspace the channel may
+//! use now (`WorkspaceReader`, issue 516). In the system prompt by default
 //! (parameter `position`): it changes rarely. The part is classified as the
 //! workspace, which flows into the channel where it may be used there.
 //!
@@ -32,7 +32,7 @@ use caelumora_runtime::component::{
     ComponentResult, Params,
 };
 use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
-use caelumora_runtime::view::WorkspaceReader;
+use caelumora_runtime::workspace::WorkspaceReader;
 use futures::future;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -91,19 +91,14 @@ fn default_instruction_files() -> Vec<String> {
 }
 
 impl WorkspacePromptProvider {
-    /// Those of the instruction files that lie at the root of `workspace`,
-    /// the one `situation` may use in its channel; none if its storage cannot be
-    /// reached, which must not cost the turn.
-    async fn instruction_files_in(
-        &self,
-        workspace: &dyn WorkspaceReader,
-        situation: &Situation<'_>,
-    ) -> Vec<&WorkspacePath> {
+    /// Those of the instruction files that lie at the root of `workspace`, the one the work may use
+    /// in its channel; none if its storage cannot be reached, which must not cost the turn.
+    async fn instruction_files_in(&self, workspace: &dyn WorkspaceReader) -> Vec<&WorkspacePath> {
         if self.instruction_files.is_empty() {
             return Vec::new();
         }
-        let terminal = match situation.workspace_terminal().await {
-            Ok((_, terminal)) => terminal,
+        let terminal = match workspace.terminal().await {
+            Ok(terminal) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
                 return Vec::new();
@@ -162,9 +157,9 @@ impl PromptProvider for WorkspacePromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        Ok(match situation.workspace_view().await? {
+        Ok(match situation.reader::<dyn WorkspaceReader>().await {
             Some(workspace) => {
-                let found = self.instruction_files_in(workspace.as_ref(), situation).await;
+                let found = self.instruction_files_in(workspace.as_ref()).await;
                 let writable = workspace.may_write().await;
                 Prompt::classified(
                     told(
@@ -190,7 +185,8 @@ pub fn register(registry: &mut ComponentRegistry) {
         writing_for_the_model(
             ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND)
                 .params::<WorkspacePromptConfig>()
-                .provides::<dyn PromptProvider>(),
+                .provides::<dyn PromptProvider>()
+                .reads::<dyn WorkspaceReader>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;

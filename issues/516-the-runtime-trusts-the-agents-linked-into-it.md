@@ -679,7 +679,17 @@ left out where the core collects an agent's commands -, `workspace_terminal`, `w
    `workspace_terminal` and the methods of `ActorRuntime` for them go. Files:
    `caelumora-runtime/src/{runtime/actor,view/reader,workspace/*}.rs`, the tools of
    `caelumora-agents` and `caelumora-workspace-tools`, `caelumora-mcp`, `caelumora-a2a`.
-3. **The trait.** `ActorRuntime` the trait of the table above, `ParticipantRuntime` the struct;
+3. **The terminal.** Added after step 5b.2: a workspace's terminal is cut as its extension is.
+   `TerminalReader` (`list`, `stat`, `read`) is what the workspace's reader hands out, `Terminal`
+   (the reader and `write`, `delete`, `mkdir`, `move_entry`) what its writer does, which asks
+   `WriteWorkspace` always: reading goes through the reader, in a tool too. `shell` leaves the
+   terminal for the provider, so that only the controller opens a shell, for the scope of the
+   channel (`shell_in`), and the writer hands the terminal out in a hull of the core's that keeps
+   the configured largest file itself, so that an application need not know it and
+   `max_file_bytes` leaves the writer. Files: `caelumora-runtime/src/terminal/*.rs`, the local
+   backend, `caelumora-open-terminal`, `controller/workspace.rs`, `workspace/extension.rs`, the
+   REST routes of files, the tools.
+4. **The trait.** `ActorRuntime` the trait of the table above, `ParticipantRuntime` the struct;
    the factory of a kind of agent is given an `Arc<dyn ActorRuntime>` alone; `agent()`,
    `personality()` and the three calls of the agent's state replace the controllers and the
    `AgentStateHandle`; `build_components` replaces the registry and the component context; the
@@ -718,7 +728,9 @@ service and the application never holds an entry it may not recall.
    to a reading.
 10. Where the core ends (see *Step 5b*): sessions, channels with their attachments and their
     approver, actors and their state, persistence, security, the event bus and projects; the
-    workspace, secrets, skills, artifacts and memory are extensions. Taken on 2026-10-31.
+    workspace, secrets, skills, artifacts and memory are extensions. Taken on 2026-10-31; amended
+    the same day, after step 5b.2: the secrets, bound to a context, and the copying of an
+    attachment for a message stay the core's.
 11. Accessors of the readers without `…_view`: `Situation::session` for the session; the reader
     of the agent's own channel next to `Situation::channel`, the channel's document - recommended
     `Situation::own_channel`. Taken on 2026-10-31 as recommended.
@@ -924,3 +936,44 @@ service and the application never holds an entry it may not recall.
   components; `ArtifactPublisher` keeps its name; the readers of the session stay the core's, the
   readers of a system service its extensions; and `artifact_tool` names the missing workspace
   before the missing storage, and answers `NotConfigured` where it is given no publisher.
+- **2026-10-31** — Step 5b.2 done on the branch: the workspace is an extension of the core's.
+  Its reader (`WorkspaceReader`: what is usable in the work's channel, and its files to read) is
+  found as it is bound, through the views - `None` where the work may use none -, its writer
+  (`WorkspaceWriter`: its files to change, its shell, the largest file it takes) asks nothing until
+  it acts, and then asks what `WorkspaceController::terminal_in` and `shell_in` ask, once
+  (`caelumora_runtime::workspace`, `UsableWorkspace` and `WorkspaceUse` binding them). The core
+  binds both itself as the runtime is built. A binding is given the work's session as the work
+  reads it (`SessionView`), as the core reached it asking `GetSession`, and may make what it binds
+  asynchronously. `ChannelReader::workspace`, `Situation::workspace_view` and
+  `workspace_terminal`, `Turn::workspace_terminal`, `workspace_shell` and `max_file_bytes`, and the
+  methods of `ActorRuntime` for them are gone; the terminal and attachment tools, the workspace
+  prompt and `artifact_tool` declare and use the faces. Differs from the plan:
+  - The secrets stay the core's (`ActorRuntime::secrets`, `Situation::secrets`), not an extension:
+    they are bound to a context, not to the place of a work, and an actor reads them for what it
+    does outside a piece of work - the external agent's actor cancels and follows its remote
+    tasks with them, also where its session cannot be read any more, and its tests run its channel
+    outside a session. Bound to the views, they failed there. This corrects decision 10, for the
+    maintainer to confirm.
+  - `copy_attachment` stays the core's too: it copies an attachment for a message the agent will
+    say, not into the workspace, as the plan had it, and the attachments of messages are the core's
+    (decision 10).
+  - The writer is no reader as well: it hands out the workspace's document with the terminal or
+    the shell it asked for, so that acting asks the controller's questions once and not also what
+    finding a usable workspace asks; and it, not the reader, says the largest file a workspace
+    takes. A tool of a turn reads and changes the files through the writer, its one way to them
+    (`caelumora_agents::tool::workspace_writer`); what only reads - the workspace prompt, the
+    offering of tool sets - goes through the reader. The security suite records one question more
+    where an agent copies an attachment into the workspace, and the artifacts' tests state what
+    publishing asks: `GetSession`, as a face is handed out.
+  - What a work cannot read is now answered as absence: where reading the workspace fails, the
+    reader is not handed out, which is logged, and the workspace prompt says there is none, as the
+    tool sets do, instead of failing the turn's context.
+  - A type is bound once: a second binding of it is refused (`extend_readers`, `extend_writers`
+    answer an error), so that no plugin - an application among them - replaces what the core or
+    another plugin binds.
+  Stored data: none.
+- **2026-10-31** — Step 5b.2 accepted: the maintainer confirmed that the secrets and the copying
+  of an attachment stay the core's (decision 10 amended), and that a workspace the work cannot read
+  is answered as absent. The full terminal is too high a privilege to hand to what only reads: the
+  terminal is cut into a reading and a changing part, as its extension is, in a step of its own
+  before the trait (*The steps of 5b*, 3), which is step 4 now.

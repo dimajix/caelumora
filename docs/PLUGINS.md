@@ -119,11 +119,11 @@ default is the program's, and in a test, `TestAgents` stands in for the program.
 ## What a system service offers an agent's work
 
 A service with a manager of its own that extends the core - skills and artifacts, which plugins
-bring; the workspace and secrets, which the core brings itself, once they are extensions too - is a
-**system service** (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): it
-runs on the core's side, its manager decides and keeps, asking the core's policies extended by
-questions of its own (`SkillAccess`), never rules of its own, and its views serve the frontends.
-What an agent's work does with its kind it offers as **extensions**, by one pattern:
+bring; the workspace, which the core brings itself - is a **system service** (issue
+[516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): it runs on the core's side,
+its manager decides and keeps, asking the core's policies extended by questions of its own
+(`SkillAccess`), never rules of its own, and its views serve the frontends. What an agent's work
+does with its kind it offers as **extensions**, by one pattern:
 
 *   **Two faces.** What the work reads by is a **reader** (`SkillReader`), handed out where it reads
     (`Situation::reader`); what it acts by is a **writer** (`SkillWriter`, `ArtifactPublisher`),
@@ -131,12 +131,16 @@ What an agent's work does with its kind it offers as **extensions**, by one patt
     workspace's terminal is read through the situation and changed through the turn. Whether there
     is a writer, without being given it, the situation answers (`has_writer`) - for a tool provider
     that offers what acts by it.
-*   **Bound by the plugin, per work.** The plugin binds each face to the views of a piece of work
-    (`RuntimeBuilder::extend_readers`, `extend_writers`), as its own views are built from them, so
-    that it acts in the work's context; a binding may answer none where it is not offered - the
-    artifacts' writer where no storage of content is configured. The core opens the views as it
-    opens the work's session, asking `GetSession`. No method of a face takes a context or an
-    identity, and what it hands out is data, not an object of the core.
+*   **Bound by the plugin, per work.** The plugin - the core for its own, the workspace - binds each
+    face to every piece of work (`RuntimeBuilder::extend_readers`, `extend_writers`), once: a type
+    bound already is refused, so that none replaces what another binds. A binding is given the
+    work's session as the work reads it (`SessionView`), reached by the core asking `GetSession`,
+    makes the face from its views - as the plugin's own views are built - so that it acts in the
+    work's context, may make it asynchronously, and may answer none where it is not offered - the
+    artifacts' writer where no storage of content is configured, the workspace's reader where the
+    work may use none. No method of a face takes a context or an identity, and what it hands out is
+    data, not an object of the core - but for a handle, named as one, that carries a right beyond
+    the call: the workspace's terminal and shell.
 *   **Asked for where it is used, never kept.** A face acts in the context of the call that asked
     for it - the rights as they are at each call -, so a component asks for it again each time.
 *   **Declared.** A component kind declares the faces it reads and writes by
@@ -165,11 +169,11 @@ a plugin depends on:
     that decides for the core - a policy, one of the core's managers, a store - is the core's, and a
     component of an application does not declare it: what it needs decided it asks of the core,
     through the `Turn` and the `Situation` it is called with (`may_reclassify`,
-    `may_copy_information`, `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`,
-    issue 516), and what it reads it reads through the readers (`Situation::session_view`,
-    `SessionReader`). What it needs of another plugin it declares as the trait that plugin offers
-    for it, or, of a system service, as the extension it reads or writes by: a reader its situation
-    hands out (`Situation::reader`), a writer its turn (`Turn::writer`).
+    `may_copy_information`, `copy_attachment`; the executor's `admit_tool_call`, issue 516), and
+    what it reads it reads through the readers (`Situation::session_view`, `SessionReader`). What it
+    needs of another plugin it declares as the trait that plugin offers for it, or, of a system
+    service, as the extension it reads or writes by: a reader its situation hands out
+    (`Situation::reader`), a writer its turn (`Turn::writer`).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,

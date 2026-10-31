@@ -5,11 +5,9 @@ use crate::attachment::{AttachmentManager, AttachmentResult};
 use crate::channel::{ChannelLoop, ResolvedParticipant};
 use crate::command::CommandExecutor;
 use crate::component::{ComponentContext, ComponentRegistry};
-use crate::controller::{ChannelController, SessionController, WorkspaceController};
+use crate::controller::{ChannelController, SessionController};
 use crate::event::EventSubscription;
-use crate::terminal::{Shell, Terminal};
 use crate::view::{SessionReader, ViewResult, Viewer, Views};
-use crate::workspace::{WorkspaceError, WorkspaceResult};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -26,15 +24,13 @@ use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::question::{QuestionError, Questions};
 use caelumora_model::secret::{SecretManager, Secrets};
 use caelumora_model::security::{
-    AccessPolicy, ActionType, Enforcement, Grant, Reclassified, SecurityAttributes, SecurityContext,
+    AccessPolicy, ActionType, Enforcement, Reclassified, SecurityAttributes, SecurityContext,
 };
-use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
 use caelumora_model::tool::{ToolCall, ToolMedia};
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::time_zone::TimeZone;
-use caelumora_model::workspace::Workspace;
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -349,12 +345,12 @@ impl ActorRuntime {
         Ok(Some(Box::new(session)))
     }
 
-    /// The reader `T` a plugin binds to the views of the actor's work for `initiator` at
+    /// The reader `T` a plugin or the core binds to the actor's work for `initiator` at
     /// `classification` (`RuntimeBuilder::extend_readers`, issue 516): what of the plugin's service
     /// the work reads by, acting as `session_view` reads. Its session is reached as `session_view`
-    /// reaches it - asking `GetSession` - and not handed out. `None` if no plugin binds one, if it
-    /// is not offered there, if the actor may not read its session, or while the channel is not
-    /// attached to it.
+    /// reaches it - asking `GetSession` - and not handed out. `None` if none is bound, if it is not
+    /// offered there, if the actor may not read its session, or while the channel is not attached
+    /// to it.
     pub async fn reader<T: ?Sized + Send + Sync + 'static>(
         &self,
         initiator: ActorId,
@@ -363,7 +359,7 @@ impl ActorRuntime {
         self.extension(Face::Reader, initiator, classification).await
     }
 
-    /// The writer `T` a plugin binds to the views of the actor's work
+    /// The writer `T` a plugin or the core binds to the actor's work
     /// (`RuntimeBuilder::extend_writers`): what of the plugin's service the work acts by, made as
     /// `reader` makes a reader.
     pub async fn writer<T: ?Sized + Send + Sync + 'static>(
@@ -382,9 +378,9 @@ impl ActorRuntime {
         classification: Classification,
     ) -> Option<Arc<T>> {
         let views = self.views_of_work(initiator, classification)?;
-        views.session(self.session_id).await.ok()?;
-        let made =
-            self.runtime.runtime_manager.extensions().made(face, TypeKey::of::<T>(), &views)?;
+        let session = views.session(self.session_id).await.ok()?;
+        let extensions = self.runtime.runtime_manager.extensions();
+        let made = extensions.made(face, TypeKey::of::<T>(), session).await?;
         made.get::<T>().cloned()
     }
 
@@ -517,7 +513,9 @@ impl ActorRuntime {
     /// The secrets that may be read in the actor's name, for `initiator` (issue 516), each read
     /// asked of the policy then (`ReadSecret`): what a component that talks to a remote system is
     /// handed for its credentials, shared, as what follows a remote task after a call reads them
-    /// too.
+    /// too. The core's own, not an extension: they are bound to the context, not to the place of a
+    /// work, and an actor reads them for what it does outside a piece of work too - cancelling a
+    /// remote task once it left its channel.
     pub fn secrets(&self, initiator: ActorId) -> Arc<dyn Secrets> {
         let context = &self.acting_for(initiator);
         Arc::new(self.secret_manager().for_context(context.clone()))
@@ -537,64 +535,12 @@ impl ActorRuntime {
         self.attachment_manager().copy(context, &self.channel(), attachment).await
     }
 
-    /// The largest file that may be put into a workspace, as the process is configured
-    /// (`WorkspaceManager::max_file_bytes`).
-    pub fn max_file_bytes(&self) -> u64 {
-        self.runtime.runtime_manager.workspace_manager().max_file_bytes()
-    }
-
     /// The actor's channel as it stands, read from its controller - as it stood last once the
     /// channel is gone (issue 374): what `channel_classification` is read
     /// from, and what an operation in the channel is given as the channel's properties
     /// (`AttachmentManager::copy`).
     pub fn channel(&self) -> Arc<Channel> {
         Arc::clone(&self.channel_controller().load())
-    }
-
-    /// The workspace of the actor's session and its terminal, for what `need` asks, as the actor
-    /// may use it in its channel, for `initiator` (`WorkspaceController::terminal_in`, issue 344):
-    /// asked by the workspace the session holds, of the session and the channel as they are now.
-    ///
-    /// # Errors
-    /// `NotUsableInChannel` while the channel is still being built or once it or its session is
-    /// gone, or no workspace is attached to the session; else what `terminal_in` reports.
-    pub async fn workspace_terminal(
-        &self,
-        initiator: ActorId,
-        need: Grant,
-    ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        let context = &self.acting_for(initiator);
-        let (session, workspace) = self.session_workspace()?;
-        workspace.terminal_in(context, &session, &self.channel(), need).await
-    }
-
-    /// The workspace of the actor's session and its shell as the actor's channel sees it - the
-    /// commands started in that channel alone -, for `initiator` (`WorkspaceController::shell_in`,
-    /// issue 344).
-    ///
-    /// # Errors
-    /// As [`Self::workspace_terminal`].
-    pub async fn workspace_shell(
-        &self,
-        initiator: ActorId,
-    ) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        let context = &self.acting_for(initiator);
-        let (session, workspace) = self.session_workspace()?;
-        workspace.shell_in(context, &session, &self.channel()).await
-    }
-
-    /// The actor's session as it is now and the workspace it holds.
-    ///
-    /// # Errors
-    /// `NotUsableInChannel` while the channel is still being built or once it or its session is
-    /// gone, or no workspace is attached to the session (`SessionLoop::workspace`).
-    fn session_workspace(&self) -> WorkspaceResult<(Arc<Session>, Arc<WorkspaceController>)> {
-        let session_loop = self
-            .channel_loop()
-            .and_then(|channel| channel.session_loop())
-            .ok_or(WorkspaceError::NotUsableInChannel)?;
-        let workspace = session_loop.workspace()?;
-        Ok((session_loop.session(), workspace))
     }
 
     /// The channel the actor is in, or `None` while the channel is still

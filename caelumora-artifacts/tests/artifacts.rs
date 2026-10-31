@@ -160,15 +160,36 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     fs::create_dir_all(dir.join("out")).unwrap();
     fs::write(dir.join("out/report.csv"), "a,b").unwrap();
 
-    let first = tool
-        .execute(
+    let (first, asked) = world
+        .asked(tool.execute(
             PUBLISH_ARTIFACT,
             &json!({ "path": "out/report.csv", "description": "The figures" }),
             None,
             &mut turn,
-        )
-        .await
-        .unwrap();
+        ))
+        .await;
+    let first = first.unwrap();
+    assert_eq!(
+        asked,
+        checks(&[
+            // The session read for its project.
+            "alice as helper: GetSession(alice's) yes",
+            // The workspace's writer handed out (issue 516), then reading the file asks once
+            // what using the workspace in the channel asks.
+            "alice as helper: GetSession(alice's) yes",
+            "alice as helper: GetSession(alice's) yes",
+            "alice as helper: GetChannel(alice's) yes",
+            "alice as helper: GetWorkspace(alice's) yes",
+            "alice as helper: Publish yes",
+            "alice as helper: Publish yes",
+            // The publisher handed out, then publishing.
+            "alice as helper: GetSession(alice's) yes",
+            "alice as helper: GetProject(alice's) yes",
+            "alice as helper: CreateArtifact(alice's) yes",
+            "alice as helper: CreateArtifact(alice's) yes",
+        ]),
+        "as its owner: the workspace once, then the artifact"
+    );
     assert_eq!(
         first.classification.as_ref(),
         Some(&docs.classification),

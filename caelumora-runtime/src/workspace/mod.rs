@@ -24,13 +24,18 @@
 //! before it is purged.
 //!
 //! The commands run in workspaces are ended by the `CommandReaper`
-//! (`reaper`) once nobody may run them any longer (issue 254).
+//! (`reaper`) once nobody may run them any longer (issue 254). An agent's
+//! work uses the workspace of its channel through the core's extensions, a
+//! reader and a writer (`extension`, issue 516).
 
+mod extension;
 mod manager;
 pub(crate) mod reaper;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub(crate) use extension::{UsableWorkspace, WorkspaceUse};
+pub use extension::{WorkspaceReader, WorkspaceWriter};
 pub use manager::WorkspaceManager;
 
 use crate::backend::StorageGone;
