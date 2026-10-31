@@ -1,32 +1,60 @@
 //! `ActorRuntime`: the interface the core gives the actor of an agent of an application (issue
 //! 516) - and `AgentRuntime`, the core's implementation of it.
 
-use super::{CallPermit, Face, OwnRecord, ParticipantRuntime};
+use super::{Face, ParticipantRuntime, RuntimeManager};
 use crate::agent::state::AgentStateHandle;
 use crate::attachment::AttachmentResult;
-use crate::component::{ComponentContainer, ComponentResult};
+use crate::component::{ComponentContainer, ComponentContext, ComponentResult};
 use crate::controller::{AgentController, PersonalityController};
-use crate::view::{SessionReader, ViewResult};
+use crate::view::{ChannelReader, SessionReader, ViewResult, Viewer, Views};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentChannelState, AgentState, Personality};
-use caelumora_model::approval::ApprovalRuleId;
-use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
+use caelumora_model::channel::{self, Channel, ChannelId};
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::{Classification, Place};
+use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions, Place};
 use caelumora_model::content::ContentRef;
 use caelumora_model::context::ModelProfile;
+use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::question::{QuestionError, Questions};
 use caelumora_model::secret::Secrets;
+use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
+use caelumora_model::session::SessionId;
 use caelumora_model::tool::{ToolCall, ToolMedia};
 use caelumora_model::type_map::{ErasedArc, TypeKey};
 use caelumora_model::value::time_zone::TimeZone;
+use chrono::Utc;
 use std::fmt::Debug;
 use std::sync::Arc;
+
+/// What the core decides of a tool call as it is admitted (`ActorRuntime::admit_tool_call`, issue
+/// 516).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CallPermit {
+    /// The policy does not let it be called (`CallTool`).
+    Forbidden,
+    /// A rule of a place denies it.
+    Denied(ApprovalRuleId),
+    /// A rule of a place asks a person to decide it, whatever its tool says (issue 13).
+    Ask,
+    /// Nothing of the core stands against it: whether a person is asked is its tool's.
+    Open,
+}
+
+/// What an agent keeps of its own in its channel, which it may reclassify
+/// (`ActorRuntime::may_reclassify`, issue 516).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnRecord {
+    /// One of its notes, public or private.
+    Note,
+    /// An entry of its memory, recalled in the channel.
+    Memory,
+}
 
 /// What the actor of an agent of an application runs with (issue 516): the one interface its
 /// kind is given by the core (`AgentKinds::register`). Who the agent is and its channel as they
@@ -49,8 +77,8 @@ pub trait ActorRuntime: Send + Sync + Debug {
     /// introduced, who sees its reasoning, what it hears during a turn.
     fn personality(&self) -> Arc<Personality>;
 
-    /// The agent's channel as it stands - as it stood last once the channel is gone (issue 374).
-    fn channel(&self) -> Arc<Channel>;
+    /// The session of the agent's channel.
+    fn session_id(&self) -> SessionId;
 
     /// The classification of the agent's channel as it is now, which what the agent says there is
     /// bound by (issues 141, 212).
@@ -149,6 +177,18 @@ pub trait ActorRuntime: Send + Sync + Debug {
         initiator: ActorId,
         classification: Classification,
     ) -> ViewResult<Option<Box<dyn SessionReader>>>;
+
+    /// The agent's own channel as its work for `initiator` reads it from there at
+    /// `classification` (`session`, `SessionReader::channel`, issue 399): its participants, its
+    /// notes. `None` where the work reaches no session.
+    ///
+    /// # Errors
+    /// What following the views to it reports.
+    async fn channel(
+        &self,
+        initiator: ActorId,
+        classification: Classification,
+    ) -> ViewResult<Option<Box<dyn ChannelReader>>>;
 
     /// How a call of `call`, made by the agent for `initiator`, is admitted (issue 516): whether
     /// the policy lets it be called, and what the strongest rule of the system, the session and
@@ -263,57 +303,115 @@ impl dyn ActorRuntime + '_ {
     }
 }
 
-/// The `ActorRuntime` of an agent in its channel (issue 516): its participant's runtime, with
-/// the session's controller of the agent, the instance's of its personality, and the agent's
-/// state - shared with its actors in other channels and sessions (issue 62).
+/// The `ActorRuntime` of an agent in its channel (issue 516): its participant's runtime, which
+/// builds the context it acts in, with the session's controller of the agent, the instance's of
+/// its personality, and the agent's state - shared with its actors in other channels and sessions
+/// (issue 62). What only an agent asks of the core it answers itself; what every participant
+/// needs it asks of its participant's runtime.
 #[derive(Debug)]
 pub struct AgentRuntime {
-    runtime: ParticipantRuntime,
+    /// The runtime of the process, whose services it answers by - held, as its channel's runtime
+    /// holds it.
+    manager: Arc<RuntimeManager>,
+    participant: ParticipantRuntime,
     agent: Arc<AgentController>,
     personality: Arc<PersonalityController>,
     state: Arc<AgentStateHandle>,
 }
 
 impl AgentRuntime {
-    /// The runtime of the agent `agent` holds, of the personality `personality` holds, running
-    /// with `runtime` in its channel, with its own state as the process holds it.
+    /// The runtime of the agent `agent` holds, of the personality `personality` holds, taking
+    /// part in its channel as `participant`, with its own state as the process holds it, shared
+    /// with its actors elsewhere.
     ///
     /// # Errors
     /// If its state cannot be loaded.
     pub(crate) async fn new(
-        runtime: ParticipantRuntime,
+        participant: ParticipantRuntime,
         agent: Arc<AgentController>,
         personality: Arc<PersonalityController>,
     ) -> Result<Self> {
+        let manager = Arc::clone(participant.runtime_manager());
         let attributes = agent.load().security_attributes.clone();
-        let state = runtime.agent_state(attributes).await?;
-        Ok(Self { runtime, agent, personality, state })
+        let state = manager.agent_states().get(agent.id(), attributes).await?;
+        Ok(Self { manager, participant, agent, personality, state })
+    }
+
+    /// The context the agent acts in now, for `initiator` (`ParticipantRuntime::acting_for`).
+    fn acting_for(&self, initiator: ActorId) -> SecurityContext {
+        self.participant.acting_for(initiator)
+    }
+
+    /// The views a piece of work of the agent reads through, for `initiator`, from its channel at
+    /// `classification`: in its context, from its place. `None` while the channel is still being
+    /// built or once it or its session is gone.
+    fn views_of_work(&self, initiator: ActorId, classification: Classification) -> Option<Views> {
+        let session_loop = self.participant.channel_loop()?.session_loop()?;
+        let channel = self.participant.channel_id;
+        let from = Place { channel, classification, session: session_loop.privacy() };
+        Some(session_loop.views(Viewer::from_place(self.acting_for(initiator), from)))
+    }
+
+    /// The extension of the type `key` names, bound as `face`, that a plugin or the core binds to
+    /// the agent's work for `initiator` at `classification` (`RuntimeBuilder::extend_readers`,
+    /// `extend_writers`): the service, acting as `session` reads. Its session is reached as
+    /// `session` reaches it - asking `GetSession` - and not handed out. `None` if none is bound as
+    /// that face, if it is not offered there, if the agent may not read its session, or while the
+    /// channel is not attached to it.
+    async fn extension_of(
+        &self,
+        face: Face,
+        initiator: ActorId,
+        classification: Classification,
+        key: TypeKey,
+    ) -> Option<ErasedArc> {
+        let views = self.views_of_work(initiator, classification)?;
+        let session = views.session(self.participant.session_id).await.ok()?;
+        self.manager.extensions().made(face, key, session).await
+    }
+
+    /// The rule of a place that decides `call` now, if one does, with what it decides of it: the
+    /// strongest of the system's, the session's and the channel's.
+    fn place_rule(&self, call: &ToolCall) -> Option<(ApprovalRuleId, RuleDecision)> {
+        let session = self.participant.session_controller().load();
+        let channel = self.participant.channel_controller().load();
+        let system = self.manager.approval_rules().iter();
+        let rules = system.chain(&session.approval_rules).chain(&channel.approval_rules);
+        ApprovalRule::decide(rules, call, session.id, channel.id, Utc::now())
+            .map(|(rule, decision)| (rule.id, decision))
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl AgentRuntime {
-    /// The runtime of the agent `runtime` is made for, with `state` as its own - in a test: of
-    /// the agent as its channel resolved it where it takes part (`participant_runtime_in`), else
-    /// of an agent "agent" of a plain personality, of the id of `runtime`'s actor.
+    /// The runtime of the agent that `participant` is the runtime of, with `state` as its own - in
+    /// a test: of the agent as its channel resolved it where it takes part
+    /// (`participant_runtime_in`), else of an agent "agent" of a plain personality, of the id of
+    /// its actor.
     ///
     /// # Panics
-    /// If `runtime` is no agent's: the core makes the runtime of an agent alone.
-    pub fn in_test(runtime: ParticipantRuntime, state: Arc<AgentStateHandle>) -> Self {
+    /// If `participant` is no agent's: the core makes the runtime of an agent alone.
+    pub fn in_test(participant: ParticipantRuntime, state: Arc<AgentStateHandle>) -> Self {
         use super::actor::Acting;
         use crate::channel::ResolvedKind;
-        let (agent, personality) = match &runtime.acting {
+        let (agent, personality) = match &participant.acting {
             Acting::Participant(resolved) => match resolved.kind() {
                 ResolvedKind::Agent(agent, personality) => {
                     (Arc::clone(agent), Arc::clone(personality))
                 }
                 ResolvedKind::User(_) | ResolvedKind::Approver(_) => {
-                    panic!("{} takes part as no agent", runtime.actor_id())
+                    panic!("{} takes part as no agent", participant.actor_id())
                 }
             },
-            Acting::Itself | Acting::Fixed(_) => Self::made_up(&runtime),
+            Acting::Itself | Acting::Fixed(_) => Self::made_up(&participant),
         };
-        Self { runtime, agent, personality, state }
+        Self {
+            manager: Arc::clone(participant.runtime_manager()),
+            participant,
+            agent,
+            personality,
+            state,
+        }
     }
 
     /// This runtime, of an agent of `personality` - in a test of what a personality decides.
@@ -321,24 +419,26 @@ impl AgentRuntime {
         Self { personality: Arc::new(PersonalityController::new(personality)), ..self }
     }
 
-    /// The controllers of an agent "agent" of the id of `runtime`'s actor, of a plain personality,
-    /// owned by a user of its own.
+    /// The controllers of an agent "agent" of the id of `participant`'s actor, of a plain
+    /// personality, owned by a user of its own.
     ///
     /// # Panics
-    /// If `runtime`'s actor is no agent.
+    /// If `participant`'s actor is no agent.
     #[expect(clippy::expect_used, reason = "test code: what fails here fails the test")]
-    fn made_up(runtime: &ParticipantRuntime) -> (Arc<AgentController>, Arc<PersonalityController>) {
+    fn made_up(
+        participant: &ParticipantRuntime,
+    ) -> (Arc<AgentController>, Arc<PersonalityController>) {
         use caelumora_model::agent::testing::make_personality;
         use caelumora_model::scope::Scope;
         use caelumora_model::user::UserId;
         use caelumora_model::value::name::ScopedName;
-        let id = runtime.actor_id().as_agent_id().expect("the runtime of an agent");
+        let id = participant.actor_id().as_agent_id().expect("the runtime of an agent");
         let personality = make_personality("plain");
         let name =
             ScopedName::new("agent", Scope::GlobalScope).expect("a test's name of an agent is one");
         let owner = ActorId::User(UserId::new());
         let agent = Agent { id, ..Agent::new(name, personality.id, owner) };
-        let stores = runtime.runtime.runtime_manager.entity_stores();
+        let stores = participant.runtime_manager().entity_stores();
         let agent = AgentController::new(agent, None, Arc::new(()), stores);
         (Arc::new(agent), Arc::new(PersonalityController::new(personality)))
     }
@@ -347,11 +447,15 @@ impl AgentRuntime {
 #[async_trait]
 impl ActorRuntime for AgentRuntime {
     fn actor_id(&self) -> ActorId {
-        self.runtime.actor_id()
+        self.participant.actor
+    }
+
+    fn session_id(&self) -> SessionId {
+        self.participant.session_id
     }
 
     fn channel_id(&self) -> ChannelId {
-        self.runtime.channel_id
+        self.participant.channel_id
     }
 
     fn agent(&self) -> Arc<Agent> {
@@ -362,32 +466,40 @@ impl ActorRuntime for AgentRuntime {
         Arc::clone(&self.personality.load())
     }
 
-    fn channel(&self) -> Arc<Channel> {
-        self.runtime.channel()
-    }
-
     fn channel_classification(&self) -> Classification {
-        self.runtime.channel_classification()
+        self.participant.channel().classification.clone()
     }
 
     fn session_time_zone(&self) -> TimeZone {
-        self.runtime.session_time_zone()
+        self.participant.session_controller().load().effective_time_zone()
     }
 
     fn announce_channel_state_changed(&self) {
-        self.runtime.announce_channel_state_changed();
+        let Some(channel) = self.participant.channel_loop() else { return };
+        let address = (self.participant.session_id, self.participant.channel_id);
+        let changed = GlobalEvent::custom::<Channel>(
+            &address,
+            channel::AGENT_STATE_CHANGED,
+            &self.agent.id(),
+        );
+        self.manager.event_bus().announce(changed, &*channel.channel());
     }
 
     async fn load_channel_state(&self) -> Result<AgentChannelState> {
-        self.runtime.load_channel_state().await
+        let (agent, channel) = (self.agent.id(), self.participant.channel_id);
+        Ok(self.manager.state_store().get_agent_channel_state(agent, channel).await?)
     }
 
     async fn store_channel_state(&self, state: &mut AgentChannelState) -> Result<()> {
-        self.runtime.store_channel_state(state).await
+        let (agent, channel) = (self.agent.id(), self.participant.channel_id);
+        self.manager.state_store().put_agent_channel_state(agent, channel, state).await?;
+        state.keep_window();
+        Ok(())
     }
 
     async fn transcript_message(&self, id: MessageId) -> Result<Option<Message>> {
-        self.runtime.transcript_message(id).await
+        let (agent, channel) = (self.agent.id(), self.participant.channel_id);
+        Ok(self.manager.transcript_store().message(agent, channel, id).await?)
     }
 
     fn agent_state(&self) -> Arc<AgentState> {
@@ -411,7 +523,8 @@ impl ActorRuntime for AgentRuntime {
         messages: &mut [Message],
         profile: &ModelProfile,
     ) -> AttachmentResult<Vec<Classification>> {
-        self.runtime.load_attachments(messages, profile).await
+        // Asking nothing: what lies in the agent's transcript, it heard.
+        self.manager.attachment_manager().load(messages, profile).await
     }
 
     async fn create_media(
@@ -420,7 +533,10 @@ impl ActorRuntime for AgentRuntime {
         classification: Classification,
         media: Vec<ToolMedia>,
     ) -> AttachmentResult<Vec<ContentRef>> {
-        self.runtime.create_media(initiator, classification, media).await
+        let context = &self.acting_for(initiator);
+        let channel = self.participant.channel();
+        let attachments = self.manager.attachment_manager();
+        attachments.create_media(context, &channel, classification, media).await
     }
 
     async fn copy_attachment(
@@ -428,7 +544,9 @@ impl ActorRuntime for AgentRuntime {
         initiator: ActorId,
         attachment: &ContentRef,
     ) -> AttachmentResult<ContentRef> {
-        self.runtime.copy_attachment(initiator, attachment).await
+        let context = &self.acting_for(initiator);
+        let channel = self.participant.channel();
+        self.manager.attachment_manager().copy(context, &channel, attachment).await
     }
 
     async fn session(
@@ -436,15 +554,38 @@ impl ActorRuntime for AgentRuntime {
         initiator: ActorId,
         classification: Classification,
     ) -> ViewResult<Option<Box<dyn SessionReader>>> {
-        self.runtime.session(initiator, classification).await
+        let Some(views) = self.views_of_work(initiator, classification) else { return Ok(None) };
+        let session = views.session(self.participant.session_id).await?;
+        Ok(Some(Box::new(session)))
+    }
+
+    async fn channel(
+        &self,
+        initiator: ActorId,
+        classification: Classification,
+    ) -> ViewResult<Option<Box<dyn ChannelReader>>> {
+        let Some(session) = self.session(initiator, classification).await? else { return Ok(None) };
+        session.channel(self.participant.channel_id).await.map(Some)
     }
 
     async fn admit_tool_call(&self, initiator: ActorId, call: &ToolCall) -> CallPermit {
-        self.runtime.admit_tool_call(initiator, call).await
+        let context = &self.acting_for(initiator);
+        let call_tool = ActionType::CallTool(call);
+        if self.manager.access_policy().require(context, call_tool, |_| ()).await.is_err() {
+            return CallPermit::Forbidden;
+        }
+        match self.place_rule(call) {
+            Some((rule, RuleDecision::Deny)) => CallPermit::Denied(rule),
+            Some((_, RuleDecision::Ask)) => CallPermit::Ask,
+            Some((_, RuleDecision::Allow)) | None => CallPermit::Open,
+        }
     }
 
     fn rule_denying(&self, call: &ToolCall) -> Option<ApprovalRuleId> {
-        self.runtime.rule_denying(call)
+        match self.place_rule(call)? {
+            (rule, RuleDecision::Deny) => Some(rule),
+            (_, RuleDecision::Ask | RuleDecision::Allow) => None,
+        }
     }
 
     fn address_questions(
@@ -452,7 +593,8 @@ impl ActorRuntime for AgentRuntime {
         initiator: ActorId,
         questions: Questions,
     ) -> Option<Result<Questions, QuestionError>> {
-        self.runtime.address_questions(initiator, questions)
+        let context = &self.acting_for(initiator);
+        Some(self.participant.channel_loop()?.address_questions(questions, context))
     }
 
     fn may_publish(
@@ -461,11 +603,13 @@ impl ActorRuntime for AgentRuntime {
         classification: &Classification,
         into: &Classification,
     ) -> bool {
-        self.runtime.may_publish(initiator, classification, into)
+        let context = &self.acting_for(initiator);
+        self.manager.confidentiality().may_publish(context, classification, into)
     }
 
     fn may_copy_information(&self, initiator: ActorId, from: &Place, into: &Place) -> bool {
-        self.runtime.may_copy_information(initiator, from, into)
+        let context = &self.acting_for(initiator);
+        self.manager.confidentiality().may_copy_information(context, from, into)
     }
 
     async fn may_reclassify(
@@ -475,15 +619,29 @@ impl ActorRuntime for AgentRuntime {
         classification: &Classification,
         within: &Classification,
     ) -> bool {
-        self.runtime.may_reclassify(initiator, record, classification, within).await
+        let context = &self.acting_for(initiator);
+        let author = self.participant.actor;
+        let attributes = self.participant.channel().security_attributes.clone();
+        let target = match record {
+            OwnRecord::Note => Reclassified::Note { author, attributes: &attributes },
+            OwnRecord::Memory => Reclassified::Memory { author, attributes: &attributes },
+        };
+        let reclassify = ActionType::Reclassify(target);
+        self.manager.access_policy().require(context, reclassify, |_| ()).await.is_ok()
+            && self
+                .manager
+                .confidentiality()
+                .require_publish(context, classification, within, || ())
+                .is_ok()
     }
 
     fn secrets(&self, initiator: ActorId) -> Arc<dyn Secrets> {
-        self.runtime.secrets(initiator)
+        let context = self.acting_for(initiator);
+        Arc::new(self.manager.secret_manager().for_context(context))
     }
 
     fn prompts(&self) -> &Arc<PromptCatalogue> {
-        self.runtime.prompts()
+        self.manager.prompts()
     }
 
     async fn build_components(
@@ -492,8 +650,10 @@ impl ActorRuntime for AgentRuntime {
         defaults: &ComponentConfig,
         facets: &[TypeKey],
     ) -> ComponentResult<ComponentContainer> {
-        let registry = self.runtime.component_registry();
-        let context = self.runtime.component_context();
+        let registry = self.manager.component_registry();
+        // In the agent's own name, as the core holds it now (issue 321).
+        let context = self.acting_for(self.participant.actor);
+        let context = ComponentContext::new(context, self.manager.services().clone());
         ComponentContainer::with_defaults(config, defaults, facets, registry, &context).await
     }
 
@@ -503,7 +663,7 @@ impl ActorRuntime for AgentRuntime {
         classification: Classification,
         key: TypeKey,
     ) -> Option<ErasedArc> {
-        self.runtime.extension_of(Face::Reader, initiator, classification, key).await
+        self.extension_of(Face::Reader, initiator, classification, key).await
     }
 
     async fn writer_of(
@@ -512,6 +672,39 @@ impl ActorRuntime for AgentRuntime {
         classification: Classification,
         key: TypeKey,
     ) -> Option<ErasedArc> {
-        self.runtime.extension_of(Face::Writer, initiator, classification, key).await
+        self.extension_of(Face::Writer, initiator, classification, key).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::ChannelRuntime;
+    use crate::session::testing::test_runtime;
+    use caelumora_model::actor::ActorState;
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::channel::testing::bare_channel;
+    use caelumora_model::session::testing::bare_session;
+
+    /// What an agent keeps in its channel it keeps under its own id, and reads back; another
+    /// agent of the channel reads its own.
+    #[tokio::test]
+    async fn an_agent_s_runtime_keeps_its_state_in_its_channel() {
+        let session = bare_session(SessionId::new());
+        let channel = bare_channel(session.id);
+        let channel = ChannelRuntime::outside_a_session(test_runtime(), session, channel);
+        let agent_in_channel = |channel: &ChannelRuntime| {
+            let participant = channel.new_participant_runtime(ActorId::Agent(AgentId::new()));
+            AgentRuntime::in_test(participant, AgentStateHandle::detached())
+        };
+        let its = agent_in_channel(&channel);
+        let mut asleep =
+            AgentChannelState { processing_state: ActorState::Sleeping, ..Default::default() };
+
+        its.store_channel_state(&mut asleep).await.expect("its own state in its channel");
+        let loaded = its.load_channel_state().await.expect("and back");
+        assert_eq!(loaded.processing_state, ActorState::Sleeping, "as it was stored");
+        let other = agent_in_channel(&channel).load_channel_state().await.expect("its own");
+        assert_eq!(other.processing_state, ActorState::Idle, "not the first agent's");
     }
 }

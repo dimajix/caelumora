@@ -91,8 +91,8 @@ impl PromptProvider for ChannelLanguagePromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`Situation::own_channel`) has no language to follow.
-        let Some(channel) = situation.own_channel().await? else {
+        // Work that reaches no session (`Situation::channel`) has no language to follow.
+        let Some(channel) = situation.channel().await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
         let text = self.text(channel.effective_language().cloned())?;

@@ -133,7 +133,8 @@ impl ExternalAgentActor {
     /// or its answers, as the component classifies them, may not be
     /// published in the channel; whatever its state store reports.
     pub(crate) async fn new(actor_runtime: Arc<dyn ActorRuntime>) -> Result<Self> {
-        let channel = actor_runtime.channel();
+        let channel = actor_runtime.channel_id();
+        let channel_classification = actor_runtime.channel_classification();
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new(
@@ -152,15 +153,15 @@ impl ExternalAgentActor {
         // there in silence: refused here instead, once - and once more with
         // every request, should the channel have been lowered since.
         let classification =
-            remote.classification().unwrap_or_else(|| channel.classification.clone());
+            remote.classification().unwrap_or_else(|| channel_classification.clone());
         // What it brings in itself - classified as its component declares,
         // else as the channel - has to enter the channel: asked here, and
         // before every exchange, as the channel may have been lowered since
         // (issue 212).
-        if !body.runtime.may_publish(body.id(), &classification, &channel.classification) {
+        if !body.runtime.may_publish(body.id(), &classification, &channel_classification) {
             return Err(anyhow!(
                 "the answers of external agent {} are classified {}, which may not be published in channel {} ({})",
-                body.agent_id(), classification, channel.id, channel.classification
+                body.agent_id(), classification, channel, channel_classification
             ));
         }
 

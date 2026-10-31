@@ -327,7 +327,8 @@ holds (`Session`, `Channel`) share their work by three rules:
     (`ChannelLoop::user_actor`), and is not an actor's. What an actor needs of its channel and does
     not find on its runtime is added there. `ParticipantRuntime::channel_loop` stays the runtime's
     (`pub(crate)`): for the user's and the approver's actors, which act for a person as the
-    frontends do, and for the views.
+    frontends do, for the views, and for the runtime of an agent (`AgentRuntime`), which answers
+    what the agent asks of its channel.
 *   **A loop gives out what it holds; a manager is given coordinates and properties.** An operation
     of a manager or a controller on what lies in a channel takes the channel by its coordinates - an
     id, an `Address<Channel>` - or by its document (`Session`, `Channel`), the properties it needs;
@@ -338,9 +339,12 @@ holds (`Session`, `Channel`) share their work by three rules:
     runtime - and decided, in reaching them, that the caller reads the channel; the manager
     asks what is its own. A loop does not act on other resources for its callers: it holds no
     forwarder to a workspace or a manager.
-*   **One name, one kind of thing.** `channel()` and `session()` return the entity's document as it
-    is now; `channel_loop()` and `session_loop()` the running object above; loading any stored
-    entity is `load_…` (`ActorRuntime::load_channel_state`).
+*   **One name, one kind of thing.** In the core, `channel()` and `session()` return the entity's
+    document as it is now; `channel_loop()` and `session_loop()` the running object above; loading
+    any stored entity is `load_…` (`ActorRuntime::load_channel_state`). On the interface of an
+    application - `ActorRuntime`, `Situation` -, which holds no document of the core, `channel` and
+    `session` are the readers of the entity, in the name of a piece of work (`ChannelReader`,
+    `SessionReader`, issue 516).
 *   **Found by id, by name, for someone.** What a running object holds is found by its id under the
     plain name of what it is (`SessionLoop::channel(id)`, `ChannelLoop::actor(id)`), by its name
     with `_named` (`SessionLoop::channel_named`, `ChannelLoop::agents_named`), and in someone's

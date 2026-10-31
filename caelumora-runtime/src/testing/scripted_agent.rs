@@ -199,8 +199,8 @@ impl ScriptedAgent {
         if let Ok(mut current) = self.state.lock() {
             *current = state;
         }
-        let channel = self.runtime.channel();
-        Answering::own(channel.session_id, channel.id, self.id, self.name.clone())
+        let (session, channel) = (self.runtime.session_id(), self.runtime.channel_id());
+        Answering::own(session, channel, self.id, self.name.clone())
             .send_all(vec![ActorEvent::StateChanged(state)], output)
             .await;
     }

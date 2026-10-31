@@ -2918,6 +2918,15 @@ mod tests {
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
+    /// The session of `channel` as `actor` reads it from there, at the channel's classification,
+    /// in its own name - as the work of an agent reads it (`AgentRuntime`, issue 163).
+    async fn read_from(channel: &ChannelLoop, actor: ActorId) -> ViewResult<SessionView> {
+        let session = channel.session_loop().expect("its session runs");
+        let from = Place::of(&channel.channel(), session.privacy());
+        let context = SecurityContext::new(actor, session.id(), channel.id());
+        session.views(Viewer::from_place(context, from)).session(session.id()).await
+    }
+
     #[tokio::test]
     async fn a_reader_knows_the_privacy_of_its_session_and_looks_up_others() {
         use caelumora_model::actor::ActorId;
@@ -2942,18 +2951,10 @@ mod tests {
         .await;
 
         let channel = Arc::clone(&hers.channels()[0]);
-        let runtime = participant_runtime_in(&channel, alice_id);
-        let session = runtime
-            .session(alice_id, channel.classification())
-            .await
-            .expect("hers to read")
-            .expect("attached to its session");
+        let session = read_from(&channel, alice_id).await.expect("hers to read");
         let stranger = ActorId::Agent(AgentId::new());
         assert!(
-            participant_runtime_in(&channel, stranger)
-                .session(stranger, channel.classification())
-                .await
-                .is_err(),
+            read_from(&channel, stranger).await.is_err(),
             "reached by who may read it alone (issue 304)"
         );
 
@@ -3043,35 +3044,26 @@ mod tests {
             "the channel's, unless classified otherwise"
         );
 
-        // Read as an agent in another channel reads: through its actor's runtime.
+        // Read as an agent's work in another channel reads.
         let reading_from = |channel: &Arc<ChannelLoop>| {
-            let runtime = participant_runtime_in(channel, alice_id);
-            let classification = channel.classification();
-            async move {
-                runtime
-                    .session(alice_id, classification)
-                    .await
-                    .expect("hers to read")
-                    .expect("attached to its session")
-            }
+            let channel = Arc::clone(channel);
+            async move { read_from(&channel, alice_id).await.expect("hers to read") }
         };
         let read = whole(
-            reading_from(&finance)
+            &reading_from(&finance)
                 .await
                 .channel_named("hr")
                 .await
-                .expect("reachable for what was released")
-                .as_ref(),
+                .expect("reachable for what was released"),
         )
         .await
         .expect("what was released to finance");
         let texts: Vec<_> =
             messages(&read).iter().map(|m| m.content.clone().unwrap_or_default()).collect();
         assert_eq!(texts, ["for finance too"], "only what was released");
-        let nothing = whole(
-            reading_from(&team).await.channel_named("hr").await.expect("reachable, but").as_ref(),
-        )
-        .await;
+        let nothing =
+            whole(&reading_from(&team).await.channel_named("hr").await.expect("reachable, but"))
+                .await;
         assert!(
             matches!(nothing, Err(ViewError::NoChannelNamed(_))),
             "nothing was released to a general channel"

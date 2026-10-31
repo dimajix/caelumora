@@ -169,7 +169,7 @@ async fn place_of(
         })?;
     let channel = turn
         .situation()
-        .own_channel()
+        .channel()
         .await?
         .ok_or_else(|| ToolError::ExecutionFailed("the turn is in no channel".to_string()))?;
     Ok((place, channel))

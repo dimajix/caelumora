@@ -697,6 +697,17 @@ left out where the core collects an agent's commands -, `workspace_terminal`, `w
    `caelumora-runtime/src/runtime/{actor,channel,mod}.rs`, `runtime/src/actor/kinds.rs`,
    `runtime/src/channel/participants.rs`, `caelumora-agents/src/actor/*`, `situation.rs`,
    `turn/*.rs`, the tests that build a `Turn`.
+5. **Each runtime its own.** Added after step 5b.4: what only an agent asks leaves the
+   `ParticipantRuntime` for `AgentRuntime`, which implements it instead of passing it on - the
+   agent's state in its channel and its transcript, the attachments, its session, its extensions,
+   the decisions of its work, the secrets, the texts and its components -, so that the
+   `ParticipantRuntime` keeps what every participant needs: the context it acts in, the
+   controllers, the channel, its events, the managers the core's actors use. `CallPermit` and
+   `OwnRecord` move to the trait. The trait reads its own channel as it reads its session, through
+   a reader (`ActorRuntime::channel`, which `Situation::own_channel` asks), and hands out the ids
+   (`session_id`, `channel_id`) and the channel's classification directly; the channel's document
+   leaves it. Files: `caelumora-runtime/src/runtime/{actor,agent}.rs`, the actors of the core, the
+   views' tests that read through a runtime, `caelumora-agents/src/{actor/*,situation}.rs`.
 
 Memory becomes a system service of its own after this issue, in an issue of its own: its
 entries leave the agent's state, a reader hands out only those that may be recalled where the
@@ -733,9 +744,16 @@ service and the application never holds an entry it may not recall.
     attachment for a message stay the core's.
 11. Accessors of the readers without `…_view`: `Situation::session` for the session; the reader
     of the agent's own channel next to `Situation::channel`, the channel's document - recommended
-    `Situation::own_channel`. Taken on 2026-10-31 as recommended.
+    `Situation::own_channel`. Taken on 2026-10-31 as recommended; revised the same day, after
+    step 5b.5: the document left the situation and the trait, so that the reader is
+    `Situation::channel`, as `ActorRuntime::channel` is.
 12. Whether `SkillCatalogue` is renamed `SkillReader` as it is cut, as the pattern names its faces
     (recommended). Taken on 2026-10-31 as recommended.
+13. Whether the methods only an agent asks leave the `ParticipantRuntime` for `AgentRuntime`
+    (*The steps of 5b*, 5), and the trait reads its channel through a reader beside its session,
+    with the ids and the classification apart. Taken on 2026-10-31: both; `ActorRuntime` keeps its
+    name, as other actors of applications may come; an agent's command that a command of its
+    session hides is refused without naming the component that provides it.
 
 ## Done when
 
@@ -1036,3 +1054,25 @@ service and the application never holds an entry it may not recall.
   `ParticipantRuntime` are named after it (`new_participant_runtime`, `participant_runtime_in`,
   `detached_participant_in`), and tests change a session's rules through
   `ChannelRuntime::session_controller_of`. Stored data: none.
+- **2026-10-31** — Step 5b.4 accepted. The maintainer took decision 13: what only an agent asks
+  moves into `AgentRuntime`, and the trait reads its own channel through a reader, as it reads its
+  session, handing out the ids and the classification directly - planned as step 5b.5 (*The steps
+  of 5b*, 5).
+- **2026-10-31** — Step 5b.5 done on the branch: each runtime its own. `AgentRuntime` answers
+  what only an agent asks itself - its state in the channel and its transcript, the attachments of
+  its messages, its session and its channel to read, its extensions, the decisions of its work,
+  the secrets, the texts and its components - and asks its participant's runtime for the context
+  it acts in, the controllers and the channel's loop. The `ParticipantRuntime` keeps what every
+  participant needs: the context, the controllers, the channel, its events and the managers the
+  core's actors use; what it answered of an agent's state for a user - an error - is gone with it.
+  `CallPermit` and `OwnRecord` lie beside the trait. The trait reads its own channel through a
+  reader (`ActorRuntime::channel`, which `Situation::own_channel` asks), and hands out
+  `session_id`, `channel_id` and `channel_classification`; the channel's document left it. The
+  views' tests that read a session through a user's runtime read it from the channel's place, as
+  an agent's work does. `AgentRuntime` holds the runtime of the process itself, as the channel's
+  runtime does, taken once from its participant's, and asks every service of it.
+  `ParticipantRuntime::actor_id`, `channel` and `subscribe_channel` are `pub(crate)`: nothing
+  outside the core asks them. After the review of the step, decided with the maintainer: the
+  reader of the agent's own channel is `Situation::channel`, as on the trait (decision 11
+  revised), and CODING-GUIDELINES names the readers the interface of an application calls by the
+  entity's name. Stored data: none.

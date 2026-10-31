@@ -218,7 +218,7 @@ modification does not take it over: a changed message stays in the turn it was p
 Beside its state, a turn reaches its session through its readers (`Situation::session`), from which
 components read other channels as the confidentiality rules allow - at the classification the turn
 began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The readers only read: its session
-and its own channel (`Situation::session`, `own_channel`) are the readers of views (`SessionReader`,
+and its own channel (`Situation::session`, `channel`) are the readers of views (`SessionReader`,
 `ChannelReader`, issue 516), named after what they read, and answer alike - nothing where the work
 reaches no session, an error where it may not read what it reaches. What is done with the
 workspace's files goes through a handle instead, named after the handle: its terminal, to read them,

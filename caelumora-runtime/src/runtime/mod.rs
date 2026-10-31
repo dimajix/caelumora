@@ -8,8 +8,8 @@
 //! - A `ChannelRuntime` (`channel`) is what a channel is built with: the
 //!   services it reads once, by name, the user commands and controller of
 //!   its session, and a handle to the channel itself (issues 360, 361).
-//! - A `ParticipantRuntime` (`actor`) is what an actor runs with: the services
-//!   every actor needs and what concerns this actor alone (issues 69, 359).
+//! - A `ParticipantRuntime` (`actor`) is what a participant's actor runs with: the context it
+//!   acts in and what concerns this actor alone (issues 69, 359, 516).
 //! - An `ActorRuntime` (`agent`) is what the actor of an agent of an application runs with: the
 //!   one interface its kind is given, which the core's `AgentRuntime` serves (issue 516).
 //! - What the plugins bind to the views of an application's work is kept as
@@ -22,8 +22,8 @@ mod channel;
 mod extension;
 mod manager;
 
-pub use actor::{CallPermit, OwnRecord, ParticipantRuntime};
-pub use agent::{ActorRuntime, AgentRuntime};
+pub use actor::ParticipantRuntime;
+pub use agent::{ActorRuntime, AgentRuntime, CallPermit, OwnRecord};
 pub use builder::RuntimeBuilder;
 pub use channel::ChannelRuntime;
 pub(crate) use extension::Face;

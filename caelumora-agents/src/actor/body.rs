@@ -248,7 +248,7 @@ impl AgentBody {
             warn!(
                 "Agent {} cannot store its state in channel {}: {:#}",
                 self.agent_id(),
-                self.runtime.channel().id,
+                self.runtime.channel_id(),
                 e
             );
         }
@@ -321,8 +321,8 @@ impl AgentBody {
     /// The context the agent speaks in of itself, nobody having asked: in its channel, its own
     /// initiator (`Answering::own`).
     pub(super) fn own(&self) -> Answering {
-        let channel = self.runtime.channel();
-        Answering::own(channel.session_id, channel.id, self.id(), self.name())
+        let (session, channel) = (self.runtime.session_id(), self.runtime.channel_id());
+        Answering::own(session, channel, self.id(), self.name())
     }
 }
 

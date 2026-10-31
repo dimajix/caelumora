@@ -327,7 +327,7 @@ impl PromptProvider for NotesComponent {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let own = ActorId::Agent(situation.agent_id());
         let mut others = Vec::new();
-        let published = match situation.own_channel().await {
+        let published = match situation.channel().await {
             Ok(Some(channel)) => channel.notes().await,
             Ok(None) => Ok(Vec::new()),
             Err(e) => Err(e),

@@ -118,14 +118,14 @@ impl<'a> Situation<'a> {
         self.runtime.writer::<T>(self.initiator(), classification).await.is_some()
     }
 
-    /// The agent's channel as the work reads it from there (`session`, `SessionReader::channel`,
-    /// issue 399): its participants, its notes. `None` where the work reaches no session.
+    /// The agent's channel as the work reads it from there (`ActorRuntime::channel`, issue 399):
+    /// its participants, its notes, at the classification the work began with. `None` where the
+    /// work reaches no session.
     ///
     /// # Errors
     /// What following the views to it reports.
-    pub async fn own_channel(&self) -> ViewResult<Option<Box<dyn ChannelReader>>> {
-        let Some(session) = self.session().await? else { return Ok(None) };
-        session.channel(self.channel_id()).await.map(Some)
+    pub async fn channel(&self) -> ViewResult<Option<Box<dyn ChannelReader>>> {
+        self.runtime.channel(self.initiator(), self.work.classification.clone()).await
     }
 
     /// The agent's state in this channel as it stands: what components read
