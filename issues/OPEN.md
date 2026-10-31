@@ -62,6 +62,12 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [378](378-resource-management-epic.md) | open | medium | epic | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
+## Code structure
+
+| No. | Status | Priority | Type | Issue |
+|---|---|---|---|---|
+| [516](516-the-runtime-trusts-the-agents-linked-into-it.md) | open | medium | refactoring | The runtime trusts the agents linked into it: an agent builds its own `SecurityContext`, sets the one its envelopes are checked by, reaches the policies and the managers through an open registry of services, and decides itself whether its owner is asked before a tool runs - nothing in the code says which side of the trust boundary a piece of it stands on. |
+
 ## Low priority
 
 | No. | Status | Priority | Type | Issue |
