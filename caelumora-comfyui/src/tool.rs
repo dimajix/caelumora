@@ -19,7 +19,7 @@ use caelumora_model::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, T
 use caelumora_model::value::identifier::Identifier;
 use caelumora_runtime::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult,
+    ComponentResult, Params,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -56,6 +56,23 @@ struct ComfyUiToolConfig {
     description: Option<String>,
 }
 
+impl Params for ComfyUiToolConfig {
+    /// # Errors
+    /// `InvalidConfig` for an endpoint with authentication, or no workflow.
+    fn check(&self) -> ComponentResult<()> {
+        if self.endpoint.auth.is_some() {
+            return Err(ComponentError::InvalidConfig(
+                "'endpoint.auth' is not supported: ComfyUI is reached without authentication"
+                    .to_string(),
+            ));
+        }
+        if self.workflows.is_empty() {
+            return Err(ComponentError::InvalidConfig("'workflows' names none".to_string()));
+        }
+        Ok(())
+    }
+}
+
 fn approved_by_none() -> ApprovalMode {
     ApprovalMode::Never
 }
@@ -83,23 +100,17 @@ struct ComfyUiTool {
 }
 
 impl ComfyUiTool {
-    /// The tool configured by `config`, over those of `workflows` it names, its texts from
-    /// `prompts`.
+    /// The tool configured by `config`, as its parameters checked it (`ComfyUiToolConfig`), over
+    /// those of `workflows` it names, its texts from `prompts`.
     ///
     /// # Errors
-    /// `InvalidConfig` for an endpoint with authentication, no workflow, or one `workflows` does
-    /// not have; what a text that cannot be had reports.
+    /// `InvalidConfig` for a workflow `workflows` does not have; what a text that cannot be had
+    /// reports.
     fn new(
         config: ComfyUiToolConfig,
         workflows: &Workflows,
         prompts: &PromptTexts,
     ) -> ComponentResult<Self> {
-        if config.endpoint.auth.is_some() {
-            return Err(ComponentError::InvalidConfig(
-                "'endpoint.auth' is not supported: ComfyUI is reached without authentication"
-                    .to_string(),
-            ));
-        }
         let offered = config
             .workflows
             .iter()
@@ -236,6 +247,7 @@ pub(crate) fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(COMFYUI_TOOL_KIND)
+                .params::<ComfyUiToolConfig>()
                 .provides::<dyn ToolProvider>()
                 .uses::<Workflows>(),
         ),
@@ -578,7 +590,7 @@ mod tests {
         assert!(refused(authenticated).contains("endpoint.auth"));
         assert!(refused(with(json!(["flux"]))).contains("'flux'"));
         assert!(refused(with(json!([]))).contains("names none"));
-        assert!(refused(with(json!(["Flux"]))).contains("invalid parameters"));
+        assert!(refused(with(json!(["Flux"]))).contains("'workflows[0]'"));
         let mut asked = with(json!(["z_image_turbo"]));
         asked["requires_approval"] = json!(true);
         assert!(built(asked).unwrap().tools()[0].requires_approval);
