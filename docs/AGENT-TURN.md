@@ -220,15 +220,17 @@ which components read other channels as the confidentiality rules allow - at the
 turn began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The readers only read: its
 session, its channel and the workspace it may use there (`Situation::session_view`, `channel_view`,
 `workspace_view`) are the readers of views (`SessionReader`, `ChannelReader`, `WorkspaceReader`,
-issue 516), named `…_view` after what they show, and answer alike - nothing where
-the work reaches no session, an error where it may not read what it reaches. The channel as it
-stands - its document, what an operation in the channel is given as its properties
-(`AttachmentManager::copy`) - is `Situation::channel`. What is done with the workspace's files goes
-through a handle instead, named after the handle: its terminal, to read them
-(`Situation::workspace_terminal`), and to change them or run commands, the turn's
-(`Turn::workspace_terminal`, `Turn::workspace_shell`). Both are reached through the actor's
-`ActorRuntime`, which the situation and the turn hold and which their components never see: they
-are given their methods (issue 370).
+issue 516), named `…_view` after what they show, and answer alike - nothing where the work reaches
+no session, an error where it may not read what it reaches. The channel as it stands - its document,
+what an operation in the channel is given as its properties (`AttachmentManager::copy`) - is
+`Situation::channel`. What is done with the workspace's files goes through a handle instead, named
+after the handle: its terminal, to read them (`Situation::workspace_terminal`), and to change them
+or run commands, the turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`). What a plugin of
+the core offers the work of its kind - the skills' `SkillCatalogue`, the artifacts'
+`ArtifactPublisher` - is `Situation::extension`: the plugin's service, bound to the views of the
+work, asking `GetSession` as `session_view` does, and `None` where the work reaches no session or
+may not read it (issue 516). All are reached through the actor's `ActorRuntime`, which the situation
+and the turn hold and which their components never see: they are given their methods (issue 370).
 
 ### Beginning and ending a turn
 

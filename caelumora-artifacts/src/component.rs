@@ -8,11 +8,11 @@
 //! The workspace is reached as `terminal_tool` reaches it, through the
 //! turn's channel (`Turn::workspace_terminal`, issue 344), for
 //! reading; the file read is handed to the `ArtifactPublisher` the plugin
-//! bound to the turn's reading (issue 516). Its tool is offered where a file can be
-//! published (issue 290): where the turn may use a workspace in its
-//! channel, and a storage of content is configured; a call is checked again
-//! all the same, and fails and says so. The result is classified as the
-//! artifact, which is classified as the workspace.
+//! binds to the views of the turn's work (issue 516). Its tool is offered
+//! where a file can be published (issue 290): where the turn may use a
+//! workspace in its channel, and a storage of content is configured; a call
+//! is checked again all the same, and fails and says so. The result is
+//! classified as the artifact, which is classified as the workspace.
 
 use crate::manager::ArtifactError;
 use crate::publisher::ArtifactPublisher;
@@ -146,11 +146,11 @@ impl ToolProvider for ArtifactTool {
     /// workspace in its channel, and a storage of content is configured
     /// (issues 290, 282).
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        if let Ok(Some(session)) = situation.session_view().await {
-            let publisher = session.extension::<dyn ArtifactPublisher>();
-            if !publisher.is_some_and(|publisher| publisher.is_configured()) {
-                return Err("no storage of content is configured".to_string());
-            }
+        // No publisher is bound where the work reaches no session; `usable_workspace` then refuses
+        // the tool.
+        let publisher = situation.extension::<dyn ArtifactPublisher>().await;
+        if publisher.is_some_and(|publisher| !publisher.is_configured()) {
+            return Err("no storage of content is configured".to_string());
         }
         usable_workspace(situation).await?;
         Ok(self.tools())
@@ -194,8 +194,11 @@ impl ToolProvider for ArtifactTool {
             .map_err(ArtifactError::from)?;
         let (workspace, terminal) = turn.workspace_terminal(Grant::Read).await?;
         let content = terminal.read(&at).await?;
-        let publisher =
-            session.extension::<dyn ArtifactPublisher>().ok_or(ArtifactError::NotJoined)?;
+        let publisher = turn
+            .situation()
+            .extension::<dyn ArtifactPublisher>()
+            .await
+            .ok_or(ArtifactError::NotJoined)?;
         let (artifact, number) = publisher
             .publish(channel, content, &workspace.classification, &name, description)
             .await?;

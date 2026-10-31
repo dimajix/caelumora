@@ -1,9 +1,9 @@
 //! How skills are joined to the runtime (issue 323): the store of their
 //! kind, the `SkillManager` as a service - what the views and the routes
 //! reach it by - and as a member of a scope, the `SkillCatalogue` bound to
-//! every reading of an application - what the component reaches skills by
-//! (issue 516) -, the `skills` component, and the section `skills` of the
-//! seed files.
+//! the views of an application's work - what the component reaches skills
+//! by (issue 516) -, the `skills` component, and the section `skills` of
+//! the seed files.
 
 use crate::catalogue::SkillCatalogue;
 use crate::component;

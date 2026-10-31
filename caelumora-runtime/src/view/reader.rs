@@ -1,7 +1,8 @@
 //! What an application reads of its session (issue 516): the readers, each the part of a view an
-//! agent's work reads through, and the extensions a plugin of the core binds to a reading. The
-//! views implement the readers and keep their full surface for the frontends; an application is
-//! handed a reader, never a view, so it reaches no policy, no manager and no context through it.
+//! agent's work reads through, and the extensions a plugin of the core binds to the views of a
+//! piece of work. The views implement the readers and keep their full surface for the frontends;
+//! an application is handed a reader, never a view, so it reaches no policy, no manager and no
+//! context through it.
 
 use super::WorkspaceView;
 use super::{ChannelView, ParticipantView, PrivateNotesElsewhere, SessionView, ViewResult, Views};
@@ -19,12 +20,12 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PublishedNotes;
 use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
-use caelumora_model::type_map::TypeKey;
+use caelumora_model::type_map::{ErasedArc, TypeKey};
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::value::text::{Briefing, Description, Summary};
 use caelumora_model::workspace::WorkspaceId;
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -61,18 +62,6 @@ pub trait SessionReader: Send + Sync {
 
     /// How session `id` stands for the flow rule now, `None` if it is gone (issue 134).
     async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>>;
-
-    /// The extension of the type `key` names that a plugin of the core bound to this reading, as
-    /// an `Arc` of it in an `Any` (`ReaderExtensions`); what `extension` asks.
-    fn extension_of(&self, key: TypeKey) -> Option<Arc<dyn Any + Send + Sync>>;
-}
-
-impl dyn SessionReader + '_ {
-    /// The extension `T` a plugin of the core bound to this reading (`ReaderExtensions`), if one
-    /// did: the plugin's service in the reader's name.
-    pub fn extension<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        self.extension_of(TypeKey::of::<T>())?.downcast_ref::<Arc<T>>().cloned()
-    }
 }
 
 /// A channel as an agent's work reads it (`ChannelView`): as a whole, or what of it it may read.
@@ -174,16 +163,16 @@ pub trait WorkspaceReader: Send + Sync {
     async fn may_write(&self) -> bool;
 }
 
-/// What the plugins of the core bind to a reading (issue 516), each by the type of what it binds:
-/// a service of the plugin's, made from the views the reading stands on, and so acting in the
-/// reader's name. An application asks a reader for it (`extension`); it names the service's
-/// trait, never the plugin's manager or the views.
+/// What the plugins of the core bind to the views of an application's work (issue 516), each by
+/// the type of what it binds: a service of the plugin's, made from the views, and so acting in
+/// their viewer's name. An application asks its runtime for it (`ActorRuntime::extension_of`); it
+/// names the service's trait, never the plugin's manager or the views.
 #[derive(Default)]
 pub(crate) struct ReaderExtensions {
     binders: HashMap<TypeId, Binder>,
 }
 
-type Binder = Arc<dyn Fn(&Views) -> Arc<dyn Any + Send + Sync> + Send + Sync>;
+type Binder = Arc<dyn Fn(&Views) -> ErasedArc + Send + Sync>;
 
 impl fmt::Debug for ReaderExtensions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -192,18 +181,18 @@ impl fmt::Debug for ReaderExtensions {
 }
 
 impl ReaderExtensions {
-    /// Binds `T` to every reading by `bind`. A `T` bound before is replaced.
+    /// Binds `T` to the views of every piece of work by `bind`. A `T` bound before is replaced.
     pub(crate) fn insert<T, F>(&mut self, bind: F)
     where
         T: ?Sized + Send + Sync + 'static,
         F: Fn(&Views) -> Arc<T> + Send + Sync + 'static,
     {
-        let binder: Binder = Arc::new(move |views| Arc::new(bind(views)));
+        let binder: Binder = Arc::new(move |views| ErasedArc::of(bind(views)));
         self.binders.insert(TypeKey::of::<T>().id, binder);
     }
 
-    /// What is bound as the type `key` names to the reading of `views`, if anything is.
-    fn bind(&self, key: TypeKey, views: &Views) -> Option<Arc<dyn Any + Send + Sync>> {
+    /// What is bound as the type `key` names, made from `views`, if anything is.
+    pub(crate) fn bind(&self, key: TypeKey, views: &Views) -> Option<ErasedArc> {
         self.binders.get(&key.id).map(|bind| bind(views))
     }
 }
@@ -249,10 +238,6 @@ impl SessionReader for SessionView {
 
     async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>> {
         self.views().privacy_of(id).await
-    }
-
-    fn extension_of(&self, key: TypeKey) -> Option<Arc<dyn Any + Send + Sync>> {
-        self.views().extensions().bind(key, self.views())
     }
 }
 

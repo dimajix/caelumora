@@ -374,18 +374,18 @@ for a look now, an artifact for a result to be kept.
 
 It is offered where a file can be published: where the turn may use a workspace in its channel and a
 storage of content is configured. The file is read from the workspace as the file tools read it and
-handed to the `ArtifactPublisher` the plugin binds to the turn's reading (issue 516). It publishes
-in the name of whoever the agent acts for: its owner, who makes the artifact (`CreateArtifact`) or
-adds a version where the artifact's list lets them (`WriteArtifact`), asked before anything is
-kept - and who reads the project it goes into (`GetProject`), which the session's participants do.
-The participants of the channel it is published in read the version, and the artifact, which reading
-a version needs as well (issue 316); the members of the project read the artifact alone. An artifact
-is published into the scope of the project the session's results go to (issue 467) under its name,
-made with its first version and given one more by every later publication under that name. It is
-classified as the workspace, fixed with its first version; a later version from a workspace
-classified otherwise is refused. A storage takes nothing above its `destination`. Publishing changes
-what is kept, so it is approved where changes are; the approver reads which file is published as
-which artifact.
+handed to the `ArtifactPublisher` the plugin binds to the views of the turn's work (issue 516). It
+publishes in the name of whoever the agent acts for: its owner, who makes the artifact
+(`CreateArtifact`) or adds a version where the artifact's list lets them (`WriteArtifact`), asked
+before anything is kept - and who reads the project it goes into (`GetProject`), which the session's
+participants do. The participants of the channel it is published in read the version, and the
+artifact, which reading a version needs as well (issue 316); the members of the project read the
+artifact alone. An artifact is published into the scope of the project the session's results go to
+(issue 467) under its name, made with its first version and given one more by every later
+publication under that name. It is classified as the workspace, fixed with its first version; a
+later version from a workspace classified otherwise is refused. A storage takes nothing above its
+`destination`. Publishing changes what is kept, so it is approved where changes are; the approver
+reads which file is published as which artifact.
 
 The participants of the channel download the version published there, wherever they act; whom the
 owner shares the artifact with read the versions there are as they share it; its owner reads every

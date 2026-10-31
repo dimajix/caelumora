@@ -1,7 +1,7 @@
 //! What an agent's work does with skills (issue 516): the skills it may load where it reads from,
 //! and those of its owner it writes - the plugin's service an application reaches, bound by the
-//! plugin to every reading (`SessionReader::extension`), so that it acts in the reader's name. The
-//! component of skills names this trait, never the `SkillManager` or the views.
+//! plugin to the views of every piece of work (`Situation::extension`), so that it acts as the work
+//! reads. The component of skills names this trait, never the `SkillManager` or the views.
 
 use crate::access::SkillAccess;
 use crate::manager::{SkillError, SkillResult};
@@ -14,7 +14,7 @@ use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::value::name::Name;
 use caelumora_runtime::view::Views;
 
-/// The skills an agent's work reads and writes where it reads from, in the reader's name.
+/// The skills an agent's work reads and writes where it reads from, as the work reads.
 #[async_trait]
 pub trait SkillCatalogue: Send + Sync {
     /// The skills the reader may load where it reads from (issue 22): of those the store lists
@@ -72,7 +72,7 @@ pub trait SkillCatalogue: Send + Sync {
     async fn rewrite(&self, id: SkillId, body: &str) -> SkillResult<Skill>;
 }
 
-/// The catalogue of the views a reading stands on, in their viewer's name: what the plugin binds.
+/// The catalogue of the views of a piece of work, in their viewer's name: what the plugin binds.
 #[async_trait]
 impl SkillCatalogue for Views {
     async fn usable_skills(&self) -> SkillResult<Vec<Skill>> {

@@ -73,7 +73,7 @@ pub struct RuntimeBuilder {
     scope_members: Vec<Arc<dyn ScopedKind>>,
     scope_holders: Arc<ScopeHolders>,
     services: Services,
-    /// What the plugins bind to an application's reading (issue 516).
+    /// What the plugins bind to the views of an application's work (issue 516).
     reader_extensions: ReaderExtensions,
     /// The texts given to models, to which the plugins add theirs (issue
     /// 57); a service once the runtime is built.
@@ -394,9 +394,9 @@ impl RuntimeBuilder {
         self.services.insert(service);
     }
 
-    /// Binds `T` to every reading of an application (`SessionReader::extension`, issue 516): a
-    /// plugin's service, made by `bind` from the views the reading stands on, so that it acts in
-    /// the reader's name. A `T` bound before is replaced.
+    /// Binds `T` to the views of every piece of work of an application
+    /// (`ActorRuntime::extension_of`, issue 516): a plugin's service, made by `bind` from the
+    /// views, so that it acts as the work reads. A `T` bound before is replaced.
     pub fn extend_readers<T, F>(&mut self, bind: F)
     where
         T: ?Sized + Send + Sync + 'static,
@@ -497,7 +497,7 @@ impl RuntimeBuilder {
             actors: Arc::new(ActorManager::new()),
             scoped,
             services: self.services,
-            reader_extensions: Arc::new(self.reader_extensions),
+            reader_extensions: self.reader_extensions,
             prompts,
             seed_sections: self.seed_sections,
         })

@@ -2,8 +2,8 @@
 //! kind, the `ArtifactManager` with the storages of content (issue 282) and
 //! the section `artifacts` of the configuration, as a service - what the
 //! views and the routes reach it by - and as a member of a scope, the
-//! `ArtifactPublisher` bound to every reading of an application - what the
-//! component publishes through (issue 516) -, and the `artifact_tool`
+//! `ArtifactPublisher` bound to the views of an application's work - what
+//! the component publishes through (issue 516) -, and the `artifact_tool`
 //! component.
 
 use crate::artifact::Artifact;

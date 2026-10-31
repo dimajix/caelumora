@@ -8,7 +8,7 @@ use crate::component::{ComponentContext, ComponentRegistry};
 use crate::controller::{ChannelController, SessionController, WorkspaceController};
 use crate::event::EventSubscription;
 use crate::terminal::{Shell, Terminal};
-use crate::view::{SessionReader, ViewResult, Viewer};
+use crate::view::{SessionReader, ViewResult, Viewer, Views};
 use crate::workspace::{WorkspaceError, WorkspaceResult};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
@@ -32,6 +32,7 @@ use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
 use caelumora_model::tool::{ToolCall, ToolMedia};
+use caelumora_model::type_map::{ErasedArc, TypeKey};
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::Workspace;
 use chrono::Utc;
@@ -343,16 +344,36 @@ impl ActorRuntime {
         initiator: ActorId,
         classification: Classification,
     ) -> ViewResult<Option<Box<dyn SessionReader>>> {
-        let context = &self.acting_for(initiator);
-        let Some(session_loop) = self.channel_loop().and_then(|channel| channel.session_loop())
-        else {
-            return Ok(None);
-        };
+        let Some(views) = self.views_of_work(initiator, classification) else { return Ok(None) };
+        let session = views.session(self.session_id).await?;
+        Ok(Some(Box::new(session)))
+    }
+
+    /// The extension of the type `key` names that a plugin of the core binds to the views of the
+    /// actor's work for `initiator` at `classification` (`RuntimeBuilder::extend_readers`, issue
+    /// 516): the plugin's service, acting as `session_view` reads. Its session is reached as
+    /// `session_view` reaches it - asking `GetSession` - and not handed out. `None` if no plugin
+    /// binds one, if the actor may not read its session, or while the channel is not attached to
+    /// it.
+    pub async fn extension_of(
+        &self,
+        initiator: ActorId,
+        classification: Classification,
+        key: TypeKey,
+    ) -> Option<ErasedArc> {
+        let views = self.views_of_work(initiator, classification)?;
+        views.session(self.session_id).await.ok()?;
+        self.runtime.runtime_manager.reader_extensions().bind(key, &views)
+    }
+
+    /// The views a piece of work of the actor reads through, for `initiator`, from its channel at
+    /// `classification`: in its context, from its place. `None` while the channel is still being
+    /// built or once it or its session is gone.
+    fn views_of_work(&self, initiator: ActorId, classification: Classification) -> Option<Views> {
+        let session_loop = self.channel_loop()?.session_loop()?;
         let from =
             Place { channel: self.channel_id, classification, session: session_loop.privacy() };
-        let views = session_loop.views(Viewer::from_place(context.clone(), from));
-        let session = views.session(session_loop.id()).await?;
-        Ok(Some(Box::new(session)))
+        Some(session_loop.views(Viewer::from_place(self.acting_for(initiator), from)))
     }
 
     /// The classification of the actor's channel as it is now, which what
@@ -574,9 +595,8 @@ mod tests {
     use crate::session::testing::test_runtime;
     use crate::testing::{actor_runtime_in, Script, ScriptedAgents, World, STAFF};
     use caelumora_model::channel::testing::bare_channel;
-    use caelumora_model::event::GlobalEvent;
     use caelumora_model::session::testing::bare_session;
-    use caelumora_model::user::{User, UserId, UserUpdateEvent};
+    use caelumora_model::user::UserId;
 
     fn channel_runtime() -> ChannelRuntime {
         let session = bare_session(SessionId::new());
@@ -622,16 +642,7 @@ mod tests {
             "as its owner's agent, for who asked"
         );
         assert_eq!(context.roles, [*STAFF], "with her roles");
-        world
-            .runtime
-            .controller_manager()
-            .user_controller(world.alice)
-            .await
-            .unwrap()
-            .process_global_event(&GlobalEvent::updated::<User>(
-                &world.alice,
-                &UserUpdateEvent::RolesChanged(Vec::new()),
-            ));
+        world.take_roles(world.alice).await;
         assert!(runtime.acting_for(bob).roles.is_empty(), "not any more, at the next call");
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }

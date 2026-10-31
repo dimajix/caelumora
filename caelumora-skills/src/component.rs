@@ -32,7 +32,7 @@
 //! be loaded (`KnowledgeRestorer`, issue 323).
 
 use crate::catalogue::SkillCatalogue;
-use crate::manager::{SkillError, SkillResult};
+use crate::manager::SkillError;
 use crate::skill::{Skill, SkillId};
 use crate::NAMESPACE;
 use async_trait::async_trait;
@@ -59,7 +59,6 @@ use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_runtime::component::{
     config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
 };
-use caelumora_runtime::view::SessionReader;
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;
@@ -116,21 +115,17 @@ fn joined(skills: &[Skill], bound: &Classification) -> Classification {
     })
 }
 
-/// The skills of `session`, as the plugin bound them to its reading (issue 516).
-///
-/// # Errors
-/// `NotJoined` if the runtime was built without the plugin.
-fn catalogue_of(session: &dyn SessionReader) -> SkillResult<Arc<dyn SkillCatalogue>> {
-    session.extension::<dyn SkillCatalogue>().ok_or(SkillError::NotJoined)
+/// The skills `situation` reaches, as the plugin binds them to the views of its work
+/// (`Situation::extension`, issue 516); `None` for work that reaches no session, which has none.
+async fn catalogue_of(situation: &Situation<'_>) -> Option<Arc<dyn SkillCatalogue>> {
+    situation.extension::<dyn SkillCatalogue>().await
 }
 
-/// The skills `turn` reaches from its session (`Situation::session_view`); a turn that reaches
-/// none has no skills.
+/// The skills `turn` reaches (`catalogue_of`).
 async fn skills_of(turn: &Turn<'_>) -> Result<Arc<dyn SkillCatalogue>, ToolError> {
-    let session = turn.situation().session_view().await?.ok_or_else(|| {
+    catalogue_of(&turn.situation()).await.ok_or_else(|| {
         ToolError::ExecutionFailed("the turn is in no session to load skills in".to_string())
-    })?;
-    Ok(catalogue_of(session.as_ref())?)
+    })
 }
 
 /// What `create_skill` is called with.
@@ -327,10 +322,10 @@ impl PromptProvider for SkillsComponent {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        let Some(session) = situation.session_view().await? else {
+        let Some(skills) = catalogue_of(situation).await else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
-        let skills = catalogue_of(session.as_ref())?.usable_skills().await?;
+        let skills = skills.usable_skills().await?;
         let classification = joined(&skills, &situation.classification());
         Ok(Prompt::classified(self.catalogue(&skills)?, classification))
     }
@@ -533,22 +528,12 @@ impl AgentCommandProvider for SkillsComponent {
             command: name.to_string(),
             reason: reason.to_string(),
         };
-        let session = turn
-            .situation()
-            .session_view()
+        let skills = catalogue_of(&turn.situation())
             .await
-            .map_err(|e| {
-                warn!("/{} could not read the agent's session: {:#}", name, e);
-                failed("the agent's session could not be read")
-            })?
             .ok_or_else(|| failed("the agent is in no session"))?;
         match name {
             SKILLS_COMMAND_NAME => {
-                let skills = catalogue_of(session.as_ref())
-                    .map_err(|e| command_error(name, e))?
-                    .usable_skills()
-                    .await
-                    .map_err(|e| command_error(name, e))?;
+                let skills = skills.usable_skills().await.map_err(|e| command_error(name, e))?;
                 let text = match skills.is_empty() {
                     true => format!("{} can load no skills here.", turn.agent_name()),
                     false => skills.iter().fold(
@@ -566,11 +551,8 @@ impl AgentCommandProvider for SkillsComponent {
                         reason: "name the skill".to_string(),
                     });
                 }
-                let skill = catalogue_of(session.as_ref())
-                    .map_err(|e| command_error(name, e))?
-                    .usable_skill_named(wanted)
-                    .await
-                    .map_err(|e| command_error(name, e))?;
+                let skill =
+                    skills.usable_skill_named(wanted).await.map_err(|e| command_error(name, e))?;
                 // In the name of who asked, as the channel knows them.
                 let issuer = turn.situation().initiator();
                 let issuer_name = match turn.situation().channel_view().await {
@@ -622,17 +604,8 @@ impl KnowledgeRestorer for SkillsComponent {
             warn!("Agent {}: the skills it had loaded could not be read again: {:#}", agent, e);
             CompactionError::KnowledgeUnreadable
         };
-        let session = turn
-            .situation()
-            .session_view()
-            .await
-            .map_err(|e| unreadable(&e))?
-            .ok_or(CompactionError::NoSession)?;
-        let usable = catalogue_of(session.as_ref())
-            .map_err(|e| unreadable(&e))?
-            .usable_skills()
-            .await
-            .map_err(|e| unreadable(&e))?;
+        let skills = catalogue_of(&turn.situation()).await.ok_or(CompactionError::NoSession)?;
+        let usable = skills.usable_skills().await.map_err(|e| unreadable(&e))?;
         given
             .iter()
             .filter_map(|id| usable.iter().find(|skill| skill.id == SkillId::from(*id)))

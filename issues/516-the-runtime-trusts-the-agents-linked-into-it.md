@@ -563,34 +563,8 @@ some twenty methods, and a `Box` per reader handed out. Files: `caelumora-runtim
 {mod,session,channel,workspace}.rs`, `caelumora-agents/src/{situation,memory}.rs`, the components
 and prompt parts that read, `caelumora-workspace-tools/src/workspace_prompt_provider.rs`.
 
-**5b. `ActorRuntime` the trait.** The struct of today implements it and is renamed
-`ParticipantRuntime` (its one way to be made outside the tests is a participant's); the factory of
-a kind of agent is given an `Arc<dyn ActorRuntime>` alone (`AgentKinds::register`), in place of
-the two controllers and the struct. The methods, every one with a caller today:
-
-| Group | Methods |
-|---|---|
-| who | `actor_id`, `session_id`, `channel_id`; `agent() -> Arc<Agent>`, `personality() -> Arc<Personality>` as they are now |
-| the channel | `channel() -> Arc<Channel>`, `channel_classification`, `session_time_zone`, `announce_channel_state_changed` |
-| its state | `load_channel_state`, `store_channel_state`, `transcript_message`; `agent_state() -> Arc<AgentState>`, `reserve_memory_id`, `apply_agent_state(changes, anchor)` |
-| reading | `session_view(initiator, classification) -> ViewResult<Option<Box<dyn SessionReader>>>` |
-| the workspace | `workspace_terminal(initiator, grant)`, `workspace_shell(initiator)`, `max_file_bytes` |
-| attachments | `load_attachments`, `create_media`, `copy_attachment` |
-| decisions | `admit_tool_call`, `rule_denying`, `address_questions`, `may_publish`, `may_copy_information`, `may_reclassify` |
-| secrets, texts | `secrets(initiator) -> Arc<dyn Secrets>`, `prompts() -> &Arc<PromptCatalogue>` |
-| components | `build_components(config, facets) -> ComponentResult<ComponentContainer>` |
-
-Gone from the applications' sight: `services`, `component_registry`, `component_context` (the
-core builds an agent's components, `build_components`), `session_controller`,
-`channel_controller`, `command_executor` (the core leaves out an agent's command that shadows a
-session command where it collects an agent's commands, `Participants::agent_commands` and the
-door), `AgentStateHandle`. `acting_as` stays on `ParticipantRuntime`, behind `test-support`.
-Cost: an `async_trait` of some thirty methods, which every call pays a `Box` for; the tests of
-the applications keep building runtimes through the core's `test-support`, which in step 6 is a
-dev-dependency. Files: `caelumora-runtime/src/runtime/{actor,channel,mod}.rs`,
-`runtime/src/actor/kinds.rs`, `runtime/src/channel/participants.rs`, `caelumora-agents/src/actor/
-{body,agent,external_agent,commands}.rs`, `situation.rs`, `turn/*.rs`, the tests that build a
-`Turn`.
+**5b. `ActorRuntime` the trait.** Planned anew after 5a, in *Step 5b: the core and its
+extensions* below: a slim trait, extended by one generic pattern, in three steps of its own.
 
 **5c. Applications register as applications.** A trait `Application`, beside `Plugin`, with one
 method, `register(&self, application: &mut ApplicationBuilder) -> Result<()>`; the
@@ -621,6 +595,104 @@ Step 5 buys nothing a test sees: it is the shape step 6 needs, where the trait, 
 `Application` and the API layers move into `caelumora-api`. Done without step 6, it costs the
 `Box`es and the trait beside the struct and enforces nothing the script of step 4 does not.
 
+## Step 5b: the core and its extensions
+
+Decided with the maintainer on 2026-10-31, after 5a: Caelumora is a modular core - nearer the
+Windows kernel than the Linux one - whose own services are few, and which is extended by
+services that run on its side. An actor's interface to it, `ActorRuntime`, is slim in return,
+and what lies beyond it reaches an application through one generic pattern.
+
+### The core and what extends it
+
+- **The core**: sessions, channels - their door and their history, the attachments of their
+  messages, the approver that lives in them -, actors and their state, and persistence; with what
+  they need around them: security - users, groups, the context, the policies -, the event bus,
+  and projects, which sessions lie in.
+- **Its extensions**: services that run on the core's side and are optional, though an actor may
+  need one - the workspace and its terminal, secrets, skills, artifacts, and memory later. Each
+  is a **system service**: its manager decides and keeps, asking the core's policies - extended
+  by its own questions, as `SkillAccess` extends the `AccessPolicy` -, never rules of its own; its
+  views serve the frontends; and what an agent's work does with it the application reaches
+  through access traits the core binds to the work. A backend - a store, a storage, a terminal
+  provider - is no system service: it offers an application nothing.
+
+### The pattern of an extension
+
+- **Two faces.** What a work may do with a service is cut in two traits: a **reader**, what it
+  reads, handed out by the `Situation`, and a **writer**, what it acts by, handed out by the
+  `Turn` - as the workspace's terminal is today (`Situation::workspace_terminal` reads,
+  `Turn::workspace_terminal` and `workspace_shell` act). What only reads takes a `Situation`, and
+  a prompt part cannot write a skill.
+- **Bound by the core, per work.** A plugin binds each face to the views of a piece of work
+  (`RuntimeBuilder::extend_readers`, `extend_writers`); a binding may answer none - artifacts
+  without a storage of content -, so that no face carries a question of its configuration. The
+  core opens the views as `session_view` does, asking `GetSession`, and the service acts in the
+  work's context: no trait of a face takes a context or an identity.
+- **Asked for, never kept.** A face is asked for where it is used (`Situation::extension`,
+  `Turn::extension`; `Situation::offers` where only whether there is one matters) and dropped
+  after: the context it was bound in is that of the call, as decision 3 wants. What it hands out
+  is data, not an object of the core; a handle that carries a right beyond the call - the
+  terminal - is named as one.
+- **Declared.** A component kind declares the faces it needs (`ComponentKind::reads::<dyn T>()`,
+  `writes::<dyn T>()`), as it declares the services it uses; the runtime refuses to be built
+  where a declared face is bound by no plugin. A missing plugin is an error at start, not a `None`
+  in a turn.
+- **Named alike.** A reader is `…Reader`, a writer `…Writer`, as the readers of 5a are.
+
+### What `ActorRuntime` keeps
+
+| Group | Methods |
+|---|---|
+| who | `actor_id`, `session_id`, `channel_id`; `agent() -> Arc<Agent>`, `personality() -> Arc<Personality>` as they are now |
+| the channel | `channel() -> Arc<Channel>`, `channel_classification`, `session_time_zone`, `announce_channel_state_changed` |
+| its state | `load_channel_state`, `store_channel_state`, `transcript_message`; `agent_state() -> Arc<AgentState>`, `reserve_memory_id`, `apply_agent_state(changes, anchor)` - the memory's until it is an extension of its own |
+| the attachments of messages | `load_attachments`, `create_media` |
+| reading the session | `session(initiator, classification) -> Box<dyn SessionReader>` |
+| decisions | `admit_tool_call`, `rule_denying`, `address_questions`, `may_publish`, `may_copy_information`, `may_reclassify` |
+| texts, components | `prompts`, `build_components(config, facets)` |
+| extensions | `extension_of(initiator, classification, face, key) -> Option<ErasedArc>`, and on `dyn ActorRuntime` the generic `extension::<T>(...)` over it |
+
+Gone from it: `services`, `component_registry`, `component_context`, `session_controller`,
+`channel_controller`, `command_executor` - an agent's command that shadows a session command is
+left out where the core collects an agent's commands -, `workspace_terminal`, `workspace_shell`,
+`max_file_bytes`, `copy_attachment` and `secrets`, which become extensions. `acting_as` stays on
+`ParticipantRuntime`, behind `test-support`.
+
+### The steps of 5b
+
+1. **The pattern.** Two faces, bindings that may answer none, `Situation::extension`,
+   `Turn::extension` and `Situation::offers`, the declaration and the check at build; `ErasedArc`
+   keeps what is bound. Skills and artifacts are its first users: `SkillCatalogue` is cut into
+   `SkillReader` (`usable_skills`, `usable_skill_named`) and `SkillWriter` (`owner_scope`,
+   `create`, `reclassify`, `describe`, `rewrite`), `ArtifactPublisher` is a writer, bound only
+   where a storage of content is configured, and `is_configured` goes. The rule goes into
+   PLUGINS.md (*What a component kind outside the core may use*) and the system service into
+   ARCHITECTURE.md. Files: `caelumora-runtime/src/view/reader.rs`, the runtime's
+   `runtime/{actor,builder,manager}.rs` and `component/` (the declaration),
+   `caelumora-agents/src/{situation,turn/mod}.rs`, the catalogue, publisher, component and plugin
+   of skills and artifacts.
+2. **The core's own extensions.** The workspace: `WorkspaceReader` - what `ChannelReader::workspace`
+   answers today, with the terminal to read and `max_file_bytes` - and `WorkspaceWriter` - the
+   terminal to change and the shell, and `copy_attachment`, which copies into the workspace -;
+   secrets: `Secrets`, a reader. Both bound by the core itself, in `caelumora-runtime`; a crate of
+   their own is not this issue's. `ChannelReader::workspace`, `Situation::workspace_view`,
+   `workspace_terminal` and the methods of `ActorRuntime` for them go. Files:
+   `caelumora-runtime/src/{runtime/actor,view/reader,workspace/*}.rs`, the tools of
+   `caelumora-agents` and `caelumora-workspace-tools`, `caelumora-mcp`, `caelumora-a2a`.
+3. **The trait.** `ActorRuntime` the trait of the table above, `ParticipantRuntime` the struct;
+   the factory of a kind of agent is given an `Arc<dyn ActorRuntime>` alone; `agent()`,
+   `personality()` and the three calls of the agent's state replace the controllers and the
+   `AgentStateHandle`; `build_components` replaces the registry and the component context; the
+   readers' accessors lose their `…_view` (`Situation::session`). Files:
+   `caelumora-runtime/src/runtime/{actor,channel,mod}.rs`, `runtime/src/actor/kinds.rs`,
+   `runtime/src/channel/participants.rs`, `caelumora-agents/src/actor/*`, `situation.rs`,
+   `turn/*.rs`, the tests that build a `Turn`.
+
+Memory becomes a system service of its own after this issue, in an issue of its own: its
+entries leave the agent's state, a reader hands out only those that may be recalled where the
+work reads, and a writer stages what the turn remembers, so that the flow rule stands in the
+service and the application never holds an entry it may not recall.
+
 ## Decisions for the maintainer
 
 1. The three words - kernel, module, program - and the crate's name, `caelumora-api`. Taken on
@@ -644,6 +716,14 @@ Step 5 buys nothing a test sees: it is the shape step 6 needs, where the trait, 
    applications' word for the trait (recommended); `Application` and `ApplicationBuilder`;
    `SkillCatalogue`, `ArtifactPublisher`; `extension` and `extend_readers` for what a plugin binds
    to a reading.
+10. Where the core ends (see *Step 5b*): sessions, channels with their attachments and their
+    approver, actors and their state, persistence, security, the event bus and projects; the
+    workspace, secrets, skills, artifacts and memory are extensions. Taken on 2026-10-31.
+11. Accessors of the readers without `…_view`: `Situation::session` for the session; the reader
+    of the agent's own channel next to `Situation::channel`, the channel's document - recommended
+    `Situation::own_channel`. Taken on 2026-10-31 as recommended.
+12. Whether `SkillCatalogue` is renamed `SkillReader` as it is cut, as the pattern names its faces
+    (recommended). Taken on 2026-10-31 as recommended.
 
 ## Done when
 
@@ -792,3 +872,28 @@ Step 5 buys nothing a test sees: it is the shape step 6 needs, where the trait, 
     internal workspace through `Views::workspace`, which a reader does not offer, and an agent reads
     from its place, where its owner's clearance is not asked.
   Stored data: none.
+- **2026-10-31** — Step 5a committed after the maintainer's review, who answered its questions:
+  decision 3 is tested through an act besides; the `…_view` names of the readers' accessors go
+  (in 5b, with the trait); an application may see a skill's access list; and whether artifacts
+  can be published is asked without reading the session. Done on the branch since:
+  - A plugin's service is bound to the views of a piece of work, not to a session's reader: the
+    application asks its situation (`Situation::extension`, through
+    `ActorRuntime::extension_of`), which opens the views as `session_view` does and asks
+    `GetSession` as it does, but hands out no reader, so that `artifact_tool` asks whether a
+    storage is configured without reading the session for it. `SessionReader::extension` and
+    the views' `extensions` are gone; one way reaches a plugin's service. A test states the
+    refusal without a storage of content (`World::configured` builds the world without one).
+  - Decision 3 is checked through an act as well, in the tests of the skills
+    (`an_agent_lists_the_skills_its_owners_roles_clear_it_for_as_they_are_at_each_call`): two
+    calls of `list_skills` in one turn, an internal skill of alice's listed before her role is
+    taken (`World::take_roles`) and not after.
+  - What `TypeMap` and `ReaderExtensions` keep of a value found by its type is one type,
+    `ErasedArc` (`caelumora_model::type_map`).
+  - `ReadingBasis` and `channel_reading` are the crate's.
+- **2026-10-31** — Step 5b planned anew with the maintainer (*Step 5b: the core and its
+  extensions*): a modular core whose own services are sessions, channels, actors and
+  persistence, extended by system services on its side; a slim `ActorRuntime`; one pattern for
+  every extension - a reader handed out by the `Situation`, a writer by the `Turn`, bound by the
+  core per work, asked for where it is used, declared by the kinds that need it. The workspace
+  and secrets become the core's own extensions; memory one of its own after this issue. Decision
+  10 taken.

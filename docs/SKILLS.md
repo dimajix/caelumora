@@ -115,9 +115,9 @@ given to it to its remote agent with its next call.
 *   **The `SkillManager`** (`caelumora_skills::manager`) is the one writer: it makes, changes,
     deletes, restores and purges skills - stored first, then announced to whoever may read the
     skill. The plugin offers it as a service of the runtime, which the views and the routes reach;
-    an agent's tools reach skills through the `SkillCatalogue` the plugin binds to every reading of
-    an application (`SessionReader::extension`, issue 516), in the reader's name, and never the
-    manager.
+    an agent's tools reach skills through the `SkillCatalogue` the plugin binds to the views of
+    every piece of work of an application (`Situation::extension`, issue 516), as the work reads,
+    and never the manager.
 *   **REST** lets a user manage skills (see [REST-SERVER.md](REST-SERVER.md)); one of a session's
     scope is written by an agent in it.
 *   **The web UI** lists them and shows one on a page of its own, where its owner edits it (see

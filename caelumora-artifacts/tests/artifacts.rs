@@ -263,6 +263,29 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// Issue 282: without a storage of content the tool is not offered, and says why - asked of the
+/// publisher the plugin binds to the work (issue 516), not of the session.
+#[tokio::test]
+async fn the_tool_is_not_offered_without_a_storage_of_content() {
+    let world = World::configured(
+        &[&TestAgents, &ArtifactsPlugin],
+        |_| {},
+        |config| {
+            config.content = Default::default();
+        },
+    )
+    .await;
+    let (session, helper, _, tool) = with_the_tool(&world, json!({})).await;
+    let mut state = AgentChannelState::default();
+    let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    assert_eq!(
+        tool.offered(&turn.situation()).await,
+        Err("no storage of content is configured".to_string())
+    );
+    drop(turn);
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 #[tokio::test]
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;

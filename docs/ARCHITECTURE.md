@@ -92,11 +92,11 @@ its routes - can be a **plugin**: a crate linked into the program, not loaded at
 323). It implements `Plugin` and registers what it brings with the `RuntimeBuilder` when the runtime
 is built: its component kinds, the store of its kind, which the configured backend opens for any
 kind, its manager as a service of the runtime, which its views and its routes reach, what an
-application's work does with its kind, bound to every reading (`extend_readers`, issue 516), the
-members of a scope, and its sections of the configuration and of the seed. On the REST side,
-`RestPlugin` adds its routes, served behind the same login as the core's. A plugin's views are an
-extension trait on the runtime's `Views`, built from what they open, and what a channel's view lists
-of its kind one on `ChannelView`. Which plugins are in is the program's choice:
+application's work does with its kind, bound to the views of that work (`extend_readers`, issue
+516), the members of a scope, and its sections of the configuration and of the seed. On the REST
+side, `RestPlugin` adds its routes, served behind the same login as the core's. A plugin's views are
+an extension trait on the runtime's `Views`, built from what they open, and what a channel's view
+lists of its kind one on `ChannelView`. Which plugins are in is the program's choice:
 `caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the core leaves open -
 the model; the core knows none. A plugin is one crate, cut into layers by Cargo features rather than
 crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second

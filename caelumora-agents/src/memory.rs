@@ -11,8 +11,8 @@
 //! `agent_memory` component uses it for its tools and prompt part; anything
 //! else that works with an agent's memory in a turn uses it too. What it
 //! needs of the session - its privacy, and that of the sessions entries
-//! come from - it reads through the turn's views (`Situation::session_view`, issue
-//! 163).
+//! come from - it reads through the turn's reader of its session
+//! (`Situation::session_view`, issues 163, 516).
 
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};

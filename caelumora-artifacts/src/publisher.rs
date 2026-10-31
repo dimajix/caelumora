@@ -1,7 +1,7 @@
 //! What an agent's work does with artifacts (issue 516): publishes a file as a version of one -
-//! the plugin's service an application reaches, bound by the plugin to every reading
-//! (`SessionReader::extension`), so that it acts in the reader's name. The `artifact_tool`
-//! component names this trait, never the `ArtifactManager` or the views.
+//! the plugin's service an application reaches, bound by the plugin to the views of every piece of
+//! work (`Situation::extension`), so that it acts as the work reads. The `artifact_tool` component
+//! names this trait, never the `ArtifactManager` or the views.
 
 use crate::artifact::Artifact;
 use crate::manager::ArtifactResult;
@@ -14,7 +14,7 @@ use caelumora_model::value::name::ScopedName;
 use caelumora_runtime::terminal::ByteStream;
 use caelumora_runtime::view::Views;
 
-/// Publishes artifacts in the reader's name.
+/// Publishes artifacts as the work it is bound to reads: in its name, for its initiator.
 #[async_trait]
 pub trait ArtifactPublisher: Send + Sync {
     /// Whether artifacts can be published: a storage of content is configured.
@@ -37,7 +37,7 @@ pub trait ArtifactPublisher: Send + Sync {
     ) -> ArtifactResult<(Artifact, u32)>;
 }
 
-/// The publisher of the views a reading stands on, in their viewer's name: what the plugin binds.
+/// The publisher of the views of a piece of work, in their viewer's name: what the plugin binds.
 #[async_trait]
 impl ArtifactPublisher for Views {
     fn is_configured(&self) -> bool {

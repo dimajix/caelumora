@@ -60,7 +60,7 @@ a plugin
 *   reaches the core's services it needs for its manager - the event bus, the policies, the
     secrets, the controllers - and offers its manager as a service (`provide`), which its views
     read through (`Views::service`) and its routes take when they are built; what an agent's work
-    does with its kind it binds to every reading of an application (`extend_readers`, below);
+    does with its kind it binds to the views of an application's work (`extend_readers`, below);
 *   registers its component kinds (`components()`), as `register_all` does for the core's;
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
     namespace of its own, from a file it compiles in - the agents' `agents`, from
@@ -93,9 +93,10 @@ on `ChannelView`, which opens its `views` and how its viewer reads it (`reading`
 viewer reads the channel stays the channel's to decide (issue 328). What lies in a project is listed
 the same way, by an extension trait on `ProjectView` (issue 467). What an agent's work does with its
 kind - loads a skill, publishes an artifact - the plugin offers as a trait of its own, which it
-binds to every reading of an application (`RuntimeBuilder::extend_readers`), made from the views the
-reading stands on, so that it acts in the reader's name; the application asks the reader of its
-session for it (`SessionReader::extension`) and names neither the views nor the manager (issue 516).
+binds to the views of every piece of work of an application (`RuntimeBuilder::extend_readers`):
+made from those views, it acts as the work reads. The application asks its situation for it
+(`Situation::extension`, which asks `ActorRuntime::extension_of`) and names neither the views nor
+the manager (issue 516).
 Its routes come from `caelumora_rest_server::plugin::RestPlugin`, a `Plugin` that builds a `Router`
 with the `AppState`; the API serves them behind the same login as the core's (`routes::api`). A
 plugin that brings component kinds alone, such as `caelumora-mcp` (issue 325), `caelumora-a2a`
@@ -139,8 +140,8 @@ a plugin depends on:
     `copy_attachment`, `max_file_bytes`; the executor's `admit_tool_call`, issue 516), and what it
     reads it reads through the readers (`Situation::session_view`, `SessionReader`). What it
     needs of another plugin it declares as the trait that plugin offers for it, or, of a plugin
-    of the core, asks the reader for, as the trait the plugin bound to it
-    (`SessionReader::extension`).
+    of the core, asks its situation for, as the trait the plugin binds to the views of the work
+    (`Situation::extension`).
 *   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,

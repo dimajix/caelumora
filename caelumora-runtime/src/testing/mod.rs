@@ -51,6 +51,7 @@ use caelumora_model::confidentiality::{
 };
 use caelumora_model::config::AppConfig;
 use caelumora_model::config::{BackendConfig, ContentConfig, WorkspacesConfig};
+use caelumora_model::event::GlobalEvent;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::scope::Scope;
@@ -72,7 +73,7 @@ use caelumora_model::template::{
     SessionTemplateId,
 };
 use caelumora_model::user::testing::{make_user, record_users};
-use caelumora_model::user::{User, UserId};
+use caelumora_model::user::{User, UserId, UserUpdateEvent};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::workspace::WorkspaceId;
@@ -364,6 +365,16 @@ impl World {
         plugins: &[&dyn Plugin],
         register: impl FnOnce(&mut ComponentRegistry),
     ) -> Self {
+        Self::configured(plugins, register, |_| {}).await
+    }
+
+    /// The world `with` makes, its configuration changed by `configure` before the runtime is
+    /// built - one without a storage of content, say.
+    pub async fn configured(
+        plugins: &[&dyn Plugin],
+        register: impl FnOnce(&mut ComponentRegistry),
+        configure: impl FnOnce(&mut AppConfig),
+    ) -> Self {
         let roles = Roles::new([(
             *STAFF,
             "staff".to_string(),
@@ -404,7 +415,8 @@ impl World {
             )]
             .into(),
         };
-        let config = AppConfig { workspaces, content, ..Default::default() };
+        let mut config = AppConfig { workspaces, content, ..Default::default() };
+        configure(&mut config);
         let runtime = TestRuntime {
             store: store.clone(),
             access_policy,
@@ -456,6 +468,16 @@ impl World {
         record_users(self.runtime.entity_stores(), &[&user]).await;
         self.access_policy.names.lock().unwrap().insert(ActorId::User(user.id), name.to_string());
         user.id
+    }
+
+    /// Takes every role from `user`, as an administrator does, through their controller: the
+    /// next context built of them holds none (issue 516).
+    pub async fn take_roles(&self, user: UserId) {
+        let controller = self.runtime.controller_manager().user_controller(user).await.unwrap();
+        controller.process_global_event(&GlobalEvent::updated::<User>(
+            &user,
+            &UserUpdateEvent::RolesChanged(Vec::new()),
+        ));
     }
 
     /// What the policy was asked in someone's name while `action` ran - a

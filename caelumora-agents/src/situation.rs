@@ -21,6 +21,7 @@ use caelumora_model::secret::Secrets;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
+use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::work::Work;
 use caelumora_model::workspace::Workspace;
@@ -108,6 +109,18 @@ impl<'a> Situation<'a> {
     /// it failed.
     pub async fn session_view(&self) -> ViewResult<Option<Box<dyn SessionReader>>> {
         self.runtime.session_view(self.initiator(), self.work.classification.clone()).await
+    }
+
+    /// The service `T` a plugin of the core binds to the views of the work
+    /// (`ActorRuntime::extension_of`, issue 516): the plugin's, acting as
+    /// the work reads - the skills' `SkillCatalogue`, say. `None` if no
+    /// plugin binds one, or where the work reaches no session or may not
+    /// read it.
+    pub async fn extension<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        let classification = self.work.classification.clone();
+        let key = TypeKey::of::<T>();
+        let erased = self.runtime.extension_of(self.initiator(), classification, key).await?;
+        erased.get::<T>().cloned()
     }
 
     /// The agent's channel as the work reads it from there (`session`,

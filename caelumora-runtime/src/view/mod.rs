@@ -22,9 +22,9 @@
 //! frontend's root is [`SessionManager::views`].
 //!
 //! An application is handed readers of the views (`reader`, issue 516): what
-//! of them an agent's work reads, and what a plugin of the core bound to the
-//! reading (`ReaderExtensions`) - never a view, through which it would reach
-//! the policies, the managers and the viewer's context.
+//! of them an agent's work reads - never a view, through which it would reach
+//! the policies, the managers and the viewer's context -, and what a plugin of
+//! the core binds to the views of its work (`ReaderExtensions`).
 //!
 //! A node answers with a snapshot (`caelumora_model::snapshot`, issue 80)
 //! for a client that lists and offers: the node's data with its questions
@@ -240,8 +240,6 @@ pub struct Views {
     actors: Arc<ActorManager>,
     /// Where the attachments of messages are read (issue 282).
     attachments: Arc<AttachmentManager>,
-    /// What the plugins bound to an application's reading (issue 516).
-    extensions: Arc<ReaderExtensions>,
     running: Arc<dyn RunningSessions>,
     viewer: Viewer,
 }
@@ -265,7 +263,6 @@ impl Views {
             controllers: Arc::clone(runtime.controller_manager()),
             actors: Arc::clone(runtime.actor_manager()),
             attachments: Arc::clone(runtime.attachment_manager()),
-            extensions: Arc::clone(runtime.reader_extensions()),
             running,
             viewer,
         }
@@ -309,11 +306,6 @@ impl Views {
     /// which its views read through.
     pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
         self.services.get::<T>()
-    }
-
-    /// What the plugins bound to an application's reading (issue 516).
-    pub(crate) fn extensions(&self) -> &ReaderExtensions {
-        &self.extensions
     }
 
     /// The stores of the entities, one per kind (issue 323).
@@ -975,7 +967,7 @@ impl Views {
 /// its channel, the classification it reads at, its session's privacy -,
 /// a user by what the roles of their context clear them for.
 #[derive(Debug, Clone, Copy)]
-pub enum ReadingBasis<'a> {
+pub(crate) enum ReadingBasis<'a> {
     From(&'a Place),
     Cleared,
 }
@@ -983,7 +975,7 @@ pub enum ReadingBasis<'a> {
 impl<'a> ReadingBasis<'a> {
     /// Reading from `from`, for whoever reads from a place as an agent does, and by clearance
     /// otherwise: the one rule by which the basis of a reading is chosen.
-    pub fn of(from: Option<&'a Place>) -> Self {
+    pub(crate) fn of(from: Option<&'a Place>) -> Self {
         from.map_or(Self::Cleared, Self::From)
     }
 }
@@ -997,7 +989,7 @@ impl<'a> ReadingBasis<'a> {
 /// a whole if they are cleared for its classification, and not at all
 /// otherwise. What the views reach a channel by, and what an operation in a
 /// channel asks before it acts there.
-pub async fn channel_reading(
+pub(crate) async fn channel_reading(
     policies: &Policies,
     context: &SecurityContext,
     channel: &SecurityAttributes,

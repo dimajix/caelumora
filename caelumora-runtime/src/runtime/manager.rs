@@ -83,8 +83,8 @@ pub struct RuntimeManager {
     /// The services components may use (issue 296), each given to the
     /// kinds that declare it (`ComponentKind::uses`), and the views.
     pub(super) services: Services,
-    /// What the plugins bound to an application's reading (issue 516).
-    pub(super) reader_extensions: Arc<ReaderExtensions>,
+    /// What the plugins bind to the views of an application's work (issue 516).
+    pub(super) reader_extensions: ReaderExtensions,
     /// The texts given to models (issue 57), also among the `services`:
     /// what the runtime itself words for a model - what an agent saw, as
     /// its context is resolved again.
@@ -187,8 +187,9 @@ impl RuntimeManager {
         &self.services
     }
 
-    /// What the plugins bound to an application's reading (issue 516), which the views hand on.
-    pub(crate) fn reader_extensions(&self) -> &Arc<ReaderExtensions> {
+    /// What the plugins bind to the views of an application's work (issue 516), which the actor's
+    /// runtime binds as its work asks (`ActorRuntime::extension_of`).
+    pub(crate) fn reader_extensions(&self) -> &ReaderExtensions {
         &self.reader_extensions
     }
 

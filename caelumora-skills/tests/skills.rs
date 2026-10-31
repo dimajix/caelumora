@@ -580,6 +580,39 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
     );
 }
 
+/// Decision 3 of issue 516, through an act: an agent's work lists the skills its owner's roles
+/// clear it for as they are at each call. An internal skill of alice's is listed by her agent's
+/// `list_skills` while her role clears her for it, and is gone from the next call of the same turn
+/// once the role is taken.
+#[tokio::test]
+async fn an_agent_lists_the_skills_its_owners_roles_clear_it_for_as_they_are_at_each_call() {
+    let world = world().await;
+    let (session, helper) = with_an_agent(&world).await;
+    manager(&world)
+        .create(
+            &World::as_user(world.alice),
+            "handbook",
+            Scope::UserScope { user_id: world.alice },
+            "How we work",
+            "Read it first.",
+            Classification::general(Confidentiality::Internal),
+        )
+        .await
+        .expect("hers");
+    let component = component(&world);
+    let mut state = AgentChannelState::default();
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    let listed = |output: ToolOutput| output.value["skills"].as_array().unwrap().len();
+
+    let before = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
+    assert_eq!(listed(before), 1, "cleared for it by her role");
+    world.take_roles(world.alice).await;
+    let after = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
+    assert_eq!(listed(after), 0, "not any more, at the next call");
+    drop(turn);
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- The seed --------------------------------------------------------------
 
 #[tokio::test]
