@@ -17,7 +17,6 @@ use caelumora_model::note::Note;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::project::ProjectId;
 use caelumora_model::scope::ScopeField;
-use caelumora_model::security::{AccessQuestions, ActionType, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::snapshot::{
     CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot,
@@ -29,6 +28,7 @@ use caelumora_model::user::UserField;
 use caelumora_model::value::language::Language;
 use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::value::time_zone::TimeZone;
+use caelumora_security::{AccessQuestions, ActionType, SecurityContext};
 use std::sync::Arc;
 use tracing::warn;
 

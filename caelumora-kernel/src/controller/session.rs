@@ -10,11 +10,12 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::project::ProjectId;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
+use caelumora_model::store::{StoreError, StoreResult};
 use caelumora_model::value::name::Name;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_security::SecurityContext;
+use caelumora_store::{EntityStore, EntityStores};
 use std::sync::Arc;
 use tracing::error;
 
@@ -269,10 +270,11 @@ impl SessionController {
 mod tests {
     use super::*;
     use caelumora_model::confidentiality::Classification;
-    use caelumora_model::security::{Policies, SecurityAttributes};
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::testing::bare_session;
-    use caelumora_model::store::Persistence;
     use caelumora_model::value::ValueError;
+    use caelumora_security::Policies;
+    use caelumora_store::Persistence;
     use chrono::{Duration, Utc};
     use std::sync::Mutex;
 

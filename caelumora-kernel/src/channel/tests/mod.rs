@@ -22,17 +22,15 @@ use caelumora_model::channel::testing::make_channel;
 use caelumora_model::channel::{moderation_components, Channel, Participant};
 use caelumora_model::component::{ComponentConfig, ComponentFailPolicy};
 use caelumora_model::history::Audience;
-use caelumora_model::security::{
-    AccessPolicy, ActionType, AllowAllPolicy, Policies, SecurityContext,
-};
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::EntityStores;
-use caelumora_model::store::Persistence;
 use caelumora_model::user::testing::make_user;
-use caelumora_model::user::testing::record_users;
 use caelumora_model::user::User;
 use caelumora_model::user::UserId;
+use caelumora_security::{AccessPolicy, ActionType, AllowAllPolicy, Policies, SecurityContext};
+use caelumora_store::testing::record_users;
+use caelumora_store::EntityStores;
+use caelumora_store::Persistence;
 use std::any::Any;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};

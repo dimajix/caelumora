@@ -8,8 +8,8 @@ use caelumora_api::component::Params;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::store::PersistenceBackend;
+use caelumora_security::secret::SecretManager;
+use caelumora_store::PersistenceBackend;
 use std::sync::Arc;
 
 /// The backend `postgres` of the stores (`PostgresStore`), as a plugin. Its backends share a pool

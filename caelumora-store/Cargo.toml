@@ -1,0 +1,31 @@
+[package]
+name = "caelumora-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-model.workspace = true
+caelumora-security.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono = { workspace = true, optional = true }
+async-trait.workspace = true
+tracing.workspace = true
+
+[features]
+# The suite every backend of the stores runs (`suite`, issue 446), the stores that refuse a write as
+# outdated and what the tests of other crates store their world by (`testing`, issue 492), which
+# write the model's values as its tests do.
+test-support = ["caelumora-model/test-support", "dep:chrono", "uuid/v4"]
+
+[dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["macros", "rt", "sync"] }
+chrono.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+caelumora-model = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

@@ -16,13 +16,13 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::prompt_catalogue::PromptCatalogue;
-use caelumora_model::security::Policies;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::session::Session;
-use caelumora_model::store::history::HistoryStore;
+use caelumora_security::Policies;
+use caelumora_store::history::HistoryStore;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::store::StateStore;
+use caelumora_store::transcript::TranscriptStore;
+use caelumora_store::StateStore;
 use std::sync::{Arc, OnceLock, Weak};
 
 /// What a channel runs with, made by its session (`SessionLoop::channel_runtime`) as the channel

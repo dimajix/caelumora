@@ -36,7 +36,7 @@ use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason,
 };
 use caelumora_model::message::Message;
-use caelumora_model::security::SecurityContext;
+use caelumora_security::SecurityContext;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::slice;
@@ -557,12 +557,12 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::history::Audience;
     use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::Persistence;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
+    use caelumora_security::SecurityContext;
+    use caelumora_store::Persistence;
     use chrono::Utc;
     use serde_json::Value;
 

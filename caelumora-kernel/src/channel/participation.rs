@@ -10,16 +10,15 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::approval::Approver;
 use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant};
-use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::role::RoleId;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{
-    ActionType, Enforcement, Policies, Refused, SecurityAttributes, SecurityContext, JOIN,
-};
+use caelumora_model::security::{Refused, SecurityAttributes};
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{
-    EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
-};
+use caelumora_model::store::{EntityKind, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_security::confidentiality::ConfidentialityQuestions;
+use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext, JOIN};
+use caelumora_store::EntityStore;
 use std::iter;
 use std::sync::Arc;
 
@@ -309,7 +308,7 @@ impl ResolvedParticipant {
     /// The context the participant acts in, in `channel`, for `initiator` (issue 516): a user's
     /// own, an agent's with its owner's rights and roles, limited by its personality, as the
     /// controllers hold them now, the approver's - an internal actor of the channel - answered for
-    /// by the channel's owner (`Approver::security_context`).
+    /// by the channel's owner (`SecurityContext::of_approver`).
     pub(crate) fn context_in(&self, channel: &Channel, initiator: ActorId) -> SecurityContext {
         let own = match &self.kind {
             ResolvedKind::User(user) => user.security_context(channel.session_id, channel.id),
@@ -318,7 +317,7 @@ impl ResolvedParticipant {
                 channel.id,
                 personality.load().limiting_roles(),
             ),
-            ResolvedKind::Approver(approver) => approver.security_context(channel),
+            ResolvedKind::Approver(approver) => SecurityContext::of_approver(approver, channel),
         };
         SecurityContext { initiator_id: initiator, ..own }
     }
@@ -361,19 +360,22 @@ mod tests {
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionManager};
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::testing::{make_personality, stored_agent};
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Agent;
     use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::{Channel, HistoryAccess, Participant};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, SessionId};
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_security::SecurityContext;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::testing::stored_agent;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -382,10 +384,11 @@ mod tests {
         use crate::channel::ChannelError;
         use caelumora_model::agent::{Personality, PersonalityKind};
         use caelumora_model::confidentiality::{
-            Clearance, Compartment, Compartments, Confidentiality, ConfidentialityRules,
+            Clearance, Compartment, Compartments, Confidentiality,
         };
         use caelumora_model::role::{RoleId, Roles};
         use caelumora_model::user::User;
+        use caelumora_security::confidentiality::ConfidentialityRules;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let roles = Roles::new([

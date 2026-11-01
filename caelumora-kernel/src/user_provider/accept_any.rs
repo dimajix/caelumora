@@ -1,11 +1,18 @@
-use crate::role::{RoleError, RoleId, Roles};
-use crate::scope::Scope;
-use crate::security::SecurityContext;
-use crate::store::{EntityStore, StoreError, StoreResultExt};
-use crate::user::{User, UserId};
+//! `AcceptAnyUserProvider`: a development stand-in that accepts every username with any
+//! credential (issue 25), giving the users it names their roles.
+
+use crate::backend::Backends;
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
-use crate::value::name::{Name, ScopedName};
 use async_trait::async_trait;
+use caelumora_api::component::{service_of, ComponentError, Params};
+use caelumora_model::role::{RoleError, RoleId, Roles};
+use caelumora_model::scope::Scope;
+use caelumora_model::store::{StoreError, StoreResultExt};
+use caelumora_model::user::{User, UserId};
+use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_security::confidentiality::ConfidentialityPolicy;
+use caelumora_security::SecurityContext;
+use caelumora_store::EntityStore;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -40,10 +47,12 @@ pub struct AcceptAnyUserProvider {
 /// configured roles.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct AcceptAnyConfig {
-    pub roles: BTreeMap<String, Vec<String>>,
-    pub default_roles: Vec<String>,
+struct AcceptAnyConfig {
+    roles: BTreeMap<String, Vec<String>>,
+    default_roles: Vec<String>,
 }
+
+impl Params for AcceptAnyConfig {}
 
 impl AcceptAnyConfig {
     /// The provider it describes, keeping its users in `store`, with the
@@ -53,7 +62,7 @@ impl AcceptAnyConfig {
     /// # Errors
     /// `RoleError::UnknownRole` for a role that is not configured - any,
     /// if no roles are.
-    pub fn provider(
+    fn provider(
         &self,
         store: Arc<dyn EntityStore<User>>,
         roles: Option<&Roles>,
@@ -71,6 +80,27 @@ impl AcceptAnyConfig {
             .collect::<Result<_, RoleError>>()?;
         Ok(AcceptAnyUserProvider::with_roles(store, assigned, ids(&self.default_roles)?))
     }
+}
+
+/// Registers the user provider `accept_any` with `backends`, keeping its users in the store of the
+/// users and naming the roles the policy of confidentiality configures - warned of loudly when it
+/// is made.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn UserProvider, _, _>(
+        "accept_any",
+        |_, config: AcceptAnyConfig, services| {
+            let users = service_of::<dyn EntityStore<User>>(services)?;
+            let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
+            let provider = config
+                .provider(Arc::clone(users), roles)
+                .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            tracing::warn!(
+                "User provider 'accept_any' is enabled: ANY username and password will be \
+                 accepted. Development only - never expose this server to a network."
+            );
+            Ok(Arc::new(provider))
+        },
+    );
 }
 
 impl AcceptAnyUserProvider {
@@ -156,10 +186,10 @@ impl UserProvider for AcceptAnyUserProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::Policies;
-    use crate::store::{EntityStores, Persistence};
-    use crate::user::testing::make_user;
     use crate::user_provider::UserManager;
+    use caelumora_model::user::testing::make_user;
+    use caelumora_security::Policies;
+    use caelumora_store::{EntityStores, Persistence};
 
     /// The provider in a chain of its own, whose manager keeps the records
     /// in `store`.

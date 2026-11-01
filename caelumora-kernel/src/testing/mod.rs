@@ -46,8 +46,7 @@ use caelumora_model::approval::{ApprovalStrategy, Approver};
 use caelumora_model::channel::{moderation_components, Channel, InternalActor, Participant};
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::{
-    Classification, Clearance, Compartments, Confidentiality, ConfidentialityPolicy,
-    ConfidentialityRules, Place, Reading,
+    Classification, Clearance, Compartments, Confidentiality, Place, Reading,
 };
 use caelumora_model::config::AppConfig;
 use caelumora_model::config::{BackendConfig, ContentConfig, WorkspacesConfig};
@@ -55,28 +54,30 @@ use caelumora_model::event::GlobalEvent;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::role::{RoleId, Roles};
 use caelumora_model::scope::Scope;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::{
-    AccessPolicy, ActionType, Admission, AllowAllPolicy, Grant, OwnershipPolicy, Policies,
-    Reclassified, SecurityAttributes, SecurityContext, Subject, Verb,
-};
+use caelumora_model::security::{Grant, SecurityAttributes, Subject};
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{
-    EntityKind, EntityStore, EntityStores, Persistence, StoreError, Stored,
-};
+use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::template::testing::{make_channel_template, make_template};
 use caelumora_model::template::{
     ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate,
     SessionTemplateId,
 };
-use caelumora_model::user::testing::{make_user, record_users};
+use caelumora_model::user::testing::make_user;
 use caelumora_model::user::{User, UserId, UserUpdateEvent};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
+use caelumora_security::secret::SecretManager;
+use caelumora_security::{
+    AccessPolicy, ActionType, Admission, AllowAllPolicy, OwnershipPolicy, Policies, Reclassified,
+    SecurityContext, Verb,
+};
+use caelumora_store::memberships::StoreMemberships;
+use caelumora_store::testing::record_users;
+use caelumora_store::{EntityStore, EntityStores, Persistence};
 use futures::stream;
 use futures::StreamExt;
 use serde_json::json;

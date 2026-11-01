@@ -164,7 +164,7 @@ pub(crate) mod testing {
     use super::*;
     use crate::prompt::ModelProfileProvider;
     use caelumora_model::context::ModelProfile;
-    use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
+    use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
     use futures::stream;
     use futures::StreamExt;
     use std::collections::VecDeque;
@@ -350,8 +350,8 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::ScriptedExternalAgent;
     use super::*;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{AllowAllPolicy, SecurityContext};
+    use caelumora_security::secret::SecretManager;
+    use caelumora_security::{AllowAllPolicy, SecurityContext};
     use futures::StreamExt;
     use std::time::Duration;
     use tokio::time;

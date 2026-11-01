@@ -5,11 +5,11 @@
 //! (`KeptItem`) and found by the message it said. A put writes the chain and
 //! derives the items and the memberships from what it added, in its
 //! transaction: the items it changes - every one, for a fitting - are read,
-//! taken further by the model's rule (`StandingItems`) and written back. A
+//! taken further by the stores' rule (`StandingItems`) and written back. A
 //! page asks the database for the items its reader is given
 //! (`Filter::seen_by`, issue 451) that meet its filter, as far as SQL can
-//! judge it (`Condition`); in which form the reader sees each is the
-//! model's (`seen`).
+//! judge it (`Condition`); in which form the reader sees each the model
+//! decides (`Recorded::as_seen_by`, asked by `seen`).
 
 use crate::chains::{failed, position, seq, Chains, Entry, BATCH};
 use crate::connection::sql;
@@ -21,12 +21,12 @@ use caelumora_model::chain::{Node, Position};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::{
-    answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, KeptItem, Memberships,
-    StandingItems,
-};
+use caelumora_model::store::history::{HistoryField, KeptItem};
 use caelumora_model::store::query::Filter;
 use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_store::history::{
+    answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,
+};
 use serde_json::Value;
 use sqlx::postgres::PgConnection;
 use sqlx::types::Json;

@@ -1,10 +1,12 @@
 //! In whose name something is done (issues 255, 341): the
 //! `SecurityContext` every operation is asked in.
 
-use crate::actor::ActorId;
-use crate::channel::ChannelId;
-use crate::role::RoleId;
-use crate::session::SessionId;
+use caelumora_model::actor::ActorId;
+use caelumora_model::agent::Agent;
+use caelumora_model::approval::Approver;
+use caelumora_model::channel::{Channel, ChannelId};
+use caelumora_model::role::RoleId;
+use caelumora_model::session::SessionId;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -61,6 +63,28 @@ impl SecurityContext {
         }
     }
 
+    /// The context `agent` acts in when nobody asked it, in the channel `channel` of session
+    /// `session` (issue 87): begun by the agent itself, answered for by its owner and acting in
+    /// the name of its principal (issues 255, 341).
+    pub fn of_agent(agent: &Agent, session: SessionId, channel: ChannelId) -> Self {
+        let actor = ActorId::Agent(agent.id);
+        Self::new(actor, session, channel).next(
+            actor,
+            agent.security_attributes.owner_id,
+            agent.principal_id,
+        )
+    }
+
+    /// The context `approver` acts in, in `channel`: its own, answered for by the owner of its
+    /// channel (issue 341) - what its actor continues a request in, and what the channel admits
+    /// its envelopes in (issue 516).
+    pub fn of_approver(approver: &Approver, channel: &Channel) -> Self {
+        Self {
+            owner_id: channel.security_attributes.owner_id,
+            ..Self::new(ActorId::Approver(approver.id), channel.session_id, channel.id)
+        }
+    }
+
     /// This context with the owner's `roles`, and the `limiting_roles` the
     /// caller is limited to, if any.
     pub fn with_roles(self, roles: Vec<RoleId>, limiting_roles: Option<Vec<RoleId>>) -> Self {
@@ -110,5 +134,38 @@ impl SecurityContext {
             roles: Vec::new(),
             limiting_roles: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_model::agent::PersonalityId;
+    use caelumora_model::user::UserId;
+    use caelumora_model::value::name::ScopedName;
+
+    /// Issue 341: an agent acting when nobody asked it is the caller and
+    /// the initiator - it caused what it does -, answered for by its owner
+    /// and acting in its owner's name.
+    #[test]
+    fn an_agent_acting_on_its_own_initiates_it_for_its_owner() {
+        let owner = ActorId::User(UserId::new());
+        let agent = Agent::new(
+            ScopedName::new("helper", Default::default()).unwrap(),
+            PersonalityId::new(),
+            owner,
+        );
+        let context = SecurityContext::of_agent(&agent, Default::default(), Default::default());
+        let itself = ActorId::Agent(agent.id);
+        assert_eq!(
+            (context.caller_id, context.initiator_id),
+            (itself, itself),
+            "it acts, and caused it"
+        );
+        assert_eq!(
+            (context.owner_id, context.principal_id),
+            (owner, owner),
+            "answered for by its owner, in their name"
+        );
     }
 }

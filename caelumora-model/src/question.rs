@@ -13,7 +13,6 @@ use crate::actor::ActorId;
 use crate::agent::AgentId;
 use crate::channel::ChannelId;
 use crate::mention::{handle_of, MentionDirectory};
-use crate::security::SecurityContext;
 use crate::session::SessionId;
 use crate::tool::ToolCall;
 use serde::{Deserialize, Serialize};
@@ -254,10 +253,9 @@ impl Questions {
         !self.ask.is_empty()
     }
 
-    /// The questions of a call made in `context` as put to the users of a
-    /// channel: every addressee found among them - a handle in
-    /// `participants`, as a model writes it, with or without `@`; the owner
-    /// and the initiator as `context` names them, if users of the channel
+    /// The questions of a call answered for by `owner` and caused by `initiator` as put to the
+    /// users of a channel: every addressee found among them - a handle in `participants`, as a
+    /// model writes it, with or without `@`; the owner and the initiator, if users of the channel
     /// (`users`) - and each user asked once.
     ///
     /// # Errors
@@ -268,7 +266,8 @@ impl Questions {
         self,
         participants: &MentionDirectory,
         users: &[ActorId],
-        context: &SecurityContext,
+        owner: ActorId,
+        initiator: ActorId,
     ) -> Result<Questions, QuestionError> {
         let mut asked: Vec<Addressee> = Vec::new();
         for addressee in self.ask {
@@ -286,11 +285,9 @@ impl Questions {
                     }
                     found
                 }
-                Addressee::Owner if users.contains(&context.owner_id) => vec![context.owner_id],
+                Addressee::Owner if users.contains(&owner) => vec![owner],
                 Addressee::Owner => return Err(QuestionError::OwnerAbsent),
-                Addressee::Initiator if users.contains(&context.initiator_id) => {
-                    vec![context.initiator_id]
-                }
+                Addressee::Initiator if users.contains(&initiator) => vec![initiator],
                 Addressee::Initiator => return Err(QuestionError::InitiatorAbsent),
                 Addressee::Actor(id) if users.contains(&id) => vec![id],
                 Addressee::Actor(_) => return Err(QuestionError::NotInChannel),
@@ -628,16 +625,14 @@ mod tests {
         let users = [alice, bob];
         let asking =
             |ask: Vec<Addressee>| Questions { ask, ..questions(vec![question(&[], false)]) };
-        // Alice's agent, asked by bob.
-        let context = SecurityContext::new(bob, Default::default(), Default::default())
-            .next(helper, alice, alice);
+        // Alice's agent, asked by bob: answered for by alice, caused by bob.
 
         let put = asking(vec![
             Addressee::Handle("@alice".to_string()),
             Addressee::Handle("Bob".to_string()),
             Addressee::Owner,
         ])
-        .resolve(&participants, &users, &context)
+        .resolve(&participants, &users, alice, bob)
         .unwrap();
         assert_eq!(
             put.ask,
@@ -651,14 +646,14 @@ mod tests {
 
         assert_eq!(
             asking(vec![Addressee::Handle("@all".to_string())])
-                .resolve(&participants, &users, &context)
+                .resolve(&participants, &users, alice, bob)
                 .map(|put| put.asked()),
             Ok(vec![alice, bob]),
             "every user (issue 401)"
         );
         assert_eq!(
             asking(vec![Addressee::Handle("@channel".to_string()), Addressee::Owner])
-                .resolve(&participants, &users, &context)
+                .resolve(&participants, &users, alice, bob)
                 .map(|put| put.asked()),
             Ok(vec![alice, bob]),
             "each once"
@@ -667,7 +662,8 @@ mod tests {
             asking(vec![Addressee::Handle("@helper".to_string())]).resolve(
                 &participants,
                 &users,
-                &context
+                alice,
+                bob
             ),
             Err(QuestionError::UnknownHandle("@helper".to_string())),
             "an agent answers no questions"
@@ -676,44 +672,41 @@ mod tests {
             asking(vec![Addressee::Handle("@carol".to_string())]).resolve(
                 &participants,
                 &users,
-                &context
+                alice,
+                bob
             ),
             Err(QuestionError::UnknownHandle("@carol".to_string()))
         );
         assert_eq!(
             asking(vec![Addressee::Owner])
-                .resolve(&participants, &users, &context)
+                .resolve(&participants, &users, alice, bob)
                 .map(|put| put.asked()),
             Ok(vec![alice]),
             "the agent's owner"
         );
         assert_eq!(
             asking(vec![Addressee::Initiator])
-                .resolve(&participants, &users, &context)
+                .resolve(&participants, &users, alice, bob)
                 .map(|put| put.asked()),
             Ok(vec![bob]),
             "whoever caused the call (issue 341)"
         );
         let elsewhere = ActorId::User(UserId::new());
-        let theirs = SecurityContext::new(elsewhere, Default::default(), Default::default())
-            .next(helper, elsewhere, elsewhere);
         assert_eq!(
-            asking(vec![Addressee::Owner]).resolve(&participants, &users, &theirs),
+            asking(vec![Addressee::Owner]).resolve(&participants, &users, elsewhere, elsewhere),
             Err(QuestionError::OwnerAbsent)
         );
         assert_eq!(
-            asking(vec![Addressee::Initiator]).resolve(&participants, &users, &theirs),
+            asking(vec![Addressee::Initiator]).resolve(&participants, &users, elsewhere, elsewhere),
             Err(QuestionError::InitiatorAbsent)
         );
-        let unasked = SecurityContext::new(helper, Default::default(), Default::default())
-            .next(helper, alice, alice);
         assert_eq!(
-            asking(vec![Addressee::Initiator]).resolve(&participants, &users, &unasked),
+            asking(vec![Addressee::Initiator]).resolve(&participants, &users, alice, helper),
             Err(QuestionError::InitiatorAbsent),
             "an agent acting on its own answers nothing"
         );
         assert_eq!(
-            asking(vec![Addressee::Actor(helper)]).resolve(&participants, &users, &context),
+            asking(vec![Addressee::Actor(helper)]).resolve(&participants, &users, alice, bob),
             Err(QuestionError::NotInChannel)
         );
     }

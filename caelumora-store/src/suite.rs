@@ -9,54 +9,59 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use crate::actor::{ActorEvent, Envelope, EventContext};
-use crate::actor::{ActorId, ActorState};
-use crate::agent::testing::make_personality;
-use crate::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId};
-use crate::chain::{Node, Position};
-use crate::channel::testing::make_channel;
-use crate::channel::{moderation_components, Channel, ChannelId, ChannelState};
-use crate::component::{ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor};
-use crate::confidentiality::Classification;
-use crate::digest;
-use crate::external_agent::ConversationId;
-use crate::group::{Group, GroupId};
-use crate::history::testing::items_of;
-use crate::history::History;
-use crate::history::{Audience, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION};
-use crate::message::MessageId;
-use crate::message::{Message, MessageRole};
-use crate::project::{Project, ProjectId};
-use crate::removal::{Removal, RemovalId};
-use crate::role::RoleId;
-use crate::scope::{Scope, Scoped};
-use crate::security::{
-    AccessPolicy, AclEntry, ActionType, Grant, OwnershipPolicy, Secured, SecurityAttributes,
-    SecurityContext, Subject, Verb,
+use crate::documents;
+use crate::history::HistoryStore;
+use crate::memberships::StoreMemberships;
+use crate::transcript::TranscriptStore;
+use crate::{EntityStore, EntityStores, PersistenceBackend, Presence, StateStore};
+use caelumora_model::actor::{ActorEvent, Envelope, EventContext};
+use caelumora_model::actor::{ActorId, ActorState};
+use caelumora_model::agent::testing::make_personality;
+use caelumora_model::agent::{
+    Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId,
 };
-use crate::session::testing::bare_session;
-use crate::session::{Session, SessionId};
-use crate::store::documents;
-use crate::store::history::HistoryStore;
-use crate::store::memberships::StoreMemberships;
-use crate::store::query::{Field, Filter, Page, Query};
-use crate::store::transcript::TranscriptStore;
-use crate::store::{
-    EntityKind, EntityStore, EntityStores, Journaled, NoEntity, PersistenceBackend, Presence,
-    Revision, StateStore, StoreError, StoreResult, Stored,
+use caelumora_model::chain::{Node, Position};
+use caelumora_model::channel::testing::make_channel;
+use caelumora_model::channel::{moderation_components, Channel, ChannelId, ChannelState};
+use caelumora_model::component::{
+    ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor,
 };
-use crate::template::testing::{make_channel_template, make_template};
-use crate::template::{ChannelTemplate, SessionTemplate, SessionTemplateId};
-use crate::tool::{ToolCall, ToolSet, ToolVisibility};
-use crate::transcript::TranscriptEntry;
-use crate::turn::TurnState;
-use crate::user::testing::make_user;
-use crate::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
-use crate::value::name::{Name, ScopedName};
-use crate::value::text::Introduction;
-use crate::work::TurnId;
-use crate::work::Work;
-use crate::workspace::{Workspace, WorkspaceId};
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::define_id;
+use caelumora_model::digest;
+use caelumora_model::external_agent::ConversationId;
+use caelumora_model::group::{Group, GroupId};
+use caelumora_model::history::testing::items_of;
+use caelumora_model::history::History;
+use caelumora_model::history::{
+    Audience, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION,
+};
+use caelumora_model::message::MessageId;
+use caelumora_model::message::{Message, MessageRole};
+use caelumora_model::project::{Project, ProjectId};
+use caelumora_model::removal::{Removal, RemovalId};
+use caelumora_model::role::RoleId;
+use caelumora_model::scope::{Scope, Scoped};
+use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
+use caelumora_model::session::testing::bare_session;
+use caelumora_model::session::{Session, SessionId};
+use caelumora_model::store::query::{Field, Filter, Page, Query};
+use caelumora_model::store::{
+    EntityKind, Journaled, NoEntity, Revision, StoreError, StoreResult, Stored,
+};
+use caelumora_model::template::testing::{make_channel_template, make_template};
+use caelumora_model::template::{ChannelTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_model::tool::{ToolCall, ToolSet, ToolVisibility};
+use caelumora_model::transcript::TranscriptEntry;
+use caelumora_model::turn::TurnState;
+use caelumora_model::user::testing::make_user;
+use caelumora_model::user::{ReadMark, User, UserChannelState, UserId, UserProfile};
+use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_model::value::text::Introduction;
+use caelumora_model::work::TurnId;
+use caelumora_model::work::Work;
+use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_security::{AccessPolicy, ActionType, OwnershipPolicy, SecurityContext, Verb};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -394,7 +399,7 @@ pub async fn queries_behave(stores: &EntityStores) {
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
     // By scope, by the session of a channel, by a participant.
-    use crate::channel::{ChannelField, Participant};
+    use caelumora_model::channel::{ChannelField, Participant};
     let session_id = SessionId(Uuid::new_v4());
     let mut in_session = Personality {
         name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(),
@@ -1292,8 +1297,8 @@ async fn all_pages(
 /// the JSON store holds.
 #[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn HistoryStore) {
-    use crate::confidentiality::Confidentiality;
-    use crate::message::testing::{id, make_message};
+    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_model::message::testing::{id, make_message};
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let key = channel;
     assert!(
@@ -1656,7 +1661,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
 /// branch, which messages it holds -, a digest there twice, and gone with
 /// the state.
 pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn TranscriptStore) {
-    use crate::message::testing::{id, make_message};
+    use caelumora_model::message::testing::{id, make_message};
     let (channel, agent) = (ChannelId::new(), AgentId::new());
     let seqs = |path: Option<Vec<Node<TranscriptEntry>>>| {
         path.map(|path| path.iter().map(|node| node.seq.get()).collect::<Vec<_>>())

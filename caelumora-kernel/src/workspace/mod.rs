@@ -38,12 +38,11 @@ pub use manager::WorkspaceManager;
 
 use crate::terminal::TerminalProvider;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
-use caelumora_model::confidentiality::{
-    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
-};
-use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext, WRITE};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext, WRITE};
 
 /// `error` of the store about workspace `id`: not found is one case with
 /// not readable.

@@ -206,7 +206,7 @@ mod tests {
     use caelumora_agents::testing::workspace_turn;
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use std::fs;
 

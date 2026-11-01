@@ -293,19 +293,20 @@ mod tests {
     use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::Participant;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::confidentiality::{
-        Compartments, ConfidentialityPolicy, ConfidentialityRules, Place, Reading,
-    };
+    use caelumora_model::confidentiality::{Compartments, Place, Reading};
     use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, Session, SessionId};
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::{EntityStores, StateStore};
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
+    use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
+    use caelumora_security::SecurityContext;
+    use caelumora_store::memory::MemoryStore;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::{EntityStores, StateStore};
     use std::collections::HashMap;
     use std::ops::Deref;
     use std::sync::OnceLock;

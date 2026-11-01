@@ -16,12 +16,12 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{
-    AccessQuestions, AclEntry, Grant, Policies, SecurityContext, Subject,
-};
+use caelumora_model::security::{AclEntry, Grant, Subject};
 use caelumora_model::session::{Channel, Session};
-use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt};
+use caelumora_model::store::{StoreResult, StoreResultExt};
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
+use caelumora_security::{AccessQuestions, Policies, SecurityContext};
+use caelumora_store::{EntityStore, EntityStores};
 use std::slice;
 use std::sync::Arc;
 use tracing::warn;

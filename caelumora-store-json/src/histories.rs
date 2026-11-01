@@ -18,11 +18,12 @@ use caelumora_model::chain::{Node, Position};
 use caelumora_model::channel::ChannelId;
 use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::{
-    answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems,
-};
+use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
 use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_store::history::{
+    answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;

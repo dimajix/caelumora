@@ -4,10 +4,19 @@
 //! them by the blanket implementation, so that no policy answers them
 //! otherwise.
 
-use crate::skill::{Skill, USE};
+use crate::skill::Skill;
 use async_trait::async_trait;
-use caelumora_model::security::{AccessPolicy, ActionType, SecurityAttributes, SecurityContext};
+use caelumora_model::security::{Grant, SecurityAttributes};
 use caelumora_model::store::Stored;
+use caelumora_security::{AccessPolicy, ActionType, CustomVerb, Requirement, SecurityContext};
+
+/// Loading a skill into a turn (issue 22): what the agent then follows,
+/// asked in the turn's context - the agent for its owner, whoever asked as
+/// initiator. Apart from reading, so that a policy can let a skill be read
+/// but not used, or the other way round; granted as reading by default.
+/// Whether its classification may flow into the channel is asked besides
+/// (`may_publish`).
+pub const USE: CustomVerb = CustomVerb { name: "Use", requires: Requirement::Grant(Grant::Read) };
 
 #[async_trait]
 pub trait SkillAccess {

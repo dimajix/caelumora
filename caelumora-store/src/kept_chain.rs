@@ -6,8 +6,8 @@
 //! names the same content after the same predecessors, and the store keeps
 //! both.
 
-use crate::chain::{Chain, Node, Position, Stored};
-use crate::digest::Digest;
+use caelumora_model::chain::{Chain, Node, Position, Stored};
+use caelumora_model::digest::Digest;
 
 /// Whether the nodes of `entries` - what a chain added, or changed in its
 /// place, since it was stored - fit what a store keeps of it up to the
@@ -156,7 +156,7 @@ impl<E: Clone> KeptChain<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::digest;
+    use caelumora_model::digest;
 
     fn node(seq: u64, label: &str) -> Node<String> {
         serde_json::from_value(serde_json::json!({ "seq": seq, "digest": digest::prompt(label), "parent": null, "entry": label })).unwrap()

@@ -25,6 +25,8 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
+caelumora-store.workspace = true
 caelumora-kernel = { workspace = true, features = ["test-support"] }
 caelumora-model = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }

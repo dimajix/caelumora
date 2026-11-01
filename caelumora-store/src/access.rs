@@ -42,10 +42,12 @@
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
-use crate::confidentiality::{may_reach, ConfidentialityQuestions};
-use crate::removal::Removal;
-use crate::security::{ActionType, Admission, Enforcement, Policies, Refused, SecurityContext};
-use crate::store::{Presence, StoreError, StoreResult, Stored};
+use crate::Presence;
+use caelumora_model::removal::Removal;
+use caelumora_model::security::Refused;
+use caelumora_model::store::{StoreError, StoreResult, Stored};
+use caelumora_security::confidentiality::{may_reach, ConfidentialityQuestions};
+use caelumora_security::{ActionType, Admission, Enforcement, Policies, SecurityContext};
 use std::slice;
 
 // Every method takes the kind of entity it asks about (issue 323): every
@@ -258,20 +260,24 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::actor::ActorId;
-    use crate::confidentiality::ConfidentialityRules;
-    use crate::removal::Removal;
-    use crate::role::RoleId;
-    use crate::security::{
-        AccessPolicy, ActionType, OwnershipPolicy, Policies, SecurityAttributes, SecurityContext,
-        Subject, Verb,
+    use crate::{EntityStores, Persistence};
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::channel::ChannelId;
+    use caelumora_model::removal::Removal;
+    use caelumora_model::role::RoleId;
+    use caelumora_model::security::{SecurityAttributes, Subject};
+    use caelumora_model::session::testing::bare_session;
+    use caelumora_model::session::{Session, SessionId};
+    use caelumora_model::store::query::Query;
+    use caelumora_model::store::{StoreError, Stored};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::UserId;
+    use caelumora_model::user::UserProfile;
+    use caelumora_model::value::text::Introduction;
+    use caelumora_security::confidentiality::ConfidentialityRules;
+    use caelumora_security::{
+        AccessPolicy, ActionType, OwnershipPolicy, Policies, SecurityContext, Verb,
     };
-    use crate::session::testing::bare_session;
-    use crate::session::{Session, SessionId};
-    use crate::store::query::Query;
-    use crate::store::{EntityStores, Persistence, StoreError, Stored};
-    use crate::user::testing::make_user;
-    use crate::user::UserId;
     use std::sync::Arc;
 
     /// Owners do everything, whom the list names read, nobody acts for
@@ -315,12 +321,14 @@ mod tests {
     /// restore or purge - the deleted alike, so that both lists agree.
     #[tokio::test]
     async fn what_the_caller_is_not_cleared_for_does_not_exist_for_them() {
-        use crate::confidentiality::{Classification, Clearance, Compartments, Confidentiality};
-        use crate::role::Roles;
-        use crate::scope::Scope;
-        use crate::security::AllowAllPolicy;
-        use crate::value::name::ScopedName;
-        use crate::workspace::Workspace;
+        use caelumora_model::confidentiality::{
+            Classification, Clearance, Compartments, Confidentiality,
+        };
+        use caelumora_model::role::Roles;
+        use caelumora_model::scope::Scope;
+        use caelumora_model::value::name::ScopedName;
+        use caelumora_model::workspace::Workspace;
+        use caelumora_security::AllowAllPolicy;
         let staff = RoleId::new();
         let roles = Roles::new([(
             staff,
@@ -593,9 +601,9 @@ mod tests {
 
     #[tokio::test]
     async fn users_are_read_by_everybody_and_changed_by_the_system_alone() {
-        use crate::scope::Scope;
-        use crate::user::User;
-        use crate::value::name::ScopedName;
+        use caelumora_model::scope::Scope;
+        use caelumora_model::user::User;
+        use caelumora_model::value::name::ScopedName;
 
         let store = EntityStores::open(
             &Persistence::in_memory(),
@@ -657,5 +665,49 @@ mod tests {
             .delete(&system, alice_id, &Removal::now(system.caller_id))
             .await
             .expect("the system deletes users"));
+    }
+
+    #[tokio::test]
+    async fn a_user_writes_their_own_profile_and_no_one_else_s() {
+        let store = EntityStores::open(
+            &Persistence::in_memory(),
+            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
+        )
+        .unwrap()
+        .user_profiles;
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let as_user = |id| {
+            SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default())
+        };
+
+        let mut hers =
+            UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
+        assert!(
+            matches!(
+                store.create(&as_user(bob), &mut hers).await,
+                Err(StoreError::PermissionDenied(_))
+            ),
+            "nobody writes a profile of someone else"
+        );
+        store.create(&as_user(alice), &mut hers).await.expect("her own");
+        let mut changed =
+            UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
+        assert!(
+            matches!(
+                store.update(&as_user(bob), &mut changed).await,
+                Err(StoreError::NotFound { .. })
+            ),
+            "nor changes it"
+        );
+        assert_eq!(
+            store
+                .get(&SecurityContext::system(), alice)
+                .await
+                .unwrap()
+                .introduction
+                .as_ref()
+                .map(Introduction::as_str),
+            Some("I run the budget.")
+        );
     }
 }

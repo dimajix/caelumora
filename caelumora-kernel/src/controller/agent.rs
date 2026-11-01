@@ -6,9 +6,10 @@ use arc_swap::Guard;
 use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent};
 use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::role::RoleId;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{EntityStores, StoreResult};
+use caelumora_model::store::StoreResult;
+use caelumora_security::SecurityContext;
+use caelumora_store::EntityStores;
 use std::sync::Arc;
 
 /// The one writer of an agent's document in this instance, shared by all
@@ -65,9 +66,7 @@ impl AgentController {
         limiting_roles: Option<&[RoleId]>,
     ) -> SecurityContext {
         let roles = self.owner.as_ref().map(|owner| owner.load().roles.clone()).unwrap_or_default();
-        self.agent
-            .load()
-            .security_context(session, channel)
+        SecurityContext::of_agent(&self.agent.load(), session, channel)
             .with_roles(roles, limiting_roles.map(<[_]>::to_vec))
     }
 
@@ -105,11 +104,11 @@ mod tests {
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Personality;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::Policies;
-    use caelumora_model::store::Persistence;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_security::Policies;
+    use caelumora_store::Persistence;
 
     #[tokio::test]
     async fn a_renamed_agent_is_stored_first() {

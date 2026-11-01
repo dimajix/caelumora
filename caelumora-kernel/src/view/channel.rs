@@ -26,7 +26,6 @@ use caelumora_model::history::{HistoryEntry, HistoryPage, Reader};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::note::Note;
 use caelumora_model::removal::Removal;
-use caelumora_model::security::{AccessQuestions, ActionType, Enforcement};
 use caelumora_model::session::ChannelId;
 use caelumora_model::snapshot::{
     ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, Unread,
@@ -40,6 +39,7 @@ use caelumora_model::value::name::Name;
 use caelumora_model::value::text::{Briefing, Introduction, Summary};
 use caelumora_model::work::TurnId;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_security::{AccessQuestions, ActionType, Enforcement};
 use std::sync::Arc;
 use tracing::warn;
 

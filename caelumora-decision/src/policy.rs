@@ -33,16 +33,17 @@ use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::moderator::{ResponderPolicy, Undecided};
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
-use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::message::{estimated_tokens, Message, MessageId};
 use caelumora_model::prompt_catalogue::{
     context, PromptCatalogue, PromptError, PromptTexts, PromptVariant,
 };
 use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::value::time_zone::TimeZone;
+use caelumora_security::confidentiality::ConfidentialityPolicy;
+use caelumora_security::secret::SecretManager;
+use caelumora_security::SecurityContext;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -454,13 +455,14 @@ mod tests {
     use caelumora_model::actor::{ActorEvent, EventContext};
     use caelumora_model::agent::AgentId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::confidentiality::{Confidentiality, ConfidentialityRules};
+    use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
-    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
+    use caelumora_security::confidentiality::ConfidentialityRules;
+    use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
+    use caelumora_store::{EntityStores, Persistence};
     use serde_json::{json, Value};
     use std::sync::Mutex;
     use tokio::net::TcpListener;

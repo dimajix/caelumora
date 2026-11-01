@@ -74,7 +74,7 @@ static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes::systems();
 impl User {
     /// A new user named `username`, of no roles and without an email: as a provider that knows
     /// nothing else of them makes one.
-    pub(crate) fn new(username: Name) -> Self {
+    pub fn new(username: Name) -> Self {
         Self {
             id: UserId::new(),
             username,
@@ -410,9 +410,6 @@ impl Journaled for UserChannelState {
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
     use super::*;
-    use crate::channel::Participant;
-    use crate::security::SecurityContext;
-    use crate::store::EntityStores;
 
     /// A user `name`, not stored: `User::new`, the name a test gives taken as one.
     #[expect(
@@ -422,27 +419,12 @@ pub mod testing {
     pub fn make_user(name: &str) -> User {
         User::new(Name::new(name).expect("a test's name of a user is one"))
     }
-
-    /// Stores copies of `users` in `stores` by the system, and answers them as participants of a
-    /// channel. The users given stay copies never stored, at the first revision.
-    #[expect(clippy::expect_used, reason = "test code: a store that fails fails the test")]
-    pub async fn record_users(stores: &EntityStores, users: &[&User]) -> Vec<Participant> {
-        let system = SecurityContext::system();
-        let mut participants = Vec::new();
-        for user in users {
-            stores.users.create(&system, &mut (*user).clone()).await.expect("a user stored");
-            participants.push(Participant::User(user.id));
-        }
-        participants
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::Policies;
     use crate::store::testing::{replayed, stored};
-    use crate::store::EntityStores;
     use std::slice;
 
     /// Issue 404: two frontends of one user cannot move the mark back.
@@ -545,57 +527,6 @@ mod tests {
         assert_eq!(
             profile.add_approval_rule(shell(RuleDecision::Allow, None)),
             Err(RuleError::TooMany)
-        );
-    }
-
-    #[tokio::test]
-    async fn a_user_writes_their_own_profile_and_no_one_else_s() {
-        use crate::channel::ChannelId;
-        use crate::security::{OwnershipPolicy, SecurityContext};
-        use crate::session::SessionId;
-        use crate::store::Persistence;
-        use crate::store::StoreError;
-        use std::sync::Arc;
-
-        let store = EntityStores::open(
-            &Persistence::in_memory(),
-            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
-        )
-        .unwrap()
-        .user_profiles;
-        let (alice, bob) = (UserId::new(), UserId::new());
-        let as_user = |id| {
-            SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default())
-        };
-
-        let mut hers =
-            UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
-        assert!(
-            matches!(
-                store.create(&as_user(bob), &mut hers).await,
-                Err(StoreError::PermissionDenied(_))
-            ),
-            "nobody writes a profile of someone else"
-        );
-        store.create(&as_user(alice), &mut hers).await.expect("her own");
-        let mut changed =
-            UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
-        assert!(
-            matches!(
-                store.update(&as_user(bob), &mut changed).await,
-                Err(StoreError::NotFound { .. })
-            ),
-            "nor changes it"
-        );
-        assert_eq!(
-            store
-                .get(&SecurityContext::system(), alice)
-                .await
-                .unwrap()
-                .introduction
-                .as_ref()
-                .map(Introduction::as_str),
-            Some("I run the budget.")
         );
     }
 }

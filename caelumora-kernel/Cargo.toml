@@ -6,6 +6,8 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
+caelumora-store.workspace = true
+caelumora-security.workspace = true
 caelumora-api.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
@@ -26,11 +28,20 @@ rand.workspace = true
 arc-swap.workspace = true
 tracing.workspace = true
 tempfile = { workspace = true, optional = true }
+# The password hashes of the user file (issue 25), verified only: hashes
+# are made by hand, so no random salts are needed here.
+argon2.workspace = true
 
 [features]
 # The world of the security suite (`testing`), for the suite and for the
-# tests of a plugin (issue 323); with it, what the model offers tests.
-test-support = ["dep:tempfile", "caelumora-model/test-support"]
+# tests of a plugin (issue 323); with it, what the model, the stores and the
+# policies offer tests.
+test-support = [
+    "dep:tempfile",
+    "caelumora-model/test-support",
+    "caelumora-store/test-support",
+    "caelumora-security/test-support",
+]
 
 [dev-dependencies]
 # `test-util` for `start_paused`: tests that wait for a value to expire without waiting.

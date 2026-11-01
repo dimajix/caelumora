@@ -2,11 +2,12 @@
 //! alone (issue 332): the policy's rule for a verb on entities, in a form a
 //! store can apply to a whole list as well as to one entity.
 
-use super::{Grant, Memberships, SecurityAttributes, Subject};
-use crate::actor::ActorId;
-use crate::group::GroupId;
-use crate::role::RoleId;
-use crate::store::Stored;
+use crate::Memberships;
+use caelumora_model::actor::ActorId;
+use caelumora_model::group::GroupId;
+use caelumora_model::role::RoleId;
+use caelumora_model::security::{Grant, SecurityAttributes, Subject};
+use caelumora_model::store::Stored;
 
 /// Which entities a context may do one verb with, in the words of
 /// `SecurityAttributes`: whom an owner or an entry has to name, and what an
@@ -61,7 +62,7 @@ impl Admission {
     /// the groups: an entry for a group counts as admitting. More than
     /// `admits`, never less - what a storage that does not keep the groups
     /// narrows a list by (issue 332).
-    pub(crate) fn may_admit(&self, attributes: &SecurityAttributes) -> bool {
+    pub fn may_admit(&self, attributes: &SecurityAttributes) -> bool {
         self.admits_without_groups(attributes) || self.groups_named(attributes).next().is_some()
     }
 
@@ -117,7 +118,7 @@ impl Admission {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::testing::*;
+    use crate::testing::*;
 
     fn reading(actors: Vec<ActorId>) -> Admission {
         Admission { actors, systems: true, grant: Some(Grant::Read), ..Admission::default() }

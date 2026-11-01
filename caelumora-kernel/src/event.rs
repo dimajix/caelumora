@@ -4,12 +4,14 @@
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::Channel;
 use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::{may_reach_each, Classification};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{EntityChange, EventPublisher, GlobalEvent};
-use caelumora_model::security::{ActionType, Policies, SecurityAttributes, SecurityContext};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::Session;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::{User, UserId, UserProfile};
+use caelumora_security::confidentiality::may_reach_each;
+use caelumora_security::{ActionType, Policies, SecurityContext};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 #[cfg(any(test, feature = "test-support"))]
@@ -572,16 +574,15 @@ mod tests {
     use async_trait::async_trait;
     use caelumora_model::actor::ActorId;
     use caelumora_model::channel::{self, ChannelUpdateEvent};
-    use caelumora_model::confidentiality::ConfidentialityRules;
     use caelumora_model::group::{Group, GroupId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{
-        AccessPolicy, AclEntry, Grant, Memberships, OwnershipPolicy, Secured, Subject,
-    };
+    use caelumora_model::security::{AclEntry, Grant, Secured, Subject};
     use caelumora_model::store::Stored;
     use caelumora_model::value::name::ScopedName;
     use caelumora_model::value::text::Introduction;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
+    use caelumora_security::confidentiality::ConfidentialityRules;
+    use caelumora_security::{AccessPolicy, Memberships, OwnershipPolicy};
     use std::slice;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
@@ -742,7 +743,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_events_of_a_channel_are_received_by_who_may_read_the_channel() {
-        use caelumora_model::security::Verb;
+        use caelumora_security::Verb;
 
         /// Lets read channels alone, so that the question asked shows.
         #[derive(Debug)]
@@ -788,7 +789,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_deletion_is_received_by_who_may_hear_of_it() {
-        use caelumora_model::security::Verb;
+        use caelumora_security::Verb;
 
         /// Lets hear of deletions alone, so that the question asked shows.
         #[derive(Debug)]

@@ -29,17 +29,11 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField};
-use caelumora_model::security::{
-    AccessQuestions, ActionType, Enforcement, Policies, SecurityAttributes, SecurityContext,
-    Subject, JOIN,
-};
+use caelumora_model::security::{SecurityAttributes, Subject};
 use caelumora_model::session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{
-    purge_behind, Deleted, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt,
-    Stored,
-};
+use caelumora_model::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::template::{
     ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate,
 };
@@ -48,6 +42,10 @@ use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::WorkspaceChoice;
+use caelumora_security::{
+    AccessQuestions, ActionType, Enforcement, Policies, SecurityContext, JOIN,
+};
+use caelumora_store::{purge_behind, Deleted, EntityStores, StateStore};
 use dashmap::DashMap;
 use futures::future::join_all;
 use std::collections::HashSet;
@@ -1139,7 +1137,7 @@ mod tests {
     use anyhow::Result;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::{ActorEvent, ActorState, Envelope};
-    use caelumora_model::agent::testing::{make_personality, stored_agent};
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Agent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::approval::ApprovalStrategy;
@@ -1152,20 +1150,19 @@ mod tests {
     use caelumora_model::project::Project;
     use caelumora_model::removal::Removal;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Grant, Secured, SecurityAttributes, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, Secured, SecurityAttributes, Subject};
     use caelumora_model::session;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::ChannelId;
     use caelumora_model::session::Session;
-    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::{Deleted, Persistence, StateStore, StoreError, Stored};
+    use caelumora_model::store::{StoreError, Stored};
     use caelumora_model::template::testing::{make_channel_template, make_template};
     use caelumora_model::template::{
         ChannelTemplate, InternalActorTemplate, SessionTemplate, SessionTemplateId,
     };
     use caelumora_model::turn::{GivenUpReason, TurnState};
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserProfile;
     use caelumora_model::user::{User, UserId};
     use caelumora_model::value::language::Language;
@@ -1173,6 +1170,11 @@ mod tests {
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::value::ValueError;
     use caelumora_model::workspace::{Workspace, WorkspaceChoice};
+    use caelumora_security::SecurityContext;
+    use caelumora_store::memory::MemoryStore;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::testing::stored_agent;
+    use caelumora_store::{Deleted, Persistence, StateStore};
     use serde_json::Value;
     use std::sync::atomic::Ordering;
     use std::sync::Arc;

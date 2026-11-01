@@ -1,28 +1,27 @@
-use crate::actor::ActorId;
-use crate::agent::{AgentChannelState, AgentId, AgentState};
-use crate::chain::{Node, Position};
-use crate::channel::{ChannelId, ChannelState};
-use crate::context::FrameRef;
-use crate::digest::Digest;
-use crate::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
-use crate::message::{Message, MessageId};
-use crate::security::Admission;
-use crate::store::documents::{Document, DocumentOf, DocumentStorage};
-use crate::store::history::{
-    answer_of, page_of, seen, seen_nodes, HistoryField, HistoryStore, Memberships, StandingItems,
+use crate::documents::{Document, DocumentOf, DocumentStorage};
+use crate::history::{
+    answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,
 };
-use crate::store::kept_chain::KeptChain;
-use crate::store::query::{ordered_after, FieldPath, Filter};
-use crate::store::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
-use crate::store::{
-    EntityKind, Journaled, PersistenceBackend, Presence, Revision, StateStore, StoreError,
-    StoreResult,
-};
-use crate::tool::ToolSet;
-use crate::transcript::{known, Transcript, TranscriptEntry};
-use crate::user::{UserChannelState, UserId};
-use crate::value::name::ScopedName;
+use crate::kept_chain::KeptChain;
+use crate::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
+use crate::{PersistenceBackend, Presence, StateStore};
 use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_model::chain::{Node, Position};
+use caelumora_model::channel::{ChannelId, ChannelState};
+use caelumora_model::context::FrameRef;
+use caelumora_model::digest::Digest;
+use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_model::message::{Message, MessageId};
+use caelumora_model::store::history::HistoryField;
+use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
+use caelumora_model::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
+use caelumora_model::tool::ToolSet;
+use caelumora_model::transcript::{known, Transcript, TranscriptEntry};
+use caelumora_model::user::{UserChannelState, UserId};
+use caelumora_model::value::name::ScopedName;
+use caelumora_security::Admission;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::mem;
@@ -686,14 +685,13 @@ impl TranscriptStore for MemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::group::GroupId;
-    use crate::security::{
-        Grant, OwnershipPolicy, Policies, SecurityAttributes, SecurityContext, Subject,
-    };
-    use crate::store::query::Query;
-    use crate::store::suite;
-    use crate::store::{EntityStores, Persistence};
-    use crate::user::UserId;
+    use crate::suite;
+    use crate::{EntityStores, Persistence};
+    use caelumora_model::group::GroupId;
+    use caelumora_model::security::{Grant, SecurityAttributes, Subject};
+    use caelumora_model::store::query::Query;
+    use caelumora_model::user::UserId;
+    use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
 
     /// The stores of a memory store, permitting everything.
     fn permitting() -> EntityStores {
@@ -795,10 +793,10 @@ mod tests {
     /// asked as the list is read, and a page is filled from further on.
     #[tokio::test]
     async fn a_limit_counts_what_the_caller_may_read() {
-        use crate::actor::ActorId;
-        use crate::confidentiality::Classification;
-        use crate::scope::Scope;
-        use crate::workspace::Workspace;
+        use caelumora_model::actor::ActorId;
+        use caelumora_model::confidentiality::Classification;
+        use caelumora_model::scope::Scope;
+        use caelumora_model::workspace::Workspace;
         let store = owners().workspaces;
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();

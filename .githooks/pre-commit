@@ -1,5 +1,5 @@
 #!/bin/sh
-# Ten checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Nine checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -22,14 +22,11 @@
 #   block (docs/CODING-GUIDELINES.md, "Imports"): `scripts/import-blocks.sh` must find none out of
 #   order and no split block in the Rust files a commit adds or changes, read whole from the
 #   working tree.
-# - A library links no kernel (issue 516): whenever a Cargo manifest or `scripts/crates.sh` is part
-#   of a commit, `scripts/library-deps.sh` must find neither a library nor the library side of a
-#   crate that stands on both levels with `caelumora-kernel` among its normal dependencies, nor
-#   `caelumora-api` with a crate of Caelumora but the model.
-# - A library names nothing only the kernel may decide by that the model still offers
-#   (docs/ARCHITECTURE.md, "The kernel decides, the agent side asks"): `scripts/library-names.sh`
-#   must find no `SecurityContext`, policy, manager or store of the model in the code of the
-#   libraries' Rust files a commit adds or changes, read whole from the working tree.
+# - A library links nothing that decides (issues 516, 517): whenever a Cargo manifest or
+#   `scripts/crates.sh` is part of a commit, `scripts/library-deps.sh` must find neither a library
+#   nor the library side of a crate that stands on both levels with `caelumora-kernel`,
+#   `caelumora-security` or `caelumora-store` among its normal dependencies, nor `caelumora-api`
+#   with a crate of Caelumora but the model.
 # - The crates that stand on both levels stay cut (issue 516): whenever Rust code, a Cargo manifest
 #   or `scripts/crates.sh` is part of a commit, the crates of `scripts/crates.sh` that stand on
 #   both levels must build without features - what a client reads -, with the feature `library`
@@ -41,7 +38,7 @@
 #   write it, or the commit is refused. It reads the manifests of the working tree, as clippy
 #   does.
 #
-# `git commit --no-verify` skips all ten.
+# `git commit --no-verify` skips all nine.
 set -eu
 
 . scripts/crates.sh
@@ -95,5 +92,4 @@ rust=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
 if [ -n "$rust" ]; then
     scripts/tuple-bindings.sh $rust
     scripts/import-blocks.sh $rust
-    scripts/library-names.sh $rust
 fi

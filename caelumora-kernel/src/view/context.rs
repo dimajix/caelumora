@@ -19,10 +19,10 @@ use caelumora_model::history::{HistoryPage, Reader};
 use caelumora_model::message::MessageId;
 use caelumora_model::note::Note;
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
-use caelumora_model::store::history::HistoryStore;
-use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::StoreError;
 use caelumora_model::transcript::Transcript;
+use caelumora_store::history::HistoryStore;
+use caelumora_store::transcript::TranscriptStore;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -63,8 +63,8 @@ impl AgentContextView {
         use caelumora_model::channel::ChannelState;
         use caelumora_model::history::{Audience, HistoryEntry, Recorded};
         use caelumora_model::prompt_catalogue::{KERNEL, KERNEL_PROMPTS};
-        use caelumora_model::store::memory::MemoryStore;
-        use caelumora_model::store::StateStore;
+        use caelumora_store::memory::MemoryStore;
+        use caelumora_store::StateStore;
         use chrono::Utc;
         let ActorId::Agent(agent) = actor else { panic!("{actor} is no agent") };
         let store = Arc::new(MemoryStore::new());
@@ -494,8 +494,8 @@ mod tests {
     #[tokio::test]
     async fn the_context_of_a_message_on_a_branch_the_state_does_not_hold_is_read_from_the_store() {
         use caelumora_model::channel::ChannelState;
-        use caelumora_model::store::memory::MemoryStore;
-        use caelumora_model::store::StateStore;
+        use caelumora_store::memory::MemoryStore;
+        use caelumora_store::StateStore;
         let agent = AgentId::new();
         let channel = ChannelId::new();
         let text = |t: &str| Message {

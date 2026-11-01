@@ -9,7 +9,7 @@ stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The entity store
 
-The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived domain entities:
+The entity stores (`EntityStore<T>`, in `caelumora-store`) keep the long-lived domain entities:
 
 *   **Personalities**, the definitions of agents, **component bundles**, the components several of
     them include (see [Component bundles](#component-bundles)), and **session templates**, which
@@ -37,7 +37,7 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
 Each kind is kept by a store of its own, `EntityStore<T>` (issue
 [323](../issues/323-kinds-enumerated-in-the-core.md)), with the same operations for every kind.
 
-**A backend keeps, the model checks** (issue
+**A backend keeps, the store checks** (issue
 [446](../issues/446-stores-check-access-each-and-are-enumerated.md)). A backend - `MemoryStore`, for
 tests, or `JsonFileStore`, of the plugin `caelumora-store-json` - is a `PersistenceBackend`: it
 keeps the documents of every kind, each kind in a `DocumentStorage` of its own, and the states with
@@ -51,7 +51,7 @@ are taken from one backend. A storage keeps documents serialized, by id, and is 
 that a backend opens the storage of any kind, a plugin's too, without knowing its type: the memory
 store keeps them in a map, the JSON store one file per document in the kind's directory,
 `entities/<kind>/<id>.json`. What every kind's store does - read the document as its type, ask the
-policies, order the steps - is written once, in the model (`CheckedStore`, over `store::access`),
+policies, order the steps - is written once, in `caelumora-store` (`CheckedStore`, over `access`),
 for every backend alike.
 
 A backend is made ready once, at start (`PersistenceBackend::open`, issue
@@ -417,7 +417,7 @@ it is. So does one that was deleted, whose id stays taken: every seeder creates 
 
 ## The state store
 
-The `StateStore` (in `caelumora-model`) stores the runtime state of channels and agents:
+The `StateStore` (in `caelumora-store`) stores the runtime state of channels and agents:
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)).
 *   **`AgentChannelState`**: an agent in one channel, of either kind - processing state,
@@ -541,13 +541,14 @@ participant (issue 417), and is kept apart from the channel state's document (is
     a fitting rewrites every items segment: slow where a database has indexes.
 *   **In Postgres** ([04](../issues/04-postgres-state-store.md)) a history is the chain in
     `history_entries`, the items in `history_items(channel_id, seq, message_id, item)` - each as it
-    is kept to be judged (`KeptItem`), found by the message it said through an index -, and the
-    head and the memberships in `histories`, the memberships whole, as `jsonb`. The put of the
-    channel's state reads the items the entries it adds change - every one for a fitting -, takes
-    them further as `StandingItems` does and writes them back. A page reads the items backwards in
-    batches, asking the database for those its reader is given (`Filter::seen_by`, issue
-    [451](../issues/451-history-reader-judged-after-reading.md)) that meet its filter, as far as
-    SQL can judge it; in which form the reader sees each the model decides (`seen`).
+    is kept to be judged (`KeptItem`), found by the message it said through an index -, and the head
+    and the memberships in `histories`, the memberships whole, as `jsonb`. The put of the channel's
+    state reads the items the entries it adds change - every one for a fitting -, takes them further
+    as `StandingItems` does and writes them back. A page reads the items backwards in batches,
+    asking the database for those its reader is given (`Filter::seen_by`, issue
+    [451](../issues/451-history-reader-judged-after-reading.md)) that meet its filter, as far as SQL
+    can judge it; in which form the reader sees each the model decides (`Recorded::as_seen_by`,
+    asked by `seen`).
 
 ### Transcripts
 

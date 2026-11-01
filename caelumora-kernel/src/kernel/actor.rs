@@ -11,9 +11,10 @@ use crate::event::EventSubscription;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, ChannelId};
-use caelumora_model::security::{AccessPolicy, SecurityAttributes, SecurityContext};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
+use caelumora_security::{AccessPolicy, SecurityContext};
 use std::sync::Arc;
 
 /// What a participant's actor runs with (issue 69): the context it acts in, built by the kernel at

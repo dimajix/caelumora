@@ -40,6 +40,8 @@ rust-embed = { workspace = true, optional = true }
 mime_guess = { workspace = true, optional = true }
 
 [dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
+caelumora-store.workspace = true
 caelumora-agents = { workspace = true, features = ["test-support"] }
 caelumora-kernel = { workspace = true, features = ["test-support"] }
 tower.workspace = true

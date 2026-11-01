@@ -1,39 +1,12 @@
-pub mod env;
-pub mod file;
+//! The secrets of a process (issue 516): its sources, tried in order (`SecretProvider`), and the
+//! `SecretManager` that asks the policy before each is read, in the name it is asked in. What is
+//! read and how reading fails are the model's (`caelumora_model::secret`).
 
-use crate::security::{AccessPolicy, ActionType, Enforcement, Refused, SecurityContext};
+use crate::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use async_trait::async_trait;
+use caelumora_model::secret::{SecretError, SecretResult, Secrets};
 use std::fmt::Debug;
 use std::sync::Arc;
-
-#[derive(Debug, thiserror::Error)]
-pub enum SecretError {
-    #[error("secret not found: {0}")]
-    NotFound(String),
-    #[error("access denied for secret: {key}")]
-    PermissionDenied {
-        key: String,
-        #[source]
-        refused: Refused,
-    },
-    #[error("backend: {0}")]
-    Backend(String),
-}
-
-pub type SecretResult<T> = Result<T, SecretError>;
-
-/// The secrets that may be read in one name, bound to it by the kernel (issue 516): what a
-/// component that talks to a remote system resolves its credential by, without naming the name or
-/// holding the `SecretManager`. Each read is asked of the policy (`ReadSecret`) in the name it is
-/// bound to.
-#[async_trait]
-pub trait Secrets: Send + Sync {
-    /// The secret `key`.
-    ///
-    /// # Errors
-    /// As `SecretManager::resolve`.
-    async fn resolve(&self, key: &str) -> SecretResult<String>;
-}
 
 /// A single source of secrets, tried in order by a `SecretManager`.
 ///
@@ -105,7 +78,7 @@ impl Secrets for SecretsFor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::AllowAllPolicy;
+    use crate::AllowAllPolicy;
     use std::collections::HashMap;
 
     #[derive(Debug)]

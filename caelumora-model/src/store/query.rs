@@ -308,12 +308,12 @@ pub struct Cursor(Uuid);
 
 impl Cursor {
     /// The cursor after the entity `id`.
-    pub(crate) fn after(id: Uuid) -> Self {
+    pub fn after(id: Uuid) -> Self {
         Self(id)
     }
 
     /// The id of the entity it goes on after.
-    pub(crate) fn id(&self) -> Uuid {
+    pub fn id(&self) -> Uuid {
         self.0
     }
 }
@@ -380,7 +380,7 @@ pub fn ordered_after<T>(
 ///
 /// # Errors
 /// `StoreError::Validation` if `value` cannot be serialized.
-pub(crate) fn meeting<T: Serialize, F: Field>(
+pub fn meeting<T: Serialize, F: Field>(
     value: T,
     filter: Option<&Filter<F>>,
 ) -> StoreResult<Option<T>> {

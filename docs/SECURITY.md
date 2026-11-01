@@ -38,7 +38,7 @@ Security is a context that travels with every operation, and explicit checks aga
     kind and a `Verb` - `Get`, `Create`, `Update`, `Delete`, `ReadDeleted`, `HearDeleted`,
     `Restore`, `Purge` - and `ActionType::List` by the kind alone. It is named by both in the log
     and in this documentation: `GetSession`, `DeleteWorkspace`; a listing as `List(session)`.
-*   **A kind's own verb** - using a skill (`skill::USE`, the plugin's own), writing a workspace's
+*   **A kind's own verb** - using a skill (`access::USE`, the plugin's own), writing a workspace's
     files or adding an artifact's version (`WRITE`, the kernel's, which any kind may use, issue
     328) - is a `CustomVerb`, named likewise (`UseSkill`, `WriteWorkspace`). It says what it
     *requires*, in a right every policy knows: what an entry grants (`Read`, `Write`), or owning the
@@ -249,8 +249,8 @@ Whether an agent may reach the channel it copies from at all is the policy's, as
 
 ### How stores check
 
-The stores ask the same way for every entity kind and every backend (`store::access`, asked by the
-one `CheckedStore` over a backend's storage - no backend asks a policy, issue 446):
+The stores ask the same way for every entity kind and every backend (`caelumora_store::access`,
+asked by the one `CheckedStore` over a backend's storage - no backend asks a policy, issue 446):
 
 *   **Reads** are checked with the attributes as stored. An entity the caller may not read is
     reported as not found, so ids cannot be probed. What lies within an entity under a list of its
@@ -390,9 +390,9 @@ rights. In three parts:
 
 1.  **The agent acts with its owner's rights.** Every context an agent acts in names it as the
     caller, its owner as owner and its principal - its owner - as principal: the one it speaks in
-    when nobody asked (`Agent::security_context`) and the one of a turn, the request's continued as
-    the agent. The kernel builds the context it decides by, at every check, from the agent's record
-    and its owner's roles as its controllers hold them; the agent, on the agent side (see
+    when nobody asked (`SecurityContext::of_agent`) and the one of a turn, the request's continued
+    as the agent. The kernel builds the context it decides by, at every check, from the agent's
+    record and its owner's roles as its controllers hold them; the agent, on the agent side (see
     [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). The channel's door builds
     the context it admits an envelope in (see [What enters a channel](#what-enters-a-channel)), the
@@ -476,12 +476,12 @@ permission, and the same one an agent asks at its next step, so that both agree 
 ### Access questions
 
 A pure access question - "may they?", asked from outside an entity to decide what to list or offer -
-is a method of `caelumora_model::security::AccessQuestions`, not of the entity. They are asked by
-the views, which decide what a client lists and offers; by the views an agent's turn navigates and
-by the components, deciding what an agent may read of other channels or recall, in the context of
-the turn; by an agent, deciding what it may put up for approval; and by the approver, deciding whom
-it waits for - an answer it then checks as the operation it counts for. An act has no question of
-its own: calling a tool, changing a message, reclassifying it are asked with `Enforcement::require`
+is a method of `caelumora_security::AccessQuestions`, not of the entity. They are asked by the
+views, which decide what a client lists and offers; by the views an agent's turn navigates and by
+the components, deciding what an agent may read of other channels or recall, in the context of the
+turn; by an agent, deciding what it may put up for approval; and by the approver, deciding whom it
+waits for - an answer it then checks as the operation it counts for. An act has no question of its
+own: calling a tool, changing a message, reclassifying it are asked with `Enforcement::require`
 where they are decided.
 
 The flow is asked alike of the `ConfidentialityPolicy`, through `ConfidentialityQuestions`: the

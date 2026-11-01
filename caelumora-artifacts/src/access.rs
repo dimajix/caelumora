@@ -6,10 +6,9 @@
 
 use crate::artifact::Artifact;
 use async_trait::async_trait;
-use caelumora_model::security::{
-    AccessPolicy, ActionType, SecurityAttributes, SecurityContext, WRITE,
-};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::store::Stored;
+use caelumora_security::{AccessPolicy, ActionType, SecurityContext, WRITE};
 
 #[async_trait]
 pub trait ArtifactAccess {

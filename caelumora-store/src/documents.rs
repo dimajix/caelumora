@@ -3,20 +3,20 @@
 //!
 //! A backend keeps documents: serialized, by their id, without asking
 //! anything (`DocumentStorage`) - as a `ContentStorage` keeps content. What
-//! is asked, in which order and what is answered is the model's, once for
-//! every kind and every backend (`CheckedStore`, over `store::access`). A
+//! is asked, in which order and what is answered is this crate's, once for
+//! every kind and every backend (`CheckedStore`, over `access`). A
 //! storage is not generic, so that a backend is a trait object and opens the
 //! storage of a kind it was never told the type of - a plugin's too.
 
-use crate::removal::{Removal, RemovalId};
-use crate::security::{ActionType, Admission, Policies, SecurityAttributes, SecurityContext};
-use crate::store::access::Access;
-use crate::store::query::{Cursor, FieldPath, Filter, Page, Query};
-use crate::store::{
-    Deleted, EntityStore, Presence, Revision, StoreError, StoreResult, StoreResultExt, Stored,
-};
-use crate::value::name::ScopedName;
+use crate::access::Access;
+use crate::{Deleted, EntityStore, Presence};
 use async_trait::async_trait;
+use caelumora_model::removal::{Removal, RemovalId};
+use caelumora_model::security::SecurityAttributes;
+use caelumora_model::store::query::{Cursor, FieldPath, Filter, Page, Query};
+use caelumora_model::store::{Revision, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_model::value::name::ScopedName;
+use caelumora_security::{ActionType, Admission, Policies, SecurityContext};
 use serde_json::Value;
 use std::fmt::{self, Debug, Display};
 use std::marker::PhantomData;
@@ -179,7 +179,7 @@ async fn written_as_next<T: Stored>(
 
 /// The entities of one kind over the storage of a backend (issue 446):
 /// every operation of the `EntityStore`, checked as every kind is
-/// (`store::access`) - for every backend alike, so that no backend asks a
+/// (`access`) - for every backend alike, so that no backend asks a
 /// policy itself.
 pub(crate) struct CheckedStore<T> {
     storage: Arc<dyn DocumentStorage>,
@@ -437,13 +437,13 @@ impl<T: Stored> EntityStore<T> for CheckedStore<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::ActorId;
-    use crate::group::{Group, GroupField};
-    use crate::scope::Scope;
-    use crate::store::query::ordered_after;
-    use crate::store::testing::ContendedStore;
-    use crate::store::EntityStores;
-    use crate::user::UserId;
+    use crate::testing::ContendedStore;
+    use crate::EntityStores;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::group::{Group, GroupField};
+    use caelumora_model::scope::Scope;
+    use caelumora_model::store::query::ordered_after;
+    use caelumora_model::user::UserId;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 

@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::seed::{create_unless_taken, SeedSection};
-use caelumora_model::store::EntityStore;
+use caelumora_store::EntityStore;
 use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;

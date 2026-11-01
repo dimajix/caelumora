@@ -20,7 +20,8 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::MessageId;
 use caelumora_model::security::SecurityAttributes;
-use caelumora_model::store::{StateStore, StoreResult};
+use caelumora_model::store::StoreResult;
+use caelumora_store::StateStore;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
@@ -72,8 +73,8 @@ impl AgentStateHandle {
     #[cfg(any(test, feature = "test-support"))]
     pub fn detached() -> Arc<Self> {
         use caelumora_model::actor::ActorId;
-        use caelumora_model::store::memory::MemoryStore;
         use caelumora_model::user::UserId;
+        use caelumora_store::memory::MemoryStore;
         let state_store = Arc::new(MemoryStore::new());
         Arc::new(Self::new(
             AgentId::default(),
@@ -182,8 +183,8 @@ mod tests {
     use caelumora_model::agent;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::event::EntityChange;
-    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::user::UserId;
+    use caelumora_store::memory::MemoryStore;
     use std::sync::Mutex;
 
     /// The attributes of an agent of a user's, which its state is read by.

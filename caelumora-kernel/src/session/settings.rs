@@ -12,10 +12,11 @@ use caelumora_model::group::GroupId;
 use caelumora_model::privacy::PrivacyConfig;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{ActionType, Enforcement, Grant, SecurityContext, Subject};
+use caelumora_model::security::{Grant, Subject};
 use caelumora_model::session::Session;
 use caelumora_model::store::{StoreError, StoreResultExt, Stored};
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -314,11 +315,13 @@ mod tests {
 
     use crate::session::testing::*;
     use crate::view::Viewer;
-    use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_security::SecurityContext;
+    use caelumora_store::testing::record_users;
     use std::sync::Arc;
 
     #[tokio::test]

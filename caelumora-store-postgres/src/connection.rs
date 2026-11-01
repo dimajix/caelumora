@@ -3,9 +3,9 @@
 
 use crate::PostgresStoreConfig;
 use crate::{DEFAULT_MAX_CONNECTIONS, DEFAULT_SCHEMA};
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_security::secret::SecretManager;
+use caelumora_security::SecurityContext;
 use sqlx::migrate::Migrator;
 use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};

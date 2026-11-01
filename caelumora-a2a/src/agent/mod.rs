@@ -309,10 +309,11 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use caelumora_agents::external::{ExternalEvent, Said};
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::secret::{SecretProvider, SecretResult};
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_model::secret::SecretResult;
+    use caelumora_security::secret::SecretManager;
+    use caelumora_security::secret::SecretProvider;
+    use caelumora_security::AllowAllPolicy;
+    use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::future;

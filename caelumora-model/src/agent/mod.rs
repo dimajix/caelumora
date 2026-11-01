@@ -25,8 +25,7 @@ pub use state::{AgentState, AgentStateChange, STATE_CHANGED};
 use crate::actor::ActorId;
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
-use crate::security::{Secured, SecuredMut, SecurityAttributes, SecurityContext};
-use crate::session::{ChannelId, SessionId};
+use crate::security::{Secured, SecuredMut, SecurityAttributes};
 use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::value::name::{Name, ScopedName};
 use crate::value::ValueError;
@@ -73,19 +72,6 @@ pub struct Agent {
 }
 
 impl Agent {
-    /// The context the agent acts in when nobody asked it, in the channel
-    /// `channel` of session `session` (issue 87): begun by the agent itself,
-    /// answered for by its owner and acting in the name of its principal
-    /// (issues 255, 341).
-    pub fn security_context(&self, session: SessionId, channel: ChannelId) -> SecurityContext {
-        let agent = ActorId::Agent(self.id);
-        SecurityContext::new(agent, session, channel).next(
-            agent,
-            self.security_attributes.owner_id,
-            self.principal_id,
-        )
-    }
-
     /// A new agent of the personality `personality_id`, owned by `owner` -
     /// whoever creates it - and acting in their name (issue 341). Nothing of
     /// the personality is copied into it: what the agent is - its
@@ -202,31 +188,6 @@ mod tests {
     use super::*;
     use crate::project::ProjectId;
     use crate::user::UserId;
-
-    /// Issue 341: an agent acting when nobody asked it is the caller and
-    /// the initiator - it caused what it does -, answered for by its owner
-    /// and acting in its owner's name.
-    #[test]
-    fn an_agent_acting_on_its_own_initiates_it_for_its_owner() {
-        let owner = ActorId::User(UserId::new());
-        let agent = Agent::new(
-            ScopedName::new("helper", Default::default()).unwrap(),
-            PersonalityId::new(),
-            owner,
-        );
-        let context = agent.security_context(Default::default(), Default::default());
-        let itself = ActorId::Agent(agent.id);
-        assert_eq!(
-            (context.caller_id, context.initiator_id),
-            (itself, itself),
-            "it acts, and caused it"
-        );
-        assert_eq!(
-            (context.owner_id, context.principal_id),
-            (owner, owner),
-            "answered for by its owner, in their name"
-        );
-    }
 
     /// Issue 341: an agent is made acting in its owner's name, and cannot
     /// be stored acting in anybody else's - whom else it may act for is

@@ -12,7 +12,6 @@ serde_json.workspace = true
 serde-saphyr.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
-anyhow.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 # The texts given to models (issue 57).
@@ -28,14 +27,8 @@ any_ascii.workspace = true
 # The patterns of approval rules (issue 13): no backtracking, so that a
 # pattern takes linear time whatever it is matched against.
 regex.workspace = true
-# The user file is read asynchronously, and a password verified on a
-# blocking thread (`rt`, issue 25).
-tokio = { workspace = true, features = ["fs", "rt"] }
 # The URL of a remote endpoint, parsed to show it without credentials.
 url.workspace = true
-# The password hashes of the user file (issue 25), verified only: hashes
-# are made by hand, so no random salts are needed here.
-argon2.workspace = true
 # The time zone a session is held in (issue 424): the IANA names and their
 # rules, compiled in, so that a time is given the same on every machine.
 chrono-tz.workspace = true
@@ -49,12 +42,11 @@ bytes.workspace = true
 # channels, sessions, users, templates and personalities they write
 # (`message::testing`, `content::testing`, `channel::testing`,
 # `session::testing`, `user::testing`, `template::testing`, `agent::testing`),
-# the suite every backend of the stores runs (`store::suite`, issue 446) and
-# the stores that refuse a write as outdated (`store::testing`, issue 492).
+# the classifications and compartments they write (`confidentiality::testing`)
+# and the actors and attributes they share an entity with (`security::testing`).
 test-support = []
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tempfile.workspace = true
 
 [lints]

@@ -9,8 +9,9 @@
 
 use caelumora_api::remote::describe_request_error;
 use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::{SecretError, SecretManager};
-use caelumora_model::security::SecurityContext;
+use caelumora_model::secret::SecretError;
+use caelumora_security::secret::SecretManager;
+use caelumora_security::SecurityContext;
 use reqwest::{Client, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};

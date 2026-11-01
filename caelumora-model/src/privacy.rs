@@ -1,5 +1,6 @@
-//! Privacy between sessions (issue 134): whom a session lets read what was
-//! said in it.
+//! Privacy between sessions (issue 134): a session as privacy sees it (`SessionPrivacy`), and the
+//! policy it chose (`PrivacyConfig`); the policies themselves, whom a session lets read what was
+//! said in it, are `caelumora-security`'s (issue 517).
 //!
 //! Confidentiality (`crate::confidentiality`) decides by how sensitive
 //! something is what *may* be shared; privacy decides whether the
@@ -8,11 +9,7 @@
 //! the source session's privacy policy has to permit it as well.
 //!
 //! Every session has exactly one policy, chosen by the [`PrivacyConfig`]
-//! stored with it. A policy has to be transitive: what it lets another
-//! session read, that session passes on by its own policy, and together
-//! they must not break the first one's promise. `SameOwner` and
-//! `SharedAudience` are, also mixed; a grant to a session named by the
-//! owner would not be - that session's owner could pass it on to anyone.
+//! stored with it.
 
 use crate::actor::ActorId;
 use crate::security::Secured;
@@ -34,24 +31,6 @@ pub enum PrivacyConfig {
     /// Other sessions may read it whose people all take part in this one:
     /// nobody learns anything they could not have heard here.
     SharedAudience,
-}
-
-impl PrivacyConfig {
-    /// The policy this configuration chooses.
-    pub fn policy(self) -> &'static dyn PrivacyPolicy {
-        match self {
-            PrivacyConfig::Private => &Private,
-            PrivacyConfig::SameOwner => &SameOwner,
-            PrivacyConfig::SharedAudience => &SharedAudience,
-        }
-    }
-}
-
-/// Whom a session lets read what was said in it. Asked only across
-/// sessions, of the session read from.
-pub trait PrivacyPolicy: Debug + Send + Sync {
-    /// Whether the session `reader` may read what was said in `source`.
-    fn permits(&self, source: &SessionPrivacy, reader: &SessionPrivacy) -> bool;
 }
 
 /// A session as privacy sees it: which one it is, its policy, its owner,
@@ -84,44 +63,6 @@ impl SessionPrivacy {
             .collect();
         Self { id: session.id, policy: session.privacy, owner, people }
     }
-
-    /// Whether the session `reader` may read what was said in this one, as
-    /// this one's policy decides.
-    pub fn permits(&self, reader: &SessionPrivacy) -> bool {
-        self.policy.policy().permits(self, reader)
-    }
-}
-
-/// [`PrivacyConfig::Private`].
-#[derive(Debug)]
-struct Private;
-
-impl PrivacyPolicy for Private {
-    fn permits(&self, _source: &SessionPrivacy, _reader: &SessionPrivacy) -> bool {
-        false
-    }
-}
-
-/// [`PrivacyConfig::SameOwner`].
-#[derive(Debug)]
-struct SameOwner;
-
-impl PrivacyPolicy for SameOwner {
-    fn permits(&self, source: &SessionPrivacy, reader: &SessionPrivacy) -> bool {
-        // Only a user owns: two sessions without an owner, or of the
-        // system, are not one person's.
-        matches!(source.owner, ActorId::User(_)) && source.owner == reader.owner
-    }
-}
-
-/// [`PrivacyConfig::SharedAudience`].
-#[derive(Debug)]
-struct SharedAudience;
-
-impl PrivacyPolicy for SharedAudience {
-    fn permits(&self, source: &SessionPrivacy, reader: &SessionPrivacy) -> bool {
-        reader.people.is_subset(&source.people)
-    }
 }
 
 #[cfg(test)]
@@ -129,65 +70,6 @@ mod tests {
     use super::*;
     use crate::security::SecurityAttributes;
     use crate::session::testing::bare_session;
-
-    fn session(policy: PrivacyConfig, owner: UserId, others: &[UserId]) -> SessionPrivacy {
-        let people = others.iter().copied().chain([owner]).collect();
-        SessionPrivacy { id: SessionId::new(), policy, owner: ActorId::User(owner), people }
-    }
-
-    #[test]
-    fn a_private_session_is_read_by_no_other() {
-        let alice = UserId::new();
-        let source = session(PrivacyConfig::Private, alice, &[]);
-        let reader = session(PrivacyConfig::Private, alice, &[]);
-        assert!(!source.permits(&reader), "not even by its owner's");
-        assert_eq!(PrivacyConfig::default(), PrivacyConfig::Private, "the default");
-        let names: Vec<_> =
-            [PrivacyConfig::Private, PrivacyConfig::SameOwner, PrivacyConfig::SharedAudience]
-                .iter()
-                .map(|p| serde_json::to_value(p).unwrap())
-                .collect();
-        assert_eq!(
-            names,
-            ["private", "same_owner", "shared_audience"],
-            "as the API and the web UI name them"
-        );
-    }
-
-    #[test]
-    fn same_owner_lets_the_owners_other_sessions_read() {
-        let (alice, bob) = (UserId::new(), UserId::new());
-        let source = session(PrivacyConfig::SameOwner, alice, &[bob]);
-        assert!(
-            source.permits(&session(PrivacyConfig::Private, alice, &[])),
-            "whatever the reader's own policy"
-        );
-        assert!(
-            !source.permits(&session(PrivacyConfig::Private, bob, &[alice])),
-            "not a participant's"
-        );
-        let unowned =
-            SessionPrivacy { policy: PrivacyConfig::SameOwner, ..SessionPrivacy::default() };
-        assert!(
-            !unowned.permits(&SessionPrivacy::default()),
-            "nobody's sessions are not one person's"
-        );
-    }
-
-    #[test]
-    fn shared_audience_lets_read_who_took_part_anyway() {
-        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
-        let source = session(PrivacyConfig::SharedAudience, alice, &[bob]);
-        assert!(
-            source.permits(&session(PrivacyConfig::Private, bob, &[])),
-            "a participant's own session"
-        );
-        assert!(source.permits(&session(PrivacyConfig::Private, alice, &[bob])), "the same people");
-        assert!(
-            !source.permits(&session(PrivacyConfig::Private, alice, &[carol])),
-            "not with someone who was not there"
-        );
-    }
 
     #[test]
     fn the_people_of_a_session_are_its_users_and_its_owner() {
@@ -203,6 +85,21 @@ mod tests {
         assert_eq!(
             (privacy.policy, privacy.owner),
             (PrivacyConfig::SharedAudience, ActorId::User(alice))
+        );
+    }
+
+    #[test]
+    fn a_session_is_private_unless_it_says_otherwise() {
+        assert_eq!(PrivacyConfig::default(), PrivacyConfig::Private, "the default");
+        let names: Vec<_> =
+            [PrivacyConfig::Private, PrivacyConfig::SameOwner, PrivacyConfig::SharedAudience]
+                .iter()
+                .map(|p| serde_json::to_value(p).unwrap())
+                .collect();
+        assert_eq!(
+            names,
+            ["private", "same_owner", "shared_audience"],
+            "as the API and the web UI name them"
         );
     }
 }

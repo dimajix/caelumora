@@ -28,9 +28,7 @@ use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::channel::{self, Channel, Participant};
-use caelumora_model::confidentiality::{
-    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
-};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::EntityChange;
 use caelumora_model::event::{Announcing, GlobalEvent};
 use caelumora_model::group::Group;
@@ -38,12 +36,14 @@ use caelumora_model::group::GroupId;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{Policies, SecurityContext};
 use caelumora_model::session::{ChannelId, Session, SessionId, SessionUpdateEvent};
-use caelumora_model::store::{EntityStores, StoreResult, StoreResultExt};
+use caelumora_model::store::{StoreResult, StoreResultExt};
 use caelumora_model::template::SessionTemplateId;
 use caelumora_model::value::name::Name;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_security::{Policies, SecurityContext};
+use caelumora_store::EntityStores;
 use dashmap::DashMap;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
@@ -528,8 +528,9 @@ mod tests {
     use crate::session::testing::*;
     use crate::session::SessionManager;
     use caelumora_model::event::GlobalEvent;
-    use caelumora_model::security::{SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::user::User;
+    use caelumora_security::SecurityContext;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;

@@ -1,15 +1,16 @@
 //! The access policy of a process (issues 11, 23), deciding by who owns
 //! an entity and whom its access list names.
 
-use super::access::check_one_by_one;
-use super::{
-    AccessPolicy, ActionType, Admission, Grant, Memberships, NoMemberships, Reclassified,
-    Requirement, SecurityAttributes, SecurityContext, Verb,
+use crate::access::check_one_by_one;
+use crate::{
+    AccessPolicy, ActionType, Admission, Memberships, NoMemberships, Reclassified, Requirement,
+    SecurityContext, Verb,
 };
-use crate::actor::ActorId;
-use crate::group::{Group, GroupId};
-use crate::store::EntityKind;
 use async_trait::async_trait;
+use caelumora_model::actor::ActorId;
+use caelumora_model::group::{Group, GroupId};
+use caelumora_model::security::{Grant, SecurityAttributes};
+use caelumora_model::store::EntityKind;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -310,19 +311,20 @@ impl Memberships for ReadOnce<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::AgentId;
-    use crate::channel::{Channel, ChannelId};
-    use crate::command::Command;
-    use crate::group::{Group, GroupId};
-    use crate::role::RoleId;
-    use crate::scope::Scope;
-    use crate::security::testing::*;
-    use crate::security::{AllowAllPolicy, CustomVerb, Subject, JOIN, WRITE};
-    use crate::session::{Session, SessionId};
-    use crate::store::{EntityKind, Stored};
-    use crate::template::SessionTemplate;
-    use crate::value::name::ScopedName;
-    use crate::workspace::Workspace;
+    use crate::testing::*;
+    use crate::{AllowAllPolicy, CustomVerb, JOIN, WRITE};
+    use caelumora_model::agent::AgentId;
+    use caelumora_model::channel::{Channel, ChannelId};
+    use caelumora_model::command::Command;
+    use caelumora_model::group::{Group, GroupId};
+    use caelumora_model::role::RoleId;
+    use caelumora_model::scope::Scope;
+    use caelumora_model::security::Subject;
+    use caelumora_model::session::{Session, SessionId};
+    use caelumora_model::store::{EntityKind, Stored};
+    use caelumora_model::template::SessionTemplate;
+    use caelumora_model::value::name::ScopedName;
+    use caelumora_model::workspace::Workspace;
 
     /// A plugin's kind (issue 323), as skills are.
     const SKILL: EntityKind = EntityKind::new("skill");

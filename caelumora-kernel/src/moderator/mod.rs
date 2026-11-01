@@ -20,7 +20,7 @@ use caelumora_api::actor::Actor;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope, RequestReason};
 use caelumora_model::history::Audience;
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::SecurityContext;
+use caelumora_security::SecurityContext;
 use std::fmt::Debug;
 use std::sync::Arc;
 

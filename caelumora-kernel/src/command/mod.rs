@@ -24,10 +24,9 @@ use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
 use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::security::{
-    AccessPolicy, ActionType, Enforcement, SecurityAttributes, SecurityContext,
-};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::type_map::TypeKey;
+use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -240,7 +239,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_model::component::ComponentFailPolicy;
-    use caelumora_model::security::AllowAllPolicy;
+    use caelumora_security::AllowAllPolicy;
 
     #[derive(Debug)]
     struct Named(&'static str);

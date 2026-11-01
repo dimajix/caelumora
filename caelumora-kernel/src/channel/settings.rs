@@ -4,8 +4,9 @@
 use super::{ChannelActor, ChannelError, ChannelLoop};
 use anyhow::Result;
 use caelumora_model::approval::ApprovalRule;
-use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
-use caelumora_model::security::{ActionType, Reclassified, SecurityContext};
+use caelumora_model::confidentiality::Classification;
+use caelumora_security::confidentiality::ConfidentialityQuestions;
+use caelumora_security::{ActionType, Reclassified, SecurityContext};
 use tracing::info;
 
 impl ChannelLoop {
@@ -157,10 +158,12 @@ mod tests {
     use caelumora_model::actor::Rejection;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId};
-    use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_security::SecurityContext;
+    use caelumora_store::testing::record_users;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
@@ -197,9 +200,8 @@ mod tests {
     async fn a_channel_and_its_messages_are_reclassified_by_who_may() {
         use crate::channel::ChannelError;
         use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{
-            Compartment, Compartments, Confidentiality, ConfidentialityRules,
-        };
+        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_security::confidentiality::ConfidentialityRules;
 
         let compartments = Compartments::new([
             (Compartment::new("hr"), vec![]),

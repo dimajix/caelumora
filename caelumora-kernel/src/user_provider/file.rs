@@ -1,14 +1,17 @@
 //! `FileUserProvider`: the users of a YAML file written by hand (issue 25) - the smallest source
 //! of identities that verifies a credential.
 
-use crate::config::parse_yaml;
-use crate::role::Roles;
-use crate::user::{User, UserId};
+use crate::backend::Backends;
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
-use crate::value::name::Name;
 use argon2::password_hash::Error as HashError;
-use argon2::{Algorithm, Argon2, Params, PasswordHash, PasswordVerifier};
+use argon2::{Algorithm, Argon2, PasswordHash, PasswordVerifier};
 use async_trait::async_trait;
+use caelumora_api::component::{service_of, ComponentError, Params};
+use caelumora_model::config::parse_yaml;
+use caelumora_model::role::Roles;
+use caelumora_model::user::{User, UserId};
+use caelumora_model::value::name::Name;
+use caelumora_security::confidentiality::ConfidentialityPolicy;
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs as std_fs;
@@ -16,6 +19,7 @@ use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 use tokio::task;
 
@@ -41,7 +45,7 @@ use tokio::task;
 /// question with `AuthError::Backend`, which denies rather than passing the question on. It is
 /// read once when the provider is made, too, so that such a file is refused at startup.
 #[derive(Debug)]
-pub struct FileUserProvider {
+struct FileUserProvider {
     path: PathBuf,
     /// The configured roles, which the file names by their names.
     roles: Roles,
@@ -50,18 +54,31 @@ pub struct FileUserProvider {
 /// The parameters of `file` (issue 324): the file the users are read from.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct FileUserConfig {
-    pub path: PathBuf,
+struct FileUserConfig {
+    path: PathBuf,
 }
+
+impl Params for FileUserConfig {}
 
 impl FileUserConfig {
     /// The provider it describes, naming roles of the configured `roles` - none, if no roles are.
     ///
     /// # Errors
     /// `AuthError::Backend` if its file cannot be read or is no valid user file.
-    pub fn provider(&self, roles: Option<&Roles>) -> AuthResult<FileUserProvider> {
+    fn provider(&self, roles: Option<&Roles>) -> AuthResult<FileUserProvider> {
         FileUserProvider::open(&self.path, roles.cloned().unwrap_or_default())
     }
+}
+
+/// Registers the user provider `file` with `backends`, naming the roles the policy of
+/// confidentiality configures.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn UserProvider, _, _>("file", |_, config: FileUserConfig, services| {
+        let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
+        let provider =
+            config.provider(roles).map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+        Ok(Arc::new(provider))
+    });
 }
 
 /// The file as written.
@@ -97,7 +114,7 @@ impl FileUserProvider {
     ///
     /// # Errors
     /// `AuthError::Backend` if the file cannot be read or is no valid user file.
-    pub fn open(path: impl Into<PathBuf>, roles: Roles) -> AuthResult<Self> {
+    fn open(path: impl Into<PathBuf>, roles: Roles) -> AuthResult<Self> {
         let provider = Self { path: path.into(), roles };
         let content = std_fs::read_to_string(&provider.path).map_err(unreadable)?;
         provider.parse(&content)?;
@@ -208,7 +225,7 @@ fn argon2_hash(text: &str) -> Result<PasswordHash, String> {
         PasswordHash::new(text).map_err(|e| format!("the password hash is no Argon2 hash: {e}"))?;
     Algorithm::try_from(hash.algorithm.as_str())
         .map_err(|_| "the password hash is no Argon2 hash".to_string())?;
-    Params::try_from(&hash)
+    argon2::Params::try_from(&hash)
         .map_err(|e| format!("the password hash has invalid parameters: {e}"))?;
     Ok(hash)
 }
@@ -269,14 +286,14 @@ fn exposed(mode: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AppConfig;
-    use crate::role::{RoleError, RoleId};
     use argon2::{PasswordHasher, Version};
+    use caelumora_model::config::AppConfig;
+    use caelumora_model::role::{RoleError, RoleId};
     use tempfile::TempDir;
 
     /// The hash of `password`, made cheaply - a real one takes long on purpose.
     fn hash(password: &str) -> String {
-        let params = Params::new(8, 1, 1, None).expect("valid parameters");
+        let params = argon2::Params::new(8, 1, 1, None).expect("valid parameters");
         Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
             .hash_password_with_salt(password.as_bytes(), b"caelumora-tests!")
             .expect("hashed")

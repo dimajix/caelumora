@@ -4,7 +4,7 @@
 //! 332), and the states in tables of their own shape
 //! (`states`), with the transcripts (`transcripts`) and the histories
 //! (`histories`), each chain a row per node (`chains`). What is asked of the
-//! entities and in which order is the model's, as for every backend
+//! entities and in which order is `caelumora-store`'s, as for every backend
 //! (`CheckedStore`); the database keeps what is kept unique - an id, a name
 //! in its scope - by its indexes, so that it holds against every process
 //! that writes it. Each put of a state is one transaction.
@@ -31,10 +31,11 @@ use crate::connection::Connection;
 use crate::documents::PgDocuments;
 use async_trait::async_trait;
 use caelumora_model::group::Group;
-use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
-use caelumora_model::store::history::HistoryStore;
-use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::store::{EntityKind, PersistenceBackend, StateStore, StoreResult, Stored};
+use caelumora_model::store::{EntityKind, StoreResult, Stored};
+use caelumora_store::documents::{DocumentOf, DocumentStorage};
+use caelumora_store::history::HistoryStore;
+use caelumora_store::transcript::TranscriptStore;
+use caelumora_store::{PersistenceBackend, StateStore};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError, RwLock};

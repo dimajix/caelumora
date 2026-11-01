@@ -8,6 +8,7 @@ license.workspace = true
 caelumora-model.workspace = true
 caelumora-api.workspace = true
 caelumora-kernel = { workspace = true, optional = true }
+caelumora-store = { workspace = true, optional = true }
 anyhow.workspace = true
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
@@ -25,9 +26,15 @@ tracing.workspace = true
 [features]
 # The world of the agents' tests (`testing`), on that of the security
 # suite, for the agents' suite and for the tests of a plugin (issue 370).
-test-support = ["dep:caelumora-kernel", "caelumora-kernel/test-support"]
+test-support = [
+    "dep:caelumora-kernel",
+    "caelumora-kernel/test-support",
+    "dep:caelumora-store",
+]
 
 [dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
+caelumora-store = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
 caelumora-model = { workspace = true, features = ["test-support"] }
 caelumora-kernel = { workspace = true, features = ["test-support"] }

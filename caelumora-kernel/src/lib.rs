@@ -17,6 +17,7 @@ pub mod moderator;
 pub mod plugin;
 pub mod project;
 pub mod scoped;
+pub mod secret;
 pub mod seed;
 pub mod session;
 mod template;
@@ -24,5 +25,6 @@ pub mod terminal;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 pub mod transport;
+pub mod user_provider;
 pub mod view;
 pub mod workspace;
