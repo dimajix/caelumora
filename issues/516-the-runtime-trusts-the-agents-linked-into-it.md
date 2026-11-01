@@ -791,6 +791,70 @@ so do the sections of this one above, written when they were decided.
    plugin and the library apart; `scripts/library-names.sh` checks `api.rs` and `library.rs` too,
    and the pre-commit hook builds each crate with `--no-default-features --features library`.
 
+## Step 6: the API crate
+
+Planned anew with the maintainer on 2026-11-01, after 5d, from what the libraries name of the
+kernel outside their tests: some 55 names of 15 modules. The plan of *The API crate* above is
+revised in three places (decisions 19 to 21).
+
+### What the API holds
+
+**`caelumora-api`** (decision 19) holds what a library is given and declares, and nothing that
+decides: it depends on `caelumora-model` and on no other crate of Caelumora. The kernel depends on
+it and implements its traits, and re-exports none of it, so that every type is reached one way. A
+library depends on the API and the model; the kernel it links as a dev-dependency alone, for the
+world of its tests (`World`, `TestKernel`), and `caelumora-agents` under `test-support` too.
+
+- `component`: what a library declares and is given of components - `ComponentKind`, the facets
+  (`ComponentFacets`), the factory, `Params` and `config_of_params`, `ComponentImpl`,
+  `ComponentError`, and `ComponentContext` and `ComponentContainer` as typed faces over the graph
+  the kernel builds (`ComponentGraph`: `all_of(facet, from)`, `one_of(facet, from)`), as
+  `ActorRuntime::reader` is over `reader_of`; `LibraryComponents` over the kinds the kernel
+  registers (`ComponentKinds`: `register(kind, factory)`, `single(facet, default_kind)`), which it
+  marks as a library's. The `ComponentRegistry`, the planning, the `ref`s and the graph stay the
+  kernel's, as the registry resolves the `ref`s of a configuration from the store in its owner's
+  name; `ComponentContext` no longer holds that name, which the kernel keeps in its graph
+  (decision 20).
+- `library`: `Library`, and `LibraryBuilder` as a trait the kernel implements (decision 21):
+  `components()`, `register_agent_kind(kind, facets, factory)` in place of `agent_kinds()`,
+  `add_prompts(namespace, yaml)`, `section(name)` and `provide_of(key, service)`, with
+  `config::<C>(name)` and `provide::<T>(service)` on `dyn LibraryBuilder`, as the pattern of
+  `reader_of` and `reader::<T>` has it.
+- `runtime`: `ActorRuntime`, `CallPermit`, `OwnRecord`; the four calls that answer an `anyhow`
+  today - `load_channel_state`, `store_channel_state`, `transcript_message`, `apply_agent_state` -
+  answer a typed error, so that the API's judgement can read it.
+- `actor`: `Actor`, `Answering`; `transport`: `EventSender`, `EventReceiver`.
+- `reader`: `SessionReader`, `ChannelReader`, `PrivateNotesElsewhere`, `ViewError`;
+  `workspace`: `WorkspaceReader`, `WorkspaceWriter`, `WorkspaceError`; `terminal`: `Terminal`,
+  `Shell`, `TerminalReader`, `ByteStream`, `WorkspacePath`, `FileEntry`, `CommandState`,
+  `TerminalError`.
+- `command`: `ProvidesCommands`, `CommandSet`, `CommandError`, `CommandResult`.
+- `error`: `ContentError`, `AttachmentError`, `StorageGone`, and the judgement of the API's errors
+  (`user_message_with`, `view_message`, `store_message`); the kernel's `user_message` adds its own
+  (`SessionError`, `ProjectError`, …).
+- `remote` (`ExpiringCache`, `describe_chain`, `describe_request_error`) and the spans of an agent
+  (`agent_span`, `envelope_span`).
+
+The faces of skills and artifacts stay in their crates, under their feature `api`, which depends
+on `caelumora-api` instead of the kernel: in the API, the kernel would know its plugins.
+
+### The steps of 6
+
+1. **The seams.** Within the kernel, without a crate: every file that mixes the API with the
+   kernel's own is cut, so that each part of the API stands apart and names nothing within the
+   kernel - the trait of `kernel/agent.rs` from `AgentRuntime`; `command`, `terminal`,
+   `transport`, `workspace/extension.rs`, `attachment`, `content` and `error` into what is given
+   and what is kept; the components behind `ComponentGraph` and `ComponentKinds`; the
+   `LibraryBuilder` a trait; the typed errors of `ActorRuntime`. No behaviour changes.
+2. **The crate.** `caelumora-api` made of those parts, every `use` turned to it, the feature `api`
+   of skills and artifacts on it. The pre-commit hook fails where `cargo tree -e normal` finds
+   `caelumora-kernel` under a library; `scripts/library-names.sh` keeps the names the model still
+   offers (`SecurityContext`, the policies), as the compiler refuses the rest.
+
+The policies, the context and the store traits stay in the model (decision 22), so that a library
+can still name them and the script checks that it does not; moving them is an issue of its own,
+after this one.
+
 ## Decisions for the maintainer
 
 1. The three words - kernel, module, program - and the crate's name, `caelumora-api`. Taken on
@@ -852,12 +916,25 @@ so do the sections of this one above, written when they were decided.
     is the API, not the agent (the maintainer, 2026-11-01) -, and the build with `library` alone
     checked by the pre-commit hook rather than by CI (recommended). Taken on 2026-11-01 as
     recommended.
+19. The name of the API crate (open since decision 1): `caelumora-api`, as the other side of the
+    kernel is its API (recommended), or `caelumora-kernel-api`. Taken on 2026-11-01 as recommended.
+20. The cut of the components (*Step 6*): the API holds what a library declares and is given,
+    typed faces over a graph and a registration the kernel implements; the registry, the
+    planning and the graph stay the kernel's (recommended). Taken on 2026-11-01 as recommended.
+21. The `LibraryBuilder` a trait the kernel implements, its generic helpers on `dyn
+    LibraryBuilder` and its erased calls named as `reader_of` is (`provide_of`) (recommended).
+    Taken on 2026-11-01 as recommended.
+22. Decision 7 within step 6, or after: the policies, the context and the store traits stay in
+    the model for now, checked by the script, and leave it in an issue of its own after this one
+    (recommended). Taken on 2026-11-01 as recommended.
+23. *Done when* names a CI the repository does not have: the pre-commit hook checks alone
+    (recommended). Taken on 2026-11-01 as recommended.
 
 ## Done when
 
 - The documents state the principle, the three levels and what the cut enforces.
-- No library depends on `caelumora-runtime`, checked by the pre-commit hook and CI; no library
-  names `SecurityContext`, a policy, a manager, a store or a controller.
+- No library depends on `caelumora-kernel`, checked by the pre-commit hook (decision 23); no
+  library names `SecurityContext`, a policy, a manager, a store or a controller.
 - The door builds the context it decides by; `Envelope` and `Work` carry none; the `Actor` trait
   answers none.
 - Whether a tool call, a result, a tool set or an agent's command is admitted is decided in the
@@ -1253,3 +1330,8 @@ so do the sections of this one above, written when they were decided.
   them without features too, the entity and the wire types; the faces of skills need no kernel
   (`api` without `caelumora-kernel`), those of artifacts still do until step 6 (`ContentError`,
   `StorageGone`, `ByteStream`); the unused `tokio` left both crates. Stored data: none.
+- **2026-11-01** — Step 6 planned anew with the maintainer, after 5d (*Step 6: the API crate*,
+  decisions 19 to 23): `caelumora-api`; the components cut along the registry, which stays the
+  kernel's; the `LibraryBuilder` a trait; the faces of skills and artifacts kept in their crates;
+  the policies and the context left in the model for an issue of their own. 6.1 cuts the seams
+  within the kernel, 6.2 makes the crate.
