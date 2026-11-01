@@ -1,6 +1,6 @@
 # 517 — The model offers the libraries what only the kernel may decide by
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -19,7 +19,8 @@ the model still holds much of what decides:
   `confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions, ConfidentialityRules}`,
   `privacy::PrivacyPolicy`;
 - the secret manager and its providers (`secret::{SecretManager, SecretProvider, env, file}`), the
-  user providers (`user_provider::*`, `UserManager`) and the configuration (`config::AppConfig`);
+  user providers (`user_provider::*`, `UserManager`) and the choice of the policies by the
+  configuration (`AppConfig::create_access_policy`, `create_confidentiality_policy`);
 - the traits of the stores (`store::{EntityStore, EntityStores, StateStore, HistoryStore,
   TranscriptStore}`), the checked store and the memory store, which name the context.
 
@@ -70,8 +71,10 @@ What matters is the cut, and that it holds by the compiler, in both directions:
 ## Decision
 
 (b), taken on 2026-11-01: two crates, `caelumora-security` and `caelumora-store`. What has to be
-the kernel's because of how the crates depend on each other - the user providers, the backends of
-the secrets and the configuration - moves into the kernel.
+the kernel's because of how the crates depend on each other - the user providers and the backends
+of the secrets - moves into the kernel. The configuration (`AppConfig`) stays in the model, as data;
+what it chooses the policies by becomes a constructor of `Policies` (amended the same day, see
+History).
 
 ## The plan
 
@@ -91,12 +94,12 @@ neither of the two crates.
 
 | Crate | holds |
 |---|---|
-| `caelumora-model` | the entities and values; `SecurityAttributes`, `AclEntry`, `Subject`, `Grant`, `Secured`, `SecuredMut`; `Refused`; the values of confidentiality (`Confidentiality`, `Compartment(s)`, `Classification`, `LabelCauses`, `Clearance(s)`, `Place`, `Reading`, `Visibility`); `PrivacyConfig` and `SessionPrivacy`; `Secrets`, `SecretError`; the words of the stores (`Stored`, `EntityKind`, `Revision`, `Journaled`, `Updatable`, `Enclosing`, `Address`, `NoEntity`, `StoreError`, `query::*`, `HistoryField`); `parse_yaml` |
-| `caelumora-security` | `SecurityContext`; `ActionType`, `Verb`, `CustomVerb`, `Requirement`; `AccessPolicy`, `AccessQuestions`, `Enforcement`, `OwnershipPolicy`, `AllowAllPolicy`, `Policies`, `Admission`, `Memberships`; `ConfidentialityPolicy`, `ConfidentialityQuestions`, `ConfidentialityRules`, `may_reach`; `PrivacyPolicy` and its policies; `SecretManager`, `SecretsFor`, the trait `SecretProvider` |
+| `caelumora-model` | the entities and values; `SecurityAttributes`, `AclEntry`, `Subject`, `Grant`, `Secured`, `SecuredMut`; `Refused`; the values of confidentiality (`Confidentiality`, `Compartment(s)`, `Classification`, `LabelCauses`, `Clearance(s)`, `Place`, `Reading`, `Visibility`); `PrivacyConfig` and `SessionPrivacy`; `Secrets`, `SecretError`; the words of the stores (`Stored`, `EntityKind`, `Revision`, `Journaled`, `Updatable`, `Enclosing`, `Address`, `NoEntity`, `StoreError`, `query::*`, `HistoryField`); the configuration (`AppConfig`, `parse_yaml`) |
+| `caelumora-security` | `SecurityContext`; `ActionType`, `Verb`, `CustomVerb`, `Requirement`; `AccessPolicy`, `AccessQuestions`, `Enforcement`, `OwnershipPolicy`, `AllowAllPolicy`, `Policies` with the policies the configuration chooses (`Policies::configured`), `Admission`, `Memberships`; `ConfidentialityPolicy`, `ConfidentialityQuestions`, `ConfidentialityRules`, `may_reach`; `PrivacyPolicy` and its policies; `SecretManager`, `SecretsFor`, the trait `SecretProvider` |
 | `caelumora-store` | `EntityStore`, `EntityStores`, `StateStore`, `HistoryStore`, `TranscriptStore`, `Persistence`, `PersistenceBackend`, `Presence`, `Deleted`, `documents` (`CheckedStore`, `DocumentStorage`), `access`, `kept_chain`, `StoreMemberships`, `MemoryStore`, `suite` |
-| `caelumora-kernel`, in addition | the user providers and `UserManager`, the backends of the secrets (`EnvSecretProvider`, `FileSecretProvider`), `AppConfig` with its sections, and the three `impl Params` |
+| `caelumora-kernel`, in addition | the user providers and `UserManager`, the backends of the secrets (`EnvSecretProvider`, `FileSecretProvider`), and the three `impl Params` |
 
-Three things cannot go into `caelumora-security`:
+Two things cannot go into `caelumora-security`:
 
 - **The user providers** read the records of the users (`EntityStore<User>`), so in `security`
   they would make it depend on `store`, which depends on it.
@@ -104,8 +107,12 @@ Three things cannot go into `caelumora-security`:
   `AcceptAnyConfig`) implement `Params` of the API. By the orphan rule the impl lies with the trait
   or with the type, and `security` may not link the API. With the backends in the kernel - where
   its `Backends` makes them, as it makes the storages - the impls lie there too.
-- **`AppConfig`** names the policies, the backends and the stores; it is what the kernel is built
-  from.
+
+The configuration stays in the model: `AppConfig` is data, and names a backend by its type and
+parameters (`BackendConfig`), not by its configuration. Only two of its methods name policies,
+`create_access_policy` and `create_confidentiality_policy`; they become `Policies::configured`,
+which the `KernelBuilder`, the seed and `caelumora-app` ask. In the kernel, `AppConfig` would make
+`caelumora-logging`, which reads its `LoggingConfig` and links the model alone, link the kernel.
 
 ### Seams the cut shows
 
@@ -128,22 +135,24 @@ Three things cannot go into `caelumora-security`:
 
 Each step builds on its own and is a commit of its own; none changes behaviour.
 
-1. **`caelumora-store`.** The stores leave the model; they name `caelumora_model::security` until
+1. **Into the kernel.** The user providers and `UserManager` (`caelumora_kernel::user_provider`)
+   and the backends of the secrets (`caelumora_kernel::secret`) move into the kernel, and the three
+   `impl Params` leave the API for the configurations they are for.
+2. **`caelumora-store`.** The stores leave the model; they name `caelumora_model::security` until
    step 3. The model keeps the words of the stores. `caelumora-store-json` and
    `caelumora-store-postgres` link it for `PersistenceBackend`, and the kernel for the plugin.
-2. **Into the kernel.** The user providers, `UserManager`, the backends of the secrets and
-   `AppConfig` move into the kernel, and the three `impl Params` leave the API for the kernel's
-   `backend.rs`.
 3. **`caelumora-security`.** The context, the policies, the policy of confidentiality and privacy,
-   and the secret manager leave the model; the store and the kernel name them there. The model
+   and the secret manager leave the model; the store and the kernel name them there, and
+   `AppConfig`'s two methods that choose the policies become `Policies::configured`. The model
    builds no context any more. `library-deps.sh` refuses `caelumora-security` and
    `caelumora-store` among a library's normal dependencies, as it refuses the kernel, and
    `library-names.sh` is deleted. The documents follow: ARCHITECTURE.md (the crates, the
    principle), CRATES.md (its graph is written by `crate-graph.sh`), SECURITY.md, STORAGE.md,
    AGENTS.md (what each crate holds).
 
-The order is forced: the model cannot depend on `security` while it holds stores that name the
-context, so the stores leave first.
+The order is forced: the user providers read the users through `EntityStore<User>`, so they leave
+the model before the stores; and the model cannot depend on `security` while it holds stores that
+name the context, so the stores leave before it.
 
 ## Done when
 
@@ -165,3 +174,16 @@ context, so the stores leave first.
   the user providers, the backends of the secrets and `AppConfig` into the kernel, `PrivacyPolicy`
   into `security` by its subject. *Why it matters* corrected: since 516 a library can skip no check;
   the gain is the cut, held by the compiler in both directions.
+- **2026-11-01** — Plan amended before step 1: the user providers read the users through the
+  stores, so they leave the model first, and step 1 and 2 change places; `AppConfig` stays in the
+  model, as data, and its two methods that choose the policies become `Policies::configured` in
+  step 3, so that `caelumora-logging` keeps linking the model alone.
+- **2026-11-01** — Step 1: the user providers, `UserManager` and the backends of the secrets
+  (`EnvSecretProvider`, `FileSecretProvider`) moved into the kernel, as
+  `caelumora_kernel::user_provider` and `caelumora_kernel::secret`; the three `impl Params` lie
+  beside the configurations they are for, and `caelumora-api` names nothing of the kernel's
+  backends any more. After the review of the step, they follow the kernel's other backends: each
+  module registers its own (`secret::register_backends`, `user_provider::register_backends`, as
+  `content` and `terminal` do), and their configurations and `FileUserProvider` are private to it.
+  `User::new` is public, as its maker is no longer in the model. `argon2` and `tokio` are no longer
+  among the model's dependencies, but for its tests. No behaviour changes. Stored data: none.

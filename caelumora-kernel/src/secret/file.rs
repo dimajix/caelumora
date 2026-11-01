@@ -1,10 +1,15 @@
-use crate::secret::{SecretError, SecretProvider, SecretResult};
+//! `FileSecretProvider`: the secrets of a flat JSON file.
+
+use crate::backend::Backends;
 use async_trait::async_trait;
+use caelumora_api::component::Params;
+use caelumora_model::secret::{SecretError, SecretProvider, SecretResult};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Resolves secrets from a flat JSON object file (`{"KEY": "value", ...}`).
 ///
@@ -21,8 +26,17 @@ pub struct FileSecretProvider {
 /// from.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct FileSecretConfig {
-    pub path: PathBuf,
+struct FileSecretConfig {
+    path: PathBuf,
+}
+
+impl Params for FileSecretConfig {}
+
+/// Registers the secret provider `file` with `backends`.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn SecretProvider, _, _>("file", |_, config: FileSecretConfig, _| {
+        Ok(Arc::new(FileSecretProvider::new(config.path)))
+    });
 }
 
 impl FileSecretProvider {

@@ -43,7 +43,6 @@ pub mod transcript;
 pub mod turn;
 pub mod type_map;
 pub mod user;
-pub mod user_provider;
 pub mod value;
 pub mod work;
 pub mod workspace;

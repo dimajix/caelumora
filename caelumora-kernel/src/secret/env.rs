@@ -1,6 +1,11 @@
-use crate::secret::{SecretProvider, SecretResult};
+//! `EnvSecretProvider`: the secrets of the environment of the process.
+
+use crate::backend::Backends;
 use async_trait::async_trait;
+use caelumora_api::component::NoParams;
+use caelumora_model::secret::{SecretProvider, SecretResult};
 use std::env;
+use std::sync::Arc;
 
 /// Resolves secrets from process environment variables.
 #[derive(Debug, Default)]
@@ -10,6 +15,13 @@ impl EnvSecretProvider {
     pub fn new() -> Self {
         Self
     }
+}
+
+/// Registers the secret provider `env` with `backends`.
+pub(super) fn register_backend(backends: &mut Backends) {
+    backends.register::<dyn SecretProvider, _, _>("env", |_, _: NoParams, _| {
+        Ok(Arc::new(EnvSecretProvider::new()))
+    });
 }
 
 #[async_trait]

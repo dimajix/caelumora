@@ -564,6 +564,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "argon2",
  "async-trait",
  "axum",
  "bytes",
@@ -627,7 +628,6 @@ version = "0.1.0"
 dependencies = [
  "any_ascii",
  "anyhow",
- "argon2",
  "async-trait",
  "bitflags",
  "bytes",

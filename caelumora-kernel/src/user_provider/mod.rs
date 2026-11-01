@@ -8,15 +8,22 @@
 //! "no such user".
 
 pub mod accept_any;
-pub mod file;
+mod file;
 mod manager;
 
 pub use manager::UserManager;
 
-use crate::user::{User, UserId};
+use crate::backend::Backends;
 use async_trait::async_trait;
+use caelumora_model::user::{User, UserId};
 use std::fmt;
 use std::fmt::Debug;
+
+/// Registers the user providers the kernel brings with `backends`: `file` and `accept_any`.
+pub(crate) fn register_backends(backends: &mut Backends) {
+    file::register_backend(backends);
+    accept_any::register_backend(backends);
+}
 
 /// A credential presented for authentication.
 ///

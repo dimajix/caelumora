@@ -21,6 +21,7 @@ use crate::plugin::Plugin;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
+use crate::user_provider::{UserManager, UserProvider};
 use crate::view::SessionView;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::{UsableWorkspace, WorkspaceManager, WorkspaceUse};
@@ -41,7 +42,6 @@ use caelumora_model::store::{
     EntityStore, EntityStores, Persistence, PersistenceBackend, StoreResult, Stored,
 };
 use caelumora_model::type_map::{ErasedArc, TypeKey};
-use caelumora_model::user_provider::{UserManager, UserProvider};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -666,11 +666,11 @@ mod tests {
     use crate::command::ChannelCommandProvider;
     use crate::moderator::{Moderator, ResponderPolicy};
     use crate::testing::TestKernel;
+    use crate::user_provider::Credential;
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::user_provider::Credential;
     use std::fs;
 
     #[tokio::test]

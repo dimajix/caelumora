@@ -18,12 +18,12 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-kernel`** - the kernel, where everything runs: sessions, channels and the actors of
     their users and approvers, the kinds of agent registered with it (`AgentKinds`), components, the
     views, the event bus, the controllers that keep entities live, workspaces, the storages of
-    binary content, and the store implementations. Its centre is the `Kernel`, built once in a
-    process by the `KernelBuilder`; what a channel or an actor runs with is its *runtime*, which the
-    kernel gives it - a channel its `ChannelRuntime`, a participant's actor its
-    `ParticipantRuntime`, an agent's actor its `ActorRuntime` -, and an actor reaches its channel
-    through its runtime alone. What a library is given and declares - the kernel's API - is a crate
-    of its own, `caelumora-api`.
+    binary content, the user providers and the backends of the secrets, and the store
+    implementations. Its centre is the `Kernel`, built once in a process by the `KernelBuilder`;
+    what a channel or an actor runs with is its *runtime*, which the kernel gives it - a channel its
+    `ChannelRuntime`, a participant's actor its `ParticipantRuntime`, an agent's actor its
+    `ActorRuntime` -, and an actor reaches its channel through its runtime alone. What a library is
+    given and declares - the kernel's API - is a crate of its own, `caelumora-api`.
 *   **`caelumora-api`** - the kernel's API (issue 516): what a library is given and declares - an
     actor and its `ActorRuntime`, the readers, a workspace's terminal, the components as a library
     declares and is given them, the `LibraryBuilder` - and the errors they answer in, with how they

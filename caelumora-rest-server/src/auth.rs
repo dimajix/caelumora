@@ -27,12 +27,12 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use caelumora_kernel::controller::ControllerManager;
+use caelumora_kernel::user_provider::{AuthError, Credential, UserManager};
 use caelumora_model::config::AuthConfig;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StoreError;
 use caelumora_model::user::UserId;
-use caelumora_model::user_provider::{AuthError, Credential, UserManager};
 use caelumora_rest_api::auth::{LoginRequest, UserResponse};
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -483,10 +483,10 @@ mod tests {
     use axum::body;
     use axum::body::Body;
     use caelumora_kernel::event::EventBus;
+    use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
+    use caelumora_kernel::user_provider::UserProvider;
     use caelumora_model::security::Policies;
     use caelumora_model::store::{EntityStores, Persistence};
-    use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
-    use caelumora_model::user_provider::UserProvider;
     use tower::ServiceExt;
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";

@@ -31,7 +31,7 @@ for crate in $both_levels; do
 done
 names='SecurityContext|ActionType|AccessPolicy|AccessQuestions|Enforcement|OwnershipPolicy'
 names="$names|AllowAllPolicy|ConfidentialityPolicy|ConfidentialityQuestions|ConfidentialityRules"
-names="$names|PrivacyPolicy|Policies|SecretManager|UserManager"
+names="$names|PrivacyPolicy|Policies|SecretManager"
 names="$names|EntityStore|EntityStores|StateStore|HistoryStore|TranscriptStore|MemoryStore"
 
 if [ $# -eq 0 ]; then

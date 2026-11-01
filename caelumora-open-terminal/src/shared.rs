@@ -228,9 +228,9 @@ mod tests {
     use bytes::Bytes;
     use caelumora_api::component::config_of_params;
     use caelumora_api::terminal::{ByteStream, TerminalReader};
+    use caelumora_kernel::secret::file::FileSecretProvider;
     use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
     use caelumora_model::remote::RemoteAuthConfig;
-    use caelumora_model::secret::file::FileSecretProvider;
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::workspace::CommandStatus;

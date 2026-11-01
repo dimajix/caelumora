@@ -19,25 +19,16 @@
 //! and its parameters, and there is one way to register it.
 
 use crate::plugin::Plugin;
-use crate::{content, terminal};
-use caelumora_api::component::service_of;
+use crate::{content, secret, terminal, user_provider};
 use caelumora_api::component::Services;
 use caelumora_api::component::{
     config_of_params, ComponentError, ComponentResult, NoParams, Params,
 };
 use caelumora_api::error::StorageGone;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::BackendConfig;
-use caelumora_model::secret::env::EnvSecretProvider;
-use caelumora_model::secret::file::{FileSecretConfig, FileSecretProvider};
-use caelumora_model::secret::SecretProvider;
 use caelumora_model::store::memory::MemoryStore;
-use caelumora_model::store::{EntityStore, PersistenceBackend};
+use caelumora_model::store::PersistenceBackend;
 use caelumora_model::type_map::TypeKey;
-use caelumora_model::user::User;
-use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
-use caelumora_model::user_provider::file::FileUserConfig;
-use caelumora_model::user_provider::UserProvider;
 use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
@@ -149,37 +140,8 @@ impl Backends {
         });
         terminal::register_backends(&mut backends);
         content::register_backends(&mut backends);
-        backends.register::<dyn SecretProvider, _, _>("file", |_, config: FileSecretConfig, _| {
-            Ok(Arc::new(FileSecretProvider::new(config.path)))
-        });
-        backends.register::<dyn SecretProvider, _, _>("env", |_, _: NoParams, _| {
-            Ok(Arc::new(EnvSecretProvider::new()))
-        });
-        backends.register::<dyn UserProvider, _, _>(
-            "file",
-            |_, config: FileUserConfig, services| {
-                let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
-                let provider = config
-                    .provider(roles)
-                    .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-                Ok(Arc::new(provider))
-            },
-        );
-        backends.register::<dyn UserProvider, _, _>(
-            "accept_any",
-            |_, config: AcceptAnyConfig, services| {
-                let users = service_of::<dyn EntityStore<User>>(services)?;
-                let roles = service_of::<dyn ConfidentialityPolicy>(services)?.roles();
-                let provider = config
-                    .provider(Arc::clone(users), roles)
-                    .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-                tracing::warn!(
-                    "User provider 'accept_any' is enabled: ANY username and password will be \
-                     accepted. Development only - never expose this server to a network."
-                );
-                Ok(Arc::new(provider))
-            },
-        );
+        secret::register_backends(&mut backends);
+        user_provider::register_backends(&mut backends);
         backends
     }
 
@@ -310,13 +272,13 @@ impl Backends {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::ConfidentialityRules;
+    use crate::user_provider::{Credential, UserManager, UserProvider};
+    use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::secret::SecretManager;
+    use caelumora_model::secret::{SecretManager, SecretProvider};
     use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_model::store::{EntityStores, Persistence};
-    use caelumora_model::user::UserId;
-    use caelumora_model::user_provider::{Credential, UserManager};
+    use caelumora_model::user::{User, UserId};
     use serde::Deserialize;
     use serde_json::json;
     use std::env;

@@ -2,10 +2,10 @@
 //! of user records (issue 306).
 
 use super::{AuthError, AuthResult, Credential, UserProvider};
-use crate::event::{Announcing, EventPublisher, GlobalEvent};
-use crate::security::SecurityContext;
-use crate::store::{EntityStore, StoreError, StoreResultExt};
-use crate::user::{User, UserId, UserUpdateEvent};
+use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_model::security::SecurityContext;
+use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
+use caelumora_model::user::{User, UserId, UserUpdateEvent};
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -171,17 +171,17 @@ impl UserManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::ActorId;
-    use crate::confidentiality::Classification;
-    use crate::event::EntityChange;
-    use crate::removal::Removal;
-    use crate::role::RoleId;
-    use crate::security::{Policies, SecurityAttributes};
-    use crate::store::testing::ContendedStore;
-    use crate::store::{EntityStores, Persistence, Stored};
-    use crate::user::testing::make_user;
-    use crate::value::name::Name;
     use async_trait::async_trait;
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::confidentiality::Classification;
+    use caelumora_model::event::EntityChange;
+    use caelumora_model::removal::Removal;
+    use caelumora_model::role::RoleId;
+    use caelumora_model::security::{Policies, SecurityAttributes};
+    use caelumora_model::store::testing::ContendedStore;
+    use caelumora_model::store::{EntityStores, Persistence, Stored};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_model::value::name::Name;
     use std::collections::HashMap;
     use std::mem;
     use std::sync::atomic::Ordering;

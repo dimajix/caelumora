@@ -10,6 +10,7 @@ use crate::plugin::PostgresStorePlugin;
 use caelumora_api::component::Services;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::secret::env::EnvSecretProvider;
 use caelumora_model::actor::{ActorId, ActorState, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::approval::ApproverId;
@@ -24,7 +25,6 @@ use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::removal::RemovalId;
 use caelumora_model::role::RoleId;
 use caelumora_model::scope::Scope;
-use caelumora_model::secret::env::EnvSecretProvider;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::{
     Admission, AllowAllPolicy, Grant, OwnershipPolicy, Policies, SecurityAttributes,

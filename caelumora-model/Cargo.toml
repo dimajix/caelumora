@@ -28,14 +28,8 @@ any_ascii.workspace = true
 # The patterns of approval rules (issue 13): no backtracking, so that a
 # pattern takes linear time whatever it is matched against.
 regex.workspace = true
-# The user file is read asynchronously, and a password verified on a
-# blocking thread (`rt`, issue 25).
-tokio = { workspace = true, features = ["fs", "rt"] }
 # The URL of a remote endpoint, parsed to show it without credentials.
 url.workspace = true
-# The password hashes of the user file (issue 25), verified only: hashes
-# are made by hand, so no random salts are needed here.
-argon2.workspace = true
 # The time zone a session is held in (issue 424): the IANA names and their
 # rules, compiled in, so that a time is given the same on every machine.
 chrono-tz.workspace = true

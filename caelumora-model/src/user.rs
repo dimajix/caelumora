@@ -74,7 +74,7 @@ static SYSTEM_OWNED: SecurityAttributes = SecurityAttributes::systems();
 impl User {
     /// A new user named `username`, of no roles and without an email: as a provider that knows
     /// nothing else of them makes one.
-    pub(crate) fn new(username: Name) -> Self {
+    pub fn new(username: Name) -> Self {
         Self {
             id: UserId::new(),
             username,

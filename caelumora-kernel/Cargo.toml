@@ -26,6 +26,9 @@ rand.workspace = true
 arc-swap.workspace = true
 tracing.workspace = true
 tempfile = { workspace = true, optional = true }
+# The password hashes of the user file (issue 25), verified only: hashes
+# are made by hand, so no random salts are needed here.
+argon2.workspace = true
 
 [features]
 # The world of the security suite (`testing`), for the suite and for the
