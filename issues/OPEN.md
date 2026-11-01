@@ -66,7 +66,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md) | open | medium | refactoring | A library links the model, and the model still holds the `SecurityContext`, the policies, the secret manager, the user providers and the traits of the stores, so the compiler lets a library name what only the kernel may decide by, and only a script finds it. |
+| [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md) | open | medium | refactoring | A library links the model, and the model still holds the `SecurityContext`, the policies, the secret manager, the user providers and the traits of the stores, so the compiler lets a library name what only the kernel may decide by, and only a script finds it; the plan draws two crates out of the model, `caelumora-security` and `caelumora-store`. |
 
 ## Low priority
 
