@@ -557,6 +557,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [513](513-a-channels-deletion-fails-where-the-managers-answer-false.md) | done | `SessionLoop::delete_channel` answers a channel that is not there, or not the caller's to read, with `SessionError::ChannelNotFound`, while every manager's deletion - the session's among them since issue 510 - answers the same case with `Ok(false)`. |
 | [516](516-the-runtime-trusts-the-agents-linked-into-it.md) | open | The runtime trusts the agents linked into it: an agent builds its own `SecurityContext`, sets the one its envelopes are checked by, reaches the policies and the managers through an open registry of services, and decides itself whether its owner is asked before a tool runs - nothing in the code says which side of the trust boundary a piece of it stands on. |
 | [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md) | open | A library links the model, and the model still holds the `SecurityContext`, the policies, the secret manager, the user providers and the traits of the stores, so the compiler lets a library name what only the kernel may decide by, and only a script finds it. |
+| [519](519-an-erased-value-forgets-its-type.md) | open | `ErasedArc` forgets the type of the value it holds, so every call that hands one on takes the key of the type beside it, and where the two disagree the value is never found again and reads as a service nobody offered. |
 
 ## Integrations
 
