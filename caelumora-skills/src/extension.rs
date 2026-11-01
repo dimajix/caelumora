@@ -1,20 +1,18 @@
-//! What an agent's work does with skills (issue 516): the skills it may load where it reads from
-//! (`SkillReader`), and those of its owner it writes (`SkillWriter`) - the plugin's service a
-//! library reaches, its two faces bound by the plugin to the views of every piece of work, so that
-//! they act in the work's context: the reader handed out where the work reads
-//! (`Situation::reader`), the writer where it acts (`Turn::writer`). The component of skills names
-//! these traits, never the `SkillManager` or the views.
+//! The part of the kernel's API that is skills' (issue 516): what an agent's work does with them,
+//! and what that fails with. The work loads the skills it may where it reads from (`SkillReader`),
+//! and writes those of its owner (`SkillWriter`) - the plugin's service a library reaches, its two
+//! faces bound by the plugin to the views of every piece of work, so that they act in the work's
+//! context: the reader handed out where the work reads (`Situation::reader`), the writer where it
+//! acts (`Turn::writer`). The component of skills names these traits, never the `SkillManager` or
+//! the views. Their error, `SkillError`, is the one error of skills, which the manager, the views
+//! and the routes answer in as well.
 
-use crate::access::SkillAccess;
-use crate::manager::{SkillError, SkillResult};
 use crate::skill::{Skill, SkillId};
-use crate::view::SkillViews;
 use async_trait::async_trait;
-use caelumora_kernel::view::Views;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::scope::{found_from, Scope};
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::value::name::Name;
+use caelumora_model::scope::Scope;
+use caelumora_model::store::StoreError;
+use caelumora_model::value::ValueError;
 
 /// The skills an agent's work may load where it reads from.
 #[async_trait]
@@ -78,72 +76,32 @@ pub trait SkillWriter: Send + Sync {
     async fn rewrite(&self, id: SkillId, body: &str) -> SkillResult<Skill>;
 }
 
-/// The reader of the views of a piece of work, in their viewer's name: what the plugin binds.
-#[async_trait]
-impl SkillReader for Views {
-    async fn usable_skills(&self) -> SkillResult<Vec<Skill>> {
-        let Some(place) = self.viewer().place() else { return Ok(Vec::new()) };
-        let context = self.context();
-        let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
-        let owner = context.principal_id.as_user_id();
-        // Those seen from here, which the store is asked for alone (issue 293).
-        let seen = Query::filtered(Filter::seen_from(&here, owner));
-        let skills = self.skill_manager()?.store().list(context, &seen).await?.items;
-        let mut usable = Vec::with_capacity(skills.len());
-        for skill in skills {
-            if self.access_policy().may_use_skill(context, &skill.security_attributes).await
-                && self.confidentiality().may_publish(
-                    context,
-                    &skill.classification,
-                    &place.classification,
-                )
-            {
-                usable.push(skill);
-            }
-        }
-        Ok(found_from(&usable, &here, owner).into_iter().cloned().collect())
-    }
-
-    async fn usable_skill_named(&self, name: &str) -> SkillResult<Skill> {
-        let not_found = || SkillError::NoSkillNamed(name.to_string());
-        let wanted = Name::new(name).map_err(|_| not_found())?;
-        SkillReader::usable_skills(self)
-            .await?
-            .into_iter()
-            .find(|skill| skill.name.name == wanted)
-            .ok_or_else(not_found)
-    }
+/// What a skill's operations fail with (issue 22).
+#[derive(Debug, thiserror::Error)]
+pub enum SkillError {
+    /// No such skill, or not one the caller may read - one case, so that
+    /// nothing can be probed.
+    #[error("there is no skill {0}")]
+    NotFound(SkillId),
+    #[error("a skill belongs to a user or to the system")]
+    OwnerNotAUser,
+    #[error("the classification may not be given")]
+    ClassificationRefused,
+    #[error("you are not cleared for the classification of the skill")]
+    NotCleared,
+    /// What an agent asks for by name: no skill of the name it may load
+    /// where it is, alike whether there is one at all (issue 22).
+    #[error("there is no skill named \"{0}\" that can be loaded here")]
+    NoSkillNamed(String),
+    /// The kernel was built without the plugin (issue 323).
+    #[error("skills are not offered here")]
+    NotJoined,
+    #[error(transparent)]
+    Invalid(#[from] ValueError),
+    /// What the store reported, as its source: judged as a store error
+    /// wherever errors are turned into messages.
+    #[error("{0}")]
+    Store(#[from] StoreError),
 }
 
-/// The writer of the views of a piece of work, in their viewer's name: what the plugin binds.
-#[async_trait]
-impl SkillWriter for Views {
-    fn owner_scope(&self) -> Option<Scope> {
-        let user_id = self.context().principal_id.as_user_id()?;
-        Some(Scope::UserScope { user_id })
-    }
-
-    async fn create(
-        &self,
-        name: &str,
-        scope: Scope,
-        description: &str,
-        body: &str,
-        classification: Classification,
-    ) -> SkillResult<Skill> {
-        let manager = self.skill_manager()?;
-        manager.create(self.context(), name, scope, description, body, classification).await
-    }
-
-    async fn reclassify(&self, id: SkillId, classification: Classification) -> SkillResult<Skill> {
-        self.skill_manager()?.reclassify(self.context(), id, classification).await
-    }
-
-    async fn describe(&self, id: SkillId, description: &str) -> SkillResult<Skill> {
-        self.skill_manager()?.describe(self.context(), id, description).await
-    }
-
-    async fn rewrite(&self, id: SkillId, body: &str) -> SkillResult<Skill> {
-        self.skill_manager()?.rewrite(self.context(), id, body).await
-    }
-}
+pub type SkillResult<T> = Result<T, SkillError>;

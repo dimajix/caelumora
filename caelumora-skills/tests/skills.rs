@@ -20,6 +20,7 @@ use caelumora_compaction::library::CompactionLibrary;
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::{asked_for, shown, TestKernel, World, STAFF};
 use caelumora_kernel::view::Viewer;
@@ -47,8 +48,9 @@ use caelumora_skills::component::{
     SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
     SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,
 };
-use caelumora_skills::extension::{SkillReader, SkillWriter};
-use caelumora_skills::manager::{SkillError, SkillManager};
+use caelumora_skills::extension::{SkillError, SkillReader, SkillWriter};
+use caelumora_skills::library::SkillsLibrary;
+use caelumora_skills::manager::SkillManager;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_skills::skill::{self, Skill, SkillBody};
 use serde_json::{json, Value};
@@ -58,7 +60,7 @@ use std::sync::Arc;
 
 /// The world with skills.
 async fn world() -> World {
-    World::with(&[&SkillsPlugin], &[&TestAgents], |_| {}).await
+    World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |_| {}).await
 }
 
 /// The one writer of skills of `world`.
@@ -409,9 +411,11 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         measured(50, "They met."),
         measured(60, "skill release-notes"),
     ];
-    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &CompactionLibrary], |registry| {
-        register_scripted(registry, "scripted", script)
-    })
+    let world = World::with(
+        &[&SkillsPlugin],
+        &[&TestAgents, &SkillsLibrary, &CompactionLibrary],
+        |registry| register_scripted(registry, "scripted", script),
+    )
     .await;
     let mut skilled = Personality {
         components: ComponentConfig {
@@ -653,7 +657,7 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
 /// channel; and how bob's stream shows him what comes of his commands.
 async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId, ChannelWatch)
 {
-    let world = World::with(&[&SkillsPlugin], &[&TestAgents], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |registry| {
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
@@ -803,7 +807,7 @@ async fn with_a_writing_agent(
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = World::with(&[&SkillsPlugin], &[&TestAgents], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |registry| {
         register_scripted(registry, "writing", vec![call])
     })
     .await;
@@ -986,4 +990,17 @@ async fn a_skill_is_changed_once_more_when_it_was_written_meanwhile() {
             .name,
         "release-notes"
     );
+}
+
+/// Issue 516: the library brings the component, the plugin what it reaches skills by - the library
+/// alone keeps the kernel from being built, as no plugin binds the reader of skills.
+#[test]
+fn the_library_needs_the_plugin() {
+    let built = |plugins: Vec<&dyn Plugin>| {
+        TestKernel { plugins, libraries: vec![&SkillsLibrary], ..Default::default() }.try_build()
+    };
+    let alone = built(Vec::new()).expect_err("no plugin binds the reader");
+    let message = format!("{alone:#}");
+    assert!(message.contains("SkillReader, which no plugin binds"), "{message}");
+    built(vec![&SkillsPlugin]).expect("both");
 }

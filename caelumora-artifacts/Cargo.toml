@@ -4,14 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# The layers of the plugin (issue 323, cut 11): without features the entity
-# and the wire types, which a client reads.
+# The layers of the crate (issue 323, cut 11; issue 516): without features the
+# entity and the wire types, which a client reads.
 [features]
-default = ["runtime", "server"]
-# The manager, the component, the views, the plugin.
-runtime = ["dep:caelumora-kernel", "dep:caelumora-agents", "dep:async-trait", "dep:tokio", "dep:tracing", "dep:anyhow", "dep:thiserror", "dep:serde_json"]
+default = ["kernel", "library", "server"]
+# What an agent's work publishes through, and what that fails with: the
+# crate's part of the kernel's API, which the plugin serves and the library
+# calls.
+api = ["dep:caelumora-kernel", "dep:async-trait", "dep:thiserror"]
+# The manager, the views, the plugin: the kernel's side.
+kernel = ["api", "dep:tracing", "dep:anyhow"]
+# The component and the library: the agent side.
+library = ["api", "dep:caelumora-agents", "dep:anyhow", "dep:serde_json"]
 # The routes, and how the plugin's errors are answered.
-server = ["runtime", "dep:caelumora-rest-server", "dep:axum"]
+server = ["kernel", "dep:caelumora-rest-server", "dep:axum"]
 
 [dependencies]
 caelumora-model.workspace = true
@@ -24,7 +30,6 @@ caelumora-agents = { workspace = true, optional = true }
 caelumora-rest-server = { workspace = true, optional = true }
 axum = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["sync"], optional = true }
 tracing = { workspace = true, optional = true }
 anyhow = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
@@ -40,11 +45,11 @@ serde_json.workspace = true
 bytes.workspace = true
 tower.workspace = true
 
-# Without the feature the test is skipped rather than failing to build:
-# its tests run the plugin in a kernel, its routes too.
+# Without the features the test is skipped rather than failing to build:
+# its tests run the plugin and the library in a kernel, its routes too.
 [[test]]
 name = "artifacts"
-required-features = ["server"]
+required-features = ["server", "library"]
 
 [lints]
 workspace = true

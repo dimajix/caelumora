@@ -1,16 +1,20 @@
-//! Skills as a user reaches them (issue 22): among the skills they may read - the plugin's views,
+//! Skills as a viewer reaches them (issue 22): among the skills they may read - the plugin's views,
 //! an extension of the kernel's (`SkillViews`, issue 323). What an agent's work loads and writes is
-//! the `SkillReader`'s and the `SkillWriter`'s (`extension`, issue 516). A node decides nothing:
-//! whoever changes or loads it asks again.
+//! the `SkillReader`'s and the `SkillWriter`'s (`extension`, issue 516), which the views serve. A
+//! node decides nothing: whoever changes or loads it asks again.
 
 use crate::access::SkillAccess;
-use crate::manager::{SkillError, SkillManager, SkillResult};
+use crate::extension::{SkillError, SkillReader, SkillResult, SkillWriter};
+use crate::manager::SkillManager;
 use crate::skill::{Skill, SkillBody, SkillId, SkillSnapshot};
 use async_trait::async_trait;
 use caelumora_kernel::view::Views;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::scope::{found_from, Scope};
 use caelumora_model::snapshot::DeletedSnapshot;
-use caelumora_model::store::query::Query;
+use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::StoreResultExt;
+use caelumora_model::value::name::Name;
 use std::sync::Arc;
 
 /// The skills the views reach (issue 323): what the kernel's `Views` offer of skills, from the
@@ -111,5 +115,75 @@ impl SkillView {
             owner: self.skill.security_attributes.owner_id,
             can_change: self.may_change().await,
         }
+    }
+}
+
+/// The reader of the views of a piece of work, in their viewer's name: what the plugin binds.
+#[async_trait]
+impl SkillReader for Views {
+    async fn usable_skills(&self) -> SkillResult<Vec<Skill>> {
+        let Some(place) = self.viewer().place() else { return Ok(Vec::new()) };
+        let context = self.context();
+        let here = Scope::ChannelScope { session_id: place.session.id, channel_id: place.channel };
+        let owner = context.principal_id.as_user_id();
+        // Those seen from here, which the store is asked for alone (issue 293).
+        let seen = Query::filtered(Filter::seen_from(&here, owner));
+        let skills = self.skill_manager()?.store().list(context, &seen).await?.items;
+        let mut usable = Vec::with_capacity(skills.len());
+        for skill in skills {
+            if self.access_policy().may_use_skill(context, &skill.security_attributes).await
+                && self.confidentiality().may_publish(
+                    context,
+                    &skill.classification,
+                    &place.classification,
+                )
+            {
+                usable.push(skill);
+            }
+        }
+        Ok(found_from(&usable, &here, owner).into_iter().cloned().collect())
+    }
+
+    async fn usable_skill_named(&self, name: &str) -> SkillResult<Skill> {
+        let not_found = || SkillError::NoSkillNamed(name.to_string());
+        let wanted = Name::new(name).map_err(|_| not_found())?;
+        SkillReader::usable_skills(self)
+            .await?
+            .into_iter()
+            .find(|skill| skill.name.name == wanted)
+            .ok_or_else(not_found)
+    }
+}
+
+/// The writer of the views of a piece of work, in their viewer's name: what the plugin binds.
+#[async_trait]
+impl SkillWriter for Views {
+    fn owner_scope(&self) -> Option<Scope> {
+        let user_id = self.context().principal_id.as_user_id()?;
+        Some(Scope::UserScope { user_id })
+    }
+
+    async fn create(
+        &self,
+        name: &str,
+        scope: Scope,
+        description: &str,
+        body: &str,
+        classification: Classification,
+    ) -> SkillResult<Skill> {
+        let manager = self.skill_manager()?;
+        manager.create(self.context(), name, scope, description, body, classification).await
+    }
+
+    async fn reclassify(&self, id: SkillId, classification: Classification) -> SkillResult<Skill> {
+        self.skill_manager()?.reclassify(self.context(), id, classification).await
+    }
+
+    async fn describe(&self, id: SkillId, description: &str) -> SkillResult<Skill> {
+        self.skill_manager()?.describe(self.context(), id, description).await
+    }
+
+    async fn rewrite(&self, id: SkillId, body: &str) -> SkillResult<Skill> {
+        self.skill_manager()?.rewrite(self.context(), id, body).await
     }
 }

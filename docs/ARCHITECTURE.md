@@ -40,11 +40,12 @@ The project is a Rust workspace, with a web UI next to it:
     libraries, builds the kernel from the configuration with them, serves the REST API under `/api`
     and the web UI from the binary (feature `web-ui`, on by default).
 *   **`caelumora-skills`** - skills, the first plugin (see [Plugins](#plugins)): the entity, its
-    manager, component, views and routes, in layers by Cargo features.
-*   **`caelumora-artifacts`** - artifacts, a plugin built as `caelumora-skills` is, which keeps
-    their content in the kernel's storages of content (issue 282) and extends the view of a channel
-    with what was published in it (issue 328), and the view of a project with what lies in it (issue
-    467). See [TOOLS.md](TOOLS.md#artifacts).
+    manager, views and routes, and the component of the library beside the plugin, in layers by
+    Cargo features (issue 516).
+*   **`caelumora-artifacts`** - artifacts, a plugin and a library built as `caelumora-skills` is,
+    which keeps their content in the kernel's storages of content (issue 282) and extends the view
+    of a channel with what was published in it (issue 328), and the view of a project with what lies
+    in it (issue 467). See [TOOLS.md](TOOLS.md#artifacts).
 *   **`caelumora-mcp`** - the tools of MCP servers, a library that brings nothing but its component
     kind `mcp_tool`, and with it `rmcp` (issue 325). See [TOOLS.md](TOOLS.md#mcp-servers).
 *   **`caelumora-compaction`** - compaction of an agent's context (issue 464), a library that brings
@@ -101,15 +102,15 @@ side, `RestPlugin` adds its routes, served behind the same login as the kernel's
 are an extension trait on the kernel's `Views`, built from what they open, and what a channel's view
 lists of its kind one on `ChannelView`. Which plugins are in is the program's choice:
 `caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the kernel leaves open -
-the model; the kernel knows none. A plugin is one crate, cut into layers by Cargo features rather
-than crates. The first is `caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the
-second `caelumora-artifacts`, which depends on the kernel's workspaces; `caelumora-decision` brings
-a component of a channel alone, and `caelumora-open-terminal`, `caelumora-store-json` and
-`caelumora-store-postgres` bring backends alone. What runs an agent or serves its facets is no
-plugin but a **library** of the agent side (issue
-[516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered as a plugin is,
-but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`). The agents are
-the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose actors the
+the model; the kernel knows none. A plugin is one crate; one that brings a library beside it is cut
+into layers by Cargo features rather than crates. The first is `caelumora-skills`
+([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
+the kernel's workspaces; `caelumora-decision` brings a component of a channel alone, and
+`caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres` bring backends
+alone. What runs an agent or serves its facets is no plugin but a **library** of the agent side
+(issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered as a plugin
+is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`). The agents
+are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose actors the
 channel builds (`AgentKinds`), and the kinds of their components; without it, the program is a chat
 between users. `caelumora-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
 `caelumora-ollama`, `caelumora-compaction` and `caelumora-workspace-tools` bring component kinds

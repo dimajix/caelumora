@@ -4,14 +4,15 @@
 //! participant gives it to an agent with `/skill`. Served behind the kernel's login (`RestPlugin`,
 //! issue 323), each handler with the `SkillManager` in its state.
 
-use crate::api::{
-    CreateSkillRequest, RenameSkillRequest, SkillBodyRequest, SkillDescriptionRequest,
-    SkillResponse,
-};
-use crate::manager::{SkillError, SkillManager};
+use crate::extension::SkillError;
+use crate::manager::SkillManager;
 use crate::plugin::SkillsPlugin;
 use crate::skill::SkillId;
 use crate::view::SkillViews;
+use crate::wire::{
+    CreateSkillRequest, RenameSkillRequest, SkillBodyRequest, SkillDescriptionRequest,
+    SkillResponse,
+};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

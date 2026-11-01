@@ -24,13 +24,16 @@ use caelumora_artifacts::artifact::{Artifact, ArtifactId, PublicationSnapshot};
 use caelumora_artifacts::component::{
     ArtifactTool, ARTIFACT_PUBLISH_PRESENTATION, ARTIFACT_TOOL_KIND, PUBLISH_ARTIFACT,
 };
-use caelumora_artifacts::manager::{ArtifactError, ArtifactManager};
+use caelumora_artifacts::extension::ArtifactError;
+use caelumora_artifacts::library::ArtifactsLibrary;
+use caelumora_artifacts::manager::ArtifactManager;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_artifacts::view::{ArtifactChannelViews, ArtifactProjectViews, ArtifactViews};
 use caelumora_kernel::backend::StorageGone;
 use caelumora_kernel::content::ContentError;
 use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_kernel::kernel::Kernel;
+use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::scoped::ScopeNotEmpty;
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop};
 use caelumora_kernel::terminal::{ByteStream, WorkspacePath};
@@ -80,7 +83,7 @@ use tower::ServiceExt;
 
 /// The world with artifacts.
 async fn world() -> World {
-    World::with(&[&ArtifactsPlugin], &[&TestAgents], |_| {}).await
+    World::with(&[&ArtifactsPlugin], &[&TestAgents, &ArtifactsLibrary], |_| {}).await
 }
 
 /// The one owner of artifacts of `world`.
@@ -294,7 +297,7 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
 async fn the_tool_is_not_offered_without_a_storage_of_content() {
     let world = World::configured(
         &[&ArtifactsPlugin],
-        &[&TestAgents],
+        &[&TestAgents, &ArtifactsLibrary],
         |_| {},
         |config| {
             config.content = Default::default();
@@ -373,7 +376,7 @@ async fn kept_in(store: Persistence) -> Kept {
         store,
         config,
         plugins: vec![&ArtifactsPlugin],
-        libraries: vec![&TestAgents],
+        libraries: vec![&TestAgents, &ArtifactsLibrary],
         ..Default::default()
     }
     .build();
@@ -448,7 +451,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
         TestKernel {
             config,
             plugins: vec![&ArtifactsPlugin],
-            libraries: vec![&TestAgents],
+            libraries: vec![&TestAgents, &ArtifactsLibrary],
             ..Default::default()
         }
         .try_build()
@@ -1546,7 +1549,7 @@ async fn publishing_into_a_project_needs_reading_it() {
 #[tokio::test]
 async fn an_agents_artifact_is_published_for_its_owner() {
     let call = calling(PUBLISH_ARTIFACT, json!({ "path": "notes/a.md" }));
-    let world = World::with(&[&ArtifactsPlugin], &[&TestAgents], |registry| {
+    let world = World::with(&[&ArtifactsPlugin], &[&TestAgents, &ArtifactsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![call])
     })
     .await;
@@ -1626,7 +1629,7 @@ async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_ne
     let elsewhere = TestKernel {
         store: persistence.clone(),
         plugins: vec![&ArtifactsPlugin],
-        libraries: vec![&TestAgents],
+        libraries: vec![&TestAgents, &ArtifactsLibrary],
         ..Default::default()
     }
     .build();
@@ -1641,4 +1644,17 @@ async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_ne
     let refused = manager.restore(&system, artifact.id).await;
     assert!(matches!(refused, Err(ArtifactError::NotFound(_))), "restored by nobody: {refused:?}");
     assert!(manager.purge(&system, artifact.id).await.expect("finished"), "purged");
+}
+
+/// Issue 516: the library brings the tool, the plugin what it publishes through - the library alone
+/// keeps the kernel from being built, as no plugin binds the publisher.
+#[test]
+fn the_library_needs_the_plugin() {
+    let built = |plugins: Vec<&dyn Plugin>| {
+        TestKernel { plugins, libraries: vec![&ArtifactsLibrary], ..Default::default() }.try_build()
+    };
+    let alone = built(Vec::new()).expect_err("no plugin binds the publisher");
+    let message = format!("{alone:#}");
+    assert!(message.contains("ArtifactPublisher, which no plugin binds"), "{message}");
+    built(vec![&ArtifactsPlugin]).expect("both");
 }

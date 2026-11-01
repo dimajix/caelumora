@@ -1,5 +1,5 @@
 #!/bin/sh
-# Seven checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Eight checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -26,8 +26,12 @@
 #   the agent side asks"): `scripts/library-names.sh` must find no `SecurityContext`, policy or
 #   manager of the kernel in the code of the libraries' Rust files a commit adds or changes, read
 #   whole from the working tree.
+# - The crates that stand on both levels stay cut (issue 516): whenever Rust code or a Cargo
+#   manifest is part of a commit, `caelumora-skills` and `caelumora-artifacts` must build without
+#   features - what a client reads -, with the feature `library` alone - the agent side without the
+#   plugin - and with `kernel` alone - the plugin without the agents.
 #
-# `git commit --no-verify` skips all seven.
+# `git commit --no-verify` skips all eight.
 set -eu
 
 if ! git diff --cached --quiet -- issues/; then
@@ -44,6 +48,15 @@ fi
 
 if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock clippy.toml; then
     cargo clippy --workspace --all-targets --quiet -- -D warnings
+fi
+
+if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock; then
+    for crate in caelumora-skills caelumora-artifacts; do
+        cargo check --quiet -p "$crate" --no-default-features
+        for side in library kernel; do
+            cargo check --quiet -p "$crate" --no-default-features --features "$side"
+        done
+    done
 fi
 
 committed=$(git diff --cached --name-only --diff-filter=ACMR -- '*.md' '*.rs' '*.ts' '*.tsx')

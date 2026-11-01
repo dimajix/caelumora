@@ -5,11 +5,12 @@
 //! (`routes::attachment_response`), named as its artifact. Served behind the kernel's login
 //! (`RestPlugin`, issue 328), each handler with the `ArtifactManager` in its state.
 
-use crate::api::{ArtifactResponse, ShareOptions};
 use crate::artifact::ArtifactId;
-use crate::manager::{ArtifactError, ArtifactManager};
+use crate::extension::ArtifactError;
+use crate::manager::ArtifactManager;
 use crate::plugin::ArtifactsPlugin;
 use crate::view::{ArtifactChannelViews, ArtifactProjectViews, ArtifactView, ArtifactViews};
+use crate::wire::{ArtifactResponse, ShareOptions};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};

@@ -8,19 +8,21 @@
 #
 #   library-names.sh [file...]
 #
-# The libraries are the crates that run an agent or bring components for its facets, and the
-# components of the plugins that stand on both levels; their code is told apart from their tests,
-# which may build what they test: a file below `channel_tests/` and a `testing.rs` are left out, as
-# is the item a `#[cfg(test)]` stands on - an import, or an item to its closing brace - and every
-# comment. Without files, it checks every Rust file of the libraries, as `import-blocks.sh` does
-# every Rust file; with files, those of them that belong to a library, passes over the other
-# Rust files and names any other file on stderr. Every name found is printed as
-# `file:line: names Name`, and the script fails if there is one.
+# The libraries are the crates that run an agent or bring components for its facets, and the library
+# side of the crates that stand on both levels - their faces, their components and their libraries;
+# their code is told apart from their tests, which may build what they test: a file below
+# `channel_tests/` and a `testing.rs` are left out, as is the item a `#[cfg(test)]` stands on - an
+# import, or an item to its closing brace - and every comment. Without files, it checks every Rust
+# file of the libraries, as `import-blocks.sh` does every Rust file; with files, those of them that
+# belong to a library, passes over the other Rust files and names any other file on stderr. Every
+# name found is printed as `file:line: names Name`, and the script fails if there is one.
 set -eu
 
 libraries='caelumora-agents/src caelumora-mcp/src caelumora-a2a/src caelumora-ollama/src
 caelumora-comfyui/src caelumora-workspace-tools/src caelumora-compaction/src
-caelumora-skills/src/component.rs caelumora-artifacts/src/component.rs'
+caelumora-skills/src/extension.rs caelumora-skills/src/component.rs caelumora-skills/src/library.rs
+caelumora-artifacts/src/extension.rs caelumora-artifacts/src/component.rs
+caelumora-artifacts/src/library.rs'
 names='SecurityContext|ActionType|AccessPolicy|AccessQuestions|Enforcement|OwnershipPolicy'
 names="$names|AllowAllPolicy|ConfidentialityPolicy|ConfidentialityQuestions|ConfidentialityRules"
 names="$names|PrivacyPolicy|Policies|SecretManager|Kernel|ControllerManager"

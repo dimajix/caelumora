@@ -3,10 +3,11 @@
 A skill is a named, self-contained piece of procedural knowledge - "how we write a release note",
 "how this schema is migrated" - that exists apart from any personality and is loaded into a turn
 when a task calls for it. This document describes what a skill is and is not, where it lives, who
-may use and write one, and how it reaches the model. Skills are a plugin, the crate
-`caelumora-skills` (issue 323, see [PLUGINS.md](PLUGINS.md)): the kernel knows nothing of them. How
-a command of an agent is carried out is in [COMMANDS.md](COMMANDS.md#commands-of-an-agent); how far
-information may travel in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
+may use and write one, and how it reaches the model. Skills are a plugin and a library, the crate
+`caelumora-skills` (issues 323, 516, see [PLUGINS.md](PLUGINS.md)): the kernel knows nothing of
+them. How a command of an agent is carried out is in
+[COMMANDS.md](COMMANDS.md#commands-of-an-agent); how far information may travel in
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 ## What a skill is
 
@@ -126,16 +127,21 @@ given to it to its remote agent with its next call.
 
 ## Where the code lives
 
-The crate `caelumora-skills` holds all of it, in layers by feature (issue 323, cut 11): without
-features the entity, its body, digest and snapshot (`skill`) and the wire types (`api`), which a
-client reads; `runtime` adds the `SkillManager` (`manager`), the views as an extension trait on the
-kernel's `Views` (`view::SkillViews`), what an agent's work does with skills
-(`extension::SkillReader`, `SkillWriter`), the questions of who may change and use a skill as an
-extension trait on the `AccessPolicy` (`access::SkillAccess`), the `skills` component (`component`)
-and `SkillsPlugin` (`plugin`), which joins them to the kernel; `server` adds the routes and how a
-`SkillError` is answered (`routes`). Its tests run in the world of the security suite
-(`tests/skills.rs`). `caelumora-app` lists the plugin with its routes, `caelumora-tui` with the
-feature `runtime` alone.
+The crate `caelumora-skills` holds all of it, in layers by feature (issue 323, cut 11; issue 516):
+without features the entity, its body, digest and snapshot (`skill`) and the wire types (`wire`),
+which a client reads; `api` adds what an agent's work does with skills (`extension::SkillReader`,
+`SkillWriter`) and what that fails with (`SkillError`) - the crate's part of the kernel's API;
+`kernel` adds the `SkillManager` (`manager`), the views as an extension trait on the kernel's
+`Views` (`view::SkillViews`), which serve the reader and the writer too, the questions of who may
+change and use a skill as an extension trait on the `AccessPolicy` (`access::SkillAccess`), and
+`SkillsPlugin` (`plugin`), which joins them to the kernel; `library` adds the `skills` component
+(`component`) and `SkillsLibrary` (`library`), which registers it with its texts; `server` adds the
+routes and how a `SkillError` is answered (`routes`). The plugin's side builds without the agents
+(`kernel` alone), the library's without the plugin (`library` alone), which the pre-commit hook
+checks; the library without the plugin keeps the kernel from being built, as no plugin binds the
+reader it reaches skills by. Its tests run in the world of the security suite (`tests/skills.rs`).
+`caelumora-app` lists the plugin with its routes and the library, `caelumora-tui` the plugin and the
+library without the routes.
 
 ## Not decided yet
 

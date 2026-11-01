@@ -12,8 +12,9 @@
 //! otherwise is refused.
 
 use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
+use crate::extension::{ArtifactError, ArtifactResult};
 use async_trait::async_trait;
-use caelumora_kernel::backend::{NamedBackends, StorageGone};
+use caelumora_kernel::backend::NamedBackends;
 use caelumora_kernel::component::{ComponentError, ComponentResult};
 use caelumora_kernel::content::{keep_digested, ContentError, ContentStorage};
 use caelumora_kernel::event::EventBus;
@@ -39,51 +40,12 @@ use caelumora_model::store::{
 };
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
-use caelumora_model::value::ValueError;
 use chrono::Utc;
 use serde::Deserialize;
 use std::fmt;
 use std::slice;
 use std::sync::Arc;
 use tracing::{info, warn};
-
-#[derive(Debug, thiserror::Error)]
-pub enum ArtifactError {
-    #[error("no artifact {0}")]
-    NotFound(ArtifactId),
-    #[error("no version {version} of artifact {artifact}")]
-    VersionNotFound { artifact: ArtifactId, version: u32 },
-    #[error("no storage of content is configured for artifacts")]
-    NotConfigured,
-    #[error("an artifact is published by a user, or for one")]
-    OwnerNotAUser,
-    /// What is so classified may not be put into the storage.
-    #[error("the storage of content '{0}' may not hold what is so classified")]
-    StorageNotCleared(String),
-    /// A later version from a workspace classified otherwise than the first.
-    #[error("the artifact '{0}' is classified otherwise than the workspace; publish it under another name")]
-    ClassifiedOtherwise(String),
-    /// Published under a name in a scope an artifact does not lie in: the caller vouches for a
-    /// project's (issue 467).
-    #[error("an artifact lies in a project's scope")]
-    InvalidScope,
-    #[error(transparent)]
-    Invalid(#[from] ValueError),
-    /// What the storage of content reported: a version too large, other than it was said to be,
-    /// or a storage that failed.
-    #[error(transparent)]
-    Content(#[from] ContentError),
-    /// The storage a version lies in, since removed from the configuration.
-    #[error(transparent)]
-    StorageGone(#[from] StorageGone),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-    /// The kernel was built without the plugin, so there is no manager to ask.
-    #[error("artifacts are not joined to this kernel")]
-    NotJoined,
-}
-
-pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
 /// The section `artifacts` of the configuration (issue 271): which of the
 /// storages of content (`content.storage`, issue 282) new artifacts are

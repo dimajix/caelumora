@@ -367,7 +367,7 @@ recorded as knowledge besides - the result in the transcript is what was read.
 
 ### Artifacts
 
-`publish_artifact` (component `artifact_tool`, of the plugin `caelumora-artifacts`, issue 328)
+`publish_artifact` (component `artifact_tool`, of the library of `caelumora-artifacts`, issue 328)
 publishes a file of the session's workspace as a version of an artifact: a fixed copy, kept in a
 storage of content beyond the workspace, downloaded at the message that published it. `publish_file`
 offers a link to a file as it is now; a model is told the difference in their descriptions - a link

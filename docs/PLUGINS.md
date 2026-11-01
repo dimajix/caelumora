@@ -33,10 +33,15 @@ trusted as the kernel: it is given what the kernel has, the stores, the policies
 controllers, the system's context. What runs an agent or brings components for an agent's facets is
 no plugin but a library of the agent side, trusted for nothing (see
 [What a library is](#what-a-library-is) and [ARCHITECTURE.md](ARCHITECTURE.md#principles)).
-`caelumora-skills` and `caelumora-artifacts` stand on both levels: their manager, views and routes
-are the kernel's, their components a library's; until they are cut in two (issue
-[516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), both register as a `Plugin`,
-their component kinds through a `LibraryComponents`, as a library's.
+`caelumora-skills` and `caelumora-artifacts` stand on both levels, cut by Cargo features (issue
+[516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): what an agent's work does
+with their kind is the crate's part of the API (`api`: the faces and their errors), their manager,
+views and routes are the kernel's - a plugin (`kernel`, `server`: `SkillsPlugin`,
+`ArtifactsPlugin`), which binds the faces -, and their components a library's (`library`:
+`SkillsLibrary`, `ArtifactsLibrary`). Each side builds without the other - the plugin without the
+agents (`kernel` alone), the library without the plugin (`library` alone), the entity and the wire
+types without either -, which the pre-commit hook checks. A program lists both; the library alone
+keeps the kernel from being built, as no plugin binds what its component reaches.
 
 A test builds the kernel with `testing::TestKernel`, naming the plugins and the libraries it needs
 (issue 375). A test of the agents' logic names the agents' library; the kernel's own tests name
@@ -57,12 +62,12 @@ it registers, a plugin
     with its kind it binds to the views of that work (`extend_readers`, `extend_writers`, below);
 *   registers its component kinds (`components()`), as `register_all` does for the kernel's;
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
-    namespace of its own, from a file it compiles in - the agents' `agents`, from
-    `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `workspace_tools`, `artifacts`
-    and `decision` from a `src/prompts.yaml` of their own -; its component kinds that write for a
-    model use the catalogue as a service (see
-    [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that names another plugin's tool
-    writes its name as text: it does not know it as a value;
+    namespace of its own, from a file it compiles in - `decision` from its `src/prompts.yaml`, as a
+    library adds its own (`LibraryBuilder::add_prompts`): the agents' `agents`, from
+    `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `workspace_tools`, `artifacts` and
+    `comfyui` from a `src/prompts.yaml` of their own -; its component kinds that write for a model
+    use the catalogue as a service (see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool
+    that names another plugin's tool writes its name as text: it does not know it as a value;
 *   is handed the kernel's storages of content (`content_storages`, issue 282) for what it keeps
     beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
@@ -104,11 +109,13 @@ the agent side: what runs an agent - `caelumora-agents`, the essential one, whic
 of agent and the built-in components (issue 370) - or brings components for an agent's facets -
 `caelumora-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-ollama` (issue 329),
 `caelumora-workspace-tools` (issue 428), `caelumora-compaction` (issue 464), `caelumora-comfyui`
-(issue 512). It is linked into the program as a plugin is, but trusted for nothing. It implements
-`caelumora_kernel::library::Library` - a name for messages and `register` -, and the programs list
-it in `libraries()`, the agents' library first, and register each with `KernelBuilder::library` once
-their plugins registered. A library registers with a `LibraryBuilder`, which offers what a library
-registers and nothing of the kernel - no store, no policy, no secret, no controller:
+(issue 512), and the library sides of `caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`,
+`ArtifactsLibrary`). It is linked into the program as a plugin is, but trusted for nothing. It
+implements `caelumora_kernel::library::Library` - a name for messages and `register` -, and the
+programs list it in `libraries()`, the agents' library first, and register each with
+`KernelBuilder::library` once their plugins registered. A library registers with a `LibraryBuilder`,
+which offers what a library registers and nothing of the kernel - no store, no policy, no secret, no
+controller:
 
 *   its component kinds (`components()`, a `LibraryComponents`), marked as a library's;
 *   its kinds of agent (`agent_kinds()`, an `AgentKinds`): for a kind of personality, what builds
@@ -217,11 +224,11 @@ agents' library, which defines the facets most plugins serve, is a judge of its 
 agent's owner is told when an answer fails is judged by `caelumora_agents::error::user_message`,
 which knows the error types of those facets and asks the kernel's judgement for the rest
 (`error::user_message_with`, issue 370). A registry of judgements the plugins add is not needed, and
-would be the registry of downcasts rejected below. A plugin may define a facet in turn that other
-plugins serve - `caelumora-compaction` the `KnowledgeRestorer`, which the `skills` component serves
-(issue 464) -: they depend on it and answer in its error type, `CompactionError`, as they answer the
-agents in theirs; what is shown of it, the defining plugin decides where it answers the agents - the
-`compaction` component carries its text into its `ActivityError` and `CommandError`.
+would be the registry of downcasts rejected below. A library may define a facet in turn that other
+libraries serve - `caelumora-compaction` the `KnowledgeRestorer`, which the `skills` component
+serves (issue 464) -: they depend on it and answer in its error type, `CompactionError`, as they
+answer the agents in theirs; what is shown of it, the defining library decides where it answers the
+agents - the `compaction` component carries its text into its `ActivityError` and `CommandError`.
 
 So the trait names its error type, and the plugin translates its own error into it where it
 answers - deciding there what may be shown, what is a refusal and what is a failure:
@@ -243,10 +250,12 @@ for its commands, into a `CompactionError` when the context is compacted and int
 for its catalogue. The compiler asks for the translation, which a `?` into an `anyhow` would let be
 forgotten.
 
-The plugin's own error type stays within the plugin: its manager, its views and its routes, whose
-handlers answer it by a `From<…> for ApiError` of the plugin's (see
-[REST-SERVER.md](REST-SERVER.md#errors)). `Plugin::register` and `SeedSection::seed` answer
-`anyhow`: they run at startup, and what fails there ends the program and goes to the log.
+The crate's own error type is part of its API (`SkillError`, `ArtifactError`, issue 516): its
+manager, its views and its routes answer in it - the routes' handlers by a `From<…> for ApiError` of
+the plugin's (see [REST-SERVER.md](REST-SERVER.md#errors)) -, and it reaches the library through the
+faces, whose component translates it as above; it reaches the kernel no further. `Plugin::register`
+and `SeedSection::seed` answer `anyhow`: they run at startup, and what fails there ends the program
+and goes to the log.
 
 What is not done instead, and why: a type of the kernel carried as `#[source]` that marks a message
 as safe to show, after the pattern of `Refused` - but a refusal is what caused the error carrying

@@ -31,8 +31,8 @@
 //! compaction summarises is given again, as it is now - where it may still
 //! be loaded (`KnowledgeRestorer`, issue 323).
 
+use crate::extension::SkillError;
 use crate::extension::{SkillReader, SkillWriter};
-use crate::manager::SkillError;
 use crate::skill::{Skill, SkillId};
 use crate::NAMESPACE;
 use async_trait::async_trait;
@@ -663,7 +663,7 @@ mod tests {
     use caelumora_agents::error::user_message;
 
     #[test]
-    fn what_the_catalogue_meets_reaches_the_owner_as_the_core_judges_it() {
+    fn what_the_catalogue_meets_reaches_the_owner_as_the_kernel_judges_it() {
         let shown = |error: SkillError| user_message(&Error::new(ContextError::from(error)));
         assert_eq!(shown(SkillError::NotJoined).as_deref(), Some("skills are not offered here"));
         assert_eq!(

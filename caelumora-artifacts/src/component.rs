@@ -12,8 +12,8 @@
 //! storage of content is configured; a call is checked again all the same, and fails and says so.
 //! The result is classified as the artifact, which is classified as the workspace.
 
+use crate::extension::ArtifactError;
 use crate::extension::ArtifactPublisher;
-use crate::manager::ArtifactError;
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};

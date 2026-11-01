@@ -14,6 +14,7 @@ use caelumora_a2a::library::A2aLibrary;
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::llm::LLMClient;
 use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
@@ -35,6 +36,7 @@ use caelumora_rest_server::error::{self, ApiError};
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
+use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
@@ -219,6 +221,8 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolsLibrary),
         Box::new(ComfyUiLibrary),
+        Box::new(SkillsLibrary),
+        Box::new(ArtifactsLibrary),
     ]
 }
 

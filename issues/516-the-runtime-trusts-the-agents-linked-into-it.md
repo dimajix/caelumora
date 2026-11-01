@@ -850,7 +850,8 @@ so do the sections of this one above, written when they were decided.
     runs with.
 18. The cut of 5d.2: the faces under a feature `api` of their own - the other side of the kernel
     is the API, not the agent (the maintainer, 2026-11-01) -, and the build with `library` alone
-    checked by the pre-commit hook rather than by CI (recommended).
+    checked by the pre-commit hook rather than by CI (recommended). Taken on 2026-11-01 as
+    recommended.
 
 ## Done when
 
@@ -1237,3 +1238,18 @@ so do the sections of this one above, written when they were decided.
   a loop a running object, not a runtime (*Running objects and their entities*); the test
   catalogue of the model is `kernel_catalogue`. No behaviour changes. Stored data: none; a
   variants file `core.yaml` becomes `kernel.yaml`, and a log filter names `caelumora_kernel`.
+- **2026-11-01** — Step 5d.2: skills and artifacts are cut in two (decision 18). Each crate's
+  features: none, the entity and the wire types, whose module is `wire` now (it was `api`, which
+  the feature names); `api`, the faces and their errors (`SkillError`, `ArtifactError`, which left
+  the manager for `extension`); `kernel`, the manager, the views - which now serve the faces too -,
+  the access and the plugin, without `caelumora-agents` or `caelumora-compaction`; `library`, the
+  component and `SkillsLibrary` or `ArtifactsLibrary`, which adds its texts and registers its kind;
+  `server`, the routes. The name of each (`SKILLS`, `ARTIFACTS`) lies in the crate's root, as the
+  plugin and the library share it. The programs list both libraries, the tests name the plugin and
+  the library apart, and a test of each crate says that the library alone keeps the kernel from
+  being built. `scripts/library-names.sh` checks the faces and the libraries too; the pre-commit
+  hook builds both crates with `library` alone and with `kernel` alone - the second, beyond the
+  plan, so that the plugin keeps without the agents. After the review of the step: the hook builds
+  them without features too, the entity and the wire types; the faces of skills need no kernel
+  (`api` without `caelumora-kernel`), those of artifacts still do until step 6 (`ContentError`,
+  `StorageGone`, `ByteStream`); the unused `tokio` left both crates. Stored data: none.
