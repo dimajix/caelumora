@@ -1391,3 +1391,8 @@ after this one.
   [518](518-memory-is-reached-through-the-agents-state.md), memory as a system service (decision
   10); and [519](519-an-erased-value-forgets-its-type.md), an `ErasedArc` that keeps the key of its
   type, from a finding of the review of step 6.1.
+- **2026-11-01** — The crates drawn as they depend on each other, as this issue left them:
+  [docs/CRATES.md](../docs/CRATES.md), the graph and the table of the programs written by
+  `scripts/crate-graph.sh` from `cargo metadata` and checked by the pre-commit hook. The list of
+  the libraries is now the list of the kinds of crates, `scripts/crates.sh`, with the plugins
+  beside the libraries, which the boxes of the graph are drawn by.

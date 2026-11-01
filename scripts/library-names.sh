@@ -19,7 +19,7 @@
 # name found is printed as `file:line: names Name`, and the script fails if there is one.
 set -eu
 
-. "$(dirname "$0")/libraries.sh"
+. "$(dirname "$0")/crates.sh"
 paths=''
 for library in $libraries; do
     paths="$paths $library/src"

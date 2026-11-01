@@ -11,7 +11,7 @@
 set -eu
 
 cd "$(git rev-parse --show-toplevel)"
-. scripts/libraries.sh
+. scripts/crates.sh
 
 # The names of the crates `cargo tree` finds under the package it is given: `$@` its arguments.
 dependencies() {

@@ -9,8 +9,10 @@ tested in.
 ## The graph
 
 An arrow points from a crate to one it depends on. A dashed arrow is a dependency that is optional,
-named by the feature that brings it. An arrow from a box stands for an arrow from each crate in it.
+named by the feature that brings it. An arrow from a box stands for an arrow from each crate in it,
+drawn so where every one of them has it.
 
+<!-- crate-graph.sh: graph -->
 ```mermaid
 flowchart TD
     subgraph both["Plugin and library"]
@@ -26,61 +28,57 @@ flowchart TD
     end
 
     subgraph libraries["Libraries"]
-        a2a["caelumora-a2a"]
-        comfyui["caelumora-comfyui"]
-        compaction["caelumora-compaction"]
-        mcp["caelumora-mcp"]
-        ollama["caelumora-ollama"]
-        workspace_tools["caelumora-workspace-tools"]
         agents["caelumora-agents"]
+        mcp["caelumora-mcp"]
+        a2a["caelumora-a2a"]
+        ollama["caelumora-ollama"]
+        comfyui["caelumora-comfyui"]
+        workspace_tools["caelumora-workspace-tools"]
+        compaction["caelumora-compaction"]
     end
 
-    rest_server["caelumora-rest-server"]
+    api["caelumora-api"]
     kernel["caelumora-kernel"]
     logging["caelumora-logging"]
-    api["caelumora-api"]
-    rest_api["caelumora-rest-api"]
     model["caelumora-model"]
+    rest_api["caelumora-rest-api"]
+    rest_client["caelumora-rest-client"]
+    rest_server["caelumora-rest-server"]
 
-    a2a & comfyui & compaction & mcp & ollama & workspace_tools --> agents
-    libraries --> api
-    libraries --> model
-    agents -. "test-support" .-> kernel
-
-    plugins --> kernel
-    plugins --> api
-    plugins --> model
-
+    both -. "library" .-> agents
+    both -. "api" .-> api
+    skills -. "library" .-> compaction
+    both -. "kernel" .-> kernel
     both --> model
     both --> rest_api
-    both -. "api" .-> api
-    both -. "kernel" .-> kernel
-    both -. "library" .-> agents
-    skills -. "library" .-> compaction
     both -. "server" .-> rest_server
-
+    plugins --> api
+    plugins --> kernel
+    plugins --> model
+    a2a & comfyui & compaction & mcp & ollama & workspace_tools --> agents
+    libraries --> api
+    agents -. "test-support" .-> kernel
+    libraries --> model
+    api & kernel & logging & rest_api & rest_server --> model
+    kernel & rest_server --> api
     rest_server --> kernel
-    rest_server --> api
     rest_server --> rest_api
-    rest_server --> model
-
-    kernel --> api
-    kernel --> model
-    logging --> model
-    api --> model
-    rest_api --> model
 ```
+<!-- crate-graph.sh: end -->
 
 ## The programs
 
-The two programs are the composition roots: each links the plugins and the libraries it runs with,
-and the crates beneath them. Drawn into the graph, their arrows would reach every crate, so they are
-listed here instead, each with the crates it depends on directly.
+The programs - the crates with a binary - are the composition roots: each links the plugins and the
+libraries it runs with, and the crates beneath them. Drawn into the graph, their arrows would reach
+every crate, so they are listed here instead, each with the crates it depends on directly, and with
+those it takes with other features than their default ones.
 
+<!-- crate-graph.sh: programs -->
 | Program | Depends on |
 |---|---|
-| `caelumora-app` | every crate of the graph above, `caelumora-skills` and `caelumora-artifacts` with their default features (`kernel`, `library`, `server`) |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-server` and `caelumora-rest-api`, `caelumora-skills` and `caelumora-artifacts` without `server` |
+| `caelumora-app` | every crate of the graph but `caelumora-rest-api` and `caelumora-rest-client` |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client` and `caelumora-rest-server`; `caelumora-artifacts` and `caelumora-skills` with `kernel` and `library` alone |
+<!-- crate-graph.sh: end -->
 
 `caelumora-rest-client` depends on no crate of the workspace, and none on it; it is reserved for a
 client of the REST interface. `caelumora-web-ui` is no crate, but the browser frontend served by
@@ -103,16 +101,12 @@ The graph is not only what has grown, but holds rules of the design:
 *   Nothing but the programs depends on a plugin, and only the crates that are a plugin and a
     library at once, with `server`, on `caelumora-rest-server`.
 
-## Reading the graph again
+## How the graph is written
 
-The graph above is drawn by hand from what `cargo metadata` reports. Where a change adds or drops a
-dependency between crates of the workspace, it changes the graph in the same change. Every normal
-dependency between them is listed by:
-
-```sh
-cargo metadata --format-version 1 --no-deps | jq -r '
-  [.packages[].name] as $own
-  | .packages[] | .name as $from
-  | .dependencies[] | select(.kind == null and (.name | IN($own[])))
-  | "\($from) -> \(.name)\(if .optional then " (optional)" else "" end)"'
-```
+The graph and the table of the programs are written by `scripts/crate-graph.sh`, from what
+`cargo metadata` reports of the manifests, between the marks `<!-- crate-graph.sh: … -->`; they are
+never edited by hand, the prose around them is. A change to a manifest, to the binary of a crate or
+to `scripts/crates.sh` runs the script, and the pre-commit hook refuses a commit whose document, as
+it is staged, does not match the manifests (`crate-graph.sh --check`). Which box a crate is drawn in
+comes from `scripts/crates.sh`, which lists the libraries, the crates on both levels and the
+plugins; a new crate of one of these kinds is entered there.
