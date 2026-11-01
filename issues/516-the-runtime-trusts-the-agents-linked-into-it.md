@@ -746,6 +746,51 @@ links alone. One trait whose implementor declared its own level would let it dec
    claimed only by its own; the seed files keep the plugins' sections at their top level, since
    no library claims one.
 
+## Step 5d: the kernel
+
+Decided with the maintainer on 2026-11-01, after 5c: what the agents run on is called the
+**kernel**, in the code, the crate and the documents, in place of *core*, and of *runtime* where
+that names the whole. The cut serves the picture the issue began with - an operating system for
+agents -, and *kernel* says what *core* does not: that its checks are the ones nothing goes around.
+A *runtime* stays what something runs with, which the kernel serves: a channel's
+(`ChannelRuntime`), a participant's (`ParticipantRuntime`), an agent's actor's (`ActorRuntime`,
+served by the kernel's `AgentRuntime`). The words of decision 1 become the kernel, its plugins,
+trusted as the kernel, and the libraries. The plan of 5d in *Step 5, measured after step 4* is
+replaced by the steps below.
+
+### The names
+
+| Today | Becomes |
+|---|---|
+| the crate `caelumora-runtime` | `caelumora-kernel` |
+| `RuntimeManager` | `Kernel` |
+| `RuntimeBuilder` | `KernelBuilder` |
+| the module `runtime` (the kernel, its builder, the runtimes, the extensions) | `kernel` |
+| `TestRuntime`, and the test helpers that answer a `RuntimeManager` (`test_runtime`, …) | `TestKernel`, `test_kernel`, … |
+| `ParticipantRuntime::runtime_manager`, a variable or field that holds a `RuntimeManager` | `kernel` |
+| the namespace of the texts `core` (`CORE`, `CORE_PROMPTS`, `core.framing`, a variants file `core.yaml`) | `kernel` |
+| *the core*, and *the runtime* where it names the whole, in documents, comments and test names | *the kernel* |
+| the feature `runtime` of `caelumora-skills` and `caelumora-artifacts` | `kernel` (5d.2) |
+
+The files of other issues keep their words, as a resolved issue's description is never rewritten;
+so do the sections of this one above, written when they were decided.
+
+### The steps of 5d
+
+1. **The word.** The names of the table, but the feature; `ARCHITECTURE.md` says what a kernel and
+   what a runtime is. No behaviour changes. A variants file `core.yaml` becomes `kernel.yaml`, and
+   a log filter names `caelumora_kernel`.
+2. **Skills and artifacts cut in two.** Each crate's features: none, the entity and the wire types;
+   `api`, the faces (`SkillReader` and `SkillWriter`, `ArtifactPublisher`) and their errors, which
+   leave the manager - the crate's part of the API, which the kernel serves and a library calls,
+   and which step 6 moves into `caelumora-api`; `kernel` (today `runtime`), the store, the
+   manager, the views with their impls of the faces, the access and the plugin, without
+   `caelumora-agents` or `caelumora-compaction`; `library`, the component and a `SkillsLibrary`
+   or `ArtifactsLibrary` that registers its kind and its texts, on `api`; `server`, the routes. By
+   default `kernel`, `library` and `server`. The programs list both libraries, the tests name the
+   plugin and the library apart; `scripts/library-names.sh` checks `api.rs` and `library.rs` too,
+   and the pre-commit hook builds each crate with `--no-default-features --features library`.
+
 ## Decisions for the maintainer
 
 1. The three words - kernel, module, program - and the crate's name, `caelumora-api`. Taken on
@@ -800,6 +845,12 @@ links alone. One trait whose implementor declared its own level would let it dec
     may declare again a single another library declared. Taken on 2026-11-01: the texts alone
     (`add_prompts`), the sections apart under `plugins` and `libraries`, and a single declared
     again is accepted, as it reaches nothing of the core.
+17. The word for what the agents run on (*Step 5d: the kernel*). Taken on 2026-11-01: *kernel*,
+    in the code, the crate and the documents, in place of *core*; a *runtime* is what something
+    runs with.
+18. The cut of 5d.2: the faces under a feature `api` of their own - the other side of the kernel
+    is the API, not the agent (the maintainer, 2026-11-01) -, and the build with `library` alone
+    checked by the pre-commit hook rather than by CI (recommended).
 
 ## Done when
 
@@ -1168,3 +1219,7 @@ links alone. One trait whose implementor declared its own level would let it dec
   declare again a single another library declared (`TestAgents` its model's): the maintainer
   accepted it, since it reaches nothing of the core. Stored data: none; a configuration file moves
   `artifacts` under `plugins` and `comfyui` under `libraries`.
+- **2026-11-01** — Step 5d planned anew with the maintainer (decision 17): what the agents run on
+  is the kernel - the crate `caelumora-kernel`, its `Kernel` built by the `KernelBuilder`, *the
+  kernel* in the documents -, and a runtime what something runs with; 5d.1 renames, 5d.2 cuts
+  skills and artifacts into a plugin and a library. Decision 18 is open.
