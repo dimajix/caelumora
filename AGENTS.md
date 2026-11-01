@@ -21,6 +21,7 @@ change something, read the document on its subject:
 | When you work on ... | read |
 |---|---|
 | any code | [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md) |
+| a dependency between crates, a new crate | [CRATES.md](docs/CRATES.md) |
 | components, facets, `ComponentRegistry` | [COMPONENTS.md](docs/COMPONENTS.md) |
 | plugins, what they register, how they answer the kernel | [PLUGINS.md](docs/PLUGINS.md) |
 | tools, tool execution | [TOOLS.md](docs/TOOLS.md) |

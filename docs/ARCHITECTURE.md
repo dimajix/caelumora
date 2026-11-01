@@ -7,7 +7,8 @@ that holds the details; the list at the end names them all.
 
 ## Crates
 
-The project is a Rust workspace, with a web UI next to it:
+The project is a Rust workspace, with a web UI next to it; how its crates depend on each other is
+drawn in [CRATES.md](CRATES.md):
 
 *   **`caelumora-model`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
     `User`, `SessionTemplate`, `Workspace`, `Group`, `Project`), the values with rules
@@ -479,6 +480,7 @@ The design repeats a few decisions; new code follows them.
 
 ## Documents
 
+*   [CRATES.md](CRATES.md) - how the crates depend on each other, and the rules the graph keeps.
 *   [COMPONENTS.md](COMPONENTS.md) - components, facets, how they are wired, the built-in
     components.
 *   [TOOLS.md](TOOLS.md) - tools and how their calls run.
