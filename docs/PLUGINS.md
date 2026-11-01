@@ -70,8 +70,9 @@ it registers, a plugin
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
     before it writes (`require`) and once it has written (`keep_made`, `restore`), so that
     nothing is left in the scope of a holder deleted meanwhile (issue 458);
-*   claims its section of the configuration (`config::<C>(name)`), read as `C`, and of the seed
-    files (`seed_section`, a `SeedSection`). Both sections stand at the top level of their files;
+*   claims its section of the configuration (`config::<C>(name)`), read as `C`, under `plugins`, and
+    of the seed files (`seed_section`, a `SeedSection`), at their top level - the seed holds what
+    the plugins keep, and no library claims a section of it, so that it has nothing to keep apart;
     one that no plugin claims is an error, so that a misspelt section is found.
 
 Its views are an extension trait on `Views`, built from what `Views` opens: the viewer's `context`,
@@ -114,8 +115,9 @@ library registers and nothing of the core - no store, no policy, no secret, no c
     its agents' actors - from the agent's `ActorRuntime` alone - and which facets their components
     are asked for. Kinds of agent are the agent side's: a plugin registers none. The agents' library
     registers both kinds there are; a program without it runs no agent;
-*   its texts (`prompts()`), under a namespace of its own, as a plugin adds its;
-*   its section of the configuration (`config::<C>(name)`);
+*   its texts (`add_prompts`), under a namespace of its own, as a plugin adds its - and nothing else
+    of the catalogue: its variants are the configuration's;
+*   its section of the configuration (`config::<C>(name)`), under `libraries`;
 *   a service of its own to its own kinds (`provide`), which decides nothing of the core's -
     `caelumora-comfyui` its workflows.
 

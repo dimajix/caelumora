@@ -17,7 +17,7 @@ impl Library for CompactionLibrary {
     }
 
     fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
-        library.prompts().add(NAMESPACE, PROMPTS)?;
+        library.add_prompts(NAMESPACE, PROMPTS)?;
         let components = &mut library.components();
         components.single::<dyn CompactionStrategy>(Some(SUMMARY_COMPACTION_KIND));
         component::register(components);

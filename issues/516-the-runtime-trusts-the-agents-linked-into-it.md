@@ -740,6 +740,11 @@ links alone. One trait whose implementor declared its own level would let it dec
    Libraries: `caelumora-agents`, `-mcp`, `-a2a`, `-ollama`, `-comfyui`, `-workspace-tools`,
    `-compaction`; `caelumora-decision`, the stores and `caelumora-open-terminal` stay plugins,
    `caelumora-skills` and `caelumora-artifacts` both until 5d.
+3. **What a library is given besides.** Added after 5c.2 (decision 16): a library adds its texts
+   and nothing else of the catalogue (`LibraryBuilder::add_prompts`), and the configuration keeps
+   the sections of the plugins and of the libraries apart, under `plugins` and `libraries`, each
+   claimed only by its own; the seed files keep the plugins' sections at their top level, since
+   no library claims one.
 
 ## Decisions for the maintainer
 
@@ -790,6 +795,11 @@ links alone. One trait whose implementor declared its own level would let it dec
     the core builds in its own name or uses a service of the core but the texts, and whether a
     library registers its kinds through a type of its own (`LibraryComponents`) rather than a
     method of the registry any plugin could call. Taken on 2026-10-31: both, as recommended.
+16. Whether a library adds its texts alone rather than being handed the catalogue, and whether the
+    configuration keeps the sections of the plugins and of the libraries apart; whether a library
+    may declare again a single another library declared. Taken on 2026-11-01: the texts alone
+    (`add_prompts`), the sections apart under `plugins` and `libraries`, and a single declared
+    again is accepted, as it reaches nothing of the core.
 
 ## Done when
 
@@ -1149,3 +1159,12 @@ links alone. One trait whose implementor declared its own level would let it dec
   them need, on and on - the `ResponderPolicy` among them -, and a library declares no single of
   them either; the registry answers the check itself (`keeps_libraries_to_their_side`). The
   documents name the libraries as libraries throughout. Stored data: none.
+- **2026-11-01** — Step 5c.3, decided with the maintainer after 5c.2: a library adds its texts and
+  nothing else of the catalogue (`LibraryBuilder::add_prompts` in place of `prompts`, so that it
+  replaces no variant of the core's texts), and the configuration keeps the sections of the plugins
+  and of the libraries apart, under `plugins` and `libraries`, each claimed only by its own
+  (`RuntimeBuilder::config`, `LibraryBuilder::config`; the builder's `Sections`). A key the
+  configuration does not know is an error when it is read, at the top too. A library may still
+  declare again a single another library declared (`TestAgents` its model's): the maintainer
+  accepted it, since it reaches nothing of the core. Stored data: none; a configuration file moves
+  `artifacts` under `plugins` and `comfyui` under `libraries`.

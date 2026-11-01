@@ -36,11 +36,11 @@ impl Library for ComfyUiLibrary {
     fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
         let config: ComfyUiConfig = library.config(COMFYUI)?;
         let workflows = match &config.workflows {
-            Some(dir) => Workflows::read(dir).context("Cannot read comfyui.workflows")?,
+            Some(dir) => Workflows::read(dir).context("Cannot read libraries.comfyui.workflows")?,
             None => Workflows::default(),
         };
         library.provide(Arc::new(workflows))?;
-        library.prompts().add(NAMESPACE, PROMPTS)?;
+        library.add_prompts(NAMESPACE, PROMPTS)?;
         tool::register(&mut library.components());
         Ok(())
     }
@@ -62,7 +62,7 @@ mod tests {
         let built = |section: Option<Value>| {
             let mut config = AppConfig::default();
             if let Some(section) = section {
-                config.plugins.insert(COMFYUI.to_string(), section);
+                config.libraries.insert(COMFYUI.to_string(), section);
             }
             TestRuntime { config, libraries: vec![&ComfyUiLibrary], ..Default::default() }
                 .try_build()
@@ -76,7 +76,30 @@ mod tests {
         let none = built(None).expect("no section, no workflows");
         assert!(none.services().get::<Workflows>().unwrap().named("z_image_turbo").is_none());
         let unreadable = built(Some(json!({ "workflows": "/none" }))).unwrap_err();
-        assert!(format!("{unreadable:#}").contains("comfyui.workflows"), "{unreadable:#}");
+        assert!(
+            format!("{unreadable:#}").contains("libraries.comfyui.workflows"),
+            "{unreadable:#}"
+        );
         assert!(built(Some(json!({ "workflow": "x" }))).is_err(), "a key it does not know");
+    }
+
+    /// Issue 516: a library's section is read from the libraries' sections alone - among the
+    /// plugins' it is claimed by none -, and one no library claims keeps the runtime from being
+    /// built.
+    #[test]
+    fn a_library_s_section_lies_among_the_libraries_sections() {
+        let built = |yaml: &str| {
+            let config = AppConfig::from_yaml(yaml).unwrap();
+            TestRuntime { config, libraries: vec![&ComfyUiLibrary], ..Default::default() }
+                .try_build()
+                .map(drop)
+        };
+        let among_plugins = built("plugins:\n  comfyui: {}\n").expect_err("no plugin claims it");
+        let message = format!("{among_plugins:#}");
+        assert!(message.contains("'plugins.comfyui' that no plugin claims"), "{message}");
+        let misspelt = built("libraries:\n  comfyuy: {}\n").expect_err("no library claims it");
+        let message = format!("{misspelt:#}");
+        assert!(message.contains("'libraries.comfyuy' that no library claims"), "{message}");
+        built("libraries:\n  comfyui: {}\n").expect("its own");
     }
 }

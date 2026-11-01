@@ -37,7 +37,7 @@ impl Library for AgentsLibrary {
 
     fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
         register_components(&mut library.components());
-        library.prompts().add(prompt::NAMESPACE, prompt::PROMPTS)?;
+        library.add_prompts(prompt::NAMESPACE, prompt::PROMPTS)?;
         let kinds = library.agent_kinds();
         kinds.register(
             PersonalityKind::Internal,

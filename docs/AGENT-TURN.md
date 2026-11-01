@@ -668,8 +668,8 @@ What the runtime's parts say is kept apart from the code that fills them in, in 
 (`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a change of
 code. Every crate brings its texts in a YAML file it compiles in - the agents'
 `caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin or library
-registers (`RuntimeBuilder::prompts`, `LibraryBuilder::prompts`): `agents.channel_participants` is
-the roster. The catalogue is a service of the runtime. The core's texts are the namespace `core`
+registers (`RuntimeBuilder::prompts`, `LibraryBuilder::add_prompts`): `agents.channel_participants`
+is the roster. The catalogue is a service of the runtime. The core's texts are the namespace `core`
 (`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it resolves a
 context - a turn given up, who joined or left - and how the messages of others are marked
 (`ModelProfile::framing_explanation`).

@@ -272,7 +272,7 @@ mod tests {
     #[tokio::test]
     async fn a_plugin_brings_its_kind_its_manager_its_component_and_its_sections() {
         let store = Persistence::in_memory();
-        let config = AppConfig::from_yaml("notes:\n  greeting: hello\n").unwrap();
+        let config = AppConfig::from_yaml("plugins:\n  notes:\n    greeting: hello\n").unwrap();
         let runtime = TestRuntime {
             store: store.clone(),
             config,
@@ -455,11 +455,17 @@ mod tests {
 
     #[test]
     fn a_section_of_the_configuration_nobody_claims_is_an_error() {
-        let refused = built(AppConfig::from_yaml("notez:\n  greeting: hello\n").unwrap(), &Notes)
-            .expect_err("a typo");
-        assert!(refused.to_string().contains("'notez'"), "{refused}");
-        let unreadable = built(AppConfig::from_yaml("notes:\n  greting: hello\n").unwrap(), &Notes)
-            .expect_err("not its section");
+        let refused = built(
+            AppConfig::from_yaml("plugins:\n  notez:\n    greeting: hello\n").unwrap(),
+            &Notes,
+        )
+        .expect_err("a typo");
+        assert!(refused.to_string().contains("'plugins.notez'"), "{refused}");
+        let unreadable = built(
+            AppConfig::from_yaml("plugins:\n  notes:\n    greting: hello\n").unwrap(),
+            &Notes,
+        )
+        .expect_err("not its section");
         assert!(format!("{unreadable:#}").contains("greting"), "{unreadable:#}");
         let again = TestRuntime { plugins: vec![&Notes, &Notes], ..Default::default() }
             .try_build()

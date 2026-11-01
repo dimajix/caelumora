@@ -191,13 +191,13 @@ pub struct LoggingConfig {
 }
 
 /// The configuration of a binary. Every section may be left out and then
-/// takes its default. A key the configuration does not know is a section
-/// of a plugin's (`plugins`, issue 323); one that no plugin claims is an
+/// takes its default. The sections of the plugins lie under `plugins`, those of
+/// the libraries under `libraries` (issues 323, 516); one that none claims is an
 /// error when the runtime is built, rather than ignored, so that a misspelt
-/// section doesn't silently fall back to its default. Within a section, a
-/// key it does not know is an error when it is read.
+/// section doesn't silently fall back to its default. A key it does not know is
+/// an error when it is read, at the top as within a section.
 #[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     pub persistence: PersistenceConfig,
     pub secrets: SecretsConfig,
@@ -250,8 +250,10 @@ pub struct AppConfig {
     pub prompts: BTreeMap<String, PathBuf>,
     /// The sections of the plugins, by name, as they were written: each
     /// read by the plugin that claims it (issue 323).
-    #[serde(flatten)]
     pub plugins: BTreeMap<String, Value>,
+    /// The sections of the libraries, by name, as they were written: each
+    /// read by the library that claims it (issue 516).
+    pub libraries: BTreeMap<String, Value>,
 }
 
 /// The storages workspaces are made in (issue 253), each by the name a
@@ -272,7 +274,7 @@ pub const DEFAULT_MAX_FILE_BYTES: u64 = 50 * 1024 * 1024;
 /// The storages binary content is kept in (issue 282), each by the name
 /// what is kept there refers to it with and a backend (`dyn
 /// ContentStorage`). Whose content goes where, and how large it may be, is
-/// its owner's to configure - `artifacts.keep_in`, say.
+/// its owner's to configure - `plugins.artifacts.keep_in`, say.
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct ContentConfig {
@@ -335,6 +337,7 @@ impl Default for AppConfig {
             attachments: AttachmentsConfig::default(),
             prompts: BTreeMap::new(),
             plugins: BTreeMap::new(),
+            libraries: BTreeMap::new(),
         }
     }
 }
@@ -494,10 +497,13 @@ persistence:
             let message = AppConfig::from_yaml(yaml).expect_err(yaml).to_string();
             assert!(message.contains("unknown field"), "{yaml:?} gave: {message}");
         }
-        // A section it does not know is a plugin's, refused by the runtime
-        // if no plugin claims it.
-        let config = AppConfig::from_yaml("secret:\n  providers: []\n").unwrap();
-        assert_eq!(config.plugins.get("secret"), Some(&serde_json::json!({"providers": []})));
+        let message = AppConfig::from_yaml("secret:\n  providers: []\n").expect_err("no section");
+        assert!(message.to_string().contains("unknown field"), "at the top too: {message}");
+        // A section of a plugin or a library is theirs, refused by the runtime if none claims it.
+        let config =
+            AppConfig::from_yaml("plugins:\n  secret: {}\nlibraries:\n  vault: {}\n").unwrap();
+        assert_eq!(config.plugins.get("secret"), Some(&serde_json::json!({})));
+        assert_eq!(config.libraries.get("vault"), Some(&serde_json::json!({})));
     }
 
     #[test]

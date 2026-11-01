@@ -15,7 +15,7 @@ impl Library for WorkspaceToolsLibrary {
     }
 
     fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
-        library.prompts().add(NAMESPACE, PROMPTS)?;
+        library.add_prompts(NAMESPACE, PROMPTS)?;
         terminal_tool::register(&mut library.components());
         workspace_prompt_provider::register(&mut library.components());
         Ok(())

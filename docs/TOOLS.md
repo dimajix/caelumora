@@ -227,8 +227,8 @@ as before. What such a component kind may use of the runtime is said in
 ## ComfyUI
 
 A `comfyui_tool` component (issue 512, library `caelumora-comfyui`) generates images on one ComfyUI
-server with the workflows it names, of those the section `comfyui` of the configuration holds (see
-[CONFIGURATION.md](CONFIGURATION.md#comfyui)):
+server with the workflows it names, of those the section `libraries.comfyui` of the configuration
+holds (see [CONFIGURATION.md](CONFIGURATION.md#comfyui)):
 
 ```yaml
 - id: comfyui-tool

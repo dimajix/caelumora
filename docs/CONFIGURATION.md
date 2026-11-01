@@ -4,12 +4,12 @@ Both programs - `caelumora-app` and the TUI - read one YAML file, given with `--
 (`AppConfig`, `caelumora_model::config`). `examples/config.yaml` is the configuration for local
 development, with every section and its default in comments.
 
-Every section may be left out and then takes its default. Within a section, a key it does not know
-is an error when the configuration is read. A section the configuration does not know is a plugin's
-or a library's (`AppConfig::plugins`, issues 323, 516): the one that claims it reads it when it
-registers (`RuntimeBuilder::config`, `LibraryBuilder::config`), and a section that none claims is an
-error when the runtime is built. Either way a misspelt key does not silently fall back to its
-default.
+Every section may be left out and then takes its default. A key the configuration does not know is
+an error when it is read, at the top as within a section. The sections of the plugins lie under
+`plugins`, those of the libraries under `libraries` (`AppConfig::plugins`, `libraries`, issues 323,
+516), each by the name of the one that claims it and reads it when it registers
+(`RuntimeBuilder::config`, `LibraryBuilder::config`); a section that none claims is an error when
+the runtime is built. Either way a misspelt key does not silently fall back to its default.
 
 Only `true` and `false` are booleans; `yes`, `no`, `on`, `off` and `y` are text (YAML 1.2), in the
 configuration as in the seed files. So a value that nothing types until later - the parameters of a
@@ -54,14 +54,14 @@ position, `the secret provider 2 (vault)`. An unknown type is answered with the 
 | `workspaces` | Where the files of workspaces lie: `storage`, the storages by name, each a [backend](#backends) - see [Workspace storages](#workspace-storages). A workspace names its storage when it is made. | no storage - no workspace can be made |
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
-| `artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
-| `comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
+| `plugins.artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
+| `libraries.comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
 
 The approval rules and the compartments are checked when the configuration is read; the backends,
-`component_defaults`, the sections of the plugins and the variants of `prompts` when the runtime is
-built.
+`component_defaults`, the sections of the plugins and of the libraries, each among its own, and
+the variants of `prompts` when the runtime is built.
 
 ### Workspace storages
 
@@ -121,13 +121,14 @@ named by the variant, the namespace and the key.
 
 ## ComfyUI
 
-`comfyui.workflows` names the directory of the workflows of ComfyUI (issue 512), which a
+`libraries.comfyui.workflows` names the directory of the workflows of ComfyUI (issue 512), which a
 `comfyui_tool` generates images with ([TOOLS.md](TOOLS.md#comfyui)), read as `seed` is, from where
 the program runs, when the runtime is built:
 
 ```yaml
-comfyui:
-  workflows: examples/comfyui/workflows
+libraries:
+  comfyui:
+    workflows: examples/comfyui/workflows
 ```
 
 A workflow is two files of one name, an identifier - lower case letters, digits, `_` and `-`:

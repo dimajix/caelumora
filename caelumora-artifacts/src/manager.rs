@@ -164,7 +164,9 @@ impl ArtifactManager {
         let storages = Arc::clone(runtime.content_storages());
         let keep_in = storages
             .chosen(config.keep_in.as_deref())
-            .map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?
+            .map_err(|why| {
+                ComponentError::InvalidConfig(format!("plugins.artifacts.keep_in {why}"))
+            })?
             .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
         Ok(Self {
             artifacts,

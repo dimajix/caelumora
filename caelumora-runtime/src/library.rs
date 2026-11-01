@@ -10,7 +10,7 @@ use crate::actor::AgentKinds;
 use crate::component::LibraryComponents;
 use crate::runtime::RuntimeBuilder;
 use anyhow::Result;
-use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_model::prompt_catalogue::PromptError;
 use serde::de::DeserializeOwned;
 use std::sync::Arc;
 
@@ -51,18 +51,23 @@ impl<'a> LibraryBuilder<'a> {
         self.runtime.agent_kinds()
     }
 
-    /// The texts given to models (issue 57), to add the library's with, under its namespace.
-    pub fn prompts(&mut self) -> &mut PromptCatalogue {
-        self.runtime.prompts()
-    }
-
-    /// Claims the section `name` of the configuration and reads it as `C`
-    /// (`RuntimeBuilder::config`).
+    /// Adds the library's texts given to models (issue 57), `yaml`, under its `namespace`
+    /// (`PromptCatalogue::add`) - and nothing else of the catalogue: the variants are the
+    /// configuration's.
     ///
     /// # Errors
-    /// As `RuntimeBuilder::config`.
+    /// As `PromptCatalogue::add`: a namespace added before among them.
+    pub fn add_prompts(&mut self, namespace: &str, yaml: &str) -> Result<(), PromptError> {
+        self.runtime.prompts().add(namespace, yaml)
+    }
+
+    /// Claims the section `name` of the libraries in the configuration (`libraries`) and reads it
+    /// as `C`; left out, it is `C::default()`.
+    ///
+    /// # Errors
+    /// If another library claimed it, or it is not a `C`.
     pub fn config<C: DeserializeOwned + Default>(&mut self, name: &str) -> Result<C> {
-        self.runtime.config(name)
+        self.runtime.library_config(name)
     }
 
     /// Offers `service`, the library's own - which decides nothing of the core's, as

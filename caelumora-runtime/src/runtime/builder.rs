@@ -48,12 +48,12 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// What builds the `RuntimeManager` (issue 323): the core's services and
-/// managers, made first - their backends by `Backends`, the core's and the
-/// plugins' (issue 324) -, and what the plugins register with it
-/// (`Plugin::register`) - their component kinds, the stores of their kinds,
-/// the services they provide, the members of a scope, their sections of
-/// the configuration and of the seed. `build` makes the runtime of it.
+/// What builds the `RuntimeManager` (issue 323): the core's services and managers, made first -
+/// their backends by `Backends`, the core's and the plugins' (issue 324) -, what the plugins
+/// register with it (`Plugin::register`) - their component kinds, the stores of their kinds, the
+/// services they provide, the members of a scope, their sections of the configuration and of the
+/// seed -, and what the libraries register through a `LibraryBuilder` (`Library::register`, issue
+/// 516). `build` makes the runtime of it.
 pub struct RuntimeBuilder {
     persistence: Persistence,
     entity_stores: EntityStores,
@@ -85,17 +85,68 @@ pub struct RuntimeBuilder {
     services_of_libraries: Vec<TypeKey>,
     /// What the plugins and the core bind to an agent's work (issue 516).
     extensions: Extensions,
-    /// The texts given to models, to which the plugins add theirs (issue
-    /// 57); a service once the runtime is built.
+    /// The texts given to models, to which the plugins and the libraries add theirs (issue 57); a
+    /// service once the runtime is built.
     prompts: PromptCatalogue,
-    /// The variants of the texts the configuration names, read once every
-    /// plugin added its texts.
+    /// The variants of the texts the configuration names, read once every plugin and library added
+    /// its texts.
     prompt_variants: BTreeMap<String, PathBuf>,
-    /// The sections of the configuration that no plugin claimed yet.
-    sections: BTreeMap<String, Value>,
-    /// The names of the sections of the configuration that were claimed.
-    claimed: BTreeSet<String>,
+    /// The sections of the plugins in the configuration (`plugins`, issue 323).
+    plugin_sections: Sections,
+    /// The sections of the libraries in the configuration (`libraries`, issue 516).
+    library_sections: Sections,
     seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
+}
+
+/// The sections of the configuration of one kind of what joins the runtime - the plugins' or the
+/// libraries' (issues 323, 516): each claimed by one of them, and read as it claims it.
+struct Sections {
+    /// The key of the configuration they lie under.
+    key: &'static str,
+    /// What claims them, as messages name it.
+    claimant: &'static str,
+    /// Those not claimed yet.
+    unclaimed: BTreeMap<String, Value>,
+    /// The names of those claimed.
+    claimed: BTreeSet<String>,
+}
+
+impl Sections {
+    fn new(key: &'static str, claimant: &'static str, sections: &BTreeMap<String, Value>) -> Self {
+        Self { key, claimant, unclaimed: sections.clone(), claimed: BTreeSet::new() }
+    }
+
+    /// Claims the section `name` and reads it as `C`; left out, it is `C::default()`.
+    ///
+    /// # Errors
+    /// If it was claimed before, or it is not a `C`.
+    fn claim<C: DeserializeOwned + Default>(&mut self, name: &str) -> Result<C> {
+        let key = self.key;
+        if !self.claimed.insert(name.to_string()) {
+            bail!("The section '{key}.{name}' of the configuration is claimed twice");
+        }
+        match self.unclaimed.remove(name) {
+            Some(section) => serde_json::from_value(section).with_context(|| {
+                format!("Cannot read the section '{key}.{name}' of the configuration")
+            }),
+            None => Ok(C::default()),
+        }
+    }
+
+    /// Whether every section was claimed.
+    ///
+    /// # Errors
+    /// Naming a section none claimed.
+    fn all_claimed(&self) -> Result<()> {
+        if let Some(name) = self.unclaimed.keys().next() {
+            bail!(
+                "The configuration has a section '{}.{name}' that no {} claims",
+                self.key,
+                self.claimant
+            );
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for RuntimeBuilder {
@@ -107,26 +158,23 @@ impl fmt::Debug for RuntimeBuilder {
 }
 
 impl RuntimeBuilder {
-    /// The builder of the runtime everything in a process shares, with the
-    /// core's services and managers made. `policies` are those the whole
-    /// process was configured with: the access policy decides tool calls and
-    /// what may be done to a channel, the confidentiality policy what may flow
-    /// where (issue 304). `persistence` keeps the entities of every kind, the
-    /// core's and the plugins', and the states; the builder opens its stores
-    /// by `policies`, so that they check by nothing else (issue 449).
-    /// Of `config`, the runtime takes what it runs by itself, so that a
-    /// binary cannot drop a configured part for a default: the global user
-    /// commands (`commands`), the components that replace built-in defaults
-    /// of facets of which an agent has one (`component_defaults`, issue 99),
-    /// what the system restricts of tool calls (`approvals`, issue 13), the
-    /// storages workspaces are made in (`workspaces`, issue 253), the
-    /// storages of content (`content`, issue 282), what a message may carry
-    /// (`attachments`, issue 282), the user providers
-    /// (`users`) and the sections of the plugins. The component kinds agents and sessions are built
-    /// from are the built-in ones (`ComponentRegistry::built_in`), resolving the bundles in the
-    /// builder's stores; a plugin adds its own, and a test stand-ins, such as a model of its own
-    /// (issue 130), through `components`. `backends` makes the storages and the user providers
-    /// `config` names (issue 324): `Backends::with_plugins` of the plugins registered afterwards.
+    /// The builder of the runtime everything in a process shares, with the core's services and
+    /// managers made. `policies` are those the whole process was configured with: the access policy
+    /// decides tool calls and what may be done to a channel, the confidentiality policy what may
+    /// flow where (issue 304). `persistence` keeps the entities of every kind, the core's and the
+    /// plugins', and the states; the builder opens its stores by `policies`, so that they check by
+    /// nothing else (issue 449). Of `config`, the runtime takes what it runs by itself, so that a
+    /// binary cannot drop a configured part for a default: the global user commands (`commands`),
+    /// the components that replace built-in defaults of facets of which an agent has one
+    /// (`component_defaults`, issue 99), what the system restricts of tool calls (`approvals`,
+    /// issue 13), the storages workspaces are made in (`workspaces`, issue 253), the storages of
+    /// content (`content`, issue 282), what a message may carry (`attachments`, issue 282), the
+    /// user providers (`users`) and the sections of the plugins and the libraries. The component
+    /// kinds agents and sessions are built from are the built-in ones
+    /// (`ComponentRegistry::built_in`), resolving the bundles in the builder's stores; a plugin
+    /// adds its own, and a test stand-ins, such as a model of its own (issue 130), through
+    /// `components`. `backends` makes the storages and the user providers `config` names (issue
+    /// 324): `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
     /// If a store of the core's kinds cannot be opened, or a storage of
@@ -262,8 +310,8 @@ impl RuntimeBuilder {
             extensions,
             prompts,
             prompt_variants: config.prompts.clone(),
-            sections: config.plugins.clone(),
-            claimed: BTreeSet::new(),
+            plugin_sections: Sections::new("plugins", "plugin", &config.plugins),
+            library_sections: Sections::new("libraries", "library", &config.libraries),
             seed_sections: BTreeMap::new(),
         })
     }
@@ -417,6 +465,7 @@ impl RuntimeBuilder {
     pub(crate) fn agent_kinds(&mut self) -> &mut AgentKinds {
         &mut self.agent_kinds
     }
+
     /// The texts given to models (issue 57), to add a plugin's with - under
     /// its namespace, from the file it compiles in. Offered to the
     /// component kinds that use it once the runtime is built.
@@ -491,20 +540,25 @@ impl RuntimeBuilder {
         self.scope_members.push(member);
     }
 
-    /// Claims the section `name` of the configuration and reads it as `C`;
-    /// left out, it is `C::default()`.
+    /// Claims the section `name` of the plugins in the configuration (`plugins`) and reads it as
+    /// `C`; left out, it is `C::default()`.
     ///
     /// # Errors
     /// If another plugin claimed it, or it is not a `C`.
     pub fn config<C: DeserializeOwned + Default>(&mut self, name: &str) -> Result<C> {
-        if !self.claimed.insert(name.to_string()) {
-            bail!("The section '{name}' of the configuration is claimed twice");
-        }
-        match self.sections.remove(name) {
-            Some(section) => serde_json::from_value(section)
-                .with_context(|| format!("Cannot read the section '{name}' of the configuration")),
-            None => Ok(C::default()),
-        }
+        self.plugin_sections.claim(name)
+    }
+
+    /// Claims the section `name` of the libraries in the configuration (`libraries`) and reads it
+    /// as `C`, as `config` reads a plugin's (`LibraryBuilder::config`, issue 516).
+    ///
+    /// # Errors
+    /// If another library claimed it, or it is not a `C`.
+    pub(crate) fn library_config<C: DeserializeOwned + Default>(
+        &mut self,
+        name: &str,
+    ) -> Result<C> {
+        self.library_sections.claim(name)
     }
 
     /// Claims the section `name` of the seed files: `section` seeds what
@@ -540,14 +594,13 @@ impl RuntimeBuilder {
     /// The runtime, with everything registered.
     ///
     /// # Errors
-    /// If a section of the configuration is claimed by no plugin; a
+    /// If a section of the configuration is claimed by no plugin or library; a
     /// `ComponentError` if `component_defaults` cannot replace a default
     /// (see `ComponentRegistry::set_defaults`) - the process does not start
     /// then.
     pub fn build(mut self) -> Result<RuntimeManager> {
-        if let Some(name) = self.sections.keys().next() {
-            bail!("The configuration has a section '{name}' that no plugin claims");
-        }
+        self.plugin_sections.all_claimed()?;
+        self.library_sections.all_claimed()?;
         let unbound = self
             .component_registry
             .extensions_declared()

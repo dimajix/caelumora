@@ -298,7 +298,7 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples").join(name)
     }
 
-    /// The runtime of the program, with its plugins, over `store`, with the
+    /// The runtime of the program, with its plugins and libraries, over `store`, with the
     /// policy of the example configuration, which knows the roles the
     /// example seed names, its component defaults, on which the example
     /// seed's models build (issue 445), its variants of the texts, which
@@ -310,8 +310,8 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let prompts =
             config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
-        let workflows = root.join(config.plugins[COMFYUI]["workflows"].as_str().unwrap());
-        let plugins = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
+        let workflows = root.join(config.libraries[COMFYUI]["workflows"].as_str().unwrap());
+        let libraries = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
         let AppConfig { compartments, roles, component_defaults, .. } = config;
         runtime_of(
             store,
@@ -320,7 +320,7 @@ mod tests {
                 roles,
                 component_defaults,
                 prompts,
-                plugins,
+                libraries,
                 ..AppConfig::default()
             },
         )

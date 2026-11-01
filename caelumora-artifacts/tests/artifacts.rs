@@ -429,7 +429,7 @@ async fn a_storage_of_content_takes_nothing_above_its_destination() {
 
 /// New artifacts are kept in the storage of content the section names, or
 /// the one there is (issue 282); one it cannot have is said naming
-/// `artifacts.keep_in`.
+/// `plugins.artifacts.keep_in`.
 #[tokio::test]
 async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is() {
     let world = world().await;
@@ -466,12 +466,12 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
     assert!(!configured(built(&[], json!({})).unwrap()), "no storage unless configured");
     let message = built(&["a", "b"], json!({})).map(|_| ()).expect_err("which one");
     assert!(
-        message.contains("artifacts.keep_in"),
+        message.contains("plugins.artifacts.keep_in"),
         "which one, among several, must be said: {message}"
     );
     let message = built(&["a", "b"], json!({ "keep_in": "c" })).map(|_| ()).expect_err("none such");
     assert!(
-        message.contains("artifacts.keep_in") && message.contains("'c'"),
+        message.contains("plugins.artifacts.keep_in") && message.contains("'c'"),
         "not one that is not there: {message}"
     );
     assert!(configured(built(&["a", "b"], json!({ "keep_in": "b" })).unwrap()));
