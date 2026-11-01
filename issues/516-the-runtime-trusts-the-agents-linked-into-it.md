@@ -1385,3 +1385,9 @@ after this one.
   does; the list of the libraries lies in one place (`scripts/libraries.sh`), which the scripts and
   the hook read. Every point of *Done when* holds; the policies, the context and the store traits
   leave the model in an issue of their own (decision 22). No behaviour changes. Stored data: none.
+- **2026-11-01** — What this issue left to issues of their own is opened:
+  [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md), the policies, the
+  context and the store traits out of the model (decision 22);
+  [518](518-memory-is-reached-through-the-agents-state.md), memory as a system service (decision
+  10); and [519](519-an-erased-value-forgets-its-type.md), an `ErasedArc` that keeps the key of its
+  type, from a finding of the review of step 6.1.

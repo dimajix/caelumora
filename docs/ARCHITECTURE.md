@@ -447,13 +447,14 @@ The design repeats a few decisions; new code follows them.
     event bus, projects -; the workspace, skills, artifacts and memory are system services that
     extend it (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - so far
     the workspace, skills and artifacts as extensions; memory is still reached through the agent's
-    state. A plugin that brings what is the kernel's - a backend, a kind of entity with its manager,
-    views and routes, a component of a channel - is trusted as the kernel; what runs an agent or
-    serves its facets is a **library** of the **agent side**, trusted for nothing:
-    `caelumora-agents`, and the crates that bring components for an agent (which crate stands where
-    is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). A library is not a program: the
-    binaries (`caelumora-app`, `caelumora-tui`) link the kernel, its plugins and the libraries, and
-    choose which are in. A library sees the kernel through the kernel's API alone - an actor its
+    state (issue [518](../issues/518-memory-is-reached-through-the-agents-state.md)). A plugin that
+    brings what is the kernel's - a backend, a kind of entity with its manager, views and routes, a
+    component of a channel - is trusted as the kernel; what runs an agent or serves its facets is a
+    **library** of the **agent side**, trusted for nothing: `caelumora-agents`, and the crates that
+    bring components for an agent (which crate stands where is listed in
+    [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). A library is not a program: the binaries
+    (`caelumora-app`, `caelumora-tui`) link the kernel, its plugins and the libraries, and choose
+    which are in. A library sees the kernel through the kernel's API alone - an actor its
     `ActorRuntime`, a component its `ComponentContext` and the `Turn` it is called with -, and the
     kernel checks every call through it in the name of the actor it gave it to. A library builds no
     `SecurityContext`, asks no policy and holds no manager, no store and no controller of the

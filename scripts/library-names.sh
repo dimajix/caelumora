@@ -5,7 +5,7 @@
 # asks the kernel through the interface it is given (`ActorRuntime`). What is the kernel's - its
 # managers, controllers, views and runtimes, its builder - the compiler refuses, as a library links
 # the API, the model and other libraries, never the kernel (`library-deps.sh` checks that it does);
-# the policies and the context stay in the model until an issue of their own moves them.
+# the policies and the context stay in the model until issue 517 moves them.
 #
 #   library-names.sh [file...]
 #
