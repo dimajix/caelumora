@@ -398,6 +398,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [442](442-agents-mention-each-other-despite-the-roster.md) | done | Agents greet, thank and praise each other with `@handle` although the roster says since issue 438 that a mention asks the agent to respond, because the rule stands once in the system prompt next to an invitation to address others by `@handle`, so nearly every turn in a channel of several agents is asked for by another agent's courtesy. |
 | [464](464-compaction-wired-into-the-agent.md) | done | The agent's actor knows compaction by name - its policy and strategy as fields, when it is due, how it is carried out and what is said when there was nothing to compact -, though what an agent does of its own accord before a model call is meant to be generic, so that every further such activity would be wired into the actor the same way. |
 | [465](465-attachments-in-the-context.md) | open | What of a message's attachments is put into a model's context and what it has to fetch through a tool is decided by no bound, so a few images or one long text can fill the context and are sent again with every call. |
+| [518](518-memory-is-reached-through-the-agents-state.md) | open | An agent's memory is part of its state, which the agent side is handed whole and changes through three calls of its `ActorRuntime`, and the agent side itself decides which entries may be recalled where, while the workspace, skills and artifacts are system services reached through a reader and a writer. |
 
 ## Maintenance
 
