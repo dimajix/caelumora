@@ -77,8 +77,17 @@ impl TypeMap {
     }
 
     pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
-        let key = TypeKey::of::<T>();
-        self.map.insert(key.id, (key.name(), ErasedArc::of(value)));
+        self.insert_of(TypeKey::of::<T>(), ErasedArc::of(value));
+    }
+
+    /// Inserts `value`, an `Arc` of the type `key` names, its type forgotten (issue 516).
+    pub fn insert_of(&mut self, key: TypeKey, value: ErasedArc) {
+        self.map.insert(key.id, (key.name(), value));
+    }
+
+    /// Whether it holds a value of the type `key` names.
+    pub fn contains(&self, key: TypeKey) -> bool {
+        self.map.contains_key(&key.id)
     }
 
     /// It with `value` besides.

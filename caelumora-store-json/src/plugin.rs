@@ -2,9 +2,9 @@
 
 use crate::JsonStoreConfig;
 use anyhow::Result;
+use caelumora_kernel::api::component::ComponentError;
+use caelumora_kernel::api::component::Params;
 use caelumora_kernel::backend::Backends;
-use caelumora_kernel::component::ComponentError;
-use caelumora_kernel::component::Params;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_model::store::PersistenceBackend;
@@ -40,7 +40,7 @@ impl Plugin for JsonStorePlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_kernel::kernel::Services;
+    use caelumora_kernel::api::component::Services;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::security::Policies;
     use caelumora_model::store::Persistence;

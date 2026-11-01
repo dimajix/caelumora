@@ -21,7 +21,9 @@ The project is a Rust workspace, with a web UI next to it:
     process by the `KernelBuilder`; what a channel or an actor runs with is its *runtime*, which the
     kernel gives it - a channel its `ChannelRuntime`, a participant's actor its
     `ParticipantRuntime`, an agent's actor its `ActorRuntime` -, and an actor reaches its channel
-    through its runtime alone.
+    through its runtime alone. What a library is given and declares - the kernel's API - lies apart
+    in its module `api`, which names nothing else of the kernel, to become a crate of its own (issue
+    516).
 *   **`caelumora-agents`** - what an agent does in a channel (issue 370): both kinds of agent - a
     model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
     the facets its components serve (tools, prompt parts, the model, message stages, its commands,

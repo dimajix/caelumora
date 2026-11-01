@@ -24,9 +24,8 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_kernel::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents,
-};
+use caelumora_kernel::api::component::config_of_params;
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::language::Language;

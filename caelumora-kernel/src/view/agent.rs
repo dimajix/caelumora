@@ -2,7 +2,8 @@
 //! (issues 164, 227): one they may read (`GetAgent`), with what they may do
 //! with it and the channels it takes part in that they may read.
 
-use super::{ChannelView, ViewError, ViewResult, Views};
+use super::{ChannelView, Views};
+use crate::api::reader::{ViewError, ViewResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
 use caelumora_model::security::{AccessQuestions, SecurityContext};

@@ -35,15 +35,17 @@ use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
 use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind};
+use caelumora_kernel::api::reader::ViewError;
+use caelumora_kernel::api::workspace::WorkspaceError;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
-use caelumora_kernel::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_kernel::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
+use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_kernel::testing::{
     asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF,
 };
-use caelumora_kernel::view::{ChannelView, ViewError, Viewer};
-use caelumora_kernel::workspace::WorkspaceError;
+use caelumora_kernel::view::{ChannelView, Viewer};
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection};
 use caelumora_model::agent::{
     Agent, AgentId, HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind,

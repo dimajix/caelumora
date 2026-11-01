@@ -2,8 +2,9 @@
 //! runtimes of its participants.
 
 use super::actor::Acting;
-use super::{Kernel, ParticipantRuntime, Services};
+use super::{Kernel, ParticipantRuntime};
 use crate::actor::AgentKinds;
+use crate::api::component::Services;
 use crate::attachment::AttachmentManager;
 use crate::channel::{ChannelLoop, Participation, ResolvedParticipant};
 use crate::command::CommandExecutor;

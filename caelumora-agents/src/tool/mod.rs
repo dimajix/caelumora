@@ -19,14 +19,15 @@ use crate::prompt::NAMESPACE;
 use crate::situation::Situation;
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_kernel::attachment::AttachmentError;
-use caelumora_kernel::backend::StorageGone;
-use caelumora_kernel::component::{ComponentImpl, ComponentResult, LibraryComponents};
-use caelumora_kernel::content::ContentError;
-use caelumora_kernel::kernel::{ActorRuntime, CallPermit};
-use caelumora_kernel::terminal::TerminalError;
-use caelumora_kernel::view::ViewError;
-use caelumora_kernel::workspace::{
+use caelumora_kernel::api::component::LibraryComponents;
+use caelumora_kernel::api::component::{ComponentImpl, ComponentResult};
+use caelumora_kernel::api::error::AttachmentError;
+use caelumora_kernel::api::error::ContentError;
+use caelumora_kernel::api::error::StorageGone;
+use caelumora_kernel::api::reader::ViewError;
+use caelumora_kernel::api::runtime::{ActorRuntime, CallPermit};
+use caelumora_kernel::api::terminal::TerminalError;
+use caelumora_kernel::api::workspace::{
     WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter,
 };
 use caelumora_model::approval::ToolMatcher;

@@ -7,8 +7,8 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use caelumora_kernel::component::ComponentImpl;
-use caelumora_kernel::view::ViewError;
+use caelumora_kernel::api::component::ComponentImpl;
+use caelumora_kernel::api::reader::ViewError;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::store::StoreError;

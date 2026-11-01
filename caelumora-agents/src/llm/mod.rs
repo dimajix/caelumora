@@ -6,7 +6,7 @@
 pub mod control_tokens;
 
 use async_trait::async_trait;
-use caelumora_kernel::component::LibraryComponents;
+use caelumora_kernel::api::component::LibraryComponents;
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;

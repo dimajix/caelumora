@@ -13,7 +13,7 @@
 
 use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
-use caelumora_kernel::terminal::{CommandState, Shell};
+use caelumora_kernel::api::terminal::{CommandState, Shell};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use caelumora_model::workspace::CommandStatus;

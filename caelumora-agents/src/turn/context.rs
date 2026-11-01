@@ -157,7 +157,7 @@ mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime};
     use crate::turn::tests::seen;
-    use caelumora_kernel::transport::Discard;
+    use caelumora_kernel::testing::Discard;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource, ModelProfile};

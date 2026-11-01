@@ -14,14 +14,15 @@
 use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
 use crate::extension::{ArtifactError, ArtifactResult};
 use async_trait::async_trait;
+use caelumora_kernel::api::component::{ComponentError, ComponentResult};
+use caelumora_kernel::api::error::ContentError;
+use caelumora_kernel::api::terminal::ByteStream;
 use caelumora_kernel::backend::NamedBackends;
-use caelumora_kernel::component::{ComponentError, ComponentResult};
-use caelumora_kernel::content::{keep_digested, ContentError, ContentStorage};
+use caelumora_kernel::content::{keep_digested, ContentStorage};
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::group::{prune_gone_groups, require_nameable};
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
-use caelumora_kernel::terminal::ByteStream;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};

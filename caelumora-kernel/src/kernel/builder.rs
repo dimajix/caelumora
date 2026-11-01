@@ -1,12 +1,16 @@
 //! `KernelBuilder`: what makes the `Kernel` of a process - its own services and managers first,
 //! then what each plugin registers (issue 323).
 
-use super::extension::{Extensions, Face};
-use super::{Kernel, Services};
+use super::extension::Extensions;
+use super::Kernel;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
 use crate::agent::state::AgentStates;
 use crate::agent::AgentManager;
+use crate::api::component::Face;
+use crate::api::component::Services;
+use crate::api::library::Library;
+use crate::api::workspace::{WorkspaceReader, WorkspaceWriter};
 use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
 use crate::channel::{ChannelLoop, Participation};
@@ -16,16 +20,14 @@ use crate::content::ContentStorage;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
-use crate::library::{Library, LibraryBuilder};
+use crate::library::ForLibrary;
 use crate::plugin::Plugin;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
 use crate::terminal::TerminalProvider;
 use crate::view::SessionView;
 use crate::workspace::reaper::CommandReaper;
-use crate::workspace::{
-    UsableWorkspace, WorkspaceManager, WorkspaceReader, WorkspaceUse, WorkspaceWriter,
-};
+use crate::workspace::{UsableWorkspace, WorkspaceManager, WorkspaceUse};
 use anyhow::{bail, Context, Result};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::component::ComponentConfig;
@@ -38,7 +40,7 @@ use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::{
     EntityStore, EntityStores, Persistence, PersistenceBackend, StoreResult, Stored,
 };
-use caelumora_model::type_map::TypeKey;
+use caelumora_model::type_map::{ErasedArc, TypeKey};
 use caelumora_model::user_provider::{UserManager, UserProvider};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -122,15 +124,24 @@ impl Sections {
     /// If it was claimed before, or it is not a `C`.
     fn claim<C: DeserializeOwned + Default>(&mut self, name: &str) -> Result<C> {
         let key = self.key;
-        if !self.claimed.insert(name.to_string()) {
-            bail!("The section '{key}.{name}' of the configuration is claimed twice");
-        }
-        match self.unclaimed.remove(name) {
+        match self.claim_value(name)? {
             Some(section) => serde_json::from_value(section).with_context(|| {
                 format!("Cannot read the section '{key}.{name}' of the configuration")
             }),
             None => Ok(C::default()),
         }
+    }
+
+    /// Claims the section `name`, as it stands; `None` if it is left out.
+    ///
+    /// # Errors
+    /// If it was claimed before.
+    fn claim_value(&mut self, name: &str) -> Result<Option<Value>> {
+        let key = self.key;
+        if !self.claimed.insert(name.to_string()) {
+            bail!("The section '{key}.{name}' of the configuration is claimed twice");
+        }
+        Ok(self.unclaimed.remove(name))
     }
 
     /// Whether every section was claimed.
@@ -396,7 +407,7 @@ impl KernelBuilder {
     /// Whatever its registration fails with, naming the library.
     pub fn library(&mut self, library: &dyn Library) -> Result<()> {
         library
-            .register(&mut LibraryBuilder::new(self))
+            .register(&mut ForLibrary(self))
             .with_context(|| format!("Cannot register the library {}", library.name()))
     }
 
@@ -475,22 +486,19 @@ impl KernelBuilder {
         self.services.insert(service);
     }
 
-    /// Offers `service`, a library's, as `provide` offers a plugin's: one that the kinds of the
-    /// libraries may use (`LibraryBuilder::provide`, issue 516).
+    /// Offers `service`, a library's - an `Arc` of the type `key` names -, as `provide` offers a
+    /// plugin's: one that the kinds of the libraries may use (`LibraryBuilder::provide_of`, issue
+    /// 516).
     ///
     /// # Errors
     /// If a service of its type is offered already - by the kernel, a plugin or a library: a
     /// library replaces none.
-    pub(crate) fn provide_of_library<T: ?Sized + Send + Sync + 'static>(
-        &mut self,
-        service: Arc<T>,
-    ) -> Result<()> {
-        let key = TypeKey::of::<T>();
-        if self.services.get::<T>().is_some() {
+    pub(crate) fn provide_of_library(&mut self, key: TypeKey, service: ErasedArc) -> Result<()> {
+        if self.services.contains(key) {
             bail!("The service {} is offered already, and a library replaces none", key.name());
         }
         self.services_of_libraries.push(key);
-        self.provide(service);
+        self.services.insert_of(key, service);
         Ok(())
     }
 
@@ -544,16 +552,13 @@ impl KernelBuilder {
         self.plugin_sections.claim(name)
     }
 
-    /// Claims the section `name` of the libraries in the configuration (`libraries`) and reads it
-    /// as `C`, as `config` reads a plugin's (`LibraryBuilder::config`, issue 516).
+    /// Claims the section `name` of the libraries in the configuration (`libraries`), as it stands,
+    /// as `config` claims a plugin's (`LibraryBuilder::section`, issue 516).
     ///
     /// # Errors
-    /// If another library claimed it, or it is not a `C`.
-    pub(crate) fn library_config<C: DeserializeOwned + Default>(
-        &mut self,
-        name: &str,
-    ) -> Result<C> {
-        self.library_sections.claim(name)
+    /// If another library claimed it.
+    pub(crate) fn library_section(&mut self, name: &str) -> Result<Option<Value>> {
+        self.library_sections.claim_value(name)
     }
 
     /// Claims the section `name` of the seed files: `section` seeds what
@@ -658,8 +663,9 @@ impl KernelBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+    use crate::api::library::LibraryBuilder;
     use crate::command::ChannelCommandProvider;
-    use crate::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use crate::moderator::{Moderator, ResponderPolicy};
     use crate::testing::TestKernel;
     use caelumora_model::prompt_catalogue::PromptVariant;
@@ -717,7 +723,7 @@ mod tests {
             fn name(&self) -> &'static str {
                 "brings"
             }
-            fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+            fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
                 library.provide(Arc::new(Workflows))?;
                 (self.0)(&mut library.components());
                 Ok(())
@@ -769,7 +775,7 @@ mod tests {
             fn name(&self) -> &'static str {
                 "replaces"
             }
-            fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+            fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
                 library.provide(Arc::new(AllowAllPolicy::new()) as Arc<dyn AccessPolicy>)
             }
         }

@@ -4,8 +4,8 @@ use super::{
     purge_channel_document, require_classification, ChannelEntry, ChannelRun, Listed, SessionError,
     SessionLoop,
 };
+use crate::api::component::ComponentError;
 use crate::channel::ChannelLoop;
-use crate::component::ComponentError;
 use crate::group::keep_participants;
 use crate::scoped::ScopeNotEmpty;
 use crate::view::{channel_reading, ReadingBasis};
@@ -676,8 +676,8 @@ impl SessionLoop {
 #[cfg(test)]
 mod tests {
     use super::unavailable_components;
+    use crate::api::component::ComponentError;
     use crate::channel::ChannelLoop;
-    use crate::component::ComponentError;
     use crate::error::is_forbidden;
     use crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND;
     use crate::moderator::random_policy::RANDOM_POLICY_KIND;

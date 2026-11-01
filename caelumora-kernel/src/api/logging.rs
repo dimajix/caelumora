@@ -1,4 +1,4 @@
-//! The spans the kernel opens itself.
+//! The spans an envelope is handled in and an agent works in, opened by the channel and the agents.
 //!
 //! The whole workspace logs through `tracing`; the kernel only emits records. Which subscriber
 //! writes them, where and how, is the program's decision: the binaries install it with

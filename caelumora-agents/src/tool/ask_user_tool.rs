@@ -13,7 +13,7 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::{
     Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS,

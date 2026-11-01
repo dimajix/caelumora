@@ -5,7 +5,7 @@ use crate::component;
 use crate::summary_compaction::{self, SUMMARY_COMPACTION_KIND};
 use crate::{CompactionStrategy, NAMESPACE, PROMPTS};
 use anyhow::Result;
-use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::library::{Library, LibraryBuilder};
 
 /// Compaction, as a library.
 #[derive(Debug, Default)]
@@ -16,7 +16,7 @@ impl Library for CompactionLibrary {
         NAMESPACE
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         library.add_prompts(NAMESPACE, PROMPTS)?;
         let components = &mut library.components();
         components.single::<dyn CompactionStrategy>(Some(SUMMARY_COMPACTION_KIND));

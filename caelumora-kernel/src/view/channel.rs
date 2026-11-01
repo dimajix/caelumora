@@ -1,15 +1,16 @@
 //! A channel as its viewer reached it, and its participants.
 
 use super::participant::{participant_state, AgentParticipant, ParticipantState};
-use super::{AgentContextView, SessionView, ViewError, ViewResult, Views, WorkspaceView};
+use super::{AgentContextView, SessionView, Views, WorkspaceView};
 use crate::actor::user::ChannelWatch;
-use crate::attachment::AttachmentError;
+use crate::api::error::component_message;
+use crate::api::error::AttachmentError;
+use crate::api::reader::{ViewError, ViewResult};
+use crate::api::terminal::ByteStream;
 use crate::channel::ChannelLoop;
-use crate::error::component_message;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use crate::session::ChannelRun;
-use crate::terminal::ByteStream;
 use caelumora_model::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;

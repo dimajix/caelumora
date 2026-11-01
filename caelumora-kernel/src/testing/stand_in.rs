@@ -3,8 +3,8 @@
 //! cancels - where who they are does not matter and no agent has to be stored. An agent the kernel
 //! builds itself is a `ScriptedAgent`.
 
-use crate::actor::Actor;
-use crate::transport::{EventReceiver, EventSender};
+use crate::api::actor::Actor;
+use crate::api::transport::{EventReceiver, EventSender};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorId, ActorState, Envelope};

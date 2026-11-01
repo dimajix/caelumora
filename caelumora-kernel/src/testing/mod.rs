@@ -21,24 +21,25 @@ pub(crate) use stand_in::StandIn;
 
 use crate::actor::user::ChannelWatch;
 use crate::agent::AgentError;
+use crate::api::library::Library;
+use crate::api::terminal::{ByteStream, TerminalReader, WorkspacePath};
+use crate::api::transport::{EventSender, TransportResult};
+use crate::api::workspace::WorkspaceError;
 use crate::backend::Backends;
 use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::controller::WorkspaceController;
 use crate::error::refusal;
 use crate::kernel::{Kernel, KernelBuilder, ParticipantRuntime};
-use crate::library::Library;
 use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
 use crate::session::{SessionError, SessionLoop, SessionManager};
-use crate::terminal::{ByteStream, TerminalReader, WorkspacePath};
 use crate::view::Viewer;
-use crate::workspace::WorkspaceError;
 use anyhow::{Error, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use caelumora_model::actor::ActorEvent;
 use caelumora_model::actor::ActorId;
+use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_model::approval::{ApprovalStrategy, Approver};
@@ -789,4 +790,15 @@ pub async fn read(terminal: &dyn TerminalReader, path: &str) -> String {
 /// The controller through which what workspace `id` is changes (issue 344).
 pub async fn workspace(world: &World, id: WorkspaceId) -> Arc<WorkspaceController> {
     world.kernel.controller_manager().workspace_controller(id).await.expect("the workspace")
+}
+
+/// An output that drops what it is sent: for tests of what an actor does
+/// besides sending.
+pub struct Discard;
+
+#[async_trait]
+impl EventSender for Discard {
+    async fn send(&self, _event: Envelope) -> TransportResult<()> {
+        Ok(())
+    }
 }

@@ -5,11 +5,12 @@ mod commands;
 pub(super) use crate::channel::testing::*;
 
 use super::*;
-use crate::actor::Actor;
+use crate::api::actor::Actor;
+use crate::api::component::ComponentImpl;
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
-use crate::component::{ComponentImpl, ComponentRegistry};
+use crate::component::ComponentRegistry;
 use crate::kernel::ChannelRuntime;
 use crate::moderator::{Moderator, Routing};
 use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestKernel};
@@ -176,7 +177,7 @@ pub(super) async fn channel_moderated_by(
     users: &[&User],
     moderator: Arc<dyn Moderator>,
 ) -> Arc<ChannelLoop> {
-    use crate::component::{ComponentFacets, ComponentKind};
+    use crate::api::component::{ComponentFacets, ComponentKind};
     let store = Persistence::in_memory();
     let participants =
         record_users(&EntityStores::open(&store, &Policies::permitting_all()).unwrap(), users)

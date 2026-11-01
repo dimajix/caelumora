@@ -13,11 +13,11 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_kernel::content::ContentError;
-use caelumora_kernel::terminal::{ByteStream, WorkspacePath};
-use caelumora_kernel::view::ChannelReader;
-use caelumora_kernel::workspace::{WorkspaceReader, WorkspaceWriter};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::error::ContentError;
+use caelumora_kernel::api::reader::ChannelReader;
+use caelumora_kernel::api::terminal::{ByteStream, WorkspacePath};
+use caelumora_kernel::api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::content::{ContentId, ContentRef};
 use caelumora_model::message::MessageId;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -347,8 +347,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime};
+    use caelumora_kernel::api::terminal::ByteStream;
     use caelumora_kernel::session::SessionLoop;
-    use caelumora_kernel::terminal::ByteStream;
     use caelumora_kernel::testing::participant_runtime_in;
     use caelumora_kernel::testing::World;
     use caelumora_kernel::view::Viewer;

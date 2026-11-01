@@ -6,9 +6,8 @@
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_kernel::component::{
-    ComponentFacets, ComponentImpl, ComponentKind, LibraryComponents,
-};
+use caelumora_kernel::api::component::ComponentImpl;
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, PromptPart};

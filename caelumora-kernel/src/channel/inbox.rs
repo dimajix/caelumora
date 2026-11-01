@@ -11,7 +11,7 @@
 //! important is recorded; what is not recorded, and so may be lost while
 //! the inbox is behind, is transient (`ActorEvent::is_transient`).
 
-use crate::transport::{EventPick, EventPredicate, EventReceiver};
+use crate::api::transport::{EventPick, EventPredicate, EventReceiver};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorId, Envelope, Pick};

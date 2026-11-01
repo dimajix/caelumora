@@ -3,8 +3,9 @@
 
 use super::inbox::{Behind, Inbox, InboxReceiver, CAPACITY};
 use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
-use crate::actor::Answering;
-use crate::logging::envelope_span;
+use crate::actor::ChannelAnswering;
+use crate::api::actor::Answering;
+use crate::api::logging::envelope_span;
 use crate::moderator::Routing;
 use crate::transport::{InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
@@ -984,16 +985,16 @@ impl Behind for ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::Actor;
+    use crate::api::actor::Actor;
+    use crate::api::component::ComponentImpl;
+    use crate::api::transport::{EventReceiver, EventSender};
     use crate::channel::tests::*;
     use crate::channel::{ActorChange, ChannelError, ResolvedParticipant};
-    use crate::component::ComponentImpl;
     use crate::moderator::broadcast_policy::BroadcastPolicy;
     use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing};
     use crate::testing::Script;
     use crate::testing::StandIn;
     use crate::testing::{file, shown, World};
-    use crate::transport::{EventReceiver, EventSender};
     use anyhow::Result;
     use bytes::Bytes;
     use caelumora_model::actor::{

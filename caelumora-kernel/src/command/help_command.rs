@@ -1,9 +1,9 @@
 //! The built-in `/help` command (issue 28).
 
-use crate::command::{
-    ChannelCommandProvider, CommandContext, CommandError, CommandResult, ProvidesCommands,
-};
-use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::api::command::{CommandError, CommandResult, ProvidesCommands};
+use crate::api::component::{ComponentFacets, ComponentKind};
+use crate::command::{ChannelCommandProvider, CommandContext};
+use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_model::command::{Command, CommandOutput, HELP_COMMAND_KIND};
 use std::collections::BTreeMap;

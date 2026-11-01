@@ -10,7 +10,7 @@
 //! remote side (`ConversationId`, `TaskId`), which the actor stores.
 
 use async_trait::async_trait;
-use caelumora_kernel::component::LibraryComponents;
+use caelumora_kernel::api::component::LibraryComponents;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::{SecretError, Secrets};

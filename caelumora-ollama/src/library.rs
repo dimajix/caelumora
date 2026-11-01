@@ -4,7 +4,7 @@
 
 use crate::client;
 use anyhow::Result;
-use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::library::{Library, LibraryBuilder};
 
 /// Models served by Ollama, as a library.
 #[derive(Debug, Default)]
@@ -15,7 +15,7 @@ impl Library for OllamaLibrary {
         "ollama"
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         client::register(&mut library.components());
         Ok(())
     }

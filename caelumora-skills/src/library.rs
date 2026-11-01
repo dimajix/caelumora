@@ -4,7 +4,7 @@
 use crate::component;
 use crate::{NAMESPACE, PROMPTS, SKILLS};
 use anyhow::Result;
-use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::library::{Library, LibraryBuilder};
 
 /// Skills, as a library: what of them an agent uses.
 #[derive(Debug, Default)]
@@ -15,7 +15,7 @@ impl Library for SkillsLibrary {
         SKILLS
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         library.add_prompts(NAMESPACE, PROMPTS)?;
         component::register(&mut library.components());
         Ok(())

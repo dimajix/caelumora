@@ -7,9 +7,9 @@ use crate::actor::agent::AgentActor;
 use crate::actor::external_agent::ExternalAgentActor;
 use crate::{components, external, llm, prompt, tool};
 use anyhow::Result;
-use caelumora_kernel::actor::Actor;
-use caelumora_kernel::component::LibraryComponents;
-use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::actor::{agent_factory, Actor};
+use caelumora_kernel::api::component::LibraryComponents;
+use caelumora_kernel::api::library::{Library, LibraryBuilder};
 use caelumora_model::agent::PersonalityKind;
 
 /// Registers the kinds of an agent's components with `registry` (issue 370): its context
@@ -33,21 +33,22 @@ impl Library for AgentsLibrary {
         "agents"
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         register_components(&mut library.components());
         library.add_prompts(prompt::NAMESPACE, prompt::PROMPTS)?;
-        let kinds = library.agent_kinds();
-        kinds.register(
+        library.register_agent_kind(
             PersonalityKind::Internal,
             AgentActor::COMPONENT_FACETS,
-            |runtime| async move { Ok(Box::new(AgentActor::new(runtime).await?) as Box<dyn Actor>) },
+            agent_factory(|runtime| async move {
+                Ok(Box::new(AgentActor::new(runtime).await?) as Box<dyn Actor>)
+            }),
         );
-        kinds.register(
+        library.register_agent_kind(
             PersonalityKind::External,
             ExternalAgentActor::COMPONENT_FACETS,
-            |runtime| async move {
+            agent_factory(|runtime| async move {
                 Ok(Box::new(ExternalAgentActor::new(runtime).await?) as Box<dyn Actor>)
-            },
+            }),
         );
         Ok(())
     }
@@ -60,10 +61,10 @@ mod tests {
     use crate::actor::external_agent::ExternalAgentActor;
     use crate::testing::{self, test_registry};
     use crate::tool::echo_tool::ECHO_TOOL_KIND;
+    use caelumora_kernel::api::component::Services;
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::component::testing::config;
-    use caelumora_kernel::component::{ComponentContainer, ComponentContext};
-    use caelumora_kernel::kernel::Services;
+    use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::moderator::policy_moderator::POLICY_MODERATOR_KIND;
     use caelumora_kernel::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
     use caelumora_kernel::testing::TestKernel;
@@ -102,53 +103,37 @@ mod tests {
     async fn a_channel_takes_no_tool_and_an_agent_no_moderator() {
         let registry = Arc::new(test_registry(&Persistence::in_memory()));
         // The texts its tools are made with.
-        let context = ComponentContext::new(
+        let context = BuildContext::new(
             SecurityContext::default(),
             Services::empty().with(testing::catalogue()),
         );
 
         let channel =
             config(&[("moderator", POLICY_MODERATOR_KIND), ("policy", ROUND_ROBIN_POLICY_KIND)]);
-        ComponentContainer::from_config(
-            &channel,
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .expect("its moderator and what it needs");
+        registry
+            .build(&channel, ChannelLoop::COMPONENT_FACETS, &context)
+            .await
+            .expect("its moderator and what it needs");
         let with_tool = config(&[("policy", ROUND_ROBIN_POLICY_KIND), ("echo", ECHO_TOOL_KIND)]);
-        let error = ComponentContainer::from_config(
-            &with_tool,
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .expect_err("a channel calls no tool");
+        let error = registry
+            .build(&with_tool, ChannelLoop::COMPONENT_FACETS, &context)
+            .await
+            .expect_err("a channel calls no tool");
         assert!(
             error.to_string().contains("'echo'") && error.to_string().contains("ToolProvider"),
             "{error}"
         );
 
-        ComponentContainer::from_config(
-            &config(&[("echo", ECHO_TOOL_KIND)]),
-            AgentActor::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .expect("an agent's tool");
+        registry
+            .build(&config(&[("echo", ECHO_TOOL_KIND)]), AgentActor::COMPONENT_FACETS, &context)
+            .await
+            .expect("an agent's tool");
         let with_moderator =
             config(&[("echo", ECHO_TOOL_KIND), ("moderator", POLICY_MODERATOR_KIND)]);
-        let error = ComponentContainer::from_config(
-            &with_moderator,
-            AgentActor::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .expect_err("an agent moderates nothing");
+        let error = registry
+            .build(&with_moderator, AgentActor::COMPONENT_FACETS, &context)
+            .await
+            .expect_err("an agent moderates nothing");
         assert!(
             error.to_string().contains("'moderator'") && error.to_string().contains("Moderator"),
             "{error}"

@@ -11,16 +11,18 @@ pub use channels::ChannelSpec;
 pub(crate) use manager::Found;
 pub use manager::{SessionManager, SessionSpec};
 
+use crate::api::component::ComponentError;
+use crate::api::workspace::{WorkspaceError, WorkspaceResult};
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;
-use crate::component::{ComponentError, ComponentRegistry};
+use crate::component::ComponentRegistry;
 use crate::controller::{ControllerManager, SessionController, WorkspaceController};
 use crate::event::{EventBus, SubscriptionTopic};
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::{ChannelRuntime, Kernel};
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::view::{Viewer, Views};
-use crate::workspace::{WorkspaceError, WorkspaceManager, WorkspaceResult};
+use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwapOption;
 use caelumora_model::actor::ActorId;
@@ -534,7 +536,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
-        use crate::actor::Actor;
+        use crate::api::actor::Actor;
         use caelumora_model::actor::ActorId;
         use caelumora_model::user::UserUpdateEvent;
 

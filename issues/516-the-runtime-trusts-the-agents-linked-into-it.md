@@ -1335,3 +1335,36 @@ after this one.
   kernel's; the `LibraryBuilder` a trait; the faces of skills and artifacts kept in their crates;
   the policies and the context left in the model for an issue of their own. 6.1 cuts the seams
   within the kernel, 6.2 makes the crate.
+- **2026-11-01** — Step 6.1: the seams. The kernel's API lies apart in its module `api`, which names
+  nothing else of the kernel: `actor` (`Actor`, `Answering`, `AgentFactory`), `command`,
+  `component`, `error`, `library`, `logging`, `reader`, `remote`, `runtime` (`ActorRuntime`,
+  `CallPermit`, `OwnRecord`), `terminal`, `transport` and `workspace`; the libraries name nothing of
+  the kernel outside it. The components are cut along the registry (decision 20): the API holds the
+  kind, its factory (`factory`, `async_factory`), the `ComponentContext` a component is built with -
+  which no longer holds the owner's name -, the `ComponentContainer` its owner holds and a
+  `BuiltComponent`, typed over the graph the kernel builds (`ComponentGraph`) and the registration
+  of a library's kinds (`ComponentKinds`); the kernel keeps the registry, which builds a
+  configuration (`ComponentRegistry::build`, in place of `ComponentContainer::from_config`) in a
+  `BuildContext` - the owner's name and the services, which the graph keeps -, and hands a library
+  its `library_components()`. The `LibraryBuilder` is a trait the kernel implements (decision 21):
+  `register_agent_kind` with an `AgentFactory` in place of `agent_kinds()`, `section` and
+  `provide_of` beside the typed `config` and `provide` on `dyn LibraryBuilder`. The four calls of
+  `ActorRuntime` that answered an `anyhow` answer a `StoreResult`; the API judges its own errors
+  (`api::error::user_message_with`), the kernel's `user_message` adds its own. Decided with the
+  maintainer after the review of the step: what of an `Answering` the kernel alone builds - in the
+  channel's name, in a user's span, replying to an event - is the kernel's (`ChannelAnswering`), not
+  the API's, as is where a workspace path lies on the host (`terminal::local`, over
+  `WorkspacePath::components`); a `ComponentKind` is read through methods of its own (`provided`,
+  `used`, `needed`, `check_params`, …), its fields private; `LibraryBuilder` answers `anyhow`, named
+  among the exceptions of CODING-GUIDELINES.md. The calls of the API the kernel makes from outside
+  it are public (`ViewError::failed`, `ComponentError::of_component`, …); the test helper `Discard`
+  moved to `testing`. A test that a component sees its caller's context became one that a `ref`
+  builds anew, as a component sees none. After the review of the step: a `ComponentContext` holds
+  its graph and its component plainly, as it is only ever made while a component is built; a
+  registration holds the `ComponentKind` it was declared as; `ComponentError::not_single` is the one
+  message of a facet that is no single; the registry and the builder as a library sees them are both
+  `ForLibrary`; `ComponentKinds::single_of` is named as an erased call is. Two changes of what is
+  logged: a failure to store an agent's state no longer says "Cannot store the state of agent …" -
+  its one caller names the agent -, and the agents' judgement of an error reads the API's types, not
+  the kernel's own (`SessionError`, `ProjectError`, …), which no call of the API answers. Stored
+  data: none.

@@ -111,22 +111,25 @@ of agent and the built-in components (issue 370) - or brings components for an a
 `caelumora-workspace-tools` (issue 428), `caelumora-compaction` (issue 464), `caelumora-comfyui`
 (issue 512), and the library sides of `caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`,
 `ArtifactsLibrary`). It is linked into the program as a plugin is, but trusted for nothing. It
-implements `caelumora_kernel::library::Library` - a name for messages and `register` -, and the
+implements `caelumora_kernel::api::library::Library` - a name for messages and `register` -, and the
 programs list it in `libraries()`, the agents' library first, and register each with
 `KernelBuilder::library` once their plugins registered. A library registers with a `LibraryBuilder`,
-which offers what a library registers and nothing of the kernel - no store, no policy, no secret, no
-controller:
+a trait of the API the kernel implements, which offers what a library registers and nothing of the
+kernel - no store, no policy, no secret, no controller:
 
 *   its component kinds (`components()`, a `LibraryComponents`), marked as a library's;
-*   its kinds of agent (`agent_kinds()`, an `AgentKinds`): for a kind of personality, what builds
-    its agents' actors - from the agent's `ActorRuntime` alone - and which facets their components
-    are asked for. Kinds of agent are the agent side's: a plugin registers none. The agents' library
-    registers both kinds there are; a program without it runs no agent;
+*   its kinds of agent (`register_agent_kind`): for a kind of personality, what builds its agents'
+    actors - an `AgentFactory`, from the agent's `ActorRuntime` alone (`agent_factory`) - and which
+    facets their components are asked for. Kinds of agent are the agent side's: a plugin registers
+    none. The agents' library registers both kinds there are; a program without it runs no agent;
 *   its texts (`add_prompts`), under a namespace of its own, as a plugin adds its - and nothing else
     of the catalogue: its variants are the configuration's;
-*   its section of the configuration (`config::<C>(name)`), under `libraries`;
-*   a service of its own to its own kinds (`provide`), which decides nothing of the kernel's -
-    `caelumora-comfyui` its workflows.
+*   its section of the configuration (`config::<C>(name)`, over `section`), under `libraries`;
+*   a service of its own to its own kinds (`provide`, over `provide_of`), which decides nothing of
+    the kernel's - `caelumora-comfyui` its workflows.
+
+The typed calls (`config`, `provide`) lie on `dyn LibraryBuilder`, the trait's erased ones beside
+them (`section`, `provide_of`), as `ActorRuntime::reader` lies over `reader_of`.
 
 The kernel is not built where a kind of a library provides a facet the kernel builds in its own
 name, a moderator of a channel or a command of a session, or uses a service that is neither a
@@ -187,13 +190,13 @@ plugin or a library depends on:
     `ComponentFacets`, and `config_of_params` to read its `params`. A kind that declares no
     parameters takes none: every one it is given is refused
     ([COMPONENTS.md](COMPONENTS.md#parameters)).
-*   **While it is built:** the `ComponentContext` - in whose name it is built, the kernel's to set
-    and not given out (issue 516) -, `service::<T>()`, the services of the kernel it declared, and
-    `all` and `one`, the facets of others it declared it needs. What a container accepts follows
-    from these declarations ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service
-    that decides for the kernel - a policy, one of the kernel's managers, a store - is the kernel's,
-    and a component of a library does not declare it - the kernel is not built where one does: what
-    it needs decided it asks of the kernel, through the `Turn` and the `Situation` it is called with
+*   **While it is built:** the `ComponentContext` - which holds no name: the graph keeps the one it
+    is built in (issue 516) -, `service::<T>()`, the services of the kernel it declared, and `all`
+    and `one`, the facets of others it declared it needs. What a container accepts follows from
+    these declarations ([COMPONENTS.md](COMPONENTS.md#what-a-container-accepts)). A service that
+    decides for the kernel - a policy, one of the kernel's managers, a store - is the kernel's, and
+    a component of a library does not declare it - the kernel is not built where one does: what it
+    needs decided it asks of the kernel, through the `Turn` and the `Situation` it is called with
     (`may_reclassify`, `may_copy_information`, `copy_attachment`; the executor's `admit_tool_call`,
     issue 516), and what it reads it reads through the readers (`Situation::session`,
     `SessionReader`). What it needs of another crate it declares as the trait that crate offers for
@@ -203,9 +206,9 @@ plugin or a library depends on:
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
     `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
-*   **If it talks to a remote system:** `caelumora_kernel::remote`, which describes its errors as
-    the kernel's are described - `describe_request_error`, `describe_chain` (issue 326) -, and the
-    `Secrets` its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
+*   **If it talks to a remote system:** `caelumora_kernel::api::remote`, which describes its errors
+    as the kernel's are described - `describe_request_error`, `describe_chain` (issue 326) -, and
+    the `Secrets` its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
     `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516).
 *   **The model's types** of what it handles: `Tool`, `RemoteEndpoint`, `Classification`, ...
 
@@ -222,13 +225,14 @@ kernel decides what a person is told of an error by the types it knows -
 inside an `anyhow`, whatever a plugin's error says is shown as a failure that points to the log. The
 agents' library, which defines the facets most plugins serve, is a judge of its own in this: what an
 agent's owner is told when an answer fails is judged by `caelumora_agents::error::user_message`,
-which knows the error types of those facets and asks the kernel's judgement for the rest
-(`error::user_message_with`, issue 370). A registry of judgements the plugins add is not needed, and
-would be the registry of downcasts rejected below. A library may define a facet in turn that other
-libraries serve - `caelumora-compaction` the `KnowledgeRestorer`, which the `skills` component
-serves (issue 464) -: they depend on it and answer in its error type, `CompactionError`, as they
-answer the agents in theirs; what is shown of it, the defining library decides where it answers the
-agents - the `compaction` component carries its text into its `ActivityError` and `CommandError`.
+which knows the error types of those facets and asks the API's judgement for the rest
+(`api::error::user_message_with`, issues 370, 516). A registry of judgements the plugins add is not
+needed, and would be the registry of downcasts rejected below. A library may define a facet in turn
+that other libraries serve - `caelumora-compaction` the `KnowledgeRestorer`, which the `skills`
+component serves (issue 464) -: they depend on it and answer in its error type, `CompactionError`,
+as they answer the agents in theirs; what is shown of it, the defining library decides where it
+answers the agents - the `compaction` component carries its text into its `ActivityError` and
+`CommandError`.
 
 So the trait names its error type, and the plugin translates its own error into it where it
 answers - deciding there what may be shown, what is a refusal and what is a failure:

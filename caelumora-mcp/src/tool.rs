@@ -2,10 +2,9 @@ use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
-};
-use caelumora_kernel::remote::ExpiringCache;
+use caelumora_kernel::api::component::{config_of_params, Params};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::remote::ExpiringCache;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;

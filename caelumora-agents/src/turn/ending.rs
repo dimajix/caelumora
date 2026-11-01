@@ -8,8 +8,8 @@
 use super::Turn;
 use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
-use caelumora_kernel::actor::Answering;
-use caelumora_kernel::transport::EventSender;
+use caelumora_kernel::api::actor::Answering;
+use caelumora_kernel::api::transport::EventSender;
 use caelumora_model::message::Message;
 use caelumora_model::tool::ToolCallState;
 use caelumora_model::turn::GivenUpReason;
@@ -143,8 +143,8 @@ mod tests {
     use crate::message::testing::given_up_turns;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
+    use caelumora_kernel::testing::Discard;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
-    use caelumora_kernel::transport::Discard;
     use caelumora_model::actor::ActorEvent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::{Classification, Confidentiality};

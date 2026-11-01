@@ -8,11 +8,14 @@
 use super::local_shell::{LocalCommands, LocalShell};
 use super::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
-    ByteStream, CommandKey, FileEntry, Shell, Terminal, TerminalError, TerminalProvider,
-    TerminalReader, TerminalResult, WorkspacePath,
+    CommandKey, TerminalProvider,
+};
+use crate::api::component::{ComponentResult, Params};
+use crate::api::terminal::{
+    ByteStream, FileEntry, Shell, Terminal, TerminalError, TerminalReader, TerminalResult,
+    WorkspacePath,
 };
 use crate::backend::Backends;
-use crate::component::{ComponentResult, Params};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
@@ -226,7 +229,7 @@ impl LocalTerminal {
     /// Where `path` lies on the host, if that is inside the workspace: what
     /// of it exists, links followed, must lie in the workspace's directory.
     async fn inside(&self, path: &WorkspacePath) -> TerminalResult<PathBuf> {
-        let full = path.under(&self.dir);
+        let full = on_host(&self.dir, path);
         let base = fs::canonicalize(&self.dir).await.map_err(unavailable)?;
         let outside = || TerminalError::InvalidPath(path.to_string());
         // A link that leads nowhere would be written through: refused.
@@ -360,7 +363,7 @@ impl Terminal for LocalTerminal {
             return Err(TerminalError::IsADirectory(path.to_string()));
         }
         let parent = path.parent();
-        fs::create_dir_all(parent.under(&self.dir)).await.map_err(|e| failed(&parent, e))?;
+        fs::create_dir_all(on_host(&self.dir, &parent)).await.map_err(|e| failed(&parent, e))?;
         write_whole(&full, content, limit).await.map_err(|failure| match failure {
             WriteFailure::TooLarge => TerminalError::TooLarge { limit },
             WriteFailure::BrokeOff(kind) => {
@@ -400,15 +403,20 @@ impl Terminal for LocalTerminal {
             return Err(TerminalError::Exists(to.to_string()));
         }
         let parent = to.parent();
-        fs::create_dir_all(parent.under(&self.dir)).await.map_err(|e| failed(&parent, e))?;
+        fs::create_dir_all(on_host(&self.dir, &parent)).await.map_err(|e| failed(&parent, e))?;
         fs::rename(&source, &target).await.map_err(|e| failed(to, e))
     }
+}
+
+/// Where `path` lies on the host, below the workspace's directory `dir`.
+fn on_host(dir: &Path, path: &WorkspacePath) -> PathBuf {
+    path.components().iter().fold(dir.to_path_buf(), |host, part| host.join(part))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernel::Services;
+    use crate::api::component::Services;
     use bytes::Bytes;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::workspace::CommandStatus;

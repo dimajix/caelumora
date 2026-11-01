@@ -421,8 +421,8 @@ fn remember<K: Eq + Hash, C>(registry: &mut HashMap<K, Weak<C>>, id: K, controll
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::StorageGone;
-    use crate::workspace::WorkspaceError;
+    use crate::api::error::StorageGone;
+    use crate::api::workspace::WorkspaceError;
     use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{Agent, AgentUpdateEvent, Personality, PersonalityId};
     use caelumora_model::approval::ApproverId;

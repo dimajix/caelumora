@@ -937,10 +937,11 @@ mod tests {
     use axum::http::header::{CONTENT_TYPE, COOKIE};
     use axum::http::Request;
     use axum::Router;
+    use caelumora_kernel::api::command::CommandError;
+    use caelumora_kernel::api::reader::ViewError;
     use caelumora_kernel::channel::ChannelError;
-    use caelumora_kernel::command::CommandError;
     use caelumora_kernel::session::testing::create;
-    use caelumora_kernel::view::{AgentContextError, ViewError};
+    use caelumora_kernel::view::AgentContextError;
     use caelumora_model::message::MessageId;
     use caelumora_model::security::Refused;
     use caelumora_model::session::testing::make_session;

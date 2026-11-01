@@ -31,8 +31,10 @@ pub trait Plugin: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::{service_of, NoParams, Params};
-    use crate::component::{ComponentContainer, ComponentContext, ComponentFacets, ComponentKind};
+    use crate::api::component::service_of;
+    use crate::api::component::{ComponentFacets, ComponentKind};
+    use crate::api::component::{NoParams, Params};
+    use crate::component::BuildContext;
     use crate::kernel::Kernel;
     use crate::seed::SeedSection;
     use crate::session::SessionManager;
@@ -284,18 +286,15 @@ mod tests {
         assert!(views.service::<Notebook>().is_some(), "reached by its views");
 
         // Its component kind, given the manager it uses.
-        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
         let config = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("notebook", "notebook")],
         };
-        ComponentContainer::from_config(
-            &config,
-            &[TypeKey::of::<Notebook>()],
-            kernel.component_registry(),
-            &context,
-        )
-        .await
-        .expect("built with its service");
+        kernel
+            .component_registry()
+            .build(&config, &[TypeKey::of::<Notebook>()], &context)
+            .await
+            .expect("built with its service");
 
         // Its seed section, into the store of its kind - the one the backend
         // gives whoever asks.

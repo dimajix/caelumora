@@ -16,10 +16,11 @@ pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant}
 
 use crate::actor::approval::ApproverActor;
 use crate::actor::user::UserActor;
-use crate::actor::Actor;
 use crate::actor::AgentKinds;
+use crate::api::actor::Actor;
+use crate::api::component::{ComponentError, ComponentImpl};
 use crate::attachment::AttachmentManager;
-use crate::component::{ComponentContainer, ComponentContext, ComponentError, ComponentImpl};
+use crate::component::BuildContext;
 use crate::controller::{ChannelController, ControllerManager};
 use crate::kernel::ChannelRuntime;
 use crate::moderator::Moderator;
@@ -294,14 +295,15 @@ impl ChannelLoop {
             .controller_manager()
             .owner_context(channel.security_attributes.owner_id, session_id, id)
             .await?;
-        let components = ComponentContainer::from_config(
-            &channel.components,
-            Self::COMPONENT_FACETS,
-            runtime.component_registry(),
-            &ComponentContext::new(security_context, runtime.services().clone()),
-        )
-        .await
-        .map_err(SessionError::InvalidComponents)?;
+        let components = runtime
+            .component_registry()
+            .build(
+                &channel.components,
+                Self::COMPONENT_FACETS,
+                &BuildContext::new(security_context, runtime.services().clone()),
+            )
+            .await
+            .map_err(SessionError::InvalidComponents)?;
         let moderator =
             components.one::<dyn Moderator>().await.map_err(SessionError::InvalidComponents)?;
 

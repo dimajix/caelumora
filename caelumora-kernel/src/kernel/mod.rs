@@ -21,19 +21,20 @@ mod channel;
 mod extension;
 
 pub use actor::ParticipantRuntime;
-pub use agent::{ActorRuntime, AgentRuntime, CallPermit, OwnRecord};
+pub use agent::AgentRuntime;
 pub use builder::KernelBuilder;
 pub use channel::ChannelRuntime;
-pub(crate) use extension::Face;
 
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
 use crate::agent::state::AgentStates;
 use crate::agent::AgentManager;
+use crate::api::component::Services;
 use crate::attachment::AttachmentManager;
 use crate::channel::Participation;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
-use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+use crate::component::BuildContext;
+use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
@@ -53,17 +54,11 @@ use caelumora_model::session::Session;
 use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::transcript::TranscriptStore;
 use caelumora_model::store::{EntityStores, StateStore};
-use caelumora_model::type_map::TypeMap;
 use caelumora_model::user_provider::UserManager;
 use extension::Extensions;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-/// The services of the kernel, by type (issues 296, 323): the policy, the secrets, the managers of
-/// the kernel that components use and what the plugins provide. A component is given those its kind
-/// uses (`ComponentKind::uses`), the views and a plugin's routes reach them all.
-pub type Services = TypeMap;
 
 /// The services and managers everything in a process shares, made once by the `KernelBuilder`.
 #[derive(Debug)]
@@ -147,18 +142,15 @@ impl Kernel {
             .controller_manager
             .owner_context(session.security_attributes.owner_id, session.id, ChannelId::default())
             .await?;
-        let context = ComponentContext::new(security, self.services().clone());
+        let context = BuildContext::new(security, self.services().clone());
         let mut providers = Vec::new();
         // Each configuration on its own, so that component ids only need to
         // be unique within one of them.
         for config in [&self.commands, &session.commands] {
-            let container = ComponentContainer::from_config(
-                config,
-                CommandExecutor::COMPONENT_FACETS,
-                &self.component_registry,
-                &context,
-            )
-            .await?;
+            let container = self
+                .component_registry
+                .build(config, CommandExecutor::COMPONENT_FACETS, &context)
+                .await?;
             providers.extend(container.get_all::<dyn ChannelCommandProvider>(None)?);
         }
         Ok(CommandExecutor::new(Arc::clone(self.access_policy()), providers)?)

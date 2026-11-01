@@ -414,7 +414,8 @@ Errors carry what failed, and only what may be shown goes to users.
     [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-kernel-in-the-kernels-types)). The
     exceptions are named, so that "its caller only logs it" is no excuse for the next one: traits
     whose only caller is the top of the program or of a task and logs the error whole -
-    `Plugin::register`, `Library::register`, `SeedSection::seed` and `Actor::run`.
+    `Plugin::register`, `Library::register`, `SeedSection::seed` and `Actor::run` -, and
+    `LibraryBuilder`, whose only caller is `Library::register` (issue 516).
 *   Avoid `unwrap()` and `expect()` in production code. Use `?` or handle the error explicitly.
 
 ### Messages name what failed
@@ -431,12 +432,13 @@ Errors carry what failed, and only what may be shown goes to users.
 
 ### What users see
 
-What users may see is decided by whoever defines an error type, in one function each: the kernel's
-types in `caelumora_kernel::error::user_message`, the types of the agents' logic - the errors of its
-facets - in `caelumora_agents::error::user_message` (issue 370). Each looks through an error chain
-for a domain error written to be read and returns its message; the agents' asks its own judgement
-first and the kernel's for the rest, in one walk (`error::user_message_with`), so that the outermost
-error that may be shown is shown. Anything else stays in the log.
+What users may see is decided by whoever defines an error type, in one function each: the API's
+types in `caelumora_kernel::api::error::user_message_with`, the kernel's own besides in
+`caelumora_kernel::error::user_message`, the types of the agents' logic - the errors of its facets -
+in `caelumora_agents::error::user_message` (issues 370, 516). Each looks through an error chain for
+a domain error written to be read and returns its message; the kernel's and the agents' ask their
+own judgement first and the API's for the rest, in one walk (`api::error::user_message_with`), so
+that the outermost error that may be shown is shown. Anything else stays in the log.
 
 A new error type meant for users must meet the rules above and be added to the function of whoever
 defines it. A plugin's error type is never added there: where the plugin answers the kernel or the
@@ -530,7 +532,7 @@ fields: `span_id`, `event_id`, `correlation_id` and `span_depth`. There are thre
 *   **`request`** - one REST request, with `method`, `uri`, `request_id`, the authenticated
     `user_id`, and the `span_id` of the envelopes the request started.
 *   **`envelope`** - handling one envelope in the `ChannelLoop` or an idle agent
-    (`caelumora_kernel::logging::envelope_span`), with session, channel, sender and event kind.
+    (`caelumora_kernel::api::logging::envelope_span`), with session, channel, sender and event kind.
 *   **`turn`** - one iteration of an agent's cognitive cycle, with agent and state and the ids of
     the turn's `EventContext`. An idle or sleeping agent runs in an `agent` span instead.
 

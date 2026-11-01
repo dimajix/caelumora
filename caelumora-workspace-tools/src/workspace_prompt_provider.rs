@@ -24,12 +24,10 @@ use caelumora_agents::prompt::{
     texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
 };
 use caelumora_agents::situation::Situation;
-use caelumora_kernel::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
-    LibraryComponents, Params,
-};
-use caelumora_kernel::terminal::{TerminalError, WorkspacePath};
-use caelumora_kernel::workspace::WorkspaceReader;
+use caelumora_kernel::api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::terminal::{TerminalError, WorkspacePath};
+use caelumora_kernel::api::workspace::WorkspaceReader;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use futures::future;

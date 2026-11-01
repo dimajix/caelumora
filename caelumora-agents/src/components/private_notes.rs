@@ -34,8 +34,8 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_kernel::view::PrivateNotesElsewhere;
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::reader::PrivateNotesElsewhere;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
@@ -311,7 +311,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing;
-    use caelumora_kernel::transport::Discard;
+    use caelumora_kernel::testing::Discard;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
     use caelumora_model::session::ChannelId;

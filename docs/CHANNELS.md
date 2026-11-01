@@ -771,9 +771,9 @@ it says what was refused, not which rule refused it.
 
 An **actor** is anything that sends and receives events in a channel.
 
-*   **`Actor`** (`caelumora_kernel::actor`) is the trait of all actors: `AgentActor`, `UserActor`,
-    `ApproverActor` and `ExternalAgentActor`. Its task, `run`, receives envelopes and sends its
-    output through the transport it is given. `wakeup`, `cancel`, `stop` and `leave` are
+*   **`Actor`** (`caelumora_kernel::api::actor`) is the trait of all actors: `AgentActor`,
+    `UserActor`, `ApproverActor` and `ExternalAgentActor`. Its task, `run`, receives envelopes and
+    sends its output through the transport it is given. `wakeup`, `cancel`, `stop` and `leave` are
     synchronous, because they come from other tasks and must take effect at once. The trait is
     public, so that a kind of agent can be built in a crate of its own (issue 370); only the channel
     controls its actors, after the operation that does it checked its permission - a rule for linked
@@ -811,7 +811,7 @@ An **actor** is anything that sends and receives events in a channel.
     `AgentActor`; `external` an `ExternalAgentActor`, for an agent that runs elsewhere and is
     reached through the personality's one `ExternalAgent` component. What builds the actor of each
     kind, and which facets its components are asked for, is registered with the kernel
-    (`AgentKinds`, `LibraryBuilder::agent_kinds`, issue 370) - both by the agents' library
+    (`AgentKinds`, `LibraryBuilder::register_agent_kind`, issue 370) - both by the agents' library
     (`AgentsLibrary`), an essential one. The channel builds an agent's actor through them and names
     no actor of an agent itself, reading the personality as the agent may read it; a kind the
     program registered nothing for is refused (`ChannelError::UnknownAgentKind`). The agent is

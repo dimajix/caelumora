@@ -4,6 +4,7 @@
 //! context. A component kind declares the extensions it needs (`ComponentKind::reads`, `writes`),
 //! and the kernel is not built where one is bound by none.
 
+use crate::api::component::Face;
 use crate::view::SessionView;
 use anyhow::{bail, Result};
 use caelumora_model::type_map::{ErasedArc, TypeKey};
@@ -14,23 +15,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;
-
-/// Which face of a service an extension is: what a work reads by, handed out where it reads
-/// (`Situation`), or what it acts by, handed out where it acts (`Turn`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Face {
-    Reader,
-    Writer,
-}
-
-impl fmt::Display for Face {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Reader => "reader",
-            Self::Writer => "writer",
-        })
-    }
-}
 
 /// What the plugins and the kernel bind to an agent's work, each by the type of what it binds and
 /// as the face it is, once.

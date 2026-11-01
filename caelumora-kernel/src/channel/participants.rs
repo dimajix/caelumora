@@ -521,7 +521,8 @@ impl ChannelLoop {
 #[cfg(test)]
 mod tests {
     use crate::actor::user::ChannelWatch;
-    use crate::actor::{Actor, Shown};
+    use crate::actor::Shown;
+    use crate::api::actor::Actor;
     use crate::channel::tests::*;
     use crate::channel::ChannelLoop;
     use crate::error::is_forbidden;

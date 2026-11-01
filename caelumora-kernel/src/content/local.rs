@@ -2,10 +2,12 @@
 //! configured root on Caelumora's host, a key's segments its directories -
 //! written whole or not at all, as the files of a local workspace are.
 
-use super::{ContentError, ContentResult, ContentStorage};
+use super::{ContentResult, ContentStorage};
+use crate::api::component::Params;
+use crate::api::error::ContentError;
+use crate::api::terminal::ByteStream;
 use crate::backend::Backends;
-use crate::component::Params;
-use crate::terminal::{write_whole, ByteStream, WriteFailure};
+use crate::terminal::{write_whole, WriteFailure};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;

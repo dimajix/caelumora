@@ -270,7 +270,7 @@ fn plan_texts(prompts: &PromptTexts, plan: &Plan) -> Result<Vec<String>, PromptE
 mod tests {
     use super::*;
     use crate::turn::tests::{message, seen};
-    use caelumora_kernel::transport::Discard;
+    use caelumora_kernel::testing::Discard;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};

@@ -42,10 +42,10 @@ use crate::situation::Situation;
 #[cfg(test)]
 use crate::testing::detached_actor_runtime;
 use anyhow::Result;
-use caelumora_kernel::actor::Answering;
-use caelumora_kernel::attachment::AttachmentResult;
-use caelumora_kernel::kernel::{ActorRuntime, OwnRecord};
-use caelumora_kernel::transport::EventSender;
+use caelumora_kernel::api::actor::Answering;
+use caelumora_kernel::api::error::AttachmentResult;
+use caelumora_kernel::api::runtime::{ActorRuntime, OwnRecord};
+use caelumora_kernel::api::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
@@ -518,7 +518,7 @@ mod tests {
     /// not with a step of a plan, one without words or a tool message.
     #[tokio::test]
     async fn what_is_put_aside_goes_with_the_next_answer() {
-        use caelumora_kernel::transport::Discard;
+        use caelumora_kernel::testing::Discard;
         use caelumora_model::content::testing::make_content_ref;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
         let mut state = AgentChannelState::default();

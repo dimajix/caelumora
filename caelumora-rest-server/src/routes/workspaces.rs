@@ -18,10 +18,10 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use caelumora_kernel::controller::WorkspaceController;
-use caelumora_kernel::terminal::{
+use caelumora_kernel::api::terminal::{
     CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
 };
+use caelumora_kernel::controller::WorkspaceController;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};

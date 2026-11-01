@@ -24,11 +24,12 @@
 //! and tells its policy the conversation: what was said before what it is
 //! to choose for, and that.
 
-use crate::actor::Actor;
-use crate::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentImpl, ComponentKind,
-    ComponentRegistry, ComponentResult, Params,
+use crate::api::actor::Actor;
+use crate::api::component::{
+    config_of_params, ComponentError, ComponentImpl, ComponentResult, Params,
 };
+use crate::api::component::{ComponentFacets, ComponentKind};
+use crate::component::ComponentRegistry;
 use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing, Undecided};
 use async_trait::async_trait;
 use caelumora_model::actor::{
@@ -542,6 +543,7 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::channel::ChannelLoop;
+    use crate::component::BuildContext;
     use crate::moderator::Moderator;
     use crate::moderator::{
         broadcast_policy, mentions_only_policy, random_policy, round_robin_policy,
@@ -828,26 +830,19 @@ mod tests {
     /// The moderator built from the channel components `config`, as a
     /// channel builds it (issue 174).
     async fn built(config: &[(&str, &str)]) -> Arc<dyn Moderator> {
-        use crate::component::{ComponentContainer, ComponentContext};
-        use crate::kernel::Services;
+        use crate::api::component::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
-        let context = ComponentContext::new(SecurityContext::default(), Services::empty());
+        let context = BuildContext::new(SecurityContext::default(), Services::empty());
         let config = ComponentConfig {
             component_nodes: config
                 .iter()
                 .map(|(id, kind)| ComponentDescriptor::new(id, kind))
                 .collect(),
         };
-        let container = ComponentContainer::from_config(
-            &config,
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .unwrap();
+        let container =
+            registry.build(&config, ChannelLoop::COMPONENT_FACETS, &context).await.unwrap();
         container.one::<dyn Moderator>().await.unwrap().facet
     }
 
@@ -1247,12 +1242,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_limit_of_hops_is_a_parameter_of_the_moderator() {
-        use crate::component::{ComponentContainer, ComponentContext};
-        use crate::kernel::Services;
+        use crate::api::component::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
-        let context = ComponentContext::new(SecurityContext::default(), Services::empty());
+        let context = BuildContext::new(SecurityContext::default(), Services::empty());
         let configured = |max_agent_hops: Value| ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: serde_json::json!({ "max_agent_hops": max_agent_hops }),
@@ -1260,14 +1254,10 @@ mod tests {
             }],
         };
 
-        let container = ComponentContainer::from_config(
-            &configured(serde_json::json!(0)),
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .unwrap();
+        let container = registry
+            .build(&configured(serde_json::json!(0)), ChannelLoop::COMPONENT_FACETS, &context)
+            .await
+            .unwrap();
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
         let asked = moderator
@@ -1276,28 +1266,24 @@ mod tests {
             .ask;
         assert!(asked.is_empty(), "with no hops allowed, agents answer only users");
 
-        let invalid = ComponentContainer::from_config(
-            &configured(serde_json::json!(-1)),
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await;
+        let invalid = registry
+            .build(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &context)
+            .await;
         assert!(invalid.is_err(), "a negative limit is refused");
 
-        let misspelt = ComponentContainer::from_config(
-            &ComponentConfig {
-                component_nodes: vec![ComponentDescriptor {
-                    params: serde_json::json!({ "max_agent_hop": 0 }),
-                    ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
-                }],
-            },
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .expect_err("not ignored (issue 515)");
+        let misspelt = registry
+            .build(
+                &ComponentConfig {
+                    component_nodes: vec![ComponentDescriptor {
+                        params: serde_json::json!({ "max_agent_hop": 0 }),
+                        ..ComponentDescriptor::new("moderator", POLICY_MODERATOR_KIND)
+                    }],
+                },
+                ChannelLoop::COMPONENT_FACETS,
+                &context,
+            )
+            .await
+            .expect_err("not ignored (issue 515)");
         assert!(misspelt.to_string().contains("invalid parameter 'max_agent_hop'"), "{misspelt}");
     }
 
@@ -1341,12 +1327,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_bound_on_span_depth_is_a_parameter_of_the_moderator() {
-        use crate::component::{ComponentContainer, ComponentContext};
-        use crate::kernel::Services;
+        use crate::api::component::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
-        let context = ComponentContext::new(SecurityContext::default(), Services::empty());
+        let context = BuildContext::new(SecurityContext::default(), Services::empty());
         let configured = |max_span_depth: Value| ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: serde_json::json!({ "max_span_depth": max_span_depth }),
@@ -1354,14 +1339,10 @@ mod tests {
             }],
         };
 
-        let container = ComponentContainer::from_config(
-            &configured(serde_json::json!(0)),
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await
-        .unwrap();
+        let container = registry
+            .build(&configured(serde_json::json!(0)), ChannelLoop::COMPONENT_FACETS, &context)
+            .await
+            .unwrap();
         let moderator = container.one::<dyn Moderator>().await.unwrap().facet;
         let agents = add_agents(moderator.as_ref());
         let asked = moderator
@@ -1373,13 +1354,9 @@ mod tests {
             .ask;
         assert!(asked.is_empty(), "with no depth allowed, nobody is asked");
 
-        let invalid = ComponentContainer::from_config(
-            &configured(serde_json::json!(-1)),
-            ChannelLoop::COMPONENT_FACETS,
-            &registry,
-            &context,
-        )
-        .await;
+        let invalid = registry
+            .build(&configured(serde_json::json!(-1)), ChannelLoop::COMPONENT_FACETS, &context)
+            .await;
         assert!(invalid.is_err(), "a negative bound is refused");
     }
 

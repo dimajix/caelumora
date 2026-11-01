@@ -2,7 +2,8 @@
 //! stored first, then announced -, each with its place in its storage, and reaching them for the
 //! kernel's other operations.
 
-use super::{require_classification, store_error, WorkspaceError, WorkspaceResult};
+use super::{require_classification, store_error};
+use crate::api::workspace::{WorkspaceError, WorkspaceResult};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
 use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};

@@ -4,7 +4,7 @@
 //! `command`, `prompt`, `llm`, `moderator`); a
 //! component that offers several facets - tools and a prompt part, say -
 //! stays here. The facet traits live next to the code that uses them
-//! (`crate::tool`, `caelumora_kernel::command`, `crate::prompt`, `crate::message`).
+//! (`crate::tool`, `caelumora_kernel::api::command`, `crate::prompt`, `crate::message`).
 
 pub mod agent_memory;
 pub mod channel_history;
@@ -12,7 +12,7 @@ pub mod create_plan_tool;
 pub mod notes;
 pub mod private_notes;
 
-use caelumora_kernel::component::LibraryComponents;
+use caelumora_kernel::api::component::LibraryComponents;
 
 /// Registers the component kinds of this directory with `registry`.
 pub fn register_all(registry: &mut LibraryComponents<'_>) {

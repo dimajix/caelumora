@@ -3,9 +3,9 @@
 use crate::connection::Connections;
 use crate::{PostgresStore, PostgresStoreConfig};
 use anyhow::Result;
+use caelumora_kernel::api::component::service_of;
+use caelumora_kernel::api::component::Params;
 use caelumora_kernel::backend::Backends;
-use caelumora_kernel::component::service_of;
-use caelumora_kernel::component::Params;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_model::secret::SecretManager;

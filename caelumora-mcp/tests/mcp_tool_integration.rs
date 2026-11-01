@@ -9,8 +9,11 @@ use axum::Router;
 use caelumora_agents::testing::{agent_runtime, offered_anywhere, TestAgents};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::component::{ComponentContainer, ComponentContext, BUNDLE_REF_KIND};
-use caelumora_kernel::kernel::{ActorRuntime, Kernel};
+use caelumora_kernel::api::component::ComponentContainer;
+use caelumora_kernel::api::runtime::ActorRuntime;
+use caelumora_kernel::component::BuildContext;
+use caelumora_kernel::component::BUNDLE_REF_KIND;
+use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::testing::{asked_for, TestKernel, World};
 use caelumora_mcp::library::McpLibrary;
@@ -154,7 +157,7 @@ async fn executed(
 async fn build_container(params: Value) -> ComponentContainer {
     let kernel = kernel(&Persistence::in_memory());
     let registry = kernel.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), kernel.services().clone());
+    let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -166,14 +169,7 @@ async fn build_container(params: Value) -> ComponentContainer {
         }],
     };
 
-    ComponentContainer::from_config(
-        &config,
-        &[TypeKey::of::<dyn ToolProvider>()],
-        registry,
-        &context,
-    )
-    .await
-    .unwrap()
+    registry.build(&config, &[TypeKey::of::<dyn ToolProvider>()], &context).await.unwrap()
 }
 
 /// What a turn outside of a running session acts through: the runtime of
@@ -305,7 +301,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     let kernel = kernel(&store);
     let registry = kernel.component_registry();
-    let context = ComponentContext::new(SecurityContext::default(), kernel.services().clone());
+    let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -319,22 +315,10 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
 
     // Two independent containers (simulating two personalities, each with its own
     // SecurityContext) both referencing the same bundle by name.
-    let container_a = ComponentContainer::from_config(
-        &ref_config,
-        &[TypeKey::of::<dyn ToolProvider>()],
-        registry,
-        &context,
-    )
-    .await
-    .unwrap();
-    let container_b = ComponentContainer::from_config(
-        &ref_config,
-        &[TypeKey::of::<dyn ToolProvider>()],
-        registry,
-        &context,
-    )
-    .await
-    .unwrap();
+    let container_a =
+        registry.build(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], &context).await.unwrap();
+    let container_b =
+        registry.build(&ref_config, &[TypeKey::of::<dyn ToolProvider>()], &context).await.unwrap();
 
     let provider_a = container_a.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;
     let provider_b = container_b.get_all::<dyn ToolProvider>(None).unwrap().remove(0).facet;

@@ -8,9 +8,9 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use crate::actor::Actor;
+use crate::api::actor::Actor;
+use crate::api::command::CommandError;
 use crate::channel::ChannelLoop;
-use crate::command::CommandError;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::view::AgentContextView;

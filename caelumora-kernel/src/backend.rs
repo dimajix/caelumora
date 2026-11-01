@@ -18,10 +18,10 @@
 //! the ways of registering a component kind (issue 515). A backend's is given nothing but its name
 //! and its parameters, and there is one way to register it.
 
-use crate::component::{
-    config_of_params, service_of, ComponentError, ComponentResult, NoParams, Params,
-};
-use crate::kernel::Services;
+use crate::api::component::service_of;
+use crate::api::component::Services;
+use crate::api::component::{config_of_params, ComponentError, ComponentResult, NoParams, Params};
+use crate::api::error::StorageGone;
 use crate::plugin::Plugin;
 use crate::{content, terminal};
 use caelumora_model::confidentiality::ConfidentialityPolicy;
@@ -53,14 +53,6 @@ impl Params for AcceptAnyConfig {}
 /// refers to its backend by. Shown by their names alone: a backend's
 /// parameters may name places of the host.
 pub struct NamedBackends<T: ?Sized>(BTreeMap<String, Arc<T>>);
-
-/// A backend that something kept names as where it lies - a workspace, an artifact's version, an
-/// attachment -, since removed from the configuration (issue 466): the server's failure, not the
-/// request's, however the kept thing was reached. Its message names the backend, which is the
-/// configuration's: for the log, not for users or models.
-#[derive(Debug, thiserror::Error)]
-#[error("the storage '{0}' is no longer configured")]
-pub struct StorageGone(pub String);
 
 /// Why no backend of a `NamedBackends` could be chosen (`chosen`), as the
 /// end of a sentence about the parameter that names it.

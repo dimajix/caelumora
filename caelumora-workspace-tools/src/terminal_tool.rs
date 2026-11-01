@@ -40,10 +40,9 @@ use caelumora_agents::tool::{
     ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
-};
-use caelumora_kernel::workspace::{WorkspaceReader, WorkspaceWriter};
+use caelumora_kernel::api::component::{config_of_params, Params};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
@@ -300,7 +299,8 @@ pub(crate) mod tests {
     use caelumora_agents::testing::with_agent_kinds;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::testing::{self as agent_testing, TestAgents};
-    use caelumora_kernel::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+    use caelumora_kernel::component::BuildContext;
+    use caelumora_kernel::component::ComponentRegistry;
     use caelumora_kernel::testing::World;
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
@@ -424,23 +424,19 @@ pub(crate) mod tests {
         );
         // The agents' kinds, with a model whose profile names the variant.
         with_agent_kinds(&mut registry);
-        register(&mut LibraryComponents::new(&mut registry));
+        register(&mut registry.library_components());
         let config = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)],
         };
         let world = session_with_workspace().await;
         // The world runs the kernel alone: the texts of these tools are added.
-        let context = ComponentContext::new(
+        let context = BuildContext::new(
             SecurityContext::default(),
             world.kernel.services().clone().with(catalogue()),
         );
-        let container = ComponentContainer::from_config(
-            &config,
-            &[TypeKey::of::<dyn ToolProvider>()],
-            &Arc::new(registry),
-            &context,
-        )
-        .await;
+        let container = (Arc::new(registry))
+            .build(&config, &[TypeKey::of::<dyn ToolProvider>()], &context)
+            .await;
         assert!(container.is_ok(), "{:?}", container.err());
     }
 

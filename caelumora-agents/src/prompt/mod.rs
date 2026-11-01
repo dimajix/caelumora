@@ -23,11 +23,9 @@ pub mod turn_context_provider;
 
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_kernel::component::{
-    config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentResult,
-    LibraryComponents, Params,
-};
-use caelumora_kernel::view::ViewError;
+use caelumora_kernel::api::component::{config_of_params, ComponentImpl, ComponentResult, Params};
+use caelumora_kernel::api::component::{ComponentContext, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::reader::ViewError;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
@@ -281,9 +279,9 @@ mod tests {
     use crate::testing::{agent_runtime, TestAgents};
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
-    use caelumora_kernel::component::{
-        ComponentContainer, ComponentContext, ComponentFacets, ComponentRegistry,
-    };
+    use caelumora_kernel::api::component::ComponentFacets;
+    use caelumora_kernel::component::BuildContext;
+    use caelumora_kernel::component::ComponentRegistry;
     use caelumora_kernel::session::testing::detached_participant_in;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_model::actor::ActorId;
@@ -373,15 +371,16 @@ mod tests {
                 ComponentDescriptor::new("calculator", CALCULATOR_TOOL_KIND),
             ],
         };
-        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
-        let built = ComponentContainer::from_config(
-            &components,
-            &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()],
-            kernel.component_registry(),
-            &context,
-        )
-        .await
-        .unwrap();
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
+        let built = kernel
+            .component_registry()
+            .build(
+                &components,
+                &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()],
+                &context,
+            )
+            .await
+            .unwrap();
         let calculator = built.get_all::<dyn ToolProvider>(None).unwrap().remove(0);
         assert_eq!(
             calculator.tools()[0].description,

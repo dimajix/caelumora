@@ -20,7 +20,7 @@ use caelumora_model::event::{EventPublisher, GlobalEvent};
 use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::MessageId;
 use caelumora_model::security::SecurityAttributes;
-use caelumora_model::store::StateStore;
+use caelumora_model::store::{StateStore, StoreResult};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Weak};
@@ -106,7 +106,7 @@ impl AgentStateHandle {
         &self,
         changes: Vec<(MemoryChange, MemoryOrigin)>,
         after: MessageId,
-    ) -> Result<()> {
+    ) -> StoreResult<()> {
         if changes.is_empty() {
             return Ok(());
         }
@@ -116,10 +116,7 @@ impl AgentStateHandle {
         for (change, origin) in changes {
             state.memory.push(change, origin, after);
         }
-        self.state_store
-            .put_agent_state(self.agent_id, &mut state)
-            .await
-            .with_context(|| format!("Cannot store the state of agent {}", self.agent_id))?;
+        self.state_store.put_agent_state(self.agent_id, &mut state).await?;
         self.current.store(Arc::new(state));
         self.events.publish(
             GlobalEvent::custom::<Agent>(&self.agent_id, agent::STATE_CHANGED, &()),

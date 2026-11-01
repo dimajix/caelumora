@@ -1,14 +1,12 @@
-//! The workspace as an agent's work uses it (issue 516): an extension of the kernel's, cut into a
-//! reader - what of the workspace of its session the work may use in its channel it reads, and its
-//! files to read - and a writer - its files to change and its shell. The kernel binds both to the
-//! session of every piece of work as the work reads it, and the workspace's controller asks in the
-//! work's context at every use of a terminal or a shell (`WorkspaceController::terminal_in`,
-//! `shell_in`).
+//! How the kernel serves the workspace an agent's work uses (issue 516): an extension of the
+//! kernel's, its reader and its writer (`api::workspace`) bound to the session of every piece of
+//! work as the work reads it, and the workspace's controller asking in the work's context at every
+//! use of a terminal or a shell (`WorkspaceController::terminal_in`, `shell_in`).
 
-use super::{WorkspaceError, WorkspaceResult};
+use crate::api::terminal::{Shell, Terminal, TerminalReader};
+use crate::api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter};
 use crate::controller::WorkspaceController;
 use crate::session::SessionLoop;
-use crate::terminal::{Shell, Terminal, TerminalReader};
 use crate::view::{ChannelView, SessionView, WorkspaceView};
 use async_trait::async_trait;
 use caelumora_model::channel::Channel;
@@ -19,56 +17,6 @@ use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
 use std::sync::Arc;
 use tracing::warn;
-
-/// The workspace of its session an agent's work may use in its channel, as the work reads it.
-#[async_trait]
-pub trait WorkspaceReader: Send + Sync {
-    /// The workspace used.
-    fn id(&self) -> WorkspaceId;
-
-    /// Its name, unique where it lies.
-    fn name(&self) -> &str;
-
-    /// What it holds, in a line; `None` if nobody said.
-    fn description(&self) -> Option<&Description>;
-
-    /// How its files are classified.
-    fn classification(&self) -> &Classification;
-
-    /// Whether commands can be run in it (issue 344).
-    fn has_shell(&self) -> bool;
-
-    /// Whether the work may change its files.
-    async fn may_write(&self) -> bool;
-
-    /// The workspace as it is now and its files to read - asked as reading them is asked -,
-    /// through a terminal that reads alone.
-    ///
-    /// # Errors
-    /// As `WorkspaceController::reader_in`.
-    async fn terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn TerminalReader>)>;
-}
-
-/// The workspace of its session an agent's work acts on in its channel: what a tool of a turn
-/// changes its files by and runs its commands by, each use asked in the work's context as it is
-/// made. Reading goes through the reader, in a tool too.
-#[async_trait]
-pub trait WorkspaceWriter: Send + Sync {
-    /// The workspace and its terminal, to change its files - asked as changing them is asked
-    /// (`WriteWorkspace`). A handle that carries the right to change them, and writes no file
-    /// larger than the workspaces take.
-    ///
-    /// # Errors
-    /// As `WorkspaceController::terminal_in`.
-    async fn terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)>;
-
-    /// The workspace and its shell as the work's channel sees it, the shell `None` where its
-    /// storage runs no commands.
-    ///
-    /// # Errors
-    /// As `WorkspaceController::shell_in`.
-    async fn shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)>;
-}
 
 /// The workspace a piece of work may use in its channel, found as it is bound: the reader.
 pub(crate) struct UsableWorkspace {

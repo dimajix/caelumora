@@ -12,11 +12,11 @@ use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use anyhow::{anyhow, Context, Error, Result};
 use async_trait::async_trait;
-use caelumora_kernel::actor::{Actor, Answering};
-use caelumora_kernel::component::ComponentImpl;
-use caelumora_kernel::kernel::ActorRuntime;
-use caelumora_kernel::logging::{agent_span, envelope_span};
-use caelumora_kernel::transport::{EventReceiver, EventSender};
+use caelumora_kernel::api::actor::{Actor, Answering};
+use caelumora_kernel::api::component::ComponentImpl;
+use caelumora_kernel::api::logging::{agent_span, envelope_span};
+use caelumora_kernel::api::runtime::ActorRuntime;
+use caelumora_kernel::api::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };

@@ -34,11 +34,12 @@ use bollard::query_parameters::{
     RemoveVolumeOptions, StopContainerOptions,
 };
 use bollard::Docker;
+use caelumora_kernel::api::component::{ComponentError, ComponentResult, Params};
+use caelumora_kernel::api::terminal::{Shell, Terminal, TerminalError, TerminalResult};
 use caelumora_kernel::backend::Backends;
-use caelumora_kernel::component::{ComponentError, ComponentResult, Params};
 use caelumora_kernel::terminal::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
-    CommandKey, Shell, Terminal, TerminalError, TerminalProvider, TerminalResult,
+    CommandKey, TerminalProvider,
 };
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::remote::RemoteEndpoint;
@@ -626,9 +627,10 @@ mod tests {
     use super::*;
     use crate::plugin::OpenTerminalPlugin;
     use bytes::Bytes;
-    use caelumora_kernel::component::config_of_params;
-    use caelumora_kernel::kernel::Services;
-    use caelumora_kernel::terminal::{ByteStream, WorkspacePath, DEFAULT_MAX_RUN_SECS};
+    use caelumora_kernel::api::component::config_of_params;
+    use caelumora_kernel::api::component::Services;
+    use caelumora_kernel::api::terminal::{ByteStream, WorkspacePath};
+    use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::workspace::CommandStatus;
     use futures::stream;

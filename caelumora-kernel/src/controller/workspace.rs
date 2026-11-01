@@ -1,14 +1,14 @@
 //! `WorkspaceController`: the one writer of a live workspace in this instance, with its storage.
 
 use super::document::LiveDocument;
-use crate::backend::StorageGone;
+use crate::api::error::StorageGone;
+use crate::api::terminal::{Shell, Terminal, TerminalReader};
+use crate::api::workspace::{WorkspaceError, WorkspaceResult};
 use crate::group::require_nameable;
-use crate::terminal::{Shell, Terminal, TerminalProvider, TerminalReader};
+use crate::terminal::TerminalProvider;
 use crate::view::{channel_reading, ReadingBasis};
 use crate::workspace::reaper::scope_of;
-use crate::workspace::{
-    require_classification, require_write, store_error, WorkspaceError, WorkspaceResult,
-};
+use crate::workspace::{require_classification, require_write, store_error};
 use arc_swap::Guard;
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{Classification, Place};

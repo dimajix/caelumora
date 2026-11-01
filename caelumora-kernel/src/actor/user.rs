@@ -1,10 +1,12 @@
+use crate::actor::ChannelAnswering;
 use crate::actor::Shown;
-use crate::actor::{Actor, Answering};
+use crate::api::actor::{Actor, Answering};
+use crate::api::command::CommandError;
+use crate::api::transport::{EventReceiver, EventSender, TransportError};
 use crate::channel::{ChannelError, ChannelLoop};
-use crate::command::{CommandContext, CommandError, CommandReply};
+use crate::command::{CommandContext, CommandReply};
 use crate::controller::{ChannelController, UserController};
 use crate::kernel::ParticipantRuntime;
-use crate::transport::{EventReceiver, EventSender, TransportError};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{
@@ -239,7 +241,7 @@ impl UserActor {
     /// 304) - the user asks nothing of the policy for what they send.
     ///
     /// Returns the `span_id` of the envelopes it starts, which every envelope
-    /// caused by the message carries as well (see `crate::logging`).
+    /// caused by the message carries as well (see `crate::api::logging`).
     ///
     /// # Errors
     /// `AttachmentError::NotFound` for an attachment that is not one of this

@@ -2,7 +2,8 @@
 //! the results of a session they read go to. It is read alone: whoever changes it asks again
 //! (`ProjectController`).
 
-use super::{SessionView, ViewResult, Views};
+use super::{SessionView, Views};
+use crate::api::reader::ViewResult;
 use caelumora_model::actor::ActorId;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::security::AccessQuestions;

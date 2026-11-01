@@ -4,7 +4,7 @@
 use crate::workflow::Workflows;
 use crate::{tool, NAMESPACE, PROMPTS};
 use anyhow::{Context, Result};
-use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::library::{Library, LibraryBuilder};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ impl Library for ComfyUiLibrary {
         COMFYUI
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         let config: ComfyUiConfig = library.config(COMFYUI)?;
         let workflows = match &config.workflows {
             Some(dir) => Workflows::read(dir).context("Cannot read libraries.comfyui.workflows")?,

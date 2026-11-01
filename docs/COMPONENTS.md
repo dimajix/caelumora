@@ -25,9 +25,16 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     that builds components without a kernel starts from `caelumora_kernel::testing::test_registry`,
     or the agents' `caelumora_agents::testing::test_registry`, with a model that is not to be asked
     as the default.
-*   **`ComponentContainer`** builds the components of a `ComponentConfig` for an owner - an agent,
-    an external agent, a channel, a session's commands - and hands out the facets that owner
-    declared it asks for, and no other ([What a container accepts](#what-a-container-accepts)).
+*   **`ComponentContainer`** holds the components of a `ComponentConfig` the registry built for an
+    owner (`ComponentRegistry::build`) - an agent, an external agent, a channel, a session's
+    commands - and hands out the facets that owner declared it asks for, and no other
+    ([What a container accepts](#what-a-container-accepts)).
+
+What a library declares and is given of components - a kind (`ComponentKind`) and its factory, the
+context a component is built with (`ComponentContext`), the container its owner holds, a component
+as one of its facets (`ComponentImpl`) - is the kernel's API (`caelumora_kernel::api::component`,
+issue 516), typed over the graph the kernel builds (`ComponentGraph`); the registry, the planning of
+a configuration and the graph are the kernel's.
 
 A descriptor of the reserved kind `ref` builds no component of its own: its `params` name a
 component bundle (`ComponentBundle`) - an entity like a personality, with an owner, an
@@ -162,7 +169,7 @@ secret, a connection opened. What a configuration can set off follows from what 
 it (issue 337):
 
 *   **The owner declares the facets it asks for**, as a constant it keeps, and builds its container
-    with them (`ComponentContainer::from_config`). The container refuses `one` and `get_all` of any
+    with them (`ComponentRegistry::build`). The container refuses `one` and `get_all` of any
     other facet, so that the declaration stays true.
 *   **The container accepts their closure**: the components that provide one of those facets - and,
     for a facet of which there is one that no component provides, its default -, then those that
@@ -298,16 +305,17 @@ checks.
 
 ## What a component may reach
 
-A container is built with a `ComponentContext`, which holds:
+A container is built in a `BuildContext`, and each of its components with a `ComponentContext`;
+between them they hold:
 
-*   the `SecurityContext` the graph is built in, the name of its owner, set by the kernel and not
-    given out to the components (issue 516) - for an agent's components the agent's own, with its
-    owner's rights (`ActorRuntime::build_components`); for a channel's components and a session's
-    commands the owner's, with their roles as they are when it is built
-    (`ControllerManager::owner_context`). What a component reads while building - a `ref` resolved,
-    a secret a component of the kernel needs - it reads in it. It does not keep it: what it asks
-    later it asks in the context of the act it serves - a tool in its turn's, a moderator in the
-    event's it routes -, one context per piece of work;
+*   the `SecurityContext` the graph is built in, the name of its owner, which the `BuildContext`
+    holds and the graph keeps - never a `ComponentContext`, so that no component is given it (issue
+    516) - for an agent's components the agent's own, with its owner's rights
+    (`ActorRuntime::build_components`); for a channel's components and a session's commands the
+    owner's, with their roles as they are when it is built (`ControllerManager::owner_context`). The
+    graph resolves every `ref` in it; a component is not given it: what it asks it asks in the
+    context of the act it serves - a tool in its turn's, a moderator in the event's it routes -, one
+    context per piece of work;
 *   the services of the kernel its kind declares it uses - for a component of the kernel the
     policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
     that a new service needs no new field and no component is given one it does not declare. They

@@ -2,13 +2,13 @@
 //! provide them, configurations and the context they are built with.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
-use super::{
-    ComponentContext, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, Params,
-};
-use crate::kernel::Services;
+use super::BuildContext;
+use super::ComponentRegistry;
+use crate::api::component::Services;
+use crate::api::component::{ComponentError, Params};
+use crate::api::component::{ComponentFacets, ComponentKind};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::security::{AccessPolicy, AllowAllPolicy, Policies, SecurityContext};
-use caelumora_model::session::SessionId;
 use caelumora_model::store::{EntityStores, Persistence};
 use caelumora_model::type_map::TypeKey;
 use serde::Deserialize;
@@ -23,13 +23,9 @@ pub trait Marker: Debug + Send + Sync {}
 pub const ASKED: &[TypeKey] =
     &[TypeKey::of::<dyn Marker>(), TypeKey::of::<dyn Named>(), TypeKey::of::<dyn Choice>()];
 
-pub fn test_context() -> ComponentContext {
-    context_with_session(SessionId::default())
-}
-
-pub fn context_with_session(session_id: SessionId) -> ComponentContext {
+pub fn test_context() -> BuildContext {
     let services = Services::empty().with(Arc::new(AllowAllPolicy::new()) as Arc<dyn AccessPolicy>);
-    ComponentContext::new(SecurityContext { session_id, ..SecurityContext::default() }, services)
+    BuildContext::new(SecurityContext::default(), services)
 }
 
 pub fn descriptor(id: &str, kind: &str, params: Value) -> ComponentDescriptor {

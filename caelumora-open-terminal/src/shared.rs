@@ -9,11 +9,15 @@ use crate::client::{Client, Key};
 use crate::terminal::{OpenCommands, OpenFiles, OpenPlace};
 use crate::wire::PathRequest;
 use async_trait::async_trait;
+use caelumora_kernel::api::component::service_of;
+use caelumora_kernel::api::component::{ComponentError, ComponentResult, Params};
+use caelumora_kernel::api::terminal::{
+    Shell, Terminal, TerminalError, TerminalResult, WorkspacePath,
+};
 use caelumora_kernel::backend::Backends;
-use caelumora_kernel::component::{service_of, ComponentError, ComponentResult, Params};
 use caelumora_kernel::terminal::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
-    CommandKey, Shell, Terminal, TerminalError, TerminalProvider, TerminalResult, WorkspacePath,
+    CommandKey, TerminalProvider,
 };
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::remote::RemoteEndpoint;
@@ -224,8 +228,9 @@ mod tests {
     use super::*;
     use crate::stand_in::{self, StandIn, KEY, MOUNT};
     use bytes::Bytes;
-    use caelumora_kernel::component::config_of_params;
-    use caelumora_kernel::terminal::{ByteStream, TerminalReader, DEFAULT_MAX_RUN_SECS};
+    use caelumora_kernel::api::component::config_of_params;
+    use caelumora_kernel::api::terminal::{ByteStream, TerminalReader};
+    use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
     use caelumora_model::remote::RemoteAuthConfig;
     use caelumora_model::secret::file::FileSecretProvider;
     use caelumora_model::secret::{SecretProvider, SecretResult};

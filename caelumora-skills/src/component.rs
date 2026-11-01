@@ -46,10 +46,9 @@ use caelumora_agents::tool::{
 };
 use caelumora_agents::turn::Turn;
 use caelumora_compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
-use caelumora_kernel::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_kernel::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
-};
+use caelumora_kernel::api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_kernel::api::component::{config_of_params, Params};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::ActorId;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::confidentiality::Classification;

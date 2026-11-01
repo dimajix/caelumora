@@ -28,7 +28,7 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::memory::{Memory, MemoryId};
@@ -287,7 +287,7 @@ mod tests {
     use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
     use caelumora_kernel::session::testing::{owned_kernel_under, participant_runtime_in, spec};
     use caelumora_kernel::session::{ChannelSpec, SessionLoop, SessionManager};
-    use caelumora_kernel::transport::Discard;
+    use caelumora_kernel::testing::Discard;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::main_channel;

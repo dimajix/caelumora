@@ -8,8 +8,9 @@
 //! session is, and taken into it as anyone is taken into a running session.
 
 use crate::agent::{AgentError, AgentManager};
+use crate::api::workspace::WorkspaceError;
 use crate::session::{SessionError, SessionLoop};
-use crate::workspace::{WorkspaceError, WorkspaceManager};
+use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, PersonalityId};

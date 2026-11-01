@@ -1,99 +1,25 @@
-use super::{
-    require_declared, ComponentContext, ComponentError, ComponentFacets, ComponentRegistry,
-    ComponentResult,
+//! The graph of a configuration's components as the registry builds it (`Graph`): each component
+//! when it is asked for, the rest in the order of the configuration, and the defaults of the
+//! singles.
+
+use super::{BuildContext, ComponentRegistry};
+use crate::api::component::{
+    BuiltComponent, ComponentContainer, ComponentError, ComponentGraph, ComponentResult,
 };
-use crate::remote::describe_chain;
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
+use async_trait::async_trait;
+use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::type_map::TypeKey;
 use futures::future::BoxFuture;
 use std::any::TypeId;
 use std::collections::HashMap;
-use std::error::Error;
-use std::ops::Deref;
 use std::sync::{Arc, Mutex};
-
-/// A built component.
-#[derive(Debug)]
-struct ComponentNode {
-    id: String,
-    fail_policy: ComponentFailPolicy,
-    tags: Vec<String>,
-    facets: ComponentFacets,
-}
-
-impl ComponentNode {
-    fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<ComponentImpl<T>> {
-        self.facets.get::<T>().map(|facet| ComponentImpl {
-            id: self.id.clone(),
-            fail_policy: self.fail_policy,
-            facet: Arc::clone(facet),
-        })
-    }
-}
-
-/// A built component as one of its facets: the facet with the component's id
-/// and fail policy. It dereferences to the facet, so that the facet's methods
-/// are called on it directly; `facet` is needed only for the `Arc` itself.
-#[derive(Debug, Clone)]
-pub struct ComponentImpl<T>
-where
-    T: ?Sized + Send + Sync,
-{
-    pub id: String,
-    pub fail_policy: ComponentFailPolicy,
-    pub facet: Arc<T>,
-}
-
-impl<T> ComponentImpl<T>
-where
-    T: ?Sized + Send + Sync,
-{
-    /// `result` of a call of the facet, as the component's fail policy
-    /// says: a failure fails the caller if the component fails closed - the
-    /// caller names it with the component, in the error type of the facet's
-    /// caller (`ContextError::Component`); if it fails open, it is logged
-    /// and the component's part left out - `None`.
-    ///
-    /// # Errors
-    /// The failure of a component that fails closed.
-    pub fn apply_fail_policy<R, E: Error + 'static>(
-        &self,
-        result: Result<R, E>,
-    ) -> Result<Option<R>, E> {
-        match result {
-            Ok(value) => Ok(Some(value)),
-            Err(e) => match self.fail_policy {
-                ComponentFailPolicy::FailOpen => {
-                    tracing::warn!(
-                        "Component '{}' failed and is left out, as it fails open: {}",
-                        self.id,
-                        describe_chain(&e)
-                    );
-                    Ok(None)
-                }
-                ComponentFailPolicy::FailClosed => Err(e),
-            },
-        }
-    }
-}
-
-impl<T> Deref for ComponentImpl<T>
-where
-    T: ?Sized + Send + Sync,
-{
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        &self.facet
-    }
-}
 
 /// A component of a graph, as far as it has been built.
 #[derive(Debug)]
 enum State {
     Pending,
     Building,
-    Built(Arc<ComponentNode>),
+    Built(Arc<BuiltComponent>),
 }
 
 /// A component of a graph to be built: its descriptor, `ref`s resolved, the
@@ -122,15 +48,15 @@ impl Planned {
 #[derive(Debug)]
 pub(super) struct Graph {
     registry: Arc<ComponentRegistry>,
-    /// The environment every component is built in.
-    context: ComponentContext,
+    /// The environment every component is built in: its owner's name and the services.
+    context: BuildContext,
     /// The facets its owner asks it for (`ComponentContainer::one`,
     /// `get_all`).
     asked: Vec<TypeKey>,
     planned: Vec<Planned>,
     states: Mutex<Vec<State>>,
     /// The defaults of singles for this graph alone, in place of the
-    /// registry's (`ComponentContainer::with_defaults`).
+    /// registry's (`ComponentRegistry::build_with_defaults`).
     own_defaults: HashMap<TypeId, ComponentDescriptor>,
     /// The defaults built for singles no component of the graph provides,
     /// by their ids: a default that provides several singles is built once
@@ -145,7 +71,7 @@ impl Graph {
         self: &Arc<Self>,
         index: usize,
         asked: Option<(&str, TypeKey)>,
-    ) -> BoxFuture<'static, ComponentResult<Arc<ComponentNode>>> {
+    ) -> BoxFuture<'static, ComponentResult<Arc<BuiltComponent>>> {
         let graph = Arc::clone(self);
         let asked = asked.map(|(component, facet)| (component.to_string(), facet));
         Box::pin(async move {
@@ -172,15 +98,11 @@ impl Graph {
         self: &Arc<Self>,
         descriptor: &ComponentDescriptor,
         provides: &[TypeKey],
-    ) -> ComponentResult<Arc<ComponentNode>> {
+    ) -> ComponentResult<Arc<BuiltComponent>> {
         let failed = |cause| ComponentError::of_component(descriptor, cause);
-        let context = ComponentContext {
-            building: Some((Arc::clone(self), descriptor.id.clone())),
-            ..self.context.clone()
-        };
         let facets = self
             .registry
-            .dispatch(descriptor.clone(), context)
+            .dispatch(descriptor.clone(), &self.context.services, Arc::<Graph>::clone(self))
             .map_err(failed)?
             .await
             .map_err(failed)?;
@@ -194,7 +116,7 @@ impl Graph {
                 declared.join(", ")
             ))));
         }
-        Ok(Arc::new(ComponentNode {
+        Ok(Arc::new(BuiltComponent {
             id: descriptor.id.clone(),
             fail_policy: descriptor.fail_policy,
             tags: descriptor.tags.clone(),
@@ -202,12 +124,12 @@ impl Graph {
         }))
     }
 
-    /// Every planned component that provides `T`, except `asking` itself.
-    pub(super) async fn all<T: ?Sized + Send + Sync + 'static>(
+    /// Every planned component that provides `facet`, except `asking` itself.
+    async fn all(
         self: &Arc<Self>,
+        facet: TypeKey,
         asking: Option<&str>,
-    ) -> ComponentResult<Vec<ComponentImpl<T>>> {
-        let facet = TypeKey::of::<T>();
+    ) -> ComponentResult<Vec<Arc<BuiltComponent>>> {
         let mut found = Vec::new();
         for (index, planned) in self.planned.iter().enumerate() {
             if Some(planned.descriptor.id.as_str()) == asking
@@ -215,27 +137,20 @@ impl Graph {
             {
                 continue;
             }
-            let node = self.ensure(index, asking.map(|component| (component, facet))).await?;
-            found.extend(node.get::<T>());
+            found.push(self.ensure(index, asking.map(|component| (component, facet))).await?);
         }
         Ok(found)
     }
 
-    /// The one component that provides the single `T`: the planned one, or
+    /// The one component that provides the single `facet`: the planned one, or
     /// the default.
-    pub(super) async fn one<T: ?Sized + Send + Sync + 'static>(
+    async fn one(
         self: &Arc<Self>,
+        facet: TypeKey,
         asking: Option<&str>,
-    ) -> ComponentResult<ComponentImpl<T>> {
-        let facet = TypeKey::of::<T>();
-        let not_single = || {
-            ComponentError::InvalidConfig(format!(
-                "{} is not a facet of which there is one",
-                facet.name()
-            ))
-        };
+    ) -> ComponentResult<Arc<BuiltComponent>> {
         if !self.registry.is_single(facet.id) {
-            return Err(not_single());
+            return Err(ComponentError::not_single(facet));
         }
         let asked = asking.map(|component| (component, facet));
         let providers: Vec<usize> = self
@@ -245,13 +160,12 @@ impl Graph {
             .filter(|(_, planned)| planned.provides.iter().any(|f| f.id == facet.id))
             .map(|(index, _)| index)
             .collect();
-        let node = match providers.as_slice() {
-            [index] => self.ensure(*index, asked).await?,
-            // `from_config` refuses a graph with two.
-            [] => self.default(facet, asked).await?,
-            _ => return Err(not_single()),
-        };
-        node.get::<T>().ok_or_else(not_single)
+        match providers.as_slice() {
+            [index] => self.ensure(*index, asked).await,
+            // `build` refuses a graph with two.
+            [] => self.default(facet, asked).await,
+            _ => Err(ComponentError::not_single(facet)),
+        }
     }
 
     /// The default for the single `facet`, built if it is not yet.
@@ -259,7 +173,7 @@ impl Graph {
         self: &Arc<Self>,
         facet: TypeKey,
         asked: Option<(&str, TypeKey)>,
-    ) -> ComponentResult<Arc<ComponentNode>> {
+    ) -> ComponentResult<Arc<BuiltComponent>> {
         let descriptor =
             self.registry.default_for(facet.id, &self.own_defaults).ok_or_else(|| {
                 ComponentError::InvalidConfig(format!(
@@ -312,15 +226,9 @@ fn cycle(asked: Option<(String, TypeKey)>, other: &str) -> ComponentError {
     }
 }
 
-/// The components of one configuration, built.
-#[derive(Debug)]
-pub struct ComponentContainer {
-    graph: Arc<Graph>,
-}
-
-impl ComponentContainer {
-    /// Builds the components of `config` with the factories of `registry`,
-    /// each with `context` - a component asked for by another first, the
+impl ComponentRegistry {
+    /// Builds the components of `config` with the factories of the registry,
+    /// each in `context` - a component asked for by another first, the
     /// rest in the order of the configuration -, for an owner that asks it
     /// for the facets `asked` and no other (issue 337).
     ///
@@ -340,40 +248,40 @@ impl ComponentContainer {
     /// with its entry - one provides no facet of the closure or has params its kind does not take
     /// or finds wrong, refused before anything is built; whatever resolving a `ref` or building a
     /// component reports, wrapped with its id and kind.
-    pub async fn from_config(
+    pub async fn build(
+        self: &Arc<Self>,
         config: &ComponentConfig,
         asked: &[TypeKey],
-        registry: &Arc<ComponentRegistry>,
-        context: &ComponentContext,
-    ) -> ComponentResult<Self> {
-        Self::with_defaults(config, &ComponentConfig::default(), asked, registry, context).await
+        context: &BuildContext,
+    ) -> ComponentResult<ComponentContainer> {
+        self.build_with_defaults(config, &ComponentConfig::default(), asked, context).await
     }
 
-    /// Builds the components of `config` as `from_config` does, with the
+    /// Builds the components of `config` as `build` does, with the
     /// components of `defaults` as the defaults of the singles they provide,
     /// in place of the registry's, for this container alone: for a kind of
     /// owner whose singles want another default, such as an external agent's
     /// `ContextProvider` (issue 214).
     ///
     /// # Errors
-    /// As `from_config`; and as `ComponentRegistry::set_defaults` for
+    /// As `build`; and as `ComponentRegistry::set_defaults` for
     /// `defaults`.
-    pub async fn with_defaults(
+    pub async fn build_with_defaults(
+        self: &Arc<Self>,
         config: &ComponentConfig,
         defaults: &ComponentConfig,
         asked: &[TypeKey],
-        registry: &Arc<ComponentRegistry>,
-        context: &ComponentContext,
-    ) -> ComponentResult<Self> {
-        let own_defaults = registry.defaults_of(defaults)?;
-        let planned = registry.plan(config, &own_defaults, &context.security_context).await?;
+        context: &BuildContext,
+    ) -> ComponentResult<ComponentContainer> {
+        let own_defaults = self.defaults_of(defaults)?;
+        let planned = self.plan(config, &own_defaults, &context.security_context).await?;
         // Refused before anything is built: params a kind does not take or
         // finds wrong (issue 515), and what nobody asks for, which would read
         // its owner's secrets for nothing (issue 337).
-        registry.require_buildable(&planned, &own_defaults, asked)?;
+        self.require_buildable(&planned, &own_defaults, asked)?;
         let graph = Arc::new(Graph {
-            registry: Arc::clone(registry),
-            context: ComponentContext { building: None, ..context.clone() },
+            registry: Arc::clone(self),
+            context: context.clone(),
             asked: asked.to_vec(),
             states: Mutex::new(planned.iter().map(|_| State::Pending).collect()),
             planned,
@@ -383,17 +291,42 @@ impl ComponentContainer {
         for index in 0..graph.planned.len() {
             graph.ensure(index, None).await?;
         }
-        Ok(Self { graph })
+        Ok(ComponentContainer::new(graph))
+    }
+}
+
+#[async_trait]
+impl ComponentGraph for Graph {
+    async fn all_of(
+        self: Arc<Self>,
+        facet: TypeKey,
+        asking: Option<&str>,
+    ) -> ComponentResult<Vec<Arc<BuiltComponent>>> {
+        self.all(facet, asking).await
     }
 
-    /// What it was built from: its configuration with every `ref` resolved
-    /// to the components of the bundle it stood for (issue 270), in their
-    /// order. The defaults built for singles it does not configure are not
-    /// among them.
-    pub fn components(&self) -> ComponentConfig {
+    async fn one_of(
+        self: Arc<Self>,
+        facet: TypeKey,
+        asking: Option<&str>,
+    ) -> ComponentResult<Arc<BuiltComponent>> {
+        self.one(facet, asking).await
+    }
+
+    fn built(&self) -> Vec<Arc<BuiltComponent>> {
+        let states = self.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        states
+            .iter()
+            .filter_map(|state| match state {
+                State::Built(node) => Some(Arc::clone(node)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn components(&self) -> ComponentConfig {
         ComponentConfig {
             component_nodes: self
-                .graph
                 .planned
                 .iter()
                 .map(|planned| planned.descriptor.clone())
@@ -401,51 +334,17 @@ impl ComponentContainer {
         }
     }
 
-    /// Every component that provides `T` - with `tag`, if one is given - in
-    /// the order of the configuration.
-    ///
-    /// # Errors
-    /// `ComponentError::Undeclared` if `T` is not among the facets it was
-    /// built for.
-    pub fn get_all<T>(&self, tag: Option<&str>) -> ComponentResult<Vec<ComponentImpl<T>>>
-    where
-        T: ?Sized + Send + Sync + 'static,
-    {
-        require_declared::<T>(&self.graph.asked)?;
-        let states = self.graph.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        Ok(states
-            .iter()
-            .filter_map(|state| match state {
-                State::Built(node) => Some(node),
-                _ => None,
-            })
-            .filter(|node| tag.is_none_or(|tag| node.tags.iter().any(|t| t == tag)))
-            .filter_map(|node| node.get::<T>())
-            .collect())
-    }
-
-    /// The one component that provides `T`, a facet of which there is
-    /// exactly one: the container's, or the default - built when it is first
-    /// asked for.
-    ///
-    /// # Errors
-    /// `ComponentError::Undeclared` if `T` is not among the facets it was
-    /// built for; whatever building the default reports;
-    /// `ComponentError::InvalidConfig` if `T` is not a facet of which there
-    /// is one.
-    pub async fn one<T: ?Sized + Send + Sync + 'static>(
-        &self,
-    ) -> ComponentResult<ComponentImpl<T>> {
-        require_declared::<T>(&self.graph.asked)?;
-        self.graph.one::<T>(None).await
+    fn asked(&self) -> &[TypeKey] {
+        &self.asked
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::component::ComponentFacets;
+    use crate::api::component::ComponentKind;
     use crate::component::testing::*;
-    use crate::component::ComponentKind;
     use caelumora_model::security::Policies;
     use caelumora_model::store::{EntityStores, Persistence};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -475,14 +374,10 @@ mod tests {
         );
         let registry = Arc::new(registry);
 
-        let error = ComponentContainer::from_config(
-            &config(&[("hen", "chicken"), ("egg", "egg")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .expect_err("they need each other");
+        let error = registry
+            .build(&config(&[("hen", "chicken"), ("egg", "egg")]), ASKED, &test_context())
+            .await
+            .expect_err("they need each other");
 
         let innermost = causes(&error).last().copied().unwrap();
         assert!(
@@ -503,14 +398,10 @@ mod tests {
         });
         let registry = Arc::new(registry);
 
-        let error = ComponentContainer::from_config(
-            &config(&[("liar", "liar")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .expect_err("provides nothing");
+        let error = registry
+            .build(&config(&[("liar", "liar")]), ASKED, &test_context())
+            .await
+            .expect_err("provides nothing");
 
         let message = error.to_string();
         assert!(
@@ -525,40 +416,24 @@ mod tests {
         let (registry, built) = choices();
         let registry = Arc::new(registry);
 
-        let without = ComponentContainer::from_config(
-            &config(&[("a", "part")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .unwrap();
+        let without =
+            registry.build(&config(&[("a", "part")]), ASKED, &test_context()).await.unwrap();
         assert_eq!(built.load(Ordering::SeqCst), 0, "nobody asked for it yet");
         assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "declared");
         assert_eq!(without.one::<dyn Choice>().await.unwrap().id, "declared");
         assert_eq!(built.load(Ordering::SeqCst), 1, "built once");
 
-        let with = ComponentContainer::from_config(
-            &config(&[("mine", "other")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .unwrap();
+        let with =
+            registry.build(&config(&[("mine", "other")]), ASKED, &test_context()).await.unwrap();
         assert_eq!(
             with.one::<dyn Choice>().await.unwrap().id,
             "mine",
             "the configured one replaces the default"
         );
 
-        let two = ComponentContainer::from_config(
-            &config(&[("mine", "other"), ("yours", "other")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await;
+        let two = registry
+            .build(&config(&[("mine", "other"), ("yours", "other")]), ASKED, &test_context())
+            .await;
         let message = two.expect_err("there is one").to_string();
         assert!(message.contains("'mine' and 'yours' both provide Choice"), "{message}");
 
@@ -573,29 +448,29 @@ mod tests {
         registry.set_defaults(&config(&[("configured", "declared")])).unwrap();
         let registry = Arc::new(registry);
 
-        let own = ComponentContainer::with_defaults(
-            &config(&[]),
-            &config(&[("its_own", "other")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .unwrap();
+        let own = registry
+            .build_with_defaults(
+                &config(&[]),
+                &config(&[("its_own", "other")]),
+                ASKED,
+                &test_context(),
+            )
+            .await
+            .unwrap();
         assert_eq!(
             own.one::<dyn Choice>().await.unwrap().id,
             "its_own",
             "in place of the configuration's too"
         );
-        let mine = ComponentContainer::with_defaults(
-            &config(&[("mine", "other")]),
-            &config(&[("its_own", "other")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .unwrap();
+        let mine = registry
+            .build_with_defaults(
+                &config(&[("mine", "other")]),
+                &config(&[("its_own", "other")]),
+                ASKED,
+                &test_context(),
+            )
+            .await
+            .unwrap();
         assert_eq!(
             mine.one::<dyn Choice>().await.unwrap().id,
             "mine",
@@ -603,14 +478,9 @@ mod tests {
         );
         assert_eq!(built.load(Ordering::SeqCst), 0, "no other default is built");
 
-        let refused = ComponentContainer::with_defaults(
-            &config(&[]),
-            &config(&[("x", "part")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await;
+        let refused = registry
+            .build_with_defaults(&config(&[]), &config(&[("x", "part")]), ASKED, &test_context())
+            .await;
         assert!(
             matches!(refused, Err(ComponentError::InvalidConfig(_))),
             "a default must provide a single"
@@ -645,23 +515,20 @@ mod tests {
         let registry = Arc::new(registry);
         let asked = &[TypeKey::of::<dyn Choice>(), TypeKey::of::<dyn Other>()];
 
-        let graph =
-            ComponentContainer::from_config(&config(&[]), asked, &registry, &test_context())
-                .await
-                .unwrap();
+        let graph = registry.build(&config(&[]), asked, &test_context()).await.unwrap();
         graph.one::<dyn Choice>().await.unwrap();
         graph.one::<dyn Other>().await.unwrap();
         assert_eq!(built.load(Ordering::SeqCst), 1, "one component for both");
 
-        let configured = ComponentContainer::with_defaults(
-            &config(&[]),
-            &config(&[("model", "pair")]),
-            asked,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .unwrap();
+        let configured = registry
+            .build_with_defaults(
+                &config(&[]),
+                &config(&[("model", "pair")]),
+                asked,
+                &test_context(),
+            )
+            .await
+            .unwrap();
         assert_eq!(configured.one::<dyn Choice>().await.unwrap().id, "model");
         assert_eq!(configured.one::<dyn Other>().await.unwrap().id, "model");
         assert_eq!(built.load(Ordering::SeqCst), 2, "the configuration's, once as well");
@@ -672,33 +539,24 @@ mod tests {
         let (mut registry, _) = choices();
         registry.single::<dyn Named>(None);
         let registry = Arc::new(registry);
-        let built =
-            ComponentContainer::from_config(&config(&[]), ASKED, &registry, &test_context())
-                .await
-                .expect("nobody asked for it");
+        let built = registry
+            .build(&config(&[]), ASKED, &test_context())
+            .await
+            .expect("nobody asked for it");
         let message = built.one::<dyn Named>().await.expect_err("there is none").to_string();
         assert!(
             message.contains("no component provides Named, and it has no default"),
             "{message}"
         );
         assert_eq!(registry.kind_of::<dyn Named>(&config(&[])), None, "no kind to tell");
-        let provided = ComponentContainer::from_config(
-            &config(&[("a", "part")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .unwrap();
+        let provided =
+            registry.build(&config(&[("a", "part")]), ASKED, &test_context()).await.unwrap();
         assert_eq!(provided.one::<dyn Named>().await.expect("the container's own").id, "a");
 
         let (mut registry, _) = choices();
         registry.single::<dyn Named>(Some("missing"));
         let registry = Arc::new(registry);
-        let built =
-            ComponentContainer::from_config(&config(&[]), ASKED, &registry, &test_context())
-                .await
-                .unwrap();
+        let built = registry.build(&config(&[]), ASKED, &test_context()).await.unwrap();
         let message = built
             .one::<dyn Named>()
             .await

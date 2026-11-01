@@ -3,7 +3,7 @@
 
 use crate::tool;
 use anyhow::Result;
-use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::library::{Library, LibraryBuilder};
 
 /// The tools of MCP servers, as a library.
 #[derive(Debug, Default)]
@@ -14,7 +14,7 @@ impl Library for McpLibrary {
         "mcp"
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         tool::register(&mut library.components());
         Ok(())
     }

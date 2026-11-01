@@ -37,11 +37,12 @@
 use crate::client::Client;
 use crate::wire;
 use async_trait::async_trait;
-use caelumora_kernel::remote::describe_request_error;
-use caelumora_kernel::terminal::{
-    ByteStream, CommandKey, CommandState, Commands, FileEntry, Kept, Shell, Terminal,
-    TerminalError, TerminalReader, TerminalResult, WorkspacePath,
+use caelumora_kernel::api::remote::describe_request_error;
+use caelumora_kernel::api::terminal::{
+    ByteStream, CommandState, FileEntry, Shell, Terminal, TerminalError, TerminalReader,
+    TerminalResult, WorkspacePath,
 };
+use caelumora_kernel::terminal::{CommandKey, Commands, Kept};
 use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, TryStreamExt};

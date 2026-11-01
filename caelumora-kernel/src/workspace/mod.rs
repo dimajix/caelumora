@@ -34,66 +34,16 @@ pub(crate) mod reaper;
 pub mod testing;
 
 pub(crate) use extension::{UsableWorkspace, WorkspaceUse};
-pub use extension::{WorkspaceReader, WorkspaceWriter};
 pub use manager::WorkspaceManager;
 
-use crate::backend::StorageGone;
-use crate::terminal::{TerminalError, TerminalProvider};
+use crate::api::workspace::{WorkspaceError, WorkspaceResult};
+use crate::terminal::TerminalProvider;
 use caelumora_model::confidentiality::{
     Classification, ConfidentialityPolicy, ConfidentialityQuestions,
 };
-use caelumora_model::security::{
-    AccessPolicy, ActionType, Enforcement, Refused, SecurityContext, WRITE,
-};
+use caelumora_model::security::{AccessPolicy, ActionType, Enforcement, SecurityContext, WRITE};
 use caelumora_model::store::{StoreError, Stored};
-use caelumora_model::value::ValueError;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
-
-#[derive(Debug, thiserror::Error)]
-pub enum WorkspaceError {
-    /// No such workspace, or not one the caller may use - one case, so
-    /// that nothing can be probed.
-    #[error("there is no workspace {0}")]
-    NotFound(WorkspaceId),
-    /// A storage the caller named, for a workspace to be made in, that is not configured.
-    #[error("no storage named '{0}' is configured")]
-    UnknownStorage(String),
-    /// The storage a workspace lies in, since removed from the configuration.
-    #[error(transparent)]
-    StorageGone(#[from] StorageGone),
-    #[error("a workspace belongs to a user")]
-    OwnerNotAUser,
-    #[error("the classification may not be given")]
-    ClassificationRefused,
-    #[error("you are not cleared for the classification of the workspace")]
-    NotCleared,
-    /// What its access list grants the caller is reading, not changing its
-    /// files (issue 23).
-    #[error("you may read the workspace {id}, not change its files")]
-    ReadOnly {
-        id: WorkspaceId,
-        #[source]
-        refused: Refused,
-    },
-    /// No workspace the caller may use in the channel they act in: none is
-    /// attached, the channel does not use it, they may not read the channel
-    /// or the workspace, or the two do not flow both ways - one case, so
-    /// that nothing can be probed (issue 296).
-    #[error("there is no workspace you can use in this channel")]
-    NotUsableInChannel,
-    /// Its storage may not hold what is so classified (issue 251): a place
-    /// with a shell or a remote side is cleared for so much.
-    #[error("the storage '{0}' may not hold a workspace so classified")]
-    StorageNotCleared(String),
-    #[error(transparent)]
-    Invalid(#[from] ValueError),
-    #[error(transparent)]
-    Terminal(#[from] TerminalError),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-}
-
-pub type WorkspaceResult<T> = Result<T, WorkspaceError>;
 
 /// `error` of the store about workspace `id`: not found is one case with
 /// not readable.

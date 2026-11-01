@@ -5,24 +5,17 @@
 //! through them and knows no actor of an agent by name; the users' and the approvers' actors are
 //! the kernel's own.
 
-use super::Actor;
+use crate::api::actor::{Actor, AgentFactory};
 use crate::channel::ChannelError;
 use crate::controller::{AgentController, PersonalityController};
-use crate::kernel::{ActorRuntime, AgentRuntime, ParticipantRuntime};
+use crate::kernel::{AgentRuntime, ParticipantRuntime};
 use anyhow::{anyhow, Result};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::PersonalityKind;
 use caelumora_model::type_map::TypeKey;
-use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::fmt;
-use std::future::Future;
 use std::sync::Arc;
-
-/// What builds the actor of an agent of one kind: from its runtime alone (issue 516), which
-/// holds the agent, its personality and the channel it takes part in.
-type AgentFactory =
-    Box<dyn Fn(Arc<dyn ActorRuntime>) -> BoxFuture<'static, Result<Box<dyn Actor>>> + Send + Sync>;
 
 /// A registered kind of agent.
 struct Registration {
@@ -48,16 +41,12 @@ impl AgentKinds {
     /// Registers the agents of personalities of `kind`: their actor is built
     /// by `factory` from the agent's runtime (issue 516), their components are asked for `facets`
     /// (issue 337). A kind registered before is replaced.
-    pub fn register<F, Fut>(
+    pub fn register(
         &mut self,
         kind: PersonalityKind,
         facets: &'static [TypeKey],
-        factory: F,
-    ) where
-        F: Fn(Arc<dyn ActorRuntime>) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<Box<dyn Actor>>> + Send + 'static,
-    {
-        let factory: AgentFactory = Box::new(move |runtime| Box::pin(factory(runtime)));
+        factory: AgentFactory,
+    ) {
         self.kinds.insert(kind, Registration { facets, factory });
     }
 
@@ -109,12 +98,13 @@ impl AgentKinds {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::actor::agent_factory;
+    use crate::api::component::ComponentImpl;
+    use crate::api::transport::{EventReceiver, EventSender};
     use crate::command::help_command::{HelpCommandProvider, HELP_COMMAND_NAME};
     use crate::command::{ChannelCommandProvider, CommandExecutor};
-    use crate::component::ComponentImpl;
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
-    use crate::transport::{EventReceiver, EventSender};
     use async_trait::async_trait;
     use caelumora_model::actor::{ActorState, Envelope};
     use caelumora_model::agent::testing::make_personality;
@@ -234,15 +224,10 @@ mod tests {
     async fn an_agent_is_built_by_the_kind_of_its_personality() {
         let mut kinds = AgentKinds::default();
         assert!(kinds.facets(PersonalityKind::Internal).is_none(), "none unless registered");
-        kinds.register(PersonalityKind::Internal, &[], |_| async {
-            Err(anyhow!("built as first registered"))
-        });
-        kinds.register(PersonalityKind::External, &[], |_| async {
-            Err(anyhow!("built as first registered"))
-        });
-        kinds.register(PersonalityKind::External, &[], |_| async {
-            Err(anyhow!("built as registered again"))
-        });
+        let failing = |why: &'static str| agent_factory(move |_| async move { Err(anyhow!(why)) });
+        kinds.register(PersonalityKind::Internal, &[], failing("built as first registered"));
+        kinds.register(PersonalityKind::External, &[], failing("built as first registered"));
+        kinds.register(PersonalityKind::External, &[], failing("built as registered again"));
 
         let error = built(
             &kinds,
@@ -264,9 +249,10 @@ mod tests {
     #[tokio::test]
     async fn an_agent_whose_command_a_command_of_the_session_hides_is_refused() {
         let mut kinds = AgentKinds::default();
-        kinds.register(PersonalityKind::Internal, &[], |runtime| async move {
+        let helping = agent_factory(|runtime| async move {
             Ok(Box::new(Helping(runtime.actor_id())) as Box<dyn Actor>)
         });
+        kinds.register(PersonalityKind::Internal, &[], helping);
         let help = |policy| {
             let help = ComponentImpl {
                 id: "help".to_string(),

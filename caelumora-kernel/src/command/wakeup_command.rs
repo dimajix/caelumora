@@ -1,10 +1,9 @@
 //! The built-in `/wakeup` command (issue 28).
 
-use crate::command::{
-    named_participant, names, ChannelCommandProvider, CommandContext, CommandError, CommandResult,
-    ProvidesCommands,
-};
-use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::api::command::{CommandError, CommandResult, ProvidesCommands};
+use crate::api::component::{ComponentFacets, ComponentKind};
+use crate::command::{named_participant, names, ChannelCommandProvider, CommandContext};
+use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
 use anyhow::Error;
 use async_trait::async_trait;

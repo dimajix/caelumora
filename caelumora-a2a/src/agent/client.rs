@@ -9,8 +9,8 @@ use super::wire::{
 };
 use bytes::Buf;
 use caelumora_agents::external::{ExternalAgentError, ExternalAgentResult};
-use caelumora_kernel::component::ComponentError;
-use caelumora_kernel::remote::{describe_chain, describe_request_error, ExpiringCache};
+use caelumora_kernel::api::component::ComponentError;
+use caelumora_kernel::api::remote::{describe_chain, describe_request_error, ExpiringCache};
 use caelumora_model::remote::{redact_endpoint, RemoteEndpoint};
 use caelumora_model::secret::Secrets;
 use futures::stream::{once, BoxStream};

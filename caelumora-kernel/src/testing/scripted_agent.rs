@@ -5,10 +5,10 @@
 //! their participants. It tells where it stands, begins and ends its answers
 //! as an agent does, and keeps what it hears.
 
-use crate::actor::{Actor, AgentKinds, Answering};
-use crate::kernel::ActorRuntime;
-use crate::library::{Library, LibraryBuilder};
-use crate::transport::{EventReceiver, EventSender};
+use crate::api::actor::{agent_factory, Actor, Answering};
+use crate::api::library::{Library, LibraryBuilder};
+use crate::api::runtime::ActorRuntime;
+use crate::api::transport::{EventReceiver, EventSender};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
@@ -44,14 +44,14 @@ impl Library for ScriptedAgents {
         "scripted_agents"
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
-        let kinds: &mut AgentKinds = library.agent_kinds();
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         for kind in [PersonalityKind::Internal, PersonalityKind::External] {
             let script = self.0.clone();
-            kinds.register(kind, &[], move |runtime| {
+            let factory = agent_factory(move |runtime| {
                 let script = script.clone();
                 async move { Ok(Box::new(ScriptedAgent::new(runtime, script)) as Box<dyn Actor>) }
             });
+            library.register_agent_kind(kind, &[], factory);
         }
         Ok(())
     }

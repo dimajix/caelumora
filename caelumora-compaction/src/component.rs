@@ -20,11 +20,9 @@ use caelumora_agents::activity::{ActivityError, ActivityProvider};
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_kernel::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
-    LibraryComponents, Params,
-};
+use caelumora_kernel::api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_kernel::api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::command::{Command, CommandOutput};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};

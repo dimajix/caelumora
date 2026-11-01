@@ -11,7 +11,7 @@
 //! `Commands` and `Kept` are public, so that a provider outside the kernel keeps its commands as
 //! the kernel's do (issue 327).
 
-use super::{TerminalError, TerminalResult};
+use crate::api::terminal::{TerminalError, TerminalResult};
 use caelumora_model::workspace::WorkspaceId;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};

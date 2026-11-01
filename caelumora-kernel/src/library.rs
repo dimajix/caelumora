@@ -1,82 +1,42 @@
-//! Libraries (issue 516): the crates of the agent side - what runs an agent or brings components
-//! for its facets -, joined to the kernel as plugins are, when the kernel is built, but trusted for
-//! nothing. A library registers with a `LibraryBuilder`, which offers what a library registers and
-//! nothing of the kernel: no store, no policy, no secret, no controller. Its component kinds are
-//! marked as a library's (`LibraryComponents`), and the kernel is not built where one provides a
-//! facet the kernel builds in its own name or uses a service of the kernel but the texts
-//! (`KernelBuilder::build`). Which libraries are in is the program's choice, as which plugins are.
+//! How the kernel serves a library's registration (`api::library`, issue 516): the part of the
+//! `KernelBuilder` a library may use.
 
-use crate::actor::AgentKinds;
-use crate::component::LibraryComponents;
+use crate::api::actor::AgentFactory;
+use crate::api::component::LibraryComponents;
+use crate::api::library::LibraryBuilder;
 use crate::kernel::KernelBuilder;
 use anyhow::Result;
+use caelumora_model::agent::PersonalityKind;
 use caelumora_model::prompt_catalogue::PromptError;
-use serde::de::DeserializeOwned;
-use std::sync::Arc;
+use caelumora_model::type_map::{ErasedArc, TypeKey};
+use serde_json::Value;
 
-/// A crate of the agent side, joined to the kernel as a plugin is (`Plugin`), trusted for nothing.
-pub trait Library: Send + Sync {
-    /// Its name, as messages name it.
-    fn name(&self) -> &'static str;
+/// The part of the `KernelBuilder` a library registers with.
+pub(crate) struct ForLibrary<'a>(pub(crate) &'a mut KernelBuilder);
 
-    /// Registers what it brings with `library`.
-    ///
-    /// # Errors
-    /// If its section of the configuration cannot be read, or what it brings cannot be made - the
-    /// process does not start then.
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()>;
-}
-
-/// What a library registers with (issue 516): the part of the `KernelBuilder` a library may use -
-/// its component kinds, its kinds of agent, its texts, its section of the configuration and the
-/// services it offers its own kinds.
-#[derive(Debug)]
-pub struct LibraryBuilder<'a> {
-    kernel: &'a mut KernelBuilder,
-}
-
-impl<'a> LibraryBuilder<'a> {
-    /// The part of `kernel` a library registers with.
-    pub(crate) fn new(kernel: &'a mut KernelBuilder) -> Self {
-        Self { kernel }
+impl LibraryBuilder for ForLibrary<'_> {
+    fn components(&mut self) -> LibraryComponents<'_> {
+        self.0.components().library_components()
     }
 
-    /// The component kinds, to register the library's with, marked as a library's.
-    pub fn components(&mut self) -> LibraryComponents<'_> {
-        LibraryComponents::new(self.kernel.components())
+    fn register_agent_kind(
+        &mut self,
+        kind: PersonalityKind,
+        facets: &'static [TypeKey],
+        factory: AgentFactory,
+    ) {
+        self.0.agent_kinds().register(kind, facets, factory);
     }
 
-    /// The kinds of agent the program runs (issue 370), to register the library's with.
-    pub fn agent_kinds(&mut self) -> &mut AgentKinds {
-        self.kernel.agent_kinds()
+    fn add_prompts(&mut self, namespace: &str, yaml: &str) -> Result<(), PromptError> {
+        self.0.prompts().add(namespace, yaml)
     }
 
-    /// Adds the library's texts given to models (issue 57), `yaml`, under its `namespace`
-    /// (`PromptCatalogue::add`) - and nothing else of the catalogue: the variants are the
-    /// configuration's.
-    ///
-    /// # Errors
-    /// As `PromptCatalogue::add`: a namespace added before among them.
-    pub fn add_prompts(&mut self, namespace: &str, yaml: &str) -> Result<(), PromptError> {
-        self.kernel.prompts().add(namespace, yaml)
+    fn section(&mut self, name: &str) -> Result<Option<Value>> {
+        self.0.library_section(name)
     }
 
-    /// Claims the section `name` of the libraries in the configuration (`libraries`) and reads it
-    /// as `C`; left out, it is `C::default()`.
-    ///
-    /// # Errors
-    /// If another library claimed it, or it is not a `C`.
-    pub fn config<C: DeserializeOwned + Default>(&mut self, name: &str) -> Result<C> {
-        self.kernel.library_config(name)
-    }
-
-    /// Offers `service`, the library's own - which decides nothing of the kernel's, as
-    /// `caelumora-comfyui`'s workflows -, to the kinds of the libraries that use it.
-    ///
-    /// # Errors
-    /// If a service of its type is offered already - by the kernel, a plugin or a library: a
-    /// library replaces none.
-    pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) -> Result<()> {
-        self.kernel.provide_of_library(service)
+    fn provide_of(&mut self, key: TypeKey, service: ErasedArc) -> Result<()> {
+        self.0.provide_of_library(key, service)
     }
 }

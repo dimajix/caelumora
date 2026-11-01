@@ -17,8 +17,8 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
-use caelumora_kernel::kernel::OwnRecord;
-use caelumora_kernel::view::SessionReader;
+use caelumora_kernel::api::reader::SessionReader;
+use caelumora_kernel::api::runtime::OwnRecord;
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::digest::Digest;
 use caelumora_model::ledger::Staged;

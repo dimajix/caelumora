@@ -44,33 +44,31 @@ pub use channel::{ChannelView, ParticipantView};
 pub use context::{AgentContextError, AgentContextView};
 pub use group::GroupView;
 pub use project::ProjectView;
-pub use reader::{ChannelReader, ParticipantReader, SessionReader};
-pub use session::{PrivateNotesElsewhere, SessionView};
+pub use session::SessionView;
 pub use workspace::WorkspaceView;
 
 use crate::actor::ActorManager;
-use crate::attachment::{AttachmentError, AttachmentManager};
+use crate::api::component::Services;
+use crate::api::reader::{ViewError, ViewResult};
+use crate::attachment::AttachmentManager;
 use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
-use crate::kernel::{Kernel, Services};
+use crate::kernel::Kernel;
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::workspace::WorkspaceManager;
-use anyhow::Error;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{
     ConfidentialityPolicy, ConfidentialityQuestions, Place, Reading,
 };
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::message::MessageId;
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::project::ProjectId;
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
 use caelumora_model::security::{
-    AccessPolicy, AccessQuestions, AclEntry, Policies, Refused, SecurityAttributes,
-    SecurityContext, Subject,
+    AccessPolicy, AccessQuestions, AclEntry, Policies, SecurityAttributes, SecurityContext, Subject,
 };
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{
@@ -83,11 +81,10 @@ use caelumora_model::store::{
     Deleted, EntityStore, EntityStores, StateStore, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_model::workspace::WorkspaceId;
-use std::error;
+use std::fmt;
 use std::fmt::Debug;
 use std::iter;
 use std::sync::Arc;
-use std::{fmt, result};
 
 /// Who navigates: in whose name every edge asks its question (issue 131),
 /// and - for an agent - from where.
@@ -120,73 +117,6 @@ impl Viewer {
         self.from.as_ref()
     }
 }
-
-/// Why an edge could not be followed. The messages are meant for users
-/// (see `crate::error::user_message`) - or, through `ToolError`, for the
-/// model that asked.
-///
-/// What does not exist and what the viewer may not read are one case each,
-/// so that nothing can be probed - as `SessionError::ChannelNotFound` holds
-/// for operations.
-#[derive(Debug, thiserror::Error)]
-pub enum ViewError {
-    #[error("There is no session {0}")]
-    SessionNotFound(SessionId),
-    #[error("Session {session} has no channel {channel}")]
-    ChannelNotFound { session: SessionId, channel: ChannelId },
-    #[error("There is no workspace {0}")]
-    WorkspaceNotFound(WorkspaceId),
-    #[error("There is no project {0}")]
-    ProjectNotFound(ProjectId),
-    #[error("There is no group {0}")]
-    GroupNotFound(GroupId),
-    #[error("There is no agent {0}")]
-    AgentNotFound(AgentId),
-    /// Asked for by name, as an agent's tools do: no such channel, or
-    /// nothing in it that can be read from where the viewer reads.
-    #[error("there is no channel named \"{0}\" that can be read from here")]
-    NoChannelNamed(String),
-    #[error("Channel {channel} has no participant {actor}")]
-    ParticipantNotFound { channel: ChannelId, actor: ActorId },
-    /// Not in the history, or not in the part of it the viewer sees.
-    #[error("Channel {channel} has no message {message}")]
-    MessageNotFound { channel: ChannelId, message: MessageId },
-    /// Reached, but not the viewer's to read: what an agent saw, which
-    /// tools it has.
-    #[error("You are not permitted to read this of {actor}")]
-    Forbidden {
-        actor: ActorId,
-        #[source]
-        refused: Refused,
-    },
-    /// Not the viewer's to do: searching whom to take into a session they
-    /// may not change (issue 221).
-    #[error("You are not permitted to do this")]
-    NotPermitted(#[source] Refused),
-    /// Only agents have a context.
-    #[error("There is nothing {actor} saw: it is no agent, or no longer exists")]
-    NoContext { actor: ActorId },
-    /// An attachment of a message the viewer sees could not be read: it carries none such, or its
-    /// storage failed (issue 282).
-    #[error(transparent)]
-    Attachment(#[from] AttachmentError),
-    /// Reaching it failed; the cause is in the log.
-    #[error("Reading failed")]
-    Failed(#[source] Error),
-}
-
-impl ViewError {
-    /// Reaching something failed: `error`, with what was being done, for
-    /// the log - the viewer learns only that it failed.
-    pub(crate) fn failed<E>(error: E, doing: impl fmt::Display + Send + Sync + 'static) -> Self
-    where
-        E: error::Error + Send + Sync + 'static,
-    {
-        ViewError::Failed(Error::new(error).context(doing))
-    }
-}
-
-pub type ViewResult<T> = result::Result<T, ViewError>;
 
 /// Where the running sessions are: a root of views reaches a session
 /// through its loop if it runs. The `SessionManager` knows them all; an
@@ -1040,6 +970,8 @@ impl Debug for Views {
 mod tests {
     use super::*;
     use crate::actor::user::ChannelWatch;
+    use crate::api::error::AttachmentError;
+    use crate::api::reader::{ChannelReader, SessionReader};
     use crate::channel::ChannelLoop;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
@@ -2962,7 +2894,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_released_message_is_read_where_its_channel_is_not() {
-        use crate::view::ViewError;
+        use crate::api::reader::ViewError;
         use caelumora_model::actor::ActorId;
         use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
 

@@ -17,11 +17,11 @@ use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_kernel::agent::state::AgentStateHandle;
-use caelumora_kernel::component::{
-    ComponentFacets, ComponentKind, ComponentRegistry, LibraryComponents,
-};
-use caelumora_kernel::kernel::{ActorRuntime, AgentRuntime, ParticipantRuntime};
-use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_kernel::api::runtime::ActorRuntime;
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
 use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::TestKernel;
@@ -69,7 +69,7 @@ impl Library for TestAgents {
         AgentsLibrary.name()
     }
 
-    fn register(&self, library: &mut LibraryBuilder<'_>) -> Result<()> {
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         AgentsLibrary.register(library)?;
         with_unasked_model(&mut library.components());
         Ok(())
@@ -293,7 +293,7 @@ pub fn test_registry(store: &Persistence) -> ComponentRegistry {
 /// that is not to be asked as the default (`with_unasked_model`) - for tests that build components
 /// without a kernel; a kernel gets them from `TestAgents`.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
-    let mut components = LibraryComponents::new(registry);
+    let mut components = registry.library_components();
     register_components(&mut components);
     with_unasked_model(&mut components);
 }

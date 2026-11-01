@@ -13,8 +13,9 @@
 
 mod local;
 
+use crate::api::error::ContentError;
+use crate::api::terminal::ByteStream;
 use crate::backend::Backends;
-use crate::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::{ContentDigest, Digest};
@@ -22,25 +23,6 @@ use futures::StreamExt;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::{fmt, io};
 use tracing::warn;
-
-#[derive(Debug, thiserror::Error)]
-pub enum ContentError {
-    /// A key that is none: a path of segments, without `.`, `..` or an
-    /// empty one - as its owner made it, never as a client wrote it.
-    #[error("'{0}' is no key of content")]
-    InvalidKey(String),
-    #[error("nothing is kept under '{0}'")]
-    NotFound(String),
-    #[error("the content is larger than {limit} bytes")]
-    TooLarge { limit: u64 },
-    /// What was kept is not as large as it was said to be: it changed while it was read, or broke
-    /// off.
-    #[error("the content was not as large as it was said to be")]
-    Changed,
-    /// The storage failed: what happened, never where.
-    #[error("the storage of content failed: {0}")]
-    Unavailable(String),
-}
 
 impl ContentError {
     /// What a failure of reading or writing is, as an error of a storage says it: its kind, never

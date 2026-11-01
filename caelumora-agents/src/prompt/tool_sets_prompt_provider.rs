@@ -16,7 +16,7 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use caelumora_model::tool::ToolSet;

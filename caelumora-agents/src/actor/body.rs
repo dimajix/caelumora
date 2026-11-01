@@ -14,11 +14,12 @@ use crate::prompt::{ContextProvider, ModelProfileProvider};
 use crate::situation::Situation;
 use crate::turn::Turn;
 use anyhow::{Context, Result};
-use caelumora_kernel::actor::Answering;
-use caelumora_kernel::command::CommandSet;
-use caelumora_kernel::component::{ComponentContainer, ComponentImpl};
-use caelumora_kernel::kernel::ActorRuntime;
-use caelumora_kernel::transport::{EventReceiver, EventSender};
+use caelumora_kernel::api::actor::Answering;
+use caelumora_kernel::api::command::CommandSet;
+use caelumora_kernel::api::component::ComponentContainer;
+use caelumora_kernel::api::component::ComponentImpl;
+use caelumora_kernel::api::runtime::ActorRuntime;
+use caelumora_kernel::api::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };

@@ -24,7 +24,7 @@ use crate::terminal_tool::{tool, TerminalTool, TerminalToolConfig};
 use bytes::Bytes;
 use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::terminal::{
+use caelumora_kernel::api::terminal::{
     ByteStream, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
 };
 use caelumora_model::approval::{ArgumentMatcher, ToolMatcher};

@@ -13,7 +13,8 @@
 //! participant looked at (issue 189).
 
 use super::context::AgentContextView;
-use super::{ViewError, ViewResult, Views};
+use super::Views;
+use crate::api::reader::{ViewError, ViewResult};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality};

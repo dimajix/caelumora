@@ -2,7 +2,9 @@
 //! runs.
 
 use super::{channel_reading, ReadingBasis};
-use super::{ChannelView, ViewError, ViewResult, Views};
+use super::{ChannelView, Views};
+use crate::api::reader::PrivateNotesElsewhere;
+use crate::api::reader::{ViewError, ViewResult};
 use crate::channel::ChannelError;
 use crate::session::{ChannelRun, Found, SessionLoop};
 use anyhow::Error;
@@ -29,18 +31,6 @@ use caelumora_model::value::text::{Briefing, Summary};
 use caelumora_model::value::time_zone::TimeZone;
 use std::sync::Arc;
 use tracing::warn;
-
-/// An agent's private notes in another channel of its session, as far as
-/// they may be read where it reads from (`SessionView::own_private_notes`):
-/// what of that channel it knows itself - no view of the channel, which it
-/// may no longer reach.
-#[derive(Debug, Clone)]
-pub struct PrivateNotesElsewhere {
-    pub channel: ChannelId,
-    pub name: String,
-    pub notes: Vec<Note>,
-    pub digest: Option<Digest>,
-}
 
 /// A session the viewer may read.
 #[derive(Debug, Clone)]

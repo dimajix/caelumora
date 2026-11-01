@@ -23,9 +23,8 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_kernel::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents,
-};
+use caelumora_kernel::api::component::config_of_params;
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -172,10 +171,10 @@ mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime, TestAgents};
     use crate::turn::Turn;
+    use caelumora_kernel::api::reader::ViewError;
     use caelumora_kernel::session::testing::participant_runtime_in;
     use caelumora_kernel::session::SessionManager;
     use caelumora_kernel::testing::TestKernel;
-    use caelumora_kernel::view::ViewError;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};

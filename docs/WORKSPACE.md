@@ -95,7 +95,8 @@ are the plugin `caelumora-open-terminal` (issue 327), which the programs list; t
 instance builds without it. Another sandbox - a pod, a remote machine - is added the same way, by a
 plugin that registers a `TerminalProvider` of its own.
 
-What a provider has to offer is the public API of `caelumora_kernel::terminal`:
+What a provider has to offer is the public API of `caelumora_kernel::terminal`, with the handles of
+`caelumora_kernel::api::terminal` it hands out:
 
 *   a `TerminalProvider`: making and removing the place of a workspace, its `Terminal` for the
     largest file a workspace takes, its `Shell` for one scope if it has one - whose `end` ends a

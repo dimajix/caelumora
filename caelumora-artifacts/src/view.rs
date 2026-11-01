@@ -15,7 +15,7 @@ use crate::artifact::{
 use crate::extension::{ArtifactError, ArtifactPublisher, ArtifactResult};
 use crate::manager::ArtifactManager;
 use async_trait::async_trait;
-use caelumora_kernel::terminal::ByteStream;
+use caelumora_kernel::api::terminal::ByteStream;
 use caelumora_kernel::view::{ChannelView, ProjectView, Views};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{Classification, Reading};

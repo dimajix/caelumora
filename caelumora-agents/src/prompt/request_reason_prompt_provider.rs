@@ -20,7 +20,7 @@ use crate::prompt::{
 use crate::situation::Situation;
 use crate::tool::stop_tool::SILENCE_TOOL_NAME;
 use async_trait::async_trait;
-use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::RequestReason;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};

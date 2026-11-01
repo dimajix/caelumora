@@ -19,9 +19,10 @@ use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
-use caelumora_kernel::component::{ComponentError, ComponentRegistry};
+use caelumora_kernel::api::component::ComponentError;
+use caelumora_kernel::api::library::Library;
+use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::kernel::KernelBuilder;
-use caelumora_kernel::library::Library;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::SessionManager;
@@ -272,10 +273,11 @@ mod tests {
     use caelumora_agents::testing::offered_anywhere;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_comfyui::library::COMFYUI;
+    use caelumora_kernel::api::component::Services;
     use caelumora_kernel::backend::Backends;
     use caelumora_kernel::channel::ChannelLoop;
-    use caelumora_kernel::component::{ComponentContainer, ComponentContext};
-    use caelumora_kernel::kernel::{Kernel, Services};
+    use caelumora_kernel::component::BuildContext;
+    use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::seed::Seed;
     use caelumora_kernel::terminal::TerminalProvider;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
@@ -366,8 +368,9 @@ mod tests {
                     ..ComponentDescriptor::new("probed", kind)
                 }],
             };
-            let context = ComponentContext::new(SecurityContext::default(), Services::empty());
-            let refused = ComponentContainer::from_config(&config, &[], registry, &context)
+            let context = BuildContext::new(SecurityContext::default(), Services::empty());
+            let refused = registry
+                .build(&config, &[], &context)
                 .await
                 .map(|_| ())
                 .expect_err(kind)
@@ -559,21 +562,20 @@ mod tests {
         let kernel = kernel(&store);
         kernel.seed(&[example("seed.yaml")]).await.unwrap();
         // The services a kernel gives them (issue 296).
-        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
             // Asked for what its actor asks for (issue 337).
             let asked = kernel
                 .agent_kinds()
                 .facets(personality.kind)
                 .expect("a kind of agent the program runs");
-            ComponentContainer::from_config(
-                &personality.components,
-                asked,
-                kernel.component_registry(),
-                &context,
-            )
-            .await
-            .unwrap_or_else(|e| panic!("personality {} cannot be built: {e}", personality.name));
+            kernel
+                .component_registry()
+                .build(&personality.components, asked, &context)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("personality {} cannot be built: {e}", personality.name)
+                });
         }
     }
 
@@ -586,25 +588,22 @@ mod tests {
         let store = Persistence::in_memory();
         let kernel = kernel(&store);
         kernel.seed(&[example("seed.yaml")]).await.unwrap();
-        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
         for (template, channel) in seed
             .session_templates
             .iter()
             .flat_map(|template| template.channels.iter().map(move |channel| (template, channel)))
         {
-            ComponentContainer::from_config(
-                &channel.components,
-                ChannelLoop::COMPONENT_FACETS,
-                kernel.component_registry(),
-                &context,
-            )
-            .await
-            .unwrap_or_else(|e| {
-                panic!(
-                    "channel {} of template {} cannot be built: {e}",
-                    channel.name, template.name
-                )
-            });
+            kernel
+                .component_registry()
+                .build(&channel.components, ChannelLoop::COMPONENT_FACETS, &context)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "channel {} of template {} cannot be built: {e}",
+                        channel.name, template.name
+                    )
+                });
         }
     }
 
@@ -614,21 +613,18 @@ mod tests {
     #[tokio::test]
     async fn the_tools_of_an_mcp_server_are_a_component_of_the_program() {
         let kernel = kernel(&Persistence::in_memory());
-        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
         let config = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }),
                 ..ComponentDescriptor::new("tracker", MCP_TOOL_KIND)
             }],
         };
-        let container = ComponentContainer::from_config(
-            &config,
-            &[TypeKey::of::<dyn ToolProvider>()],
-            kernel.component_registry(),
-            &context,
-        )
-        .await
-        .expect("the kind is known");
+        let container = kernel
+            .component_registry()
+            .build(&config, &[TypeKey::of::<dyn ToolProvider>()], &context)
+            .await
+            .expect("the kind is known");
         let tools = container.get_all::<dyn ToolProvider>(None).unwrap();
         assert_eq!(tools.len(), 1);
         assert!(offered_anywhere(tools[0].facet.as_ref()).await.is_err());

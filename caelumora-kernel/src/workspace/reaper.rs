@@ -8,12 +8,12 @@
 //! other command its storage lists, at each event that can change the
 //! answer and besides every `COMMANDS_CHECKED_EVERY`.
 
+use crate::api::component::{ComponentError, ComponentResult};
+use crate::api::workspace::{WorkspaceError, WorkspaceResult};
 use crate::backend::NamedBackends;
-use crate::component::{ComponentError, ComponentResult};
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::terminal::{CommandKey, TerminalProvider};
-use crate::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::Agent;
 use caelumora_model::channel::{self, Participant};
@@ -266,7 +266,7 @@ fn changes_who_may_run(event: &GlobalEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::Shell;
+    use crate::api::terminal::Shell;
     use crate::workspace::testing::{session_with_workspace, shell_in, WithWorkspace};
     use caelumora_model::channel::ChannelUpdateEvent;
     use caelumora_model::workspace::CommandStatus;

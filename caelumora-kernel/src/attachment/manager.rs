@@ -4,11 +4,12 @@
 //! along.
 
 use super::cache::ContentCache;
-use super::{AttachmentError, AttachmentResult};
+use crate::api::component::{ComponentError, ComponentResult};
+use crate::api::error::ContentError;
+use crate::api::error::{AttachmentError, AttachmentResult};
+use crate::api::terminal::ByteStream;
 use crate::backend::NamedBackends;
-use crate::component::{ComponentError, ComponentResult};
-use crate::content::{keep_digested, ContentError, ContentStorage};
-use crate::terminal::ByteStream;
+use crate::content::{keep_digested, ContentStorage};
 use bytes::{Bytes, BytesMut};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;

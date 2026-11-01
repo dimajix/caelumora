@@ -16,7 +16,8 @@
 //!   Caelumora ends is not killed by it.
 
 use super::commands::{locked, Commands, Kept};
-use super::{CommandKey, CommandState, Shell, TerminalError, TerminalResult};
+use super::CommandKey;
+use crate::api::terminal::{CommandState, Shell, TerminalError, TerminalResult};
 use async_trait::async_trait;
 use caelumora_model::workspace::CommandStatus;
 use caelumora_model::workspace::WorkspaceId;

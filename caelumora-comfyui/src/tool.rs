@@ -11,10 +11,8 @@ use caelumora_agents::tool::{
     arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
-    LibraryComponents, Params,
-};
+use caelumora_kernel::api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;

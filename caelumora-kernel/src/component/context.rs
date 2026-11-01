@@ -1,133 +1,36 @@
-use super::container::{ComponentImpl, Graph};
-use super::registry::Registration;
-use super::{require_declared, ComponentError, ComponentResult};
-use crate::kernel::Services;
+//! The environment a configuration of components is built in (`BuildContext`).
+
+use crate::api::component::Services;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::type_map::TypeKey;
-use std::fmt;
-use std::fmt::Debug;
-use std::sync::Arc;
 
-/// The service `T` of `services`, for what is made with them: a component
-/// (`ComponentContext::service`), a backend (`Backends`).
-///
-/// # Errors
-/// `ComponentError::NoService` if there is none.
-pub fn service_of<T: ?Sized + Send + Sync + 'static>(
-    services: &Services,
-) -> ComponentResult<&Arc<T>> {
-    services.get::<T>().ok_or(ComponentError::NoService(TypeKey::of::<T>().name()))
-}
-
-/// What a component is built with: the environment of the whole graph - the security context it is
-/// built under, the services of the kernel it uses (`service`) - and, while it is built, the other
-/// components of its graph, asked for by type (`all`, `one`). This is all a component is given: not
-/// its actor's runtime, so that it cannot store its actor's state past the `Turn` it is called with
-/// (issue 128); of the services, only those its kind declares it uses (`ComponentKind::uses`, issue
-/// 296); and of the other components, only the facets it declares it needs (`ComponentKind::needs`,
-/// issue 337).
-#[derive(Clone)]
-pub struct ComponentContext {
-    /// The name the graph is built in, that of its owner (issue 321): an
-    /// agent's own, a channel's owner's. What a component asks while it is
-    /// built - a `ref` resolved, a secret - it asks in this name. It does not
-    /// keep it: what it does later it does in the context of the act it
-    /// serves, as a tool does in its turn's.
+/// The environment a configuration of components is built in (issues 321, 516): the name of its
+/// owner - an agent's own, a channel's owner's -, in which every `ref` is resolved and the graph
+/// keeps, and the services of the kernel, of which each component is given those its kind uses
+/// (`ComponentContext`). A component does not keep the name: what it does later it does in the
+/// context of the act it serves, as a tool does in its turn's.
+#[derive(Debug, Clone)]
+pub struct BuildContext {
     pub(crate) security_context: SecurityContext,
-    /// The services of the kernel: all of them in the context a graph is built with, those its kind
-    /// uses in the one a component is given.
     pub(super) services: Services,
-    /// The facets of other components it may ask for: none in the context a
-    /// graph is built with, those its kind needs in the one a component is
-    /// given.
-    pub(super) needs: Vec<TypeKey>,
-    /// The graph being built and the component this context was given to;
-    /// set by `ComponentContainer::from_config`.
-    pub(super) building: Option<(Arc<Graph>, String)>,
 }
 
-impl Debug for ComponentContext {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ComponentContext")
-            .field("security_context", &self.security_context)
-            .field("services", &self.services.names())
-            .field("needs", &self.needs)
-            .field("building", &self.building.as_ref().map(|(_, component)| component))
-            .finish()
-    }
-}
-
-impl ComponentContext {
-    /// The environment a component graph is built in, with the services of the kernel:
-    /// `ComponentContainer::from_config` gives each component this context, with the services its
-    /// kind uses, through which it reaches the others.
+impl BuildContext {
+    /// The environment of a graph built in `security_context`'s name, with `services`.
     pub fn new(security_context: SecurityContext, services: Services) -> Self {
-        Self { security_context, services, needs: Vec::new(), building: None }
-    }
-
-    /// The service `T` of the kernel - the policy (`dyn AccessPolicy`), the secrets
-    /// (`SecretManager`), the workspaces (`WorkspaceManager`) -, for a component whose kind
-    /// declares it uses it.
-    ///
-    /// # Errors
-    /// `ComponentError::NoService` if the kind does not declare it, or the kernel has none.
-    pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> ComponentResult<&Arc<T>> {
-        service_of(&self.services)
-    }
-
-    /// The context for a component of `kind`: this one, with the services it
-    /// uses alone, and the facets it needs.
-    pub(super) fn for_kind(&self, kind: &Registration) -> Self {
-        Self { services: self.services.only(&kind.uses), needs: kind.needs.clone(), ..self.clone() }
-    }
-
-    /// Every other component of the graph that provides `T`, in the order of
-    /// the configuration - built first if they are not yet.
-    ///
-    /// # Errors
-    /// `ComponentError::Undeclared` if the kind does not declare it needs
-    /// `T`; whatever building one of them reports; `ComponentError::Cycle`
-    /// if one of them is being built and waits for this one.
-    pub async fn all<T: ?Sized + Send + Sync + 'static>(
-        &self,
-    ) -> ComponentResult<Vec<ComponentImpl<T>>> {
-        require_declared::<T>(&self.needs)?;
-        let (graph, component) = self.building()?;
-        graph.all::<T>(Some(component)).await
-    }
-
-    /// The one component that provides `T`, a facet of which there is
-    /// exactly one (`ComponentRegistry::single`): the graph's, or the
-    /// default - built first if it is not yet.
-    ///
-    /// # Errors
-    /// As [`all`](Self::all).
-    pub async fn one<T: ?Sized + Send + Sync + 'static>(
-        &self,
-    ) -> ComponentResult<ComponentImpl<T>> {
-        require_declared::<T>(&self.needs)?;
-        let (graph, component) = self.building()?;
-        graph.one::<T>(Some(component)).await
-    }
-
-    fn building(&self) -> ComponentResult<(&Arc<Graph>, &str)> {
-        self.building.as_ref().map(|(graph, component)| (graph, component.as_str())).ok_or_else(
-            || {
-                ComponentError::InvalidConfig(
-                    "other components can only be asked for while a component is built".to_string(),
-                )
-            },
-        )
+        Self { security_context, services }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
+    use crate::api::component::ComponentError;
+    use crate::api::component::ComponentKind;
     use crate::component::testing::*;
-    use crate::component::{ComponentContainer, ComponentKind, ComponentRegistry};
+    use crate::component::ComponentRegistry;
     use caelumora_model::security::{AccessPolicy, Policies};
     use caelumora_model::store::{EntityStores, Persistence};
+    use std::sync::Arc;
     use std::sync::Mutex;
 
     #[tokio::test]
@@ -158,14 +61,14 @@ mod tests {
         let registry = Arc::new(registry);
 
         // Configured before what it collects, which is built for it first.
-        let container = ComponentContainer::from_config(
-            &config(&[("collector", "collector"), ("a", "part"), ("b", "part")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .expect("builds");
+        let container = registry
+            .build(
+                &config(&[("collector", "collector"), ("a", "part"), ("b", "part")]),
+                ASKED,
+                &test_context(),
+            )
+            .await
+            .expect("builds");
 
         assert_eq!(
             *seen.lock().unwrap(),
@@ -204,22 +107,14 @@ mod tests {
         });
         let registry = Arc::new(registry);
 
-        ComponentContainer::from_config(
-            &config(&[("seeing", "seeing")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .expect("given what it uses");
-        let error = ComponentContainer::from_config(
-            &config(&[("blind", "blind")]),
-            ASKED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .expect_err("not what it does not declare");
+        registry
+            .build(&config(&[("seeing", "seeing")]), ASKED, &test_context())
+            .await
+            .expect("given what it uses");
+        let error = registry
+            .build(&config(&[("blind", "blind")]), ASKED, &test_context())
+            .await
+            .expect_err("not what it does not declare");
         assert!(
             causes(&error).iter().any(|e| matches!(e, ComponentError::NoService("AccessPolicy"))),
             "{error}"
@@ -250,27 +145,19 @@ mod tests {
             },
         );
         let registry = Arc::new(registry);
-        let error = ComponentContainer::from_config(
-            &config(&[("greedy", "greedy")]),
-            NAMED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .expect_err("its kind does not need Named");
+        let error = registry
+            .build(&config(&[("greedy", "greedy")]), NAMED, &test_context())
+            .await
+            .expect_err("its kind does not need Named");
         assert!(
             causes(&error).iter().any(|e| matches!(e, ComponentError::Undeclared("Named"))),
             "{error}"
         );
 
-        let container = ComponentContainer::from_config(
-            &config(&[("a", "part")]),
-            NAMED,
-            &registry,
-            &test_context(),
-        )
-        .await
-        .expect("provides Named");
+        let container = registry
+            .build(&config(&[("a", "part")]), NAMED, &test_context())
+            .await
+            .expect("provides Named");
         assert!(
             matches!(
                 container.get_all::<dyn Other>(None),

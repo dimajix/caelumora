@@ -1,6 +1,7 @@
 //! The `broadcast_policy` component: asks every agent to respond.
 
-use crate::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use crate::api::component::{ComponentFacets, ComponentKind};
+use crate::component::ComponentRegistry;
 use crate::moderator::{ResponderPolicy, Undecided};
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};

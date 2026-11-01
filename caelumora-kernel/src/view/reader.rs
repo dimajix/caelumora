@@ -1,10 +1,10 @@
-//! What the agent side reads of its session (issue 516): the readers, each the part of a view an
-//! agent's work reads through. The views implement them and keep their full surface for the
-//! frontends; the agent side is handed a reader, never a view, so it reaches no policy, no manager
-//! and no context through it.
+//! How the views serve the readers of the API (issue 516): each reader is the part of a view an
+//! agent's work reads through (`api::reader`).
 
-use super::{ChannelView, ParticipantView, PrivateNotesElsewhere, SessionView, ViewResult};
-use crate::terminal::ByteStream;
+use super::{ChannelView, ParticipantView, SessionView};
+use crate::api::reader::{ChannelReader, ParticipantReader, SessionReader};
+use crate::api::reader::{PrivateNotesElsewhere, ViewResult};
+use crate::api::terminal::ByteStream;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::chain::Position;
@@ -21,114 +21,6 @@ use caelumora_model::store::query::Filter;
 use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::value::text::{Briefing, Summary};
-
-/// A session as an agent's work reads it from its channel (`SessionView`).
-#[async_trait]
-pub trait SessionReader: Send + Sync {
-    /// The session read.
-    fn id(&self) -> SessionId;
-
-    /// The project its results go to (issue 467).
-    fn project(&self) -> ProjectId;
-
-    /// What the session is for, in a line (issue 245).
-    fn summary(&self) -> Option<&Summary>;
-
-    /// What an agent should know before it works in the session (issue 245).
-    fn briefing(&self) -> Option<&Briefing>;
-
-    /// Where the reading stands: the actor's channel, at the classification its work reads at.
-    fn place(&self) -> Option<&Place>;
-
-    /// Channel `id` of the session, if the reader may read it.
-    async fn channel(&self, id: ChannelId) -> ViewResult<Box<dyn ChannelReader>>;
-
-    /// The channel of the session called `name`, if the reader may read it.
-    async fn channel_named(&self, name: &str) -> ViewResult<Box<dyn ChannelReader>>;
-
-    /// The channels of the session the reader may read.
-    async fn channels(&self) -> Vec<Box<dyn ChannelReader>>;
-
-    /// The reader's private notes in the session's other channels (issue 255).
-    async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere>;
-
-    /// How session `id` stands for the flow rule now, `None` if it is gone (issue 134).
-    async fn privacy_of(&self, id: SessionId) -> ViewResult<Option<SessionPrivacy>>;
-}
-
-/// A channel as an agent's work reads it (`ChannelView`): as a whole, or what of it it may read.
-#[async_trait]
-pub trait ChannelReader: Send + Sync {
-    /// The channel read.
-    fn id(&self) -> ChannelId;
-
-    /// Its name, unique in its session.
-    fn name(&self) -> &Name;
-
-    /// How its contents are classified (issue 133).
-    fn classification(&self) -> &Classification;
-
-    /// What the channel is for, in a line (issue 245).
-    fn summary(&self) -> Option<&Summary>;
-
-    /// What an agent should know before it works in the channel (issue 245).
-    fn briefing(&self) -> Option<&Briefing>;
-
-    /// The language the channel's conversation is held in: its own, else its session's (issue
-    /// 425).
-    fn effective_language(&self) -> Option<&Language>;
-
-    /// The session it was reached through.
-    fn session(&self) -> &dyn SessionReader;
-
-    /// Its participants, each as the reader may see them.
-    async fn participants(&self) -> Vec<Box<dyn ParticipantReader>>;
-
-    /// Its participant `actor`, if it takes part.
-    async fn participant(&self, actor: ActorId) -> ViewResult<Box<dyn ParticipantReader>>;
-
-    /// Where in the history the reader's reading begins (issue 379).
-    async fn visible_from(&self) -> ViewResult<Position>;
-
-    /// A page of the history the reader may read, before `before`, of at most `limit` entries
-    /// that match `filter`.
-    async fn history_page_of(
-        &self,
-        before: Option<Position>,
-        limit: usize,
-        filter: Option<Filter<HistoryField>>,
-    ) -> ViewResult<HistoryPage>;
-
-    /// Message `id`, if the reader may read it.
-    async fn message(&self, id: MessageId) -> ViewResult<Message>;
-
-    /// What message `message` carries as `id`, if the reader may read it.
-    async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<ContentRef>;
-
-    /// What message `message` carries as `id`, with its size and its content.
-    async fn attachment_content(
-        &self,
-        message: MessageId,
-        id: ContentId,
-    ) -> ViewResult<(ContentRef, u64, ByteStream)>;
-
-    /// The notes its participants published there, as far as the reader may read them.
-    async fn notes(&self) -> ViewResult<Vec<PublishedNotes>>;
-}
-
-/// A participant of a channel as an agent's work sees it (`ParticipantView`).
-#[async_trait]
-pub trait ParticipantReader: Send + Sync {
-    /// The actor that takes part.
-    fn id(&self) -> ActorId;
-
-    /// Its name; `None` for a user or agent that no longer exists.
-    fn name(&self) -> Option<&str>;
-
-    /// What of the participant is public to everyone in the channel (issue 176); `None` for one
-    /// that no longer exists.
-    async fn describe(&self) -> ViewResult<Option<ActorDescription>>;
-}
 
 #[async_trait]
 impl SessionReader for SessionView {
