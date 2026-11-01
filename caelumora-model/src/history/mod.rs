@@ -112,11 +112,10 @@ pub enum HistoryEntry {
         output: String,
         at: DateTime<Utc>,
     },
-    /// `participant`, called `name` then, joined the channel at `at`, by
-    /// the act of `by`, called `by_name` then - the participant itself if
-    /// it joined by itself, `ActorId::System` if the runtime added it
-    /// (issue 408): recorded where it happened among what was said, with
-    /// the names as they were, so that it reads the same after a renaming.
+    /// `participant`, called `name` then, joined the channel at `at`, by the act of `by`, called
+    /// `by_name` then - the participant itself if it joined by itself, `ActorId::System` if the
+    /// kernel added it (issue 408): recorded where it happened among what was said, with the names
+    /// as they were, so that it reads the same after a renaming.
     ParticipantJoined {
         participant: ActorId,
         name: String,

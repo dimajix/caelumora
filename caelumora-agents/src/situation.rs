@@ -12,6 +12,8 @@
 //! what it offers - are given a `Situation` rather than a `Turn`, so that
 //! they serve both kinds of agent.
 
+use caelumora_kernel::kernel::ActorRuntime;
+use caelumora_kernel::view::{ChannelReader, SessionReader, ViewResult};
 use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::confidentiality::{Classification, Place};
@@ -22,8 +24,6 @@ use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::work::Work;
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::view::{ChannelReader, SessionReader, ViewResult};
 use std::sync::Arc;
 
 /// The situation of the work under way of an agent in its channel, to
@@ -71,8 +71,8 @@ impl<'a> Situation<'a> {
     }
 
     /// Who began the chain the work answers (`EventContext::initiator_id`, issue 432): what the
-    /// core is told with every call it is asked in the work's name, for the record - never for
-    /// rights, which the core builds itself (issue 516).
+    /// kernel is told with every call it is asked in the work's name, for the record - never for
+    /// rights, which the kernel builds itself (issue 516).
     pub fn initiator(&self) -> ActorId {
         self.work.initiator()
     }
@@ -102,7 +102,7 @@ impl<'a> Situation<'a> {
         self.runtime.session(self.initiator(), self.work.classification.clone()).await
     }
 
-    /// The reader `T` a plugin or the core binds to the work (`ActorRuntime::reader`, issue 516):
+    /// The reader `T` a plugin or the kernel binds to the work (`ActorRuntime::reader`, issue 516):
     /// what of the plugin's service the work reads by - the skills' `SkillReader`, say -, in its
     /// context. Asked for where it is used and not kept: it acts in the context of the call. `None`
     /// if none is bound, if it is not offered here, or where the work reaches no session or may not

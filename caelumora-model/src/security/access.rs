@@ -69,9 +69,9 @@ pub(super) async fn check_one_by_one<P: AccessPolicy + ?Sized>(
 /// channel's `cancel`, a store's `update_channel`) keep their check; a pure
 /// question goes here, not onto the entity.
 ///
-/// What a client is shown or offered - may it change a channel, read an
-/// agent's context - comes from a view (`crate::view`, issue 80) that the
-/// runtime builds with these questions; clients do not ask them themselves.
+/// What a client is shown or offered - may it change a channel, read an agent's context - comes
+/// from a view (`crate::view`, issue 80) that the kernel builds with these questions; clients do
+/// not ask them themselves.
 #[async_trait]
 pub trait AccessQuestions {
     /// Whether `context` may read the session with `session` attributes -

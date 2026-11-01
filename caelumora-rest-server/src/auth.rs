@@ -26,6 +26,7 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
+use caelumora_kernel::controller::ControllerManager;
 use caelumora_model::config::AuthConfig;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
@@ -33,7 +34,6 @@ use caelumora_model::store::StoreError;
 use caelumora_model::user::UserId;
 use caelumora_model::user_provider::{AuthError, Credential, UserManager};
 use caelumora_rest_api::auth::{LoginRequest, UserResponse};
-use caelumora_runtime::controller::ControllerManager;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -220,9 +220,8 @@ impl TokenService {
     }
 }
 
-/// What the authentication layer needs: the token service, the chain of
-/// user providers, and the runtime's controllers, which give a user's
-/// context with their roles as they are now (issue 304).
+/// What the authentication layer needs: the token service, the chain of user providers, and the
+/// kernel's controllers, which give a user's context with their roles as they are now (issue 304).
 pub struct Auth {
     pub tokens: TokenService,
     pub users: Arc<UserManager>,
@@ -483,11 +482,11 @@ mod tests {
     use super::*;
     use axum::body;
     use axum::body::Body;
+    use caelumora_kernel::event::EventBus;
     use caelumora_model::security::Policies;
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_model::user_provider::UserProvider;
-    use caelumora_runtime::event::EventBus;
     use tower::ServiceExt;
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";

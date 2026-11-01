@@ -23,18 +23,18 @@ use caelumora_agents::tool::{
     ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::component::{
+    config_of_params, ComponentFacets, ComponentKind, ComponentResult, LibraryComponents, Params,
+};
+use caelumora_kernel::content::ContentError;
+use caelumora_kernel::terminal::WorkspacePath;
+use caelumora_kernel::workspace::WorkspaceReader;
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
 use caelumora_model::store::StoreError;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::name::ScopedName;
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentResult, LibraryComponents, Params,
-};
-use caelumora_runtime::content::ContentError;
-use caelumora_runtime::terminal::WorkspacePath;
-use caelumora_runtime::workspace::WorkspaceReader;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

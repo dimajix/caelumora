@@ -8,12 +8,12 @@
 use super::Turn;
 use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
+use caelumora_kernel::actor::Answering;
+use caelumora_kernel::transport::EventSender;
 use caelumora_model::message::Message;
 use caelumora_model::tool::ToolCallState;
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::turn::TurnState;
-use caelumora_runtime::actor::Answering;
-use caelumora_runtime::transport::EventSender;
 use tracing::warn;
 
 /// What is still needed of a turn once it is taken over (`commit`).
@@ -143,14 +143,14 @@ mod tests {
     use crate::message::testing::given_up_turns;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
+    use caelumora_kernel::transport::memory::InMemoryEventSender;
+    use caelumora_kernel::transport::Discard;
     use caelumora_model::actor::ActorEvent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolCallResult};
-    use caelumora_runtime::transport::memory::InMemoryEventSender;
-    use caelumora_runtime::transport::Discard;
     use chrono::Utc;
     use futures::executor;
     use serde_json::Value;

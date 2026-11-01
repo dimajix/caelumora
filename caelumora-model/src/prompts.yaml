@@ -1,4 +1,4 @@
-# The texts of the core (issue 57), namespace `core`: what the model is told
+# The texts of the kernel (issue 57), namespace `kernel`: what the model is told
 # as its context is resolved (`ContextResolver`), and how what it is given is
 # marked. Templates of `minijinja`, rendered by `PromptCatalogue`; the
 # conventions are those of the agents' file (`caelumora-agents/src/prompts.yaml`).

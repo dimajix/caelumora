@@ -1,0 +1,296 @@
+//! The kernel: what everything in a process shares, built once, and the runtimes it gives a channel
+//! and an actor.
+//!
+//! - The `Kernel` holds the process-wide services and managers - the policies, the stores, the
+//!   event bus, the controllers, the component kinds -, made once by the `KernelBuilder`
+//!   (`builder`) from the configuration and what the plugins register (issue 323).
+//! - A `ChannelRuntime` (`channel`) is what a channel is built with: the
+//!   services it reads once, by name, the user commands and controller of
+//!   its session, and a handle to the channel itself (issues 360, 361).
+//! - A `ParticipantRuntime` (`actor`) is what a participant's actor runs with: the context it
+//!   acts in and what concerns this actor alone (issues 69, 359, 516).
+//! - An `ActorRuntime` (`agent`) is what the actor of an agent runs with, on the agent side: the
+//!   one interface its kind is given, which the kernel's `AgentRuntime` serves (issue 516).
+//! - What the plugins and the kernel bind to the views of an agent's work is kept as its extensions
+//!   (`extension`, issue 516).
+
+mod actor;
+mod agent;
+mod builder;
+mod channel;
+mod extension;
+
+pub use actor::ParticipantRuntime;
+pub use agent::{ActorRuntime, AgentRuntime, CallPermit, OwnRecord};
+pub use builder::KernelBuilder;
+pub use channel::ChannelRuntime;
+pub(crate) use extension::Face;
+
+use crate::actor::ActorManager;
+use crate::actor::AgentKinds;
+use crate::agent::state::AgentStates;
+use crate::agent::AgentManager;
+use crate::attachment::AttachmentManager;
+use crate::channel::Participation;
+use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+use crate::controller::ControllerManager;
+use crate::event::EventBus;
+use crate::group::GroupManager;
+use crate::scoped::ScopedEntities;
+use crate::seed::{self, SeedSection};
+use crate::workspace::reaper::CommandReaper;
+use crate::workspace::WorkspaceManager;
+use anyhow::Result;
+use caelumora_model::approval::ApprovalRule;
+use caelumora_model::channel::ChannelId;
+use caelumora_model::component::ComponentConfig;
+use caelumora_model::confidentiality::ConfidentialityPolicy;
+use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_model::secret::SecretManager;
+use caelumora_model::security::{AccessPolicy, Policies};
+use caelumora_model::session::Session;
+use caelumora_model::store::history::HistoryStore;
+use caelumora_model::store::transcript::TranscriptStore;
+use caelumora_model::store::{EntityStores, StateStore};
+use caelumora_model::type_map::TypeMap;
+use caelumora_model::user_provider::UserManager;
+use extension::Extensions;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
+/// The services of the kernel, by type (issues 296, 323): the policy, the secrets, the managers of
+/// the kernel that components use and what the plugins provide. A component is given those its kind
+/// uses (`ComponentKind::uses`), the views and a plugin's routes reach them all.
+pub type Services = TypeMap;
+
+/// The services and managers everything in a process shares, made once by the `KernelBuilder`.
+#[derive(Debug)]
+pub struct Kernel {
+    /// Who may do what, and - asked beside it, never by it - what may flow
+    /// where and who is cleared for what (issue 304): those its stores are
+    /// checked by (issue 449).
+    policies: Policies,
+    state_store: Arc<dyn StateStore>,
+    /// The read side of the histories the states hold (issue 379).
+    history_store: Arc<dyn HistoryStore>,
+    /// The read side of the agents' transcripts the states hold (issue 380).
+    transcript_store: Arc<dyn TranscriptStore>,
+    entity_stores: EntityStores,
+    secret_manager: Arc<SecretManager>,
+    /// The one writer of user records, asked at a login (issue 306).
+    user_manager: Arc<UserManager>,
+    component_registry: Arc<ComponentRegistry>,
+    /// The kinds of agent it runs, by which a channel builds an agent's
+    /// actor (issue 370).
+    agent_kinds: Arc<AgentKinds>,
+    event_bus: Arc<EventBus>,
+    controller_manager: Arc<ControllerManager>,
+    /// Who takes part in a channel and whether they may (issue 356).
+    participation: Arc<Participation>,
+    commands: ComponentConfig,
+    /// What the system restricts of tool calls everywhere
+    /// (`AppConfig::approvals`, issue 13).
+    approval_rules: Arc<[ApprovalRule]>,
+    /// One owner of every running agent's `AgentState` (issue 62).
+    agent_states: Arc<AgentStates>,
+    /// The one owner of workspaces and their places (issue 253).
+    workspaces: Arc<WorkspaceManager>,
+    /// What ends the commands nobody may run any longer (issues 254, 344).
+    command_reaper: Arc<CommandReaper>,
+    /// The one owner of the content of attachments (issue 282).
+    attachments: Arc<AttachmentManager>,
+    /// The one writer of teams (issue 286).
+    groups: Arc<GroupManager>,
+    /// The one owner of agents' lifecycle (issue 314).
+    agents: Arc<AgentManager>,
+    /// The one owner of what of an actor outlives its run (issue 386).
+    actors: Arc<ActorManager>,
+    /// What deletes, restores and purges what lies in a scope with what
+    /// holds it (issues 178, 319).
+    scoped: Arc<ScopedEntities>,
+    /// The services components may use (issue 296), each given to the
+    /// kinds that declare it (`ComponentKind::uses`), and the views.
+    services: Services,
+    /// What the plugins and the kernel bind to an agent's work (issue 516).
+    extensions: Extensions,
+    /// The texts given to models (issue 57), also among the `services`: what the kernel itself
+    /// words for a model - what an agent saw, as its context is resolved again.
+    prompts: Arc<PromptCatalogue>,
+    /// The sections of the seed the plugins claimed (issue 323).
+    seed_sections: BTreeMap<String, Arc<dyn SeedSection>>,
+}
+
+impl Kernel {
+    /// Puts what the seed files `paths` hold into the stores (issue 105): the kernel's sections and
+    /// those the plugins claimed.
+    ///
+    /// # Errors
+    /// As `seed::load`.
+    pub async fn seed(&self, paths: &[PathBuf]) -> Result<()> {
+        seed::load(&self.entity_stores, self.confidentiality().as_ref(), &self.seed_sections, paths)
+            .await
+    }
+
+    /// The executor for the user commands of `session`: the global ones and
+    /// the session's own (issue 28), built once for all of its channels, in
+    /// the name of the session's owner (`ControllerManager::owner_context`,
+    /// issue 321).
+    ///
+    /// # Errors
+    /// A `ComponentError` if a command component cannot be built or two
+    /// provide the same command - the session does not start then; whatever
+    /// the store reports reading its owner.
+    pub async fn new_command_executor(&self, session: &Session) -> Result<CommandExecutor> {
+        let security = self
+            .controller_manager
+            .owner_context(session.security_attributes.owner_id, session.id, ChannelId::default())
+            .await?;
+        let context = ComponentContext::new(security, self.services().clone());
+        let mut providers = Vec::new();
+        // Each configuration on its own, so that component ids only need to
+        // be unique within one of them.
+        for config in [&self.commands, &session.commands] {
+            let container = ComponentContainer::from_config(
+                config,
+                CommandExecutor::COMPONENT_FACETS,
+                &self.component_registry,
+                &context,
+            )
+            .await?;
+            providers.extend(container.get_all::<dyn ChannelCommandProvider>(None)?);
+        }
+        Ok(CommandExecutor::new(Arc::clone(self.access_policy()), providers)?)
+    }
+
+    pub fn event_bus(&self) -> &Arc<EventBus> {
+        &self.event_bus
+    }
+
+    /// The policies of the process, the pair its stores are checked by.
+    pub fn policies(&self) -> &Policies {
+        &self.policies
+    }
+
+    /// Who may do what.
+    pub fn access_policy(&self) -> &Arc<dyn AccessPolicy> {
+        self.policies.access_policy()
+    }
+
+    /// What may flow where, and who is cleared for what (issue 304).
+    pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
+        self.policies.confidentiality()
+    }
+
+    pub fn state_store(&self) -> &Arc<dyn StateStore> {
+        &self.state_store
+    }
+
+    /// The read side of the histories the states hold (issue 379).
+    pub fn history_store(&self) -> &Arc<dyn HistoryStore> {
+        &self.history_store
+    }
+
+    /// The read side of the agents' transcripts the states hold (issue 380).
+    pub fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
+        &self.transcript_store
+    }
+
+    /// The stores of the entities, one per kind (issue 323).
+    pub fn entity_stores(&self) -> &EntityStores {
+        &self.entity_stores
+    }
+
+    pub fn secret_manager(&self) -> &Arc<SecretManager> {
+        &self.secret_manager
+    }
+
+    /// The one writer of user records, which authenticates a login against
+    /// the configured user providers (issues 306, 324).
+    pub fn user_manager(&self) -> &Arc<UserManager> {
+        &self.user_manager
+    }
+
+    pub fn services(&self) -> &Services {
+        &self.services
+    }
+
+    /// What the plugins and the kernel bind to an agent's work (issue 516), which the actor's
+    /// runtime makes as its work asks (`ActorRuntime::reader`, `writer`).
+    fn extensions(&self) -> &Extensions {
+        &self.extensions
+    }
+
+    /// The texts given to models (issue 57).
+    pub fn prompts(&self) -> &Arc<PromptCatalogue> {
+        &self.prompts
+    }
+
+    /// The kinds of agent it runs (issue 370): how an agent's actor is
+    /// built, and which facets its components are asked for.
+    pub fn agent_kinds(&self) -> &Arc<AgentKinds> {
+        &self.agent_kinds
+    }
+
+    pub fn component_registry(&self) -> &Arc<ComponentRegistry> {
+        &self.component_registry
+    }
+
+    pub fn controller_manager(&self) -> &Arc<ControllerManager> {
+        &self.controller_manager
+    }
+
+    /// Who takes part in a channel and whether they may (issue 356).
+    pub(crate) fn participation(&self) -> &Arc<Participation> {
+        &self.participation
+    }
+
+    /// What the system restricts of tool calls everywhere (issue 13).
+    pub fn approval_rules(&self) -> &Arc<[ApprovalRule]> {
+        &self.approval_rules
+    }
+
+    /// The owner of every running agent's `AgentState` (issue 62).
+    pub fn agent_states(&self) -> &Arc<AgentStates> {
+        &self.agent_states
+    }
+
+    /// The one owner of workspaces and their places (issue 253).
+    pub fn workspace_manager(&self) -> &Arc<WorkspaceManager> {
+        &self.workspaces
+    }
+
+    /// What ends the commands nobody may run any longer (issues 254, 344).
+    pub(crate) fn command_reaper(&self) -> &Arc<CommandReaper> {
+        &self.command_reaper
+    }
+
+    /// The one owner of the content of attachments (issue 282).
+    pub fn attachment_manager(&self) -> &Arc<AttachmentManager> {
+        &self.attachments
+    }
+
+    /// The one writer of teams (issue 286), and what deletes and restores
+    /// the groups of the participants with their session or channel (issue
+    /// 348).
+    pub fn group_manager(&self) -> &Arc<GroupManager> {
+        &self.groups
+    }
+
+    /// The one owner of agents' lifecycle (issue 314).
+    pub fn agent_manager(&self) -> &Arc<AgentManager> {
+        &self.agents
+    }
+
+    /// The one owner of what of an actor outlives its run (issue 386).
+    pub(crate) fn actor_manager(&self) -> &Arc<ActorManager> {
+        &self.actors
+    }
+
+    /// What deletes, restores and purges what lies in a scope with what
+    /// holds it (issues 178, 319).
+    pub(crate) fn scoped_entities(&self) -> &Arc<ScopedEntities> {
+        &self.scoped
+    }
+}

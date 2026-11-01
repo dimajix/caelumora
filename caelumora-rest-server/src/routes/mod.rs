@@ -1,5 +1,5 @@
-//! The routes of the API (issue 323): the core's, behind the login, with the plugins', and what
-//! the handlers share to reach the runtime as the user who asks.
+//! The routes of the API (issue 323): the kernel's, behind the login, with the plugins', and what
+//! the handlers share to reach the kernel as the user who asks.
 
 mod agents;
 mod attachments;
@@ -27,15 +27,15 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::session::SessionLoop;
+use caelumora_kernel::terminal::ByteStream;
+use caelumora_kernel::view::{ChannelView, Viewer, Views};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::Detail;
 use caelumora_model::store::StoreError;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::session::SessionSnapshot;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::terminal::ByteStream;
-use caelumora_runtime::view::{ChannelView, Viewer, Views};
 use std::sync::Arc;
 
 pub async fn ensure_session(
@@ -48,10 +48,9 @@ pub async fn ensure_session(
     Ok(state.session_manager.open(&user.security_context(), session_id).await?)
 }
 
-/// Session `session_id` and its channel `channel_id`, as `user` may read
-/// them - the one way a handler reaches a channel (issue 102). A channel the
-/// user may not read is answered as absent, like one that does not exist;
-/// the runtime decides that (`SessionLoop::channel_for`).
+/// Session `session_id` and its channel `channel_id`, as `user` may read them - the one way a
+/// handler reaches a channel (issue 102). A channel the user may not read is answered as absent,
+/// like one that does not exist; the kernel decides that (`SessionLoop::channel_for`).
 pub async fn open_channel(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
@@ -63,10 +62,9 @@ pub async fn open_channel(
     Ok((session, channel))
 }
 
-/// Channel `channel_id` of session `session_id` as `user` sees it (issue
-/// 80) - what a handler answers with a channel, with what is new in it to
-/// the user (issue 404). Described by the runtime, which decides what the
-/// user may read and do; does not start the session.
+/// Channel `channel_id` of session `session_id` as `user` sees it (issue 80) - what a handler
+/// answers with a channel, with what is new in it to the user (issue 404). Described by the kernel,
+/// which decides what the user may read and do; does not start the session.
 pub async fn channel_response(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
@@ -181,8 +179,8 @@ pub fn change_error(error: Error, code: &'static str) -> ApiError {
     }
 }
 
-/// The routes of the API: the core's and those of `plugins`, as the API serves them below the path
-/// the program nests them at (issue 323). Everything except `/auth/login` and `/auth/logout`
+/// The routes of the API: the kernel's and those of `plugins`, as the API serves them below the
+/// path the program nests them at (issue 323). Everything except `/auth/login` and `/auth/logout`
 /// requires a session (see `crate::auth`), the plugins' routes too.
 pub fn api(state: Arc<AppState>, plugins: &[Box<dyn RestPlugin>]) -> Router {
     let protected = Router::new()
@@ -394,18 +392,18 @@ pub(crate) mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::header::{COOKIE, SET_COOKIE};
     use axum::http::Request;
+    use caelumora_kernel::event::EventBus;
+    use caelumora_kernel::kernel::KernelBuilder;
+    use caelumora_kernel::plugin::Plugin;
+    use caelumora_kernel::project::ProjectManager;
+    use caelumora_kernel::session::SessionManager;
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_model::config::{AppConfig, AuthConfig};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::template::testing::{make_channel_template, make_template};
     use caelumora_model::template::{ChannelTemplate, SessionTemplate};
     use caelumora_model::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_model::user_provider::UserManager;
-    use caelumora_runtime::event::EventBus;
-    use caelumora_runtime::plugin::Plugin;
-    use caelumora_runtime::project::ProjectManager;
-    use caelumora_runtime::runtime::RuntimeBuilder;
-    use caelumora_runtime::session::SessionManager;
-    use caelumora_runtime::testing::TestRuntime;
     use serde_json::{json, Value};
     use tower::ServiceExt;
     use uuid::Uuid;
@@ -418,7 +416,7 @@ pub(crate) mod tests {
             "hello"
         }
 
-        fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
+        fn register(&self, _kernel: &mut KernelBuilder) -> Result<()> {
             Ok(())
         }
     }
@@ -439,31 +437,31 @@ pub(crate) mod tests {
         api(state(), plugins)
     }
 
-    /// The state of an API that lets anybody log in and permits everything,
-    /// on a runtime of memory stores.
+    /// The state of an API that lets anybody log in and permits everything, on a kernel of memory
+    /// stores.
     pub(crate) fn state() -> Arc<AppState> {
         state_with(AppConfig::default())
     }
 
-    /// The state `state` makes, of a runtime configured by `config`.
+    /// The state `state` makes, of a kernel configured by `config`.
     pub(crate) fn state_with(config: AppConfig) -> Arc<AppState> {
-        let runtime = TestRuntime { config, plugins: Vec::new(), ..Default::default() }.build();
-        let users = Arc::clone(&runtime.entity_stores().users);
+        let kernel = TestKernel { config, plugins: Vec::new(), ..Default::default() }.build();
+        let users = Arc::clone(&kernel.entity_stores().users);
         let auth = Arc::new(Auth {
             tokens: TokenService::new(b"0123456789abcdef0123456789abcdef", &AuthConfig::default())
                 .unwrap(),
             users: Arc::new(UserManager::new(
                 vec![Arc::new(AcceptAnyUserProvider::new(Arc::clone(&users)))],
                 users,
-                Arc::<EventBus>::clone(runtime.event_bus()),
+                Arc::<EventBus>::clone(kernel.event_bus()),
             )),
-            controllers: Arc::clone(runtime.controller_manager()),
+            controllers: Arc::clone(kernel.controller_manager()),
         });
-        let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+        let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let project_manager = Arc::new(ProjectManager::new(Arc::clone(&session_manager)));
         Arc::new(AppState {
             auth,
-            runtime_manager: runtime,
+            kernel,
             session_manager,
             project_manager,
             compartments: Default::default(),
@@ -639,7 +637,7 @@ pub(crate) mod tests {
             ..make_template("alone")
         };
         state
-            .runtime_manager
+            .kernel
             .entity_stores()
             .session_templates
             .create(&SecurityContext::system(), &mut template)

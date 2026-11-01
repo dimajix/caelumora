@@ -12,11 +12,11 @@
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_model::context::{KnowledgeRef, PromptPart};
-use caelumora_model::message::MessageRole;
-use caelumora_runtime::component::{
+use caelumora_kernel::component::{
     ComponentFacets, ComponentImpl, ComponentKind, LibraryComponents,
 };
+use caelumora_model::context::{KnowledgeRef, PromptPart};
+use caelumora_model::message::MessageRole;
 use std::sync::Arc;
 
 pub const EXTERNAL_CONTEXT_PROVIDER_KIND: &str = "external_context_provider";

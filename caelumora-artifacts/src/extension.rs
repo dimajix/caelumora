@@ -8,12 +8,12 @@ use crate::artifact::Artifact;
 use crate::manager::ArtifactResult;
 use crate::view::ArtifactViews;
 use async_trait::async_trait;
+use caelumora_kernel::terminal::ByteStream;
+use caelumora_kernel::view::Views;
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::store::Address;
 use caelumora_model::value::name::ScopedName;
-use caelumora_runtime::terminal::ByteStream;
-use caelumora_runtime::view::Views;
 
 /// Publishes artifacts as the work it is bound to reads: in its name, for its initiator.
 #[async_trait]

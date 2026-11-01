@@ -1,8 +1,7 @@
-//! Session templates: what a session is made of - its participants and
-//! channels - before there is one. The model builds a session from a
-//! template and the participants it names; finding or creating those
-//! participants in the store is the runtime's (`SessionManager::
-//! create_from_template`, issue 88), so nothing here touches a store.
+//! Session templates: what a session is made of - its participants and channels - before there is
+//! one. The model builds a session from a template and the participants it names; finding or
+//! creating those participants in the store is the kernel's
+//! (`SessionManager::create_from_template`, issue 88), so nothing here touches a store.
 
 use crate::actor::ActorId;
 use crate::agent::PersonalityId;
@@ -28,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::Not;
 
 /// A template that cannot be made into a session. The messages are meant
-/// for users (see `caelumora_runtime::error::user_message`).
+/// for users (see `caelumora_kernel::error::user_message`).
 #[derive(Debug, thiserror::Error)]
 pub enum TemplateError {
     /// A channel names a participant the template does not have.
@@ -459,8 +458,8 @@ pub enum ParticipantTemplate {
     Agent { name: Name, scope: ScopeTemplate, personality_id: PersonalityId },
 }
 
-/// What a participant of a template is for one session: the runtime finds
-/// or makes what it names (`SessionManager::create_from_template`).
+/// What a participant of a template is for one session: the kernel finds or makes what it names
+/// (`SessionManager::create_from_template`).
 #[derive(Debug, Clone)]
 pub enum ParticipantRequest {
     /// This user, who must exist.
@@ -600,8 +599,7 @@ mod tests {
         }
     }
 
-    /// The users as the runtime would resolve the requests; the agents join
-    /// later.
+    /// The users as the kernel would resolve the requests; the agents join later.
     fn resolved(
         template: &SessionTemplate,
         session: SessionId,

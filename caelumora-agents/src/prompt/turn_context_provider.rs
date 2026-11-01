@@ -6,13 +6,13 @@
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_kernel::component::{
+    ComponentFacets, ComponentImpl, ComponentKind, LibraryComponents,
+};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
-use caelumora_runtime::component::{
-    ComponentFacets, ComponentImpl, ComponentKind, LibraryComponents,
-};
 use std::sync::Arc;
 
 pub const TURN_CONTEXT_PROVIDER_KIND: &str = "turn_context_provider";

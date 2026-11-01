@@ -8,8 +8,8 @@ Every section may be left out and then takes its default. A key the configuratio
 an error when it is read, at the top as within a section. The sections of the plugins lie under
 `plugins`, those of the libraries under `libraries` (`AppConfig::plugins`, `libraries`, issues 323,
 516), each by the name of the one that claims it and reads it when it registers
-(`RuntimeBuilder::config`, `LibraryBuilder::config`); a section that none claims is an error when
-the runtime is built. Either way a misspelt key does not silently fall back to its default.
+(`KernelBuilder::config`, `LibraryBuilder::config`); a section that none claims is an error when the
+kernel is built. Either way a misspelt key does not silently fall back to its default.
 
 Only `true` and `false` are booleans; `yes`, `no`, `on`, `off` and `y` are text (YAML 1.2), in the
 configuration as in the seed files. So a value that nothing types until later - the parameters of a
@@ -30,12 +30,12 @@ workspaces:
       root: "local/workspaces/files"
 ```
 
-The type names the factory registered for it, the core's or a plugin's (see
+The type names the factory registered for it, the kernel's or a plugin's (see
 [ARCHITECTURE.md](ARCHITECTURE.md#backends)), which reads the parameters. So a type nobody
 registers, a parameter its backend does not know or one that does not fit are not refused when the
-file is read but when the runtime is built - still at start-up, before anything runs, with a
-message naming the backend: `the storage of workspaces 'files' (local)`, or for a chain its
-position, `the secret provider 2 (vault)`. An unknown type is answered with the types there are.
+file is read but when the kernel is built - still at start-up, before anything runs, with a message
+naming the backend: `the storage of workspaces 'files' (local)`, or for a chain its position,
+`the secret provider 2 (vault)`. An unknown type is answered with the types there are.
 
 | Section | What it configures | Default |
 |---|---|---|
@@ -60,8 +60,8 @@ position, `the secret provider 2 (vault)`. An unknown type is answered with the 
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
 
 The approval rules and the compartments are checked when the configuration is read; the backends,
-`component_defaults`, the sections of the plugins and of the libraries, each among its own, and
-the variants of `prompts` when the runtime is built.
+`component_defaults`, the sections of the plugins and of the libraries, each among its own, and the
+variants of `prompts` when the kernel is built.
 
 ### Workspace storages
 
@@ -83,18 +83,18 @@ The two Open Terminal storages are the plugin `caelumora-open-terminal`, which `
 `caelumora-tui` list; `open_terminal_docker` needs its feature `docker` (on by default). The stores
 in JSON files, `type: json` under `persistence`, are the plugin `caelumora-store-json`, the stores
 in Postgres, `type: postgres`, the plugin `caelumora-store-postgres` (see
-[STORAGE.md](STORAGE.md#in-postgres)), which both programs list too; `memory` is the core's.
+[STORAGE.md](STORAGE.md#in-postgres)), which both programs list too; `memory` is the kernel's.
 
 **`open_terminal_docker` needs the Docker daemon of Caelumora's environment, whose socket is root on
 the host.**
 
 ## The texts given to models
 
-What the runtime tells a model in prose - its prompt parts, the descriptions of its tools, what it
-is told of a tool call - are the texts of the prompt catalogue (issue 57, see
+What the kernel tells a model in prose - its prompt parts, the descriptions of its tools, what it is
+told of a tool call - are the texts of the prompt catalogue (issue 57, see
 [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), compiled in, one file per namespace: the
-core's (`caelumora-model/src/prompts.yaml`), the agents' (`caelumora-agents/src/prompts.yaml`), and
-those of the plugins and libraries (`skills`, `compaction`, `workspace_tools`, `artifacts`,
+kernel's (`caelumora-model/src/prompts.yaml`), the agents' (`caelumora-agents/src/prompts.yaml`),
+and those of the plugins and libraries (`skills`, `compaction`, `workspace_tools`, `artifacts`,
 `decision`, each in its `src/prompts.yaml`). `prompts` names variants of them:
 
 ```yaml
@@ -104,7 +104,7 @@ prompts:
 ```
 
 A variant is a directory with a file per namespace it changes, named after the namespace -
-`agents.yaml`, `core.yaml`, `skills.yaml` - and of the form of the namespace's own file, whose
+`agents.yaml`, `kernel.yaml`, `skills.yaml` - and of the form of the namespace's own file, whose
 entries it replaces one by one: a copy of that file, changed where it is to say something else,
 or only the entries that differ. What a file leaves out, and a namespace without a file, stay as
 they are; other files than `.yaml` ones are not read. A variant falls back to `default`, `default`
@@ -114,16 +114,16 @@ names (`prompt_texts` of `ollama_client`, `a2a_agent` and `decision_policy`): on
 configured keeps the component from being built. The example configuration names one, `gemma4`
 in `examples/prompts/gemma4`, which the model of Sassy in the example seed is given.
 
-The variants are read when the runtime is built, after every plugin and library added its texts, and
+The variants are read when the kernel is built, after every plugin and library added its texts, and
 checked whole: a file of no namespace, a text the defaults do not have, a template that does not
-parse and a value a template names that its default is not given keep the runtime from starting,
+parse and a value a template names that its default is not given keep the kernel from starting,
 named by the variant, the namespace and the key.
 
 ## ComfyUI
 
 `libraries.comfyui.workflows` names the directory of the workflows of ComfyUI (issue 512), which a
 `comfyui_tool` generates images with ([TOOLS.md](TOOLS.md#comfyui)), read as `seed` is, from where
-the program runs, when the runtime is built:
+the program runs, when the kernel is built:
 
 ```yaml
 libraries:
@@ -146,13 +146,13 @@ size: { min: 512, max: 2048, multiple_of: 16 }   # optional, 256 to 2048 by 16 w
 output: 9                              # the node whose images are the result; left out, every one
 ```
 
-The directory is checked whole: a file without the other, a name that is no identifier, a
-parameter mapped to an input the graph does not have or that holds no value of its kind - a
-prompt a text, a size or seed a whole number, never a link to another node -, a width or height
-of the graph outside its own bounds, an output node that is not there keep the runtime from
-starting, named by the workflow. Other files are not read. Whether the nodes are ones the server
-has, and whether the output node gives images, only the server can tell. The example names one,
-`z_image_turbo`, after ComfyUI's template of that name.
+The directory is checked whole: a file without the other, a name that is no identifier, a parameter
+mapped to an input the graph does not have or that holds no value of its kind - a prompt a text, a
+size or seed a whole number, never a link to another node -, a width or height of the graph outside
+its own bounds, an output node that is not there keep the kernel from starting, named by the
+workflow. Other files are not read. Whether the nodes are ones the server has, and whether the
+output node gives images, only the server can tell. The example names one, `z_image_turbo`, after
+ComfyUI's template of that name.
 
 ## The model
 
@@ -160,7 +160,7 @@ The language model an agent talks to is a component: the `LLMClient` facet, of w
 exactly one. A personality may configure its own; every other agent gets the one
 `component_defaults` names, or else the default model of the program: `ollama_client` with its
 defaults in `caelumora-app` and `caelumora-tui`, which list its library `caelumora-ollama` and name
-it (issue 329) - the core names no model. There is no separate section for it, and no environment
+it (issue 329) - the kernel names no model. There is no separate section for it, and no environment
 variable.
 
 A personality's own model replaces the default whole. One that is to differ in a few parameters
@@ -200,10 +200,10 @@ component_defaults:
 | `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
 | `vision` | Whether the model sees images, which it is then given along with their messages (see [AGENT-TURN.md](AGENT-TURN.md#attachments)); left out, it is asked of the server's `/api/show` as the agent is built - one that cannot say gives none, with a warning | left out |
 
-An unknown parameter is refused: in `component_defaults`, the runtime does not start; in a
+An unknown parameter is refused: in `component_defaults`, the kernel does not start; in a
 personality, a request that writes it is refused, and one stored before is not built - its agent
-does not start. Which values suit which model, as
-far as measured, is in [LLM-MODELS.md](LLM-MODELS.md).
+does not start. Which values suit which model, as far as measured, is in
+[LLM-MODELS.md](LLM-MODELS.md).
 
 Before the first call to a model, the client reads the model's control tokens from the server and
 keeps them from being produced by any text it sends; if they cannot be read, the call fails

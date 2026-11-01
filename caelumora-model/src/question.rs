@@ -1,7 +1,6 @@
-//! Questions a tool asks a person before it runs, and the answers it runs
-//! with (issue 165): the contract between the tool that asks, the runtime
-//! that waits for the answers, and the frontends that show the questions and
-//! send the answers.
+//! Questions a tool asks a person before it runs, and the answers it runs with (issue 165): the
+//! contract between the tool that asks, the kernel that waits for the answers, and the frontends
+//! that show the questions and send the answers.
 //!
 //! The answers go to the tool alone, never into a history or a transcript:
 //! what the model learns of them is what the tool puts into its result. A
@@ -72,8 +71,7 @@ pub struct Choice {
     pub recommended: bool,
 }
 
-/// Whom questions are put to, as the tool names them; the runtime finds
-/// who that is in the channel.
+/// Whom questions are put to, as the tool names them; the kernel finds who that is in the channel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Addressee {
@@ -120,8 +118,7 @@ impl QuestionRequest {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Answers {
     pub questions: Questions,
-    /// Who answered, set by the runtime from whom the answers came - never
-    /// from what they say.
+    /// Who answered, set by the kernel from whom the answers came - never from what they say.
     pub answered_by: ActorId,
     pub answered_by_name: String,
     pub responses: Vec<Response>,

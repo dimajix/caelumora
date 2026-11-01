@@ -3,9 +3,9 @@
 
 use super::*;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
+use caelumora_kernel::command::{CommandContext, CommandError, CommandReply};
 use caelumora_model::chain::Node;
 use caelumora_model::transcript::TranscriptEntry;
-use caelumora_runtime::command::{CommandContext, CommandError, CommandReply};
 use std::sync::Mutex;
 
 /// A running channel with alice and an agent, `helper`, that carries
@@ -264,7 +264,7 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
 
 #[tokio::test]
 async fn help_lists_the_commands_of_the_agents_with_their_handles() {
-    use caelumora_runtime::command::ChannelCommandProvider;
+    use caelumora_kernel::command::ChannelCommandProvider;
     let Stuck { channel, context, running, .. } = with_a_marking_agent(false).await;
     // This channel's session has no commands of its own: `/help` is run
     // as it would be among them.

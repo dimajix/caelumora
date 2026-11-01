@@ -28,6 +28,11 @@
 use crate::client::{Answer, DecisionClient, DecisionError, Question, MAX_OPTIONS, MAX_QUESTIONS};
 use crate::NAMESPACE;
 use async_trait::async_trait;
+use caelumora_kernel::component::{
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
+    ComponentResult, Params,
+};
+use caelumora_kernel::moderator::{ResponderPolicy, Undecided};
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
@@ -39,11 +44,6 @@ use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::value::time_zone::TimeZone;
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
-};
-use caelumora_runtime::moderator::{ResponderPolicy, Undecided};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -451,6 +451,7 @@ mod tests {
     use axum::http::StatusCode;
     use axum::routing::post;
     use axum::{Json, Router};
+    use caelumora_kernel::channel::ChannelLoop;
     use caelumora_model::actor::{ActorEvent, EventContext};
     use caelumora_model::agent::AgentId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -461,7 +462,6 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
-    use caelumora_runtime::channel::ChannelLoop;
     use serde_json::{json, Value};
     use std::sync::Mutex;
     use tokio::net::TcpListener;

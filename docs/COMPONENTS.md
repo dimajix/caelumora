@@ -18,13 +18,13 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     never `null`. A parameter its kind does not take is refused, naming the component and the
     parameter, whether the kind takes parameters or not ([Parameters](#parameters)).
 *   **`ComponentRegistry`** holds a factory per kind, together with the parameters that kind takes,
-    the facets it provides and those of others it needs. The `RuntimeBuilder` makes the built-in
+    the facets it provides and those of others it needs. The `KernelBuilder` makes the built-in
     registry of its own stores and applies `component_defaults`; a plugin registers its kinds in it
-    (`RuntimeBuilder::components`), a library through a `LibraryComponents`, which marks them as a
-    library's (issue 516), and a test its own before the plugins (`TestRuntime::components`). A test
-    that builds components without a runtime starts from
-    `caelumora_runtime::testing::test_registry`, or the agents'
-    `caelumora_agents::testing::test_registry`, with a model that is not to be asked as the default.
+    (`KernelBuilder::components`), a library through a `LibraryComponents`, which marks them as a
+    library's (issue 516), and a test its own before the plugins (`TestKernel::components`). A test
+    that builds components without a kernel starts from `caelumora_kernel::testing::test_registry`,
+    or the agents' `caelumora_agents::testing::test_registry`, with a model that is not to be asked
+    as the default.
 *   **`ComponentContainer`** builds the components of a `ComponentConfig` for an owner - an agent,
     an external agent, a channel, a session's commands - and hands out the facets that owner
     declared it asks for, and no other ([What a container accepts](#what-a-container-accepts)).
@@ -125,7 +125,7 @@ Components are wired the way Spring Boot wires beans.
     facet are thus known before any of them is built, and the container checks that each factory
     kept to what its kind declared.
 *   **A kind declares the services it uses** (`ComponentKind::uses`). Its factory is given those
-    services of the runtime and no other, and keeps them as fields; one it does not declare is
+    services of the kernel and no other, and keeps them as fields; one it does not declare is
     refused, naming it.
 *   **A kind declares the facets of others it needs** (`ComponentKind::needs`), as the
     `policy_moderator` needs a `ResponderPolicy`. Its factory may ask for those and no other; one
@@ -133,7 +133,7 @@ Components are wired the way Spring Boot wires beans.
 *   **A kind declares the extensions it reads and writes by** (`ComponentKind::reads`, `writes`):
     the faces of a system service a plugin binds to the work a component serves, which it is handed
     while it works, not while it is built (issue 516, see
-    [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). A runtime in which a
+    [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). A kernel in which a
     declared one is bound by no plugin is not built; unlike `uses` and `needs`, it refuses nothing
     to a component that did not declare it.
 *   **A component asks for what it needs, by type** (`context.all::<dyn PromptProvider>()`, or
@@ -151,7 +151,7 @@ Components are wired the way Spring Boot wires beans.
 *   **The order of the configuration counts.** The components no other one asks for are built in
     that order, and handed out in it.
 
-`uses` and `needs` are two declarations, built alike: a service comes from the runtime, is the same
+`uses` and `needs` are two declarations, built alike: a service comes from the kernel, is the same
 for every graph and is always there; a facet comes from the container's own graph, is built on
 demand and may be missing. Only `needs` decides what a container accepts.
 
@@ -188,7 +188,7 @@ it (issue 337):
 | agent | `ContextProvider`, `LLMClient`, `ModelProfileProvider`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider`, `ActivityProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
-| a session's commands | `ChannelCommandProvider` | `RuntimeManager::new_command_executor` |
+| a session's commands | `ChannelCommandProvider` | `Kernel::new_command_executor` |
 
 An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and,
 if it lists `compaction`, the `CompactionStrategy` and the `KnowledgeRestorer`s that component
@@ -200,7 +200,7 @@ Of some facets an agent has exactly one: the `ContextProvider`, the `LLMClient`,
 `ModelProfileProvider` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`
 and one `ModelProfileProvider`; a channel exactly one `Moderator` and one `ResponderPolicy`. They
 are registered with `ComponentRegistry::single` by the module that holds the default kind - or,
-where the core holds no kind, by the module of the facet, without one: the `LLMClient` and the
+where the kernel holds no kind, by the module of the facet, without one: the `LLMClient` and the
 `ModelProfileProvider`, whose kinds are libraries' (issue 329). The program names their default
 among the kinds its libraries brought (`ComponentRegistry::set_default_kind`, refused for a kind
 that is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name
@@ -218,7 +218,7 @@ and keeps it with every turn.
     asks - a session's commands, say - never builds one.
 *   A single may have no default where none makes sense: the remote agent of an `ExternalAgent` is
     always named. A container asked for it that provides none fails then; nothing is checked
-    beforehand. The `LLMClient` has no default in the core, only the one the program names.
+    beforehand. The `LLMClient` has no default in the kernel, only the one the program names.
 *   What a container's single is, is known without building it (`ComponentRegistry::kind_of`) -
     unless the container refers to a component bundle, which might provide it.
 *   The default comes from, in this order: the container's own component; the defaults the container
@@ -300,22 +300,21 @@ checks.
 
 A container is built with a `ComponentContext`, which holds:
 
-*   the `SecurityContext` the graph is built in, the name of its owner, set by the core and not
+*   the `SecurityContext` the graph is built in, the name of its owner, set by the kernel and not
     given out to the components (issue 516) - for an agent's components the agent's own, with its
     owner's rights (`ActorRuntime::build_components`); for a channel's components and a session's
     commands the owner's, with their roles as they are when it is built
-    (`ControllerManager::owner_context`).
-    What a component reads while building - a `ref` resolved, a secret a component of the core
-    needs - it reads in it. It does not keep it: what it asks later it asks in the context of
-    the act it serves - a tool in its turn's, a moderator in the event's it routes -, one context
-    per piece of work;
-*   the services of the runtime its kind declares it uses - for a component of the core the
+    (`ControllerManager::owner_context`). What a component reads while building - a `ref` resolved,
+    a secret a component of the kernel needs - it reads in it. It does not keep it: what it asks
+    later it asks in the context of the act it serves - a tool in its turn's, a moderator in the
+    event's it routes -, one context per piece of work;
+*   the services of the kernel its kind declares it uses - for a component of the kernel the
     policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
     that a new service needs no new field and no component is given one it does not declare. They
-    are the runtime's `Services`, which the views and a plugin's routes reach as well. A component
-    of a library declares no policy and no manager of the core: what it needs decided, or a secret,
-    it asks of the core through the `Turn` and the `Situation` it is called with (issue 516, see
-    [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-core-may-use));
+    are the kernel's `Services`, which the views and a plugin's routes reach as well. A component of
+    a library declares no policy and no manager of the kernel: what it needs decided, or a secret,
+    it asks of the kernel through the `Turn` and the `Situation` it is called with (issue 516, see
+    [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-kernel-may-use));
 *   nothing of the session: what a component reads of it - other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with (see
     [MEMORY.md](MEMORY.md#reading-other-channels));
@@ -325,15 +324,15 @@ A container is built with a `ComponentContext`, which holds:
 Components are not given their actor's `ActorRuntime`: through it they could store the actor's state
 or act as the actor past the `Turn` they are called with. What a component may use is exactly what
 its context holds, and a service it needs is declared by its kind, which is where it shows who may
-use what. A service of the core that acts in someone's name takes the security context with each
-call; a component of a library asks the core through its `Turn` and its `Situation`, which name only
-the initiator of the work, and the core builds the context of the call (issue 516).
+use what. A service of the kernel that acts in someone's name takes the security context with each
+call; a component of a library asks the kernel through its `Turn` and its `Situation`, which name
+only the initiator of the work, and the kernel builds the context of the call (issue 516).
 
 ## Writing a component
 
 The built-in components live **one file per component kind**, named after the kind
 (`calculator_tool.rs`, `notes.rs`, ...), in the module of the facet that is their purpose. Those of
-`command/` and `moderator/` are the runtime's own, in `caelumora-runtime/src/`
+`command/` and `moderator/` are the kernel's own, in `caelumora-kernel/src/`
 (`ComponentRegistry::built_in`); the others are an agent's, in `caelumora-agents/src/`, registered
 by the agents' library (`caelumora_agents::library::register_components`, issue 370). That module's
 `mod.rs` holds the facet trait - with what consumes it, such as the `ToolExecutor` - and
@@ -384,9 +383,9 @@ which a tool passes on with `?`.
 
 ## Plugins and libraries
 
-A component kind can come from a plugin, a crate of its own that brings a subject the core does not
-know, or from a library of the agent side, which runs an agent or serves its facets (issue 516). How
-each registers its kinds, and what of the runtime such a kind may use, is in
+A component kind can come from a plugin, a crate of its own that brings a subject the kernel does
+not know, or from a library of the agent side, which runs an agent or serves its facets (issue 516).
+How each registers its kinds, and what of the kernel such a kind may use, is in
 [PLUGINS.md](PLUGINS.md).
 
 ## Built-in components

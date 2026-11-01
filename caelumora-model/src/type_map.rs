@@ -1,6 +1,6 @@
-//! Values by their type (issues 99, 296, 323): the facets a component
-//! provides, the services of the runtime, the stores a backend opened -
-//! each an `Arc<T>` of a trait object or a type, found by `T` (`ErasedArc`).
+//! Values by their type (issues 99, 296, 323): the facets a component provides, the services of the
+//! kernel, the stores a backend opened - each an `Arc<T>` of a trait object or a type, found by `T`
+//! (`ErasedArc`).
 
 use std::any::{type_name, Any, TypeId};
 use std::collections::HashMap;

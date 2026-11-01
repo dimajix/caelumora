@@ -197,8 +197,8 @@ someone else's channel. No agent is the system's (issue
 
 Before a call is registered, the `ToolExecutor` decides how it is admitted (`ToolExecutor::admit`):
 answered at once, put to a user, or run as it is. The actor only records what the executor decided.
-What of it is the core's - the policy and the rules of the places - the executor asks of the core
-(`ActorRuntime::admit_tool_call`, issue 516), and decides the rest itself.
+What of it is the kernel's - the policy and the rules of the places - the executor asks of the
+kernel (`ActorRuntime::admit_tool_call`, issue 516), and decides the rest itself.
 
 *   **Policy.** A call the `AccessPolicy` does not permit is refused before any approval is
     requested, so users are not asked about calls that would be refused anyway. It is the one place
@@ -223,10 +223,10 @@ the record of the answers, nothing raw.
     names no user of the channel, or an owner or initiator who does not take part as a user, makes
     the call invalid. A call that needs approval is approved first, then asks. Whoever approves sees
     the arguments, never the answers.
-2.  **Request.** The agent sends `QuestionRequested` under an id of the runtime's - not the model's
-    call id, which some backends repeat. The moderator sends it to the users of the channel - to
-    those asked alone if the questions are sensitive - never to the approver or other agents. Only
-    those asked answer.
+2.  **Request.** The agent sends `QuestionRequested` under an id of its own - not the model's call
+    id, which some backends repeat. The moderator sends it to the users of the channel - to those
+    asked alone if the questions are sensitive - never to the approver or other agents. Only those
+    asked answer.
 3.  **Answers.** The user's actor refuses what cannot count - questions not open or not put to them,
     responses not as the questions ask - before anything is sent; whether the user may answer in the
     channel at all (`AnswerQuestion`) the channel decides as it admits the answer. The answer goes

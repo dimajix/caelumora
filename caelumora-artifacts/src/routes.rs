@@ -2,7 +2,7 @@
 //! whoever the artifact's list lets read it reads the versions whose own list lets them as well
 //! (issues 23, 316), by the artifact, never through a channel - a channel lists what was published
 //! in it, a project what lies in it (issue 467). A version is downloaded as an attachment
-//! (`routes::attachment_response`), named as its artifact. Served behind the core's login
+//! (`routes::attachment_response`), named as its artifact. Served behind the kernel's login
 //! (`RestPlugin`, issue 328), each handler with the `ArtifactManager` in its state.
 
 use crate::api::{ArtifactResponse, ShareOptions};
@@ -29,9 +29,8 @@ use caelumora_rest_server::state::AppState;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// What the handlers of artifacts share: the state of every handler, and
-/// the one owner of artifacts, taken from the runtime when the routes are
-/// built.
+/// What the handlers of artifacts share: the state of every handler, and the one owner of
+/// artifacts, taken from the kernel when the routes are built.
 #[derive(Clone)]
 struct Artifacts {
     app: Arc<AppState>,
@@ -40,12 +39,10 @@ struct Artifacts {
 
 impl RestPlugin for ArtifactsPlugin {
     fn routes(&self, app: Arc<AppState>) -> Router {
-        // Without the plugin registered with the runtime there are no
-        // artifacts to serve.
-        let Some(manager) = app.runtime_manager.services().get::<ArtifactManager>().map(Arc::clone)
-        else {
+        // Without the plugin registered with the kernel there are no artifacts to serve.
+        let Some(manager) = app.kernel.services().get::<ArtifactManager>().map(Arc::clone) else {
             tracing::error!(
-                "The artifacts plugin serves no routes: the runtime was built without it"
+                "The artifacts plugin serves no routes: the kernel was built without it"
             );
             return Router::new();
         };
@@ -80,7 +77,7 @@ impl From<ArtifactError> for ApiError {
             ArtifactError::StorageGone(e) => e.into(),
             ArtifactError::Store(e) => e.into(),
             // A caller that is no user, a name not in a project's scope - which the publisher
-            // vouches for -, a runtime without artifacts: not the client's request.
+            // vouches for -, a kernel without artifacts: not the client's request.
             ArtifactError::OwnerNotAUser
             | ArtifactError::InvalidScope
             | ArtifactError::NotJoined => {

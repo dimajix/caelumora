@@ -7,11 +7,11 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use caelumora_kernel::component::ComponentImpl;
+use caelumora_kernel::view::ViewError;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
 use caelumora_model::store::StoreError;
-use caelumora_runtime::component::ComponentImpl;
-use caelumora_runtime::view::ViewError;
 use std::fmt::Debug;
 
 #[async_trait]

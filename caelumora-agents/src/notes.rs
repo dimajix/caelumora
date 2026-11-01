@@ -13,13 +13,13 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
+use caelumora_kernel::kernel::OwnRecord;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;
 use caelumora_model::ledger::Staged;
 use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId, NoteOrigin, Notes};
 use caelumora_model::turn::TurnState;
-use caelumora_runtime::runtime::OwnRecord;
 
 /// Which of an agent's note chains in a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,10 +113,10 @@ impl AgentNotes {
         true
     }
 
-    /// Reclassifies note `id` as `classification` (issue 133) - one of the
-    /// current notes, or one noted earlier in this turn, and not revoked -
-    /// if the core lets the agent (`Turn::may_reclassify`, issue 516):
-    /// never above the channel. Taken over when the turn completes.
+    /// Reclassifies note `id` as `classification` (issue 133) - one of the current notes, or one
+    /// noted earlier in this turn, and not revoked - if the kernel lets the agent
+    /// (`Turn::may_reclassify`, issue 516): never above the channel. Taken over when the turn
+    /// completes.
     ///
     /// # Errors
     /// `InvalidParameter` if there is no such note, `PermissionDenied` if

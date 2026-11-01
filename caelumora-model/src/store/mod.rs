@@ -549,10 +549,9 @@ pub async fn purge_behind<T: Stored, E: From<StoreError>>(
     Ok(store.purge(ctx, id).await?)
 }
 
-/// The stores of the entities (issue 323), one per kind of the core,
-/// which the runtime is given and hands to the managers that keep each
-/// kind. A plugin's kinds are not among them: it asks the builder for their
-/// stores itself (`RuntimeBuilder::entity_store`).
+/// The stores of the entities (issue 323), one per kind of the kernel, which the kernel is given
+/// and hands to the managers that keep each kind. A plugin's kinds are not among them: it asks the
+/// builder for their stores itself (`KernelBuilder::entity_store`).
 #[derive(Debug, Clone)]
 pub struct EntityStores {
     pub workspaces: Arc<dyn EntityStore<Workspace>>,
@@ -569,7 +568,7 @@ pub struct EntityStores {
 }
 
 impl EntityStores {
-    /// The stores of the core's kinds in `persistence`, every access checked by `policies`.
+    /// The stores of the kernel's kinds in `persistence`, every access checked by `policies`.
     ///
     /// # Errors
     /// If one cannot be opened.
@@ -632,13 +631,11 @@ pub trait PersistenceBackend: Debug + Send + Sync {
     /// As `state_store`.
     fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>>;
 
-    /// Makes the backend ready to be used (issue 447): once, at start,
-    /// after every plugin registered - so after the kinds of the core and of
-    /// the plugins were opened -, and before anything reads or writes. A
-    /// database connects here, applies its migrations and makes what the
-    /// kinds opened need, so that what is wrong with it fails the start; a
-    /// kind opened later is the backend's to make ready when it is first
-    /// used. Nothing, unless a backend says otherwise.
+    /// Makes the backend ready to be used (issue 447): once, at start, after every plugin
+    /// registered - so after the kinds of the kernel and of the plugins were opened -, and before
+    /// anything reads or writes. A database connects here, applies its migrations and makes what
+    /// the kinds opened need, so that what is wrong with it fails the start; a kind opened later is
+    /// the backend's to make ready when it is first used. Nothing, unless a backend says otherwise.
     ///
     /// # Errors
     /// If the backend cannot be made ready.
@@ -650,10 +647,10 @@ pub trait PersistenceBackend: Debug + Send + Sync {
 /// The stores (issues 323, 446, 448, 449): of the entities of every kind and of the states, over
 /// the backend of the entities and the backend of the states - one, or two. It holds no policies:
 /// the store of a kind is checked by the policies whoever opens it gives, the same way for every
-/// backend (`CheckedStore`) - the runtime's by its own. It refuses a kind whose name another kind
-/// has already, since the name is what a kind is kept, asked about and announced by
-/// (`EntityKind`). The three state stores are taken from the backend of the states when it is
-/// made, together, since they read what one another writes.
+/// backend (`CheckedStore`) - the kernel's by its own. It refuses a kind whose name another kind
+/// has already, since the name is what a kind is kept, asked about and announced by (`EntityKind`).
+/// The three state stores are taken from the backend of the states when it is made, together, since
+/// they read what one another writes.
 #[derive(Debug, Clone)]
 pub struct Persistence {
     /// What the entities are kept in.
@@ -1003,7 +1000,7 @@ mod tests {
         assert!(matches!(gone, Err(StoreError::NotFound { .. })), "purged: {gone:?}");
     }
 
-    /// A kind named as the core's groups are.
+    /// A kind named as the kernel's groups are.
     #[derive(Debug, Clone, Serialize, Deserialize)]
     struct Impostor(Note);
 

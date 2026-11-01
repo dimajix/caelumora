@@ -1,11 +1,11 @@
-//! How compaction is joined to the runtime (issue 464): its texts, the `compaction` component and
+//! How compaction is joined to the kernel (issue 464): its texts, the `compaction` component and
 //! the strategies, and the strategy as a facet of which an agent has exactly one.
 
 use crate::component;
 use crate::summary_compaction::{self, SUMMARY_COMPACTION_KIND};
 use crate::{CompactionStrategy, NAMESPACE, PROMPTS};
 use anyhow::Result;
-use caelumora_runtime::library::{Library, LibraryBuilder};
+use caelumora_kernel::library::{Library, LibraryBuilder};
 
 /// Compaction, as a library.
 #[derive(Debug, Default)]

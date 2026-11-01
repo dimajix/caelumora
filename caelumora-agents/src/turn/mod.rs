@@ -42,6 +42,10 @@ use crate::situation::Situation;
 #[cfg(test)]
 use crate::testing::detached_actor_runtime;
 use anyhow::Result;
+use caelumora_kernel::actor::Answering;
+use caelumora_kernel::attachment::AttachmentResult;
+use caelumora_kernel::kernel::{ActorRuntime, OwnRecord};
+use caelumora_kernel::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
@@ -57,10 +61,6 @@ use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 #[cfg(test)]
 use caelumora_model::work::Work;
-use caelumora_runtime::actor::Answering;
-use caelumora_runtime::attachment::AttachmentResult;
-use caelumora_runtime::runtime::{ActorRuntime, OwnRecord};
-use caelumora_runtime::transport::EventSender;
 use std::sync::{Arc, LazyLock};
 use tool_calls::ToolCalls;
 
@@ -136,11 +136,11 @@ impl<'a> Turn<'a> {
         Situation::new(&self.current().work, self.agent_channel_state, &*self.runtime)
     }
 
-    /// The writer `T` a plugin or the core binds to the turn's work (`ActorRuntime::writer`, issue
-    /// 516): what of the plugin's service a tool acts by - the skills' `SkillWriter`, say -, in the
-    /// work's context. Asked for where it is used and not kept, as `Situation::reader` is. `None`
-    /// if none is bound, if it is not offered here, or where the work reaches no session or may not
-    /// read it.
+    /// The writer `T` a plugin or the kernel binds to the turn's work (`ActorRuntime::writer`,
+    /// issue 516): what of the plugin's service a tool acts by - the skills' `SkillWriter`, say -,
+    /// in the work's context. Asked for where it is used and not kept, as `Situation::reader` is.
+    /// `None` if none is bound, if it is not offered here, or where the work reaches no session or
+    /// may not read it.
     pub async fn writer<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
         let situation = self.situation();
         self.runtime.writer(situation.initiator(), situation.classification()).await
@@ -445,12 +445,12 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 mod tests {
     use super::*;
     use crate::testing;
+    use caelumora_kernel::transport::memory::InMemoryEventSender;
     use caelumora_model::actor::EventContext;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
-    use caelumora_runtime::transport::memory::InMemoryEventSender;
     use tokio::sync::mpsc;
 
     pub(super) fn message(content: &str) -> Message {
@@ -518,9 +518,9 @@ mod tests {
     /// not with a step of a plan, one without words or a tool message.
     #[tokio::test]
     async fn what_is_put_aside_goes_with_the_next_answer() {
+        use caelumora_kernel::transport::Discard;
         use caelumora_model::content::testing::make_content_ref;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
-        use caelumora_runtime::transport::Discard;
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             Default::default(),

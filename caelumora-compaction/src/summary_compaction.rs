@@ -15,10 +15,10 @@ use async_trait::async_trait;
 use caelumora_agents::llm::LLMClient;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::ActorId;
 use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -209,10 +209,10 @@ mod tests {
     use crate::testing::prompts;
     use caelumora_agents::llm::{unlabelled_message, LLMError, LLMResult};
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::tool::Tool;
-    use caelumora_runtime::workspace::testing::session_with_workspace;
     use futures::stream;
     use futures::stream::BoxStream;
     use std::collections::VecDeque;

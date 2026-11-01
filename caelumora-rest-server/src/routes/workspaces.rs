@@ -18,6 +18,10 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use caelumora_kernel::controller::WorkspaceController;
+use caelumora_kernel::terminal::{
+    CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
+};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -30,10 +34,6 @@ use caelumora_rest_api::session::SessionSnapshot;
 use caelumora_rest_api::workspace::{
     AttachWorkspaceRequest, CommandResponse, CreateWorkspaceRequest, FileResponse, FilesQuery,
     RenameWorkspaceRequest, StorageResponse, UsesWorkspaceRequest, WorkspaceResponse,
-};
-use caelumora_runtime::controller::WorkspaceController;
-use caelumora_runtime::terminal::{
-    CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
 };
 use futures::TryStreamExt;
 use std::io::Error;
@@ -68,7 +68,7 @@ pub(super) async fn list_storages(
 ) -> Json<Vec<StorageResponse>> {
     Json(
         state
-            .runtime_manager
+            .kernel
             .workspace_manager()
             .storages()
             .map(|(name, has_shell)| StorageResponse { name: name.to_string(), has_shell })
@@ -91,7 +91,7 @@ pub(super) async fn create_workspace(
     })?;
     let classification = request.classification.unwrap_or(Classification::CHANNEL_DEFAULT);
     let made = state
-        .runtime_manager
+        .kernel
         .workspace_manager()
         .create(
             &user.security_context(),
@@ -162,8 +162,7 @@ pub(super) async fn delete_workspace(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let id = WorkspaceId(id);
-    let deleted =
-        state.runtime_manager.workspace_manager().delete(&user.security_context(), id).await?;
+    let deleted = state.kernel.workspace_manager().delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
         false => {
@@ -179,7 +178,7 @@ pub(super) async fn restore_workspace(
     user: AuthenticatedUser,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
     let id = WorkspaceId(id);
-    state.runtime_manager.workspace_manager().restore(&user.security_context(), id).await?;
+    state.kernel.workspace_manager().restore(&user.security_context(), id).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 
@@ -191,8 +190,7 @@ pub(super) async fn purge_workspace(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let id = WorkspaceId(id);
-    let purged =
-        state.runtime_manager.workspace_manager().purge(&user.security_context(), id).await?;
+    let purged = state.kernel.workspace_manager().purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -324,7 +322,7 @@ async fn controller(
     state: &Arc<AppState>,
     id: WorkspaceId,
 ) -> Result<Arc<WorkspaceController>, ApiError> {
-    Ok(state.runtime_manager.controller_manager().workspace_controller(id).await?)
+    Ok(state.kernel.controller_manager().workspace_controller(id).await?)
 }
 
 /// The user's workspace `id`, as they see it.

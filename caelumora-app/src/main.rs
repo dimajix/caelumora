@@ -1,7 +1,6 @@
-//! Caelumora as one program (issue 323): the composition root that lists
-//! the plugins and the libraries (issue 516), builds the runtime with them,
-//! serves the REST API with the plugins' routes under `/api` and - with the
-//! feature `web-ui` - the web UI at `/`, from the binary.
+//! Caelumora as one program (issue 323): the composition root that lists the plugins and the
+//! libraries (issue 516), builds the kernel with them, serves the REST API with the plugins' routes
+//! under `/api` and - with the feature `web-ui` - the web UI at `/`, from the binary.
 
 #[cfg(feature = "web-ui")]
 mod web_ui;
@@ -19,6 +18,12 @@ use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
+use caelumora_kernel::component::{ComponentError, ComponentRegistry};
+use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::library::Library;
+use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::project::ProjectManager;
+use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
 use caelumora_model::config::AppConfig;
@@ -30,12 +35,6 @@ use caelumora_rest_server::error::{self, ApiError};
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes;
 use caelumora_rest_server::state::AppState;
-use caelumora_runtime::component::{ComponentError, ComponentRegistry};
-use caelumora_runtime::library::Library;
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::project::ProjectManager;
-use caelumora_runtime::runtime::RuntimeBuilder;
-use caelumora_runtime::session::SessionManager;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
@@ -79,14 +78,14 @@ async fn main() -> Result<()> {
 
     let rest_plugins = rest_plugins();
     let plugins = plugins();
-    let mut builder = RuntimeBuilder::from_config(&config, &all(&rest_plugins, &plugins)).await?;
+    let mut builder = KernelBuilder::from_config(&config, &all(&rest_plugins, &plugins)).await?;
     for library in libraries() {
         builder.library(library.as_ref())?;
     }
     default_kinds(builder.components())?;
-    let runtime_manager = Arc::new(builder.build()?);
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime_manager)));
-    let user_manager = Arc::clone(runtime_manager.user_manager());
+    let kernel = Arc::new(builder.build()?);
+    let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+    let user_manager = Arc::clone(kernel.user_manager());
     if user_manager.is_empty() {
         tracing::warn!(
             "No user providers configured (`users` section): nobody can log in. \
@@ -94,12 +93,12 @@ async fn main() -> Result<()> {
         );
     }
     let auth = Arc::new(Auth {
-        tokens: TokenService::from_secret(runtime_manager.secret_manager(), &config.auth).await?,
+        tokens: TokenService::from_secret(kernel.secret_manager(), &config.auth).await?,
         users: user_manager,
-        controllers: Arc::clone(runtime_manager.controller_manager()),
+        controllers: Arc::clone(kernel.controller_manager()),
     });
 
-    runtime_manager.seed(&config.seed).await?;
+    kernel.seed(&config.seed).await?;
     // What was under way when the process last ended goes on (issue 388),
     // beside the requests rather than before them.
     tokio::spawn({
@@ -110,7 +109,7 @@ async fn main() -> Result<()> {
     let shutdown = CancellationToken::new();
     let state = Arc::new(AppState {
         auth,
-        runtime_manager,
+        kernel,
         session_manager: Arc::clone(&session_manager),
         project_manager: Arc::new(ProjectManager::new(Arc::clone(&session_manager))),
         compartments: Arc::new(config.compartments.clone()),
@@ -192,14 +191,14 @@ async fn signalled() {
     }
 }
 
-/// The plugins of the program that serve routes (issue 323), which it
-/// builds its runtime and its API with.
+/// The plugins of the program that serve routes (issue 323), which it builds its kernel and its API
+/// with.
 fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin)]
 }
 
-/// The plugins of the program that bring no routes (issues 03, 327, 403, 446),
-/// which only its runtime is built with.
+/// The plugins of the program that bring no routes (issues 03, 327, 403, 446), which only its
+/// kernel is built with.
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(OpenTerminalPlugin),
@@ -223,10 +222,9 @@ fn libraries() -> Vec<Box<dyn Library>> {
     ]
 }
 
-/// Names the defaults of the facets of which an agent has one that the core
-/// leaves to the program (issue 329) among the kinds of `components`: the
-/// model is served by Ollama. `component_defaults` of the configuration
-/// still replaces them.
+/// Names the defaults of the facets of which an agent has one that the kernel leaves to the program
+/// (issue 329) among the kinds of `components`: the model is served by Ollama. `component_defaults`
+/// of the configuration still replaces them.
 ///
 /// # Errors
 /// If a plugin that brings a default kind is not among `plugins`.
@@ -235,8 +233,8 @@ fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentErro
     components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
 }
 
-/// Every plugin of the program, which it builds its runtime with:
-/// `rest_plugins` and `plugins`, those without routes.
+/// Every plugin of the program, which it builds its kernel with: `rest_plugins` and `plugins`,
+/// those without routes.
 fn all<'a>(
     rest_plugins: &'a [Box<dyn RestPlugin>],
     plugins: &'a [Box<dyn Plugin>],
@@ -270,6 +268,12 @@ mod tests {
     use caelumora_agents::testing::offered_anywhere;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_comfyui::library::COMFYUI;
+    use caelumora_kernel::backend::Backends;
+    use caelumora_kernel::channel::ChannelLoop;
+    use caelumora_kernel::component::{ComponentContainer, ComponentContext};
+    use caelumora_kernel::kernel::{Kernel, Services};
+    use caelumora_kernel::seed::Seed;
+    use caelumora_kernel::terminal::TerminalProvider;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -282,12 +286,6 @@ mod tests {
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
-    use caelumora_runtime::backend::Backends;
-    use caelumora_runtime::channel::ChannelLoop;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-    use caelumora_runtime::runtime::{RuntimeManager, Services};
-    use caelumora_runtime::seed::Seed;
-    use caelumora_runtime::terminal::TerminalProvider;
     use caelumora_skills::skill::Skill;
     use serde_json::json;
     use std::path::Path;
@@ -298,14 +296,12 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples").join(name)
     }
 
-    /// The runtime of the program, with its plugins and libraries, over `store`, with the
-    /// policy of the example configuration, which knows the roles the
-    /// example seed names, its component defaults, on which the example
-    /// seed's models build (issue 445), its variants of the texts, which
-    /// they are given (issue 57), and the workflows of ComfyUI its agent
-    /// generates images with (issue 512) - read from where the program
-    /// runs, the root of the sources.
-    fn runtime(store: &Persistence) -> RuntimeManager {
+    /// The kernel of the program, with its plugins and libraries, over `store`, with the policy of
+    /// the example configuration, which knows the roles the example seed names, its component
+    /// defaults, on which the example seed's models build (issue 445), its variants of the texts,
+    /// which they are given (issue 57), and the workflows of ComfyUI its agent generates images
+    /// with (issue 512) - read from where the program runs, the root of the sources.
+    fn kernel(store: &Persistence) -> Kernel {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let prompts =
@@ -313,7 +309,7 @@ mod tests {
         let workflows = root.join(config.libraries[COMFYUI]["workflows"].as_str().unwrap());
         let libraries = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
         let AppConfig { compartments, roles, component_defaults, .. } = config;
-        runtime_of(
+        kernel_of(
             store,
             &AppConfig {
                 compartments,
@@ -326,15 +322,15 @@ mod tests {
         )
     }
 
-    /// The runtime of the program, with its plugins and its libraries, over `store`, as `config`
+    /// The kernel of the program, with its plugins and its libraries, over `store`, as `config`
     /// configures it.
-    fn runtime_of(store: &Persistence, config: &AppConfig) -> RuntimeManager {
+    fn kernel_of(store: &Persistence, config: &AppConfig) -> Kernel {
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets =
             Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
         let (rest_plugins, plugins) = (rest_plugins(), plugins());
         let plugins = all(&rest_plugins, &plugins);
-        let mut builder = RuntimeBuilder::new(
+        let mut builder = KernelBuilder::new(
             store.clone(),
             secrets,
             Policies::new(access_policy, config.create_confidentiality_policy()),
@@ -357,8 +353,8 @@ mod tests {
     /// parameters lacks `deny_unknown_fields` would ignore it without a word.
     #[tokio::test]
     async fn every_component_kind_refuses_a_parameter_it_does_not_take() {
-        let runtime = runtime(&Persistence::in_memory());
-        let registry = runtime.component_registry();
+        let kernel = kernel(&Persistence::in_memory());
+        let registry = kernel.component_registry();
         for kind in registry.registered_kinds() {
             let config = ComponentConfig {
                 component_nodes: vec![ComponentDescriptor {
@@ -384,9 +380,9 @@ mod tests {
     /// plugin (issue 329).
     #[test]
     fn the_default_model_is_served_by_ollama() {
-        let runtime = runtime_of(&Persistence::in_memory(), &AppConfig::default());
+        let kernel = kernel_of(&Persistence::in_memory(), &AppConfig::default());
         assert_eq!(
-            runtime
+            kernel
                 .component_registry()
                 .kind_of::<dyn LLMClient>(&ComponentConfig::default())
                 .as_deref(),
@@ -399,11 +395,11 @@ mod tests {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
         assert!(!seed.personalities.is_empty() && !seed.session_templates.is_empty());
         let store = Persistence::in_memory();
-        let runtime = runtime(&store);
-        let stores = runtime.entity_stores();
+        let kernel = kernel(&store);
+        let stores = kernel.entity_stores();
         let system = SecurityContext::system();
 
-        runtime.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&[example("seed.yaml")]).await.unwrap();
         // Every personality a template names is part of the seed.
         for template in &seed.session_templates {
             for participant in &template.participants {
@@ -420,7 +416,7 @@ mod tests {
             stores.personalities.get(&system, seed.personalities[0].personality.id).await.unwrap();
         changed.description = Some(Description::new("changed").unwrap());
         stores.personalities.update(&system, &mut changed).await.unwrap();
-        runtime.seed(&[example("seed.yaml")]).await.expect("seeding again is no conflict");
+        kernel.seed(&[example("seed.yaml")]).await.expect("seeding again is no conflict");
         assert_eq!(
             stores
                 .personalities
@@ -493,11 +489,11 @@ mod tests {
     async fn a_seeded_document_that_was_deleted_stays_so_and_seeding_again_succeeds() {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
         let store = Persistence::in_memory();
-        let runtime = runtime(&store);
-        let stores = runtime.entity_stores();
+        let kernel = kernel(&store);
+        let stores = kernel.entity_stores();
         let skills = store.entity_store::<Skill>(&Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
-        runtime.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&[example("seed.yaml")]).await.unwrap();
         let bundle = seed.component_bundles[0].id;
         let personality = seed.personalities[0].personality.id;
         let template = seed.session_templates[0].id;
@@ -519,7 +515,7 @@ mod tests {
             .unwrap());
         assert!(skills.delete(&system, skill, &Removal::now(system.caller_id)).await.unwrap());
 
-        runtime.seed(&[example("seed.yaml")]).await.expect("a taken id is no failure");
+        kernel.seed(&[example("seed.yaml")]).await.expect("a taken id is no failure");
         assert!(
             stores.component_bundles.get(&system, bundle).await.is_err()
                 && stores.component_bundles.get_deleted(&system, bundle).await.is_ok(),
@@ -542,7 +538,7 @@ mod tests {
         );
 
         assert!(stores.personalities.purge(&system, personality).await.unwrap());
-        runtime.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&[example("seed.yaml")]).await.unwrap();
         assert!(
             stores.personalities.get(&system, personality).await.is_ok(),
             "purged, it is seeded again"
@@ -556,20 +552,20 @@ mod tests {
     async fn every_personality_of_the_example_seed_can_be_built() {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
         let store = Persistence::in_memory();
-        let runtime = runtime(&store);
-        runtime.seed(&[example("seed.yaml")]).await.unwrap();
-        // The services a runtime gives them (issue 296).
-        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
+        let kernel = kernel(&store);
+        kernel.seed(&[example("seed.yaml")]).await.unwrap();
+        // The services a kernel gives them (issue 296).
+        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
             // Asked for what its actor asks for (issue 337).
-            let asked = runtime
+            let asked = kernel
                 .agent_kinds()
                 .facets(personality.kind)
                 .expect("a kind of agent the program runs");
             ComponentContainer::from_config(
                 &personality.components,
                 asked,
-                runtime.component_registry(),
+                kernel.component_registry(),
                 &context,
             )
             .await
@@ -584,9 +580,9 @@ mod tests {
     async fn every_channel_of_the_example_seed_can_be_built() {
         let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
         let store = Persistence::in_memory();
-        let runtime = runtime(&store);
-        runtime.seed(&[example("seed.yaml")]).await.unwrap();
-        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
+        let kernel = kernel(&store);
+        kernel.seed(&[example("seed.yaml")]).await.unwrap();
+        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
         for (template, channel) in seed
             .session_templates
             .iter()
@@ -595,7 +591,7 @@ mod tests {
             ComponentContainer::from_config(
                 &channel.components,
                 ChannelLoop::COMPONENT_FACETS,
-                runtime.component_registry(),
+                kernel.component_registry(),
                 &context,
             )
             .await
@@ -613,8 +609,8 @@ mod tests {
     /// nobody answers at the endpoint.
     #[tokio::test]
     async fn the_tools_of_an_mcp_server_are_a_component_of_the_program() {
-        let runtime = runtime(&Persistence::in_memory());
-        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
+        let kernel = kernel(&Persistence::in_memory());
+        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
         let config = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }),
@@ -624,7 +620,7 @@ mod tests {
         let container = ComponentContainer::from_config(
             &config,
             &[TypeKey::of::<dyn ToolProvider>()],
-            runtime.component_registry(),
+            kernel.component_registry(),
             &context,
         )
         .await

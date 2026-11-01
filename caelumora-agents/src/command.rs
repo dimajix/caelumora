@@ -1,13 +1,12 @@
-//! The commands an agent carries out itself (issue 269), as a facet of its
-//! components - `/skill`, `/compact` -: an agent's, beside the channel's
-//! commands (`caelumora_runtime::command`), which the runtime keeps (issue
-//! 370). Who may ask an agent for one is decided at its channel's door
-//! (issue 516).
+//! The commands an agent carries out itself (issue 269), as a facet of its components - `/skill`,
+//! `/compact` -: an agent's, beside the channel's commands (`caelumora_kernel::command`), which the
+//! kernel keeps (issue 370). Who may ask an agent for one is decided at its channel's door (issue
+//! 516).
 
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::command::{CommandResult, ProvidesCommands};
 use caelumora_model::command::CommandOutput;
-use caelumora_runtime::command::{CommandResult, ProvidesCommands};
 
 /// A component facet contributing commands an agent carries out itself
 /// (issue 269) - `/skill`, `/compact` -, of agents run here and elsewhere

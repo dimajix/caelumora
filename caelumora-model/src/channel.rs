@@ -561,7 +561,7 @@ pub mod testing {
     }
 
     /// A channel of the session `session_id` that holds nothing but its ids: what an actor outside
-    /// a running session is in (the runtime's `ChannelRuntime::outside_a_session`) - neither
+    /// a running session is in (the kernel's `ChannelRuntime::outside_a_session`) - neither
     /// components nor the workspace of its session.
     pub fn bare_channel(session_id: SessionId) -> Channel {
         Channel {

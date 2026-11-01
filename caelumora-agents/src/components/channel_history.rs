@@ -15,6 +15,7 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::chain::Position;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -25,7 +26,6 @@ use caelumora_model::question::Answers;
 use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

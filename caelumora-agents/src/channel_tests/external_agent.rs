@@ -8,6 +8,13 @@ use crate::prompt::ModelProfileProvider;
 use crate::prompt::PromptProvider;
 use crate::testing::TestAgents;
 use anyhow::Result;
+use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, ComponentRegistry};
+use caelumora_kernel::kernel::ChannelRuntime;
+use caelumora_kernel::session::testing::*;
+use caelumora_kernel::session::SessionManager;
+use caelumora_kernel::testing::TestKernel;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::testing::{make_personality, stored_agent};
@@ -29,13 +36,6 @@ use caelumora_model::session::{ChannelId, Participant, SessionId};
 use caelumora_model::store::Persistence;
 use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::work::Work;
-use caelumora_runtime::actor::user::ChannelWatch;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::runtime::ChannelRuntime;
-use caelumora_runtime::session::testing::*;
-use caelumora_runtime::session::SessionManager;
-use caelumora_runtime::testing::TestRuntime;
 use chrono::Utc;
 use std::iter;
 use std::sync::Arc;
@@ -106,7 +106,7 @@ async fn external_channel(
     };
     // In whose name the remote agent is called, its policy sees (`called_as`).
     let access_policy: Arc<dyn AccessPolicy> = Arc::<CallsRead>::clone(&read);
-    let runtime = TestRuntime {
+    let kernel = TestKernel {
         store,
         access_policy,
         components: Box::new(components),
@@ -119,16 +119,11 @@ async fn external_channel(
         security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
         ..make_channel(SessionId::new(), "main")
     };
-    runtime
-        .entity_stores()
-        .channels
-        .create(&SecurityContext::system(), &mut channel)
-        .await
-        .unwrap();
+    kernel.entity_stores().channels.create(&SecurityContext::system(), &mut channel).await.unwrap();
     // Its participants' joins recorded, as if they had founded it (issue 420).
-    runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
+    kernel.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     if let Some(mut stored) = stored(agent_id) {
-        runtime
+        kernel
             .state_store()
             .put_agent_channel_state(agent_id, channel.id, &mut stored)
             .await
@@ -138,14 +133,9 @@ async fn external_channel(
     // that does not run - the channel runs outside one (`ChannelRuntime::outside_a_session`), and
     // what its tests read of the session is its time zone (issue 486).
     let mut session = bare_session(channel.session_id);
-    runtime
-        .entity_stores()
-        .sessions
-        .create(&SecurityContext::system(), &mut session)
-        .await
-        .unwrap();
+    kernel.entity_stores().sessions.create(&SecurityContext::system(), &mut session).await.unwrap();
     let channel =
-        ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, session, channel)).await?;
+        ChannelLoop::new(ChannelRuntime::outside_a_session(kernel, session, channel)).await?;
     Ok((channel, context, agent_id, alice))
 }
 
@@ -1941,22 +1931,22 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
             );
         }
     };
-    let runtime = TestRuntime {
+    let kernel = TestKernel {
         store: store.clone(),
         components: Box::new(components),
         libraries: vec![&TestAgents],
         ..Default::default()
     }
     .build();
-    let manager = SessionManager::new(Arc::clone(&runtime));
+    let manager = SessionManager::new(Arc::clone(&kernel));
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
-    let participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
+    let participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
     let mut roster =
         ComponentDescriptor::new("participants", "channel_participants_prompt_provider");
     roster.params = serde_json::json!({ "changes_only": true });
     let hermes = stored_agent(
-        runtime.entity_stores(),
+        kernel.entity_stores(),
         "hermes",
         Personality {
             kind: PersonalityKind::External,

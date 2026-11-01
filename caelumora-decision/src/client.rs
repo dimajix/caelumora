@@ -7,10 +7,10 @@
 //! of 2 to 26 options, and `noul`, yes or no. Its error format is not
 //! documented, so an error is told by its status alone.
 
+use caelumora_kernel::remote::describe_request_error;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
-use caelumora_runtime::remote::describe_request_error;
 use reqwest::{Client, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};

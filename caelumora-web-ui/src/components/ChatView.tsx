@@ -2008,7 +2008,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             </div>
             <button
               type="submit"
-              // Enabled while an agent answers too (issue 202): the runtime
+              // Enabled while an agent answers too (issue 202): the kernel
               // takes a message at any time, and an agent in a turn hears it
               // once the turn ends.
               disabled={!mayBeSent}

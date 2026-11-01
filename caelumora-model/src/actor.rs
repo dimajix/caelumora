@@ -29,10 +29,10 @@ pub enum ActorId {
     User(UserId),
     Agent(AgentId),
     Approver(ApproverId),
-    /// The runtime itself, acting on no one's behalf: setting up initial
-    /// data, keeping its own records in step with events. Only ever set
-    /// deliberately, through `SecurityContext::system()` - never the default,
-    /// so that a context nobody filled in has no rights (issue 11).
+    /// The kernel itself, acting on no one's behalf: setting up initial data, keeping its own
+    /// records in step with events. Only ever set deliberately, through
+    /// `SecurityContext::system()` - never the default, so that a context nobody filled in has no
+    /// rights (issue 11).
     System,
 }
 /// An actor as a query compares it, after serde's tags: `{"User": "…"}`,
@@ -60,9 +60,9 @@ impl ActorId {
         Name::fixed(Self::APPROVER_NAME)
     }
 
-    /// The name of an actor that is no entity and so has no name of its own:
-    /// an approver, the runtime itself, nobody. `None` for users and agents,
-    /// whose names are their entities' (`ControllerManager::actor_name`).
+    /// The name of an actor that is no entity and so has no name of its own: an approver, the
+    /// kernel itself, nobody. `None` for users and agents, whose names are their entities'
+    /// (`ControllerManager::actor_name`).
     pub fn fixed_name(&self) -> Option<&'static str> {
         match self {
             ActorId::Approver(_) => Some(Self::APPROVER_NAME),
@@ -301,11 +301,10 @@ pub enum ActorEvent {
         activity: String,
         output: String,
     },
-    /// `participant`, called `name`, joined the channel (issue 408). The
-    /// envelope's sender is who added it - the participant itself if it
-    /// joined by itself, the runtime, `ActorId::System`, if an agent was
-    /// restored. Sent by the channel alone, as the participant's actor
-    /// starts, so that it is the first thing the newcomer hears.
+    /// `participant`, called `name`, joined the channel (issue 408). The envelope's sender is who
+    /// added it - the participant itself if it joined by itself, the kernel, `ActorId::System`, if
+    /// an agent was restored. Sent by the channel alone, as the participant's actor starts, so that
+    /// it is the first thing the newcomer hears.
     ///
     /// The channel records it in its history (`HistoryEntry::
     /// ParticipantJoined`), and everybody is told - the agents too, which
@@ -314,12 +313,10 @@ pub enum ActorEvent {
         participant: ActorId,
         name: String,
     },
-    /// `participant`, called `name`, left the channel (issues 162, 408). The
-    /// envelope's sender is who removed it - the runtime itself,
-    /// `ActorId::System`, if nobody did. Sent by the channel alone, once the
-    /// participant's actor no longer runs in it: nothing of the participant
-    /// follows, so whatever of it was under way - a turn, a call of a tool -
-    /// has ended.
+    /// `participant`, called `name`, left the channel (issues 162, 408). The envelope's sender is
+    /// who removed it - the kernel itself, `ActorId::System`, if nobody did. Sent by the channel
+    /// alone, once the participant's actor no longer runs in it: nothing of the participant
+    /// follows, so whatever of it was under way - a turn, a call of a tool - has ended.
     ///
     /// Recorded and told as `ParticipantJoined` is. The channel delivered
     /// nothing to it from the position `until` on (issue 417): where it
@@ -785,7 +782,7 @@ pub enum Rejection {
 }
 
 /// What is done with an envelope an actor looks at in its inbox, looking for the next it takes
-/// without waiting (`EventReceiver::try_recv_if` of the runtime, issue 435).
+/// without waiting (`EventReceiver::try_recv_if` of the kernel, issue 435).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pick {
     /// It is taken - ahead of what was passed over before it, if anything was.

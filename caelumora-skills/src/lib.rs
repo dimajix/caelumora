@@ -1,12 +1,10 @@
-//! Skills (issues 22, 323): procedures written down for agents to follow,
-//! as a plugin of their own - the first subject moved out of the core. The
-//! crate is cut into layers by features (cut 11 of issue 323): without
-//! features it is the entity (`skill`) and the wire types (`api`), which a
-//! client reads; `runtime` adds the one writer of skills (`manager`), how
-//! a viewer reaches them (`view`), what an agent's work does with them
-//! (`extension`, issue 516), the questions of who may use and change one
-//! (`access`), the `skills` component and the plugin that joins all of it
-//! to the runtime (`plugin`); `server` adds the routes.
+//! Skills (issues 22, 323): procedures written down for agents to follow, as a plugin of their
+//! own - the first subject moved out of the kernel. The crate is cut into layers by features (cut
+//! 11 of issue 323): without features it is the entity (`skill`) and the wire types (`api`), which
+//! a client reads; `runtime` adds the one writer of skills (`manager`), how a viewer reaches them
+//! (`view`), what an agent's work does with them (`extension`, issue 516), the questions of who may
+//! use and change one (`access`), the `skills` component and the plugin that joins all of it to the
+//! kernel (`plugin`); `server` adds the routes.
 
 pub mod api;
 pub mod skill;

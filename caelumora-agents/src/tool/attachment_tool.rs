@@ -13,16 +13,16 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::content::ContentError;
+use caelumora_kernel::terminal::{ByteStream, WorkspacePath};
+use caelumora_kernel::view::ChannelReader;
+use caelumora_kernel::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::content::{ContentId, ContentRef};
 use caelumora_model::message::MessageId;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_runtime::content::ContentError;
-use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
-use caelumora_runtime::view::ChannelReader;
-use caelumora_runtime::workspace::{WorkspaceReader, WorkspaceWriter};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -347,6 +347,11 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime};
+    use caelumora_kernel::session::SessionLoop;
+    use caelumora_kernel::terminal::ByteStream;
+    use caelumora_kernel::testing::participant_runtime_in;
+    use caelumora_kernel::testing::World;
+    use caelumora_kernel::view::Viewer;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -357,11 +362,6 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::Grant;
     use caelumora_model::workspace::Workspace;
-    use caelumora_runtime::session::SessionLoop;
-    use caelumora_runtime::terminal::ByteStream;
-    use caelumora_runtime::testing::participant_runtime_in;
-    use caelumora_runtime::testing::World;
-    use caelumora_runtime::view::Viewer;
     use futures::stream;
     use std::fs;
     use std::time::Duration;
@@ -380,7 +380,7 @@ mod tests {
         let helper = world.agent("helper", world.alice, &personality).await;
         let alice = World::as_user(world.alice);
         let docs = world
-            .runtime
+            .kernel
             .workspace_manager()
             .create(
                 &alice,
@@ -403,7 +403,7 @@ mod tests {
         let main = &session.channels()[0];
         let channel = main.channel();
         let hers = World::as_user(world.alice);
-        let attachments = world.runtime.attachment_manager();
+        let attachments = world.kernel.attachment_manager();
         let notes = attachments
             .create(&hers, &channel, "notes.txt", None, bytes(b"line one\nline two\n"))
             .await

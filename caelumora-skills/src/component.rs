@@ -46,6 +46,10 @@ use caelumora_agents::tool::{
 };
 use caelumora_agents::turn::Turn;
 use caelumora_compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
+use caelumora_kernel::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_kernel::component::{
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
+};
 use caelumora_model::actor::ActorId;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::confidentiality::Classification;
@@ -55,10 +59,6 @@ use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;
 use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
-};
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;

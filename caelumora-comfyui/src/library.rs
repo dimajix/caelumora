@@ -1,11 +1,10 @@
-//! How ComfyUI is joined to the runtime (issue 512): the section `comfyui` of the configuration,
-//! the workflows it names as a service, the texts of its tool, and the component kind
-//! `comfyui_tool`.
+//! How ComfyUI is joined to the kernel (issue 512): the section `comfyui` of the configuration, the
+//! workflows it names as a service, the texts of its tool, and the component kind `comfyui_tool`.
 
 use crate::workflow::Workflows;
 use crate::{tool, NAMESPACE, PROMPTS};
 use anyhow::{Context, Result};
-use caelumora_runtime::library::{Library, LibraryBuilder};
+use caelumora_kernel::library::{Library, LibraryBuilder};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -49,14 +48,14 @@ impl Library for ComfyUiLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_model::config::AppConfig;
-    use caelumora_runtime::testing::TestRuntime;
     use serde_json::{json, Value};
     use std::path::Path;
 
     /// The workflows the section names, of the example configuration here, are what the library
     /// offers; a section that names none offers none, and one whose workflows cannot be read keeps
-    /// the runtime from being built, naming the parameter.
+    /// the kernel from being built, naming the parameter.
     #[test]
     fn the_workflows_the_section_names_are_offered_as_a_service() {
         let built = |section: Option<Value>| {
@@ -64,12 +63,12 @@ mod tests {
             if let Some(section) = section {
                 config.libraries.insert(COMFYUI.to_string(), section);
             }
-            TestRuntime { config, libraries: vec![&ComfyUiLibrary], ..Default::default() }
+            TestKernel { config, libraries: vec![&ComfyUiLibrary], ..Default::default() }
                 .try_build()
         };
         let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/comfyui/workflows");
-        let runtime = built(Some(json!({ "workflows": examples }))).expect("the example's");
-        let workflows = runtime.services().get::<Workflows>().expect("offered");
+        let kernel = built(Some(json!({ "workflows": examples }))).expect("the example's");
+        let workflows = kernel.services().get::<Workflows>().expect("offered");
         let example = workflows.named("z_image_turbo").expect("the example's workflow");
         assert!(example.description().starts_with("fast"));
 
@@ -84,13 +83,13 @@ mod tests {
     }
 
     /// Issue 516: a library's section is read from the libraries' sections alone - among the
-    /// plugins' it is claimed by none -, and one no library claims keeps the runtime from being
+    /// plugins' it is claimed by none -, and one no library claims keeps the kernel from being
     /// built.
     #[test]
     fn a_library_s_section_lies_among_the_libraries_sections() {
         let built = |yaml: &str| {
             let config = AppConfig::from_yaml(yaml).unwrap();
-            TestRuntime { config, libraries: vec![&ComfyUiLibrary], ..Default::default() }
+            TestKernel { config, libraries: vec![&ComfyUiLibrary], ..Default::default() }
                 .try_build()
                 .map(drop)
         };

@@ -45,7 +45,7 @@ pub(super) async fn upload_attachment(
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let content = Box::pin(body.into_data_stream().map_err(Error::other));
     let uploaded = state
-        .runtime_manager
+        .kernel
         .attachment_manager()
         .create(
             &user.security_context(),
@@ -99,13 +99,13 @@ mod tests {
     use axum::body::to_bytes;
     use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE};
     use axum::http::Request;
+    use caelumora_kernel::session::testing::create;
+    use caelumora_kernel::view::Viewer;
     use caelumora_model::config::{AppConfig, BackendConfig, ContentConfig};
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Participant;
     use caelumora_model::user::UserId;
-    use caelumora_runtime::session::testing::create;
-    use caelumora_runtime::view::Viewer;
     use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::time;

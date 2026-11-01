@@ -7,10 +7,10 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

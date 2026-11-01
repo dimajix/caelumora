@@ -62,8 +62,8 @@ pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_kernel::logging::envelope_span;
     use caelumora_model::actor::{ActorId, EventContext};
-    use caelumora_runtime::logging::envelope_span;
     use serde_json::Value;
     use std::env;
     use tracing::info;

@@ -15,7 +15,7 @@ define_id!(TurnId);
 
 /// A piece of work of an agent: the event context it is done in - the request it answers, and who
 /// began its chain -, the most it may write as, what it has seen so far, and what what comes of it
-/// is produced from. In whose name and with whose rights it acts the core decides at each call
+/// is produced from. In whose name and with whose rights it acts the kernel decides at each call
 /// (issue 516).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Work {
@@ -58,7 +58,7 @@ pub struct Work {
 
 impl Work {
     /// Who began the chain the work answers (`EventContext::initiator_id`, issue 432): what the
-    /// core is told with every call made in the work's name, for the record - never for rights
+    /// kernel is told with every call made in the work's name, for the record - never for rights
     /// (issue 516).
     pub fn initiator(&self) -> ActorId {
         self.event_context.initiator_id

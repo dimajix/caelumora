@@ -4,9 +4,8 @@
 //! `caelumora-rest-server`, a client is `caelumora-rest-client` -, so that
 //! both depend on these types alone and neither on the other.
 //!
-//! A response is made from what the model gives - an entity, a snapshot of
-//! it as a reader sees it - by `From` or an `of`; what only the runtime
-//! knows is put into it by the server.
+//! A response is made from what the model gives - an entity, a snapshot of it as a reader sees it -
+//! by `From` or an `of`; what only the kernel knows is put into it by the server.
 
 pub mod access;
 pub mod agent;

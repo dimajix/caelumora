@@ -464,8 +464,8 @@ whose authority it acts with - which of its tools may be called there
 (`AgentChannelState::offer_tools`, see [TOOLS.md](TOOLS.md#tool-sets)). They are fixed in the turn
 like its classification - a resumed turn keeps them. The model is told of a tool only its name,
 description and parameters; whether its calls need approval, who sees them and how results are
-classified stay with the runtime. A tool that changes during a turn is offered as it is from the
-next turn on; a call of one that is gone fails as unknown. The tool sets offered are kept once per
+classified stay with the kernel. A tool that changes during a turn is offered as it is from the next
+turn on; a call of one that is gone fails as unknown. The tool sets offered are kept once per
 digest, each tool whole with how its calls were treated: the same tools treated otherwise are
 another offer. The model gets the tools from the resolved context, as it gets the messages, so what
 it was offered and what is recorded as offered are the same.
@@ -656,22 +656,22 @@ What the model is given besides the conversation - the system prompt, notes, wha
 remembers - is a *prompt part*. The `ContextProvider` decides where the parts go; the turn records
 what it was handed. A part is never stored in the transcript, which stays a stable prefix.
 
-Every part the runtime writes has one form: a short title in brackets on a line of its own -
-`[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content;
-a part configured with a title (`static_system_prompt_provider`) is given the same form
-(`agents.titled`). A part that says nothing is no part.
-The personality's own system prompt stays as written.
+Every part the agents write has one form: a short title in brackets on a line of its own -
+`[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content; a
+part configured with a title (`static_system_prompt_provider`) is given the same form
+(`agents.titled`). A part that says nothing is no part. The personality's own system prompt stays as
+written.
 
 ### The prompt catalogue
 
-What the runtime's parts say is kept apart from the code that fills them in, in the prompt catalogue
+What the prompt parts say is kept apart from the code that fills them in, in the prompt catalogue
 (`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a change of
 code. Every crate brings its texts in a YAML file it compiles in - the agents'
 `caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin or library
-registers (`RuntimeBuilder::prompts`, `LibraryBuilder::add_prompts`): `agents.channel_participants`
-is the roster. The catalogue is a service of the runtime. The core's texts are the namespace `core`
-(`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it resolves a
-context - a turn given up, who joined or left - and how the messages of others are marked
+registers (`KernelBuilder::prompts`, `LibraryBuilder::add_prompts`): `agents.channel_participants`
+is the roster. The catalogue is a service of the kernel. The kernel's texts are the namespace
+`kernel` (`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it
+resolves a context - a turn given up, who joined or left - and how the messages of others are marked
 (`ModelProfile::framing_explanation`).
 
 **Variants.** The configuration may name variants of the texts (`prompts`, see
@@ -692,12 +692,12 @@ which falls back to the default for what it leaves out:
     each time it resolves it - also when what an agent saw is asked for afterwards, with the texts
     of that variant as they are then.
 
-A text is a whole part, title and all: a template of `minijinja` (Jinja2), given its values by
-name, that may branch and loop over them - the roster over the participants, the notes over their
+A text is a whole part, title and all: a template of `minijinja` (Jinja2), given its values by name,
+that may branch and loop over them - the roster over the participants, the notes over their
 sections. The code decides whether a part is given at all and with which values - whether an agent
 is among the others, which name serves as the example, an introduction on one line -, the template
 only how it reads. Names of tools are values, never text: they are identifiers. A template that does
-not parse keeps the runtime from starting; a value it names and is not given fails the part
+not parse keeps the kernel from starting; a value it names and is not given fails the part
 (`ContextError::Prompt`), as a provider's error does. The conventions of the templates - block tags
 on lines of their own, `+%}` where one ends a line of text - are at the top of each file.
 
@@ -728,7 +728,7 @@ A `PromptProvider` is given a `Situation` (`Turn::situation`), what every piece 
 has, so the same providers serve an external agent as well. What only reads takes a `Situation`;
 what stages changes takes the `Turn`.
 
-The runtime brings four parts of its own, which a personality wires in as components. They go into
+The agents bring four parts of their own, which a personality wires in as components. They go into
 the system prompt by default, since they change rarely. For an external agent, whose remote agent
 keeps its conversation, the first three take `changes_only`: told once, then only when they changed.
 
@@ -795,11 +795,10 @@ that the prompt does not change with their content. It lives with the tools it n
 
 ### Instructions within a turn
 
-While a plan is executed, the runtime tells the model which step to work on next and, after the
-last, to write the final answer (`Turn::advance_plan`). Such an instruction is a prompt part placed
-after the messages the turn has produced so far - never between a tool call and its result. It is
-given again within its turn, never to later turns, which see the plan through the `create_plan`
-call.
+While a plan is executed, the turn tells the model which step to work on next and, after the last,
+to write the final answer (`Turn::advance_plan`). Such an instruction is a prompt part placed after
+the messages the turn has produced so far - never between a tool call and its result. It is given
+again within its turn, never to later turns, which see the plan through the `create_plan` call.
 
 ### Why the agent was asked
 
@@ -854,7 +853,7 @@ implementation, and therefore cannot diverge.
 
 ## Asking what an agent saw
 
-What an agent saw is read through the views (`caelumora_runtime::view`), from the participant of the
+What an agent saw is read through the views (`caelumora_kernel::view`), from the participant of the
 channel that produced the message: the channel's history holds it once, and only its sender is
 given what it was produced from.
 

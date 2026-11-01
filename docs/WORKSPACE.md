@@ -64,7 +64,7 @@ Using it in a channel is asked by its `WorkspaceController`, which the running s
 session and the channel as they are then (`WorkspaceController::terminal_in`, `shell_in`): as the
 views ask - whether the caller may read the session and the channel, whether the workspace is usable
 there - and for changing files `WriteWorkspace`. Whoever holds the running session hands the
-documents over: for an agent's work the core's extension of the workspace - a reader the situation
+documents over: for an agent's work the kernel's extension of the workspace - a reader the situation
 hands out (`WorkspaceReader`: what is usable there, its files to read), a writer the turn
 (`WorkspaceWriter`: its files to change, its shell), each asked at every use (issue 516) -, the REST
 server from the session it opened.
@@ -86,16 +86,16 @@ Caelumora) - differ in what their backend does; how each meets the rules of this
 their module docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal). A storage's key is
 resolved through the secret chain in the system's name, since the storage is the operator's.
 
-A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider
-is made by the factory registered for its `type`, which reads and checks its parameters. The core
+A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider is
+made by the factory registered for its `type`, which reads and checks its parameters. The kernel
 brings `local` alone, registered by `terminal::register_backends` beside its provider in
-`caelumora-runtime/src/terminal/`, which tests and development need. The two Open Terminal storages
+`caelumora-kernel/src/terminal/`, which tests and development need. The two Open Terminal storages
 are the plugin `caelumora-open-terminal` (issue 327), which the programs list; the Docker one, with
 `bollard`, is behind its feature `docker`, on by default, so that a deployment with one shared
 instance builds without it. Another sandbox - a pod, a remote machine - is added the same way, by a
 plugin that registers a `TerminalProvider` of its own.
 
-What a provider has to offer is the public API of `caelumora_runtime::terminal`:
+What a provider has to offer is the public API of `caelumora_kernel::terminal`:
 
 *   a `TerminalProvider`: making and removing the place of a workspace, its `Terminal` for the
     largest file a workspace takes, its `Shell` for one scope if it has one - whose `end` ends a
@@ -104,7 +104,7 @@ What a provider has to offer is the public API of `caelumora_runtime::terminal`:
 *   the `Terminal` it hands out, a `TerminalReader` besides, on `WorkspacePath`s, with files as
     `ByteStream`s and its failures as `TerminalError`s;
 *   the commands of its storage, kept in `Commands` by what its shells keep of each (`Kept`), so
-    that they are listed and forgotten as the core's are;
+    that they are listed and forgotten as the kernel's are;
 *   its parameter `max_run_secs`, read with `default_max_run_secs` and checked with
     `check_max_run_secs` in the `Params::check` of its parameters, so that every storage bounds its
     commands alike.
@@ -130,9 +130,9 @@ alone. A classification says who may read a workspace; it does not keep a comman
 
 A storage may have a `Shell`, which its provider hands out, not its terminal: commands started in
 the workspace, followed by what they print and killed with everything they started. A shell is made
-for one scope - for the runtime, the channel - and sees only the commands started under it. A
-storage knows the commands it started, so that none is started past it, and ends one when told,
-without asking anything.
+for one scope - for the kernel, the channel - and sees only the commands started under it. A storage
+knows the commands it started, so that none is started past it, and ends one when told, without
+asking anything.
 
 **Commands live with the storage**, not with a call or a turn: a command handed back to an agent as
 running outlives the call that started it. A command is its channel's, not its starter's: it runs on
@@ -141,7 +141,7 @@ the channel leaves its command to the participants who remain. Whoever ends a co
 shell bound to the channel (`WorkspaceController::shell_in`), so that who may end a command is who
 could have started it there.
 
-A command nobody ends is ended by the runtime:
+A command nobody ends is ended by the kernel:
 
 *   once it ran for its storage's `max_run_secs`;
 *   once its session is stopped, or its workspace purged - removing a place ends the commands in it
@@ -149,7 +149,7 @@ A command nobody ends is ended by the runtime:
 *   once nobody may run it any longer where it was started. The `CommandReaper`, woken by the events
     that can change who may use a workspace in a channel and besides every minute, asks for each
     command whether some current participant of its channel could start it there, in that
-    participant's name with the runtime as initiator, of the session and the channel as they are
+    participant's name with the kernel as initiator, of the session and the channel as they are
     stored. A command whose question cannot be answered for now is kept. It also ends the commands
     of a stopped session.
 

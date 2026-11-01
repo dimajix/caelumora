@@ -12,6 +12,8 @@
 //! reach it: read and cleared for (issues 312, 322).
 
 use crate::skill::{Skill, SkillBody, SkillId, SkillUpdateEvent};
+use caelumora_kernel::event::EventBus;
+use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::{
     Classification, ConfidentialityPolicy, ConfidentialityQuestions,
@@ -24,8 +26,6 @@ use caelumora_model::store::{EntityStore, StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
 use caelumora_model::value::ValueError;
-use caelumora_runtime::event::EventBus;
-use caelumora_runtime::scoped::{ScopeHolders, ScopeMember};
 use chrono::Utc;
 use std::fmt;
 use std::sync::Arc;
@@ -47,7 +47,7 @@ pub enum SkillError {
     /// where it is, alike whether there is one at all (issue 22).
     #[error("there is no skill named \"{0}\" that can be loaded here")]
     NoSkillNamed(String),
-    /// The runtime was built without the plugin (issue 323).
+    /// The kernel was built without the plugin (issue 323).
     #[error("skills are not offered here")]
     NotJoined,
     #[error(transparent)]

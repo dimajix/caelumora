@@ -29,9 +29,9 @@ pub enum ConfigError {
 
 pub type ConfigResult<T> = Result<T, ConfigError>;
 
-/// Where the stores keep their data (issue 446): the backend of the
-/// entities and the components, and that of the states, each a backend
-/// (`dyn PersistenceBackend`) - the core's `memory` and `json`, or a plugin's.
+/// Where the stores keep their data (issue 446): the backend of the entities and the components,
+/// and that of the states, each a backend (`dyn PersistenceBackend`) - the kernel's `memory` and
+/// `json`, or a plugin's.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct PersistenceConfig {
@@ -50,11 +50,10 @@ impl Default for PersistenceConfig {
     }
 }
 
-/// A backend of a service (issue 324): its `type`, by which the runtime
-/// finds the factory registered for it - the core's or a plugin's -, and
-/// its parameters, written beside the type and read by that factory. A
-/// type no factory is registered for, or parameters it cannot read, are
-/// refused when the runtime is built.
+/// A backend of a service (issue 324): its `type`, by which the kernel finds the factory registered
+/// for it - the kernel's or a plugin's -, and its parameters, written beside the type and read by
+/// that factory. A type no factory is registered for, or parameters it cannot read, are refused
+/// when the kernel is built.
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 pub struct BackendConfig {
     #[serde(rename = "type")]
@@ -190,12 +189,11 @@ pub struct LoggingConfig {
     pub file: Option<PathBuf>,
 }
 
-/// The configuration of a binary. Every section may be left out and then
-/// takes its default. The sections of the plugins lie under `plugins`, those of
-/// the libraries under `libraries` (issues 323, 516); one that none claims is an
-/// error when the runtime is built, rather than ignored, so that a misspelt
-/// section doesn't silently fall back to its default. A key it does not know is
-/// an error when it is read, at the top as within a section.
+/// The configuration of a binary. Every section may be left out and then takes its default. The
+/// sections of the plugins lie under `plugins`, those of the libraries under `libraries` (issues
+/// 323, 516); one that none claims is an error when the kernel is built, rather than ignored, so
+/// that a misspelt section doesn't silently fall back to its default. A key it does not know is an
+/// error when it is read, at the top as within a section.
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
@@ -242,11 +240,10 @@ pub struct AppConfig {
     pub content: ContentConfig,
     /// What a message may carry besides its text (issue 282).
     pub attachments: AttachmentsConfig,
-    /// The variants of the texts given to models (issue 57), each by its
-    /// name and the directory of its files, one per namespace - `default`
-    /// overriding the defaults for every model. Read and checked when the
-    /// runtime is built (`PromptCatalogue::add_variant`). None unless
-    /// configured: the texts compiled in.
+    /// The variants of the texts given to models (issue 57), each by its name and the directory of
+    /// its files, one per namespace - `default` overriding the defaults for every model. Read and
+    /// checked when the kernel is built (`PromptCatalogue::add_variant`). None unless configured:
+    /// the texts compiled in.
     pub prompts: BTreeMap<String, PathBuf>,
     /// The sections of the plugins, by name, as they were written: each
     /// read by the plugin that claims it (issue 323).
@@ -467,8 +464,8 @@ persistence:
             serde_json::json!({ "root": "x", "shell": true, "destination": { "level": "internal" }, "max_file_bytes": 1024 }),
         );
         assert_eq!(config.workspaces.storage.get("dev"), Some(&expected));
-        // What the parameters are is the factory's to say, when the runtime
-        // is built: a type nobody registers is no error here.
+        // What the parameters are is the factory's to say, when the kernel is built: a type nobody
+        // registers is no error here.
         let unknown = AppConfig::from_yaml(
             "workspaces:\n  storage:\n    main:\n      type: nfs\n      rot: z\n",
         )
@@ -499,7 +496,7 @@ persistence:
         }
         let message = AppConfig::from_yaml("secret:\n  providers: []\n").expect_err("no section");
         assert!(message.to_string().contains("unknown field"), "at the top too: {message}");
-        // A section of a plugin or a library is theirs, refused by the runtime if none claims it.
+        // A section of a plugin or a library is theirs, refused by the kernel if none claims it.
         let config =
             AppConfig::from_yaml("plugins:\n  secret: {}\nlibraries:\n  vault: {}\n").unwrap();
         assert_eq!(config.plugins.get("secret"), Some(&serde_json::json!({})));

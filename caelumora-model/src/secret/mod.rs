@@ -22,10 +22,10 @@ pub enum SecretError {
 
 pub type SecretResult<T> = Result<T, SecretError>;
 
-/// The secrets that may be read in one name, bound to it by the core (issue 516): what a
-/// component that talks to a remote system resolves its credential by, without naming the name
-/// or holding the `SecretManager`. Each read is asked of the policy (`ReadSecret`) in the name it
-/// is bound to.
+/// The secrets that may be read in one name, bound to it by the kernel (issue 516): what a
+/// component that talks to a remote system resolves its credential by, without naming the name or
+/// holding the `SecretManager`. Each read is asked of the policy (`ReadSecret`) in the name it is
+/// bound to.
 #[async_trait]
 pub trait Secrets: Send + Sync {
     /// The secret `key`.

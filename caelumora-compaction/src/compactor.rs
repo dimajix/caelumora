@@ -171,6 +171,8 @@ mod tests {
     use crate::testing::{two_calls, Scripted, SUMMARY};
     use async_trait::async_trait;
     use caelumora_agents::testing::{agent_runtime, workspace_turn};
+    use caelumora_kernel::testing::participant_runtime_in;
+    use caelumora_kernel::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -181,8 +183,6 @@ mod tests {
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::work::Work;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
-    use caelumora_runtime::testing::participant_runtime_in;
-    use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
 
     /// What the agent of a test is given, as a plugin gives it - a skill, say: a workspace, here,
     /// and its text.

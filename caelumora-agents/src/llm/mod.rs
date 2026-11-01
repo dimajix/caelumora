@@ -6,10 +6,10 @@
 pub mod control_tokens;
 
 use async_trait::async_trait;
+use caelumora_kernel::component::LibraryComponents;
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;
-use caelumora_runtime::component::LibraryComponents;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
@@ -46,14 +46,11 @@ pub fn unlabelled_message() -> Message {
 
 #[async_trait]
 pub trait LLMClient: Send + Sync + Debug {
-    /// Sends `context` and the `tools` the model may call (issue 137) - of
-    /// each only its name, description and parameters: whether its calls
-    /// need approval, who sees them and how its results are classified are
-    /// the runtime's, not the model's (issue 194) - and streams its answer
-    /// as `MessageEvent`s:
-    /// partial messages as they arrive, then the complete ones, each built
-    /// on `unlabelled_message`. The stream owns the request; dropping it
-    /// abandons it.
+    /// Sends `context` and the `tools` the model may call (issue 137) - of each only its name,
+    /// description and parameters: whether its calls need approval, who sees them and how its
+    /// results are classified are the kernel's, not the model's (issue 194) - and streams its
+    /// answer as `MessageEvent`s: partial messages as they arrive, then the complete ones, each
+    /// built on `unlabelled_message`. The stream owns the request; dropping it abandons it.
     async fn chat_completion(
         &self,
         context: &[Message],
@@ -61,10 +58,9 @@ pub trait LLMClient: Send + Sync + Debug {
     ) -> BoxStream<'static, LLMResult<MessageEvent>>;
 }
 
-/// Registers the `LLMClient` with `registry` as a facet of which an agent
-/// has exactly one - without a default kind: the core knows no model
-/// provider, the program names it (`ComponentRegistry::default_kind`,
-/// issue 329).
+/// Registers the `LLMClient` with `registry` as a facet of which an agent has exactly one - without
+/// a default kind: the kernel knows no model provider, the program names it
+/// (`ComponentRegistry::default_kind`, issue 329).
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
     registry.single::<dyn LLMClient>(None);
 }

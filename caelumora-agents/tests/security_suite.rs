@@ -1,13 +1,11 @@
-//! The agents' part of the security suite (issues 198, 370): what agents do
-//! in someone's name - their tool calls, commands, readings and the answers
-//! of agents that run elsewhere - tested in the world of the runtime's suite
-//! with the agents' library (`caelumora_agents::testing`). As the runtime's
-//! part: users with different permissions doing different things, through
-//! the whole runtime - the stores checking with
-//! the ownership policy, the `SessionManager`, running channels and the
-//! views - as a frontend would. What the system starts from is put into the
-//! store as the system, as a setup would; everything a user does goes
-//! through the public API, in that user's name.
+//! The agents' part of the security suite (issues 198, 370): what agents do in someone's name -
+//! their tool calls, commands, readings and the answers of agents that run elsewhere - tested in
+//! the world of the kernel's suite with the agents' library (`caelumora_agents::testing`). As the
+//! kernel's part: users with different permissions doing different things, through the whole
+//! kernel - the stores checking with the ownership policy, the `SessionManager`, running channels
+//! and the views - as a frontend would. What the system starts from is put into the store as the
+//! system, as a setup would; everything a user does goes through the public API, in that user's
+//! name.
 //!
 //! The policy records every question it is asked (`Recorder`): a test of
 //! an action asserts the questions asked in a user's name, in order - which
@@ -36,6 +34,16 @@ use caelumora_agents::tool::echo_tool::ECHO_TOOL_KIND;
 use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
 use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::{ChannelError, ChannelLoop};
+use caelumora_kernel::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
+use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
+use caelumora_kernel::testing::{
+    asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF,
+};
+use caelumora_kernel::view::{ChannelView, ViewError, Viewer};
+use caelumora_kernel::workspace::WorkspaceError;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection};
 use caelumora_model::agent::{
     Agent, AgentId, HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind,
@@ -70,16 +78,6 @@ use caelumora_model::user::UserId;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::work::TurnId;
 use caelumora_model::workspace::WorkspaceChoice;
-use caelumora_runtime::actor::user::ChannelWatch;
-use caelumora_runtime::channel::{ChannelError, ChannelLoop};
-use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, BUNDLE_REF_KIND};
-use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
-use caelumora_runtime::testing::{
-    asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF,
-};
-use caelumora_runtime::view::{ChannelView, ViewError, Viewer};
-use caelumora_runtime::workspace::WorkspaceError;
 use futures::stream;
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -109,7 +107,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
             .await
             .expect("hers to use");
         let agents = world
-            .runtime
+            .kernel
             .entity_stores()
             .agents
             .list(&World::as_user(world.alice), &Query::all())
@@ -124,7 +122,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
             "owned by who made it"
         );
         let gone = world
-            .runtime
+            .kernel
             .entity_stores()
             .agents
             .get(&World::as_user(world.bob), agent.id)
@@ -135,7 +133,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
             Agent { name: ScopedName::new("taken", Scope::GlobalScope).unwrap(), ..agent.clone() };
         assert!(
             world
-                .runtime
+                .kernel
                 .entity_stores()
                 .agents
                 .update(&World::as_user(world.bob), &mut renamed)
@@ -169,7 +167,7 @@ async fn an_agent_whose_personality_was_withdrawn_is_left_out_of_its_channel() {
     let mut withdrawn =
         Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::as_user(world.bob), &mut withdrawn)
@@ -202,7 +200,7 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
     let session = world.shared_session(&[helper], &[]).await;
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .delete(&World::as_user(world.bob), bobs.id, &Removal::now(ActorId::User(world.bob)))
@@ -244,7 +242,7 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
         ..world.personality("answering", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut answering)
@@ -255,13 +253,7 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
     let session = world.shared_session(&[helper], &[other]).await;
     let main = Arc::clone(&session.channels()[0]);
     let mut owners = Personality { reasoning_visibility: Visibility::Owner, ..answering };
-    world
-        .runtime
-        .entity_stores()
-        .personalities
-        .update(&World::system(), &mut owners)
-        .await
-        .unwrap();
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut owners).await.unwrap();
 
     main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All)
         .await
@@ -310,13 +302,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         reasoning_visibility: Visibility::Owner,
         ..world.personality("answering", None, &[]).await
     };
-    world
-        .runtime
-        .entity_stores()
-        .personalities
-        .update(&World::system(), &mut owners)
-        .await
-        .unwrap();
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut owners).await.unwrap();
     let helper = world.agent("helper", world.alice, &owners).await;
     let other = world.agent("other", world.alice, &owners).await;
     let session = world.shared_session(&[helper], &[other]).await;
@@ -344,7 +330,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         "bob is given the answer live, not its owner's reasoning"
     );
 
-    let histories = world.runtime.history_store();
+    let histories = world.kernel.history_store();
     let key = main.id();
     let recorded = time::timeout(Duration::from_secs(5), async {
         loop {
@@ -388,12 +374,8 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         .expect("it may run");
     let caught_up = time::timeout(Duration::from_secs(5), async {
         loop {
-            let state = world
-                .runtime
-                .state_store()
-                .get_agent_channel_state(other, main.id())
-                .await
-                .unwrap();
+            let state =
+                world.kernel.state_store().get_agent_channel_state(other, main.id()).await.unwrap();
             if let Some(message) =
                 state.transcript.messages().into_iter().find(|m| m.id == answered.id)
             {
@@ -425,7 +407,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
 
     assert!(
         world
-            .runtime
+            .kernel
             .entity_stores()
             .personalities
             .get(&World::as_user(world.bob), hers.id)
@@ -475,7 +457,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
         attributes(Some(world.bob), &[world.alice]),
     );
     world
-        .runtime
+        .kernel
         .entity_stores()
         .component_bundles
         .create(&World::as_user(world.bob), &mut tools)
@@ -489,7 +471,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
         }],
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::as_user(world.alice), &mut hers)
@@ -513,7 +495,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let mut withdrawn =
         ComponentBundle { security_attributes: attributes(Some(world.bob), &[]), ..tools };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .component_bundles
         .update(&World::as_user(world.bob), &mut withdrawn)
@@ -583,7 +565,7 @@ async fn joining_needs_an_entry_that_lets_one_join() {
     let shared = world.personality("shared", None, &[]).await;
     let template_id = world.template(Some(world.alice), &[], "helper", shared.id).await;
     let mut template = world
-        .runtime
+        .kernel
         .entity_stores()
         .session_templates
         .get(&World::system(), template_id)
@@ -594,7 +576,7 @@ async fn joining_needs_an_entry_that_lets_one_join() {
     template.access = vec![bob_joins];
     template.channels[0].access = vec![AclEntry { subject: Subject::Everyone, grant: Grant::Join }];
     world
-        .runtime
+        .kernel
         .entity_stores()
         .session_templates
         .update(&World::system(), &mut template)
@@ -630,7 +612,7 @@ async fn joining_needs_an_entry_that_lets_one_join() {
         "bob: JoinChannel(alice's) yes",
         "bob: JoinChannel(alice's) yes",
         "bob: JoinChannel(bob) yes",
-    ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the runtime's");
+    ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the kernel's");
     assert!(
         world.participants(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)),
         "in the channel"
@@ -763,7 +745,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
         ..world.personality("answering", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut answering)
@@ -858,13 +840,7 @@ async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_wor
         },
         ..world.personality("silent", None, &[]).await
     };
-    world
-        .runtime
-        .entity_stores()
-        .personalities
-        .update(&World::system(), &mut silent)
-        .await
-        .unwrap();
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut silent).await.unwrap();
     let helper = world.agent("helper", world.alice, &silent).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1029,7 +1005,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
         attributes(Some(world.bob), &[world.alice]),
     );
     world
-        .runtime
+        .kernel
         .entity_stores()
         .component_bundles
         .create(&World::as_user(world.bob), &mut tools)
@@ -1046,7 +1022,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
         ],
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::as_user(world.alice), &mut hers)
@@ -1144,13 +1120,7 @@ async fn with_a_call_of(
         },
         ..world.personality("asking", None, &[]).await
     };
-    world
-        .runtime
-        .entity_stores()
-        .personalities
-        .update(&World::system(), &mut asking)
-        .await
-        .unwrap();
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut asking).await.unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1262,13 +1232,7 @@ async fn with_a_call_asking_whom(
         },
         ..world.personality("asking", None, &[]).await
     };
-    world
-        .runtime
-        .entity_stores()
-        .personalities
-        .update(&World::system(), &mut asking)
-        .await
-        .unwrap();
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut asking).await.unwrap();
     let helper = world.agent("helper", world.alice, &asking).await;
     let session = world.shared_session(&[helper], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1570,7 +1534,7 @@ fn sleeping(decision: RuleDecision, reach: Reach) -> ApprovalRule {
 #[tokio::test]
 async fn a_persons_rule_answers_for_them_as_they_would() {
     let (world, session, main, _) = with_a_call_to_approve().await;
-    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     let rule = sleeping(RuleDecision::Allow, Reach::Session(session.id()));
     assert!(denied(&Error::new(
         hers.add_approval_rule(&World::as_user(world.bob), rule.clone())
@@ -1604,7 +1568,7 @@ async fn a_persons_rule_answers_for_them_as_they_would() {
 #[tokio::test]
 async fn a_rule_answers_only_where_its_person_may_approve() {
     let (world, session, main, _) = with_a_call_to_approve().await;
-    let his = world.runtime.controller_manager().user_controller(world.bob).await.unwrap();
+    let his = world.kernel.controller_manager().user_controller(world.bob).await.unwrap();
     his.add_approval_rule(
         &World::as_user(world.bob),
         sleeping(RuleDecision::Allow, Reach::Everywhere),
@@ -1627,7 +1591,7 @@ async fn a_rule_answers_only_where_its_person_may_approve() {
 #[tokio::test]
 async fn a_rule_out_of_its_reach_does_not_answer() {
     let (world, session, main, _) = with_a_call_to_approve().await;
-    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     let alice = World::as_user(world.alice);
     hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Session(SessionId::new())))
         .await
@@ -1649,7 +1613,7 @@ async fn a_rule_out_of_its_reach_does_not_answer() {
 async fn a_rule_of_a_place_outweighs_a_persons_rule() {
     let (world, session, main, _) = with_a_call_to_approve().await;
     let alice = World::as_user(world.alice);
-    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
     main.update_approval_rules(&alice, vec![sleeping(RuleDecision::Ask, Reach::Everywhere)])
         .await
@@ -1662,7 +1626,7 @@ async fn a_rule_of_a_place_outweighs_a_persons_rule() {
 
     let (world, session, main, _) = with_a_call_to_approve().await;
     let alice = World::as_user(world.alice);
-    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, sleeping(RuleDecision::Allow, Reach::Everywhere)).await.unwrap();
     session
         .update_approval_rules(&alice, vec![sleeping(RuleDecision::Deny, Reach::Everywhere)])
@@ -1696,7 +1660,7 @@ async fn a_rule_derived_from_a_command_answers_only_the_commands_like_it() {
     for (command, answered) in [("ls -la", true), ("ls; rm -rf ~", false)] {
         let (world, session, main, _) = with_a_command_to_approve(command).await;
         let alice = World::as_user(world.alice);
-        let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+        let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
         hers.add_approval_rule(&alice, rule.clone()).await.unwrap();
         let asked = ask_helper(&world, &main, world.alice).await;
         assert!(asked.request.is_some(), "{command}: put up for approval");
@@ -1747,7 +1711,7 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
 
     let (world, session, main, _) = with_a_command_to_approve("echo $HOME").await;
     let alice = World::as_user(world.alice);
-    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, every_command.clone()).await.unwrap();
     session
         .update_approval_rules(&alice, vec![commands(&["rm"], RuleDecision::Deny)])
@@ -1760,7 +1724,7 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
 
     let (world, session, main, _) = with_a_command_to_approve("echo $HOME").await;
     let alice = World::as_user(world.alice);
-    let hers = world.runtime.controller_manager().user_controller(world.alice).await.unwrap();
+    let hers = world.kernel.controller_manager().user_controller(world.alice).await.unwrap();
     hers.add_approval_rule(&alice, commands(&["rm"], RuleDecision::Deny)).await.unwrap();
     let asked = ask_helper(&world, &main, world.alice).await;
     assert!(asked.request.as_ref().is_some_and(|r| !r.explicit), "put up for approval");
@@ -1988,7 +1952,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         ..world.personality("sending", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut sending)
@@ -2099,7 +2063,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
                 ..world.personality(name, None, &[]).await
             };
             world
-                .runtime
+                .kernel
                 .entity_stores()
                 .personalities
                 .update(&World::system(), &mut personality)
@@ -2190,7 +2154,7 @@ async fn with_a_reader_of(
         ..world.personality("reading", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut reading)
@@ -2455,7 +2419,7 @@ async fn bob_speaks_while_alices_turn_works(
         ..world.personality("hearing", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut hearing)
@@ -2735,13 +2699,7 @@ async fn remote_personality(world: &World) -> Personality {
         },
         ..world.personality("remote", None, &[]).await
     };
-    world
-        .runtime
-        .entity_stores()
-        .personalities
-        .update(&World::system(), &mut remote)
-        .await
-        .unwrap();
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut remote).await.unwrap();
     remote
 }
 
@@ -2840,12 +2798,11 @@ async fn an_external_agents_task_is_followed_for_its_owner_as_whoever_asked_bega
     world.manager.stop(&World::as_user(world.alice), reopened.id()).await.unwrap();
 }
 
-/// A session restarted by the runtime (issue 388) - nobody asked for it -
-/// has an external agent's open task followed in the name it was begun in,
-/// alice's credential, asked by bob, as when someone opens the session: the
-/// runtime's name reaches nothing the agent does.
+/// A session restarted by the kernel (issue 388) - nobody asked for it - has an external agent's
+/// open task followed in the name it was begun in, alice's credential, asked by bob, as when
+/// someone opens the session: the kernel's name reaches nothing the agent does.
 #[tokio::test]
-async fn a_task_resumed_after_a_restart_is_followed_as_whoever_asked_began_it_not_as_the_runtime() {
+async fn a_task_resumed_after_a_restart_is_followed_as_whoever_asked_began_it_not_as_the_kernel() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let (world, session, _) = with_a_task_bob_asked_for(&calls).await;
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -3096,10 +3053,9 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
 // --- The permissions each action needs --------------------------------------
 //
-// What each action asks of the policy, in whose name, of whose entity, and
-// what it is answered - for its owner, for someone taking part, for a
-// stranger: the record of which permissions an action needs (issue 198).
-// The runtime's own reads in its own name are left out (`World::asked`).
+// What each action asks of the policy, in whose name, of whose entity, and what it is answered -
+// for its owner, for someone taking part, for a stranger: the record of which permissions an action
+// needs (issue 198). The kernel's own reads in its own name are left out (`World::asked`).
 
 /// Making a session from a template: reading the template, then creating
 /// the session - before anything is found or made for it (issue 312) -,
@@ -3173,7 +3129,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     let unusable = world.template(Some(world.alice), &[], "unusable", bobs.id).await;
     let sessions = || async {
         world
-            .runtime
+            .kernel
             .entity_stores()
             .sessions
             .list(&World::system(), &Query::all())
@@ -3237,7 +3193,7 @@ async fn a_session_is_made_in_a_project_as_it_is_put_into_one() {
     );
 
     let sessions = || async {
-        let stores = world.runtime.entity_stores();
+        let stores = world.kernel.entity_stores();
         let system = World::system();
         let live = stores.sessions.list(&system, &Query::all()).await.unwrap().items.len();
         live + stores.sessions.list_deleted(&system, &Query::all()).await.unwrap().items.len()
@@ -3304,10 +3260,10 @@ async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
     assert!(world.manager.views(bob.clone()).agents().await.unwrap().is_empty());
 
     let mut shared =
-        world.runtime.entity_stores().agents.get(&World::system(), helper).await.unwrap();
+        world.kernel.entity_stores().agents.get(&World::system(), helper).await.unwrap();
     shared.security_attributes =
         shared.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Read);
-    world.runtime.entity_stores().agents.update(&World::system(), &mut shared).await.unwrap();
+    world.kernel.entity_stores().agents.update(&World::system(), &mut shared).await.unwrap();
     let (seen, asked) = world
         .asked(async {
             world
@@ -3369,7 +3325,7 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     let mut withdrawn =
         Personality { security_attributes: attributes(Some(world.bob), &[]), ..shared };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::as_user(world.bob), &mut withdrawn)
@@ -3434,7 +3390,7 @@ async fn template_with_workspace(
     let global = world.personality(&format!("global-{storage}"), None, &[]).await;
     let id = world.template(None, &[], &format!("helper-{storage}"), global.id).await;
     let mut template =
-        world.runtime.entity_stores().session_templates.get(&World::system(), id).await.unwrap();
+        world.kernel.entity_stores().session_templates.get(&World::system(), id).await.unwrap();
     template.workspace = Some(WorkspaceTemplate {
         name: Name::new("files").unwrap(),
         scope,
@@ -3443,7 +3399,7 @@ async fn template_with_workspace(
         description: None,
     });
     world
-        .runtime
+        .kernel
         .entity_stores()
         .session_templates
         .update(&World::system(), &mut template)
@@ -3471,7 +3427,7 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
     let mine = first.session().workspace.expect("attached");
     let others = second.session().workspace.expect("attached");
     assert_ne!(mine, others, "one for every session");
-    let made = world.runtime.entity_stores().workspaces.get(&alice, mine).await.expect("hers");
+    let made = world.kernel.entity_stores().workspaces.get(&alice, mine).await.expect("hers");
     assert_eq!(made.name.scope, Scope::SessionScope { session_id: first.id() });
 
     assert_eq!(
@@ -3497,12 +3453,12 @@ async fn a_workspace_of_a_session_s_scope_is_made_with_it_and_goes_with_it() {
 
     assert!(world.manager.delete(&alice, first.id()).await.unwrap());
     assert!(
-        world.runtime.entity_stores().workspaces.get_deleted(&alice, mine).await.is_ok(),
+        world.kernel.entity_stores().workspaces.get_deleted(&alice, mine).await.is_ok(),
         "deleted with it"
     );
     world.manager.restore(&alice, first.id()).await.unwrap();
     assert!(
-        world.runtime.entity_stores().workspaces.get(&alice, mine).await.is_ok(),
+        world.kernel.entity_stores().workspaces.get(&alice, mine).await.is_ok(),
         "restored with it"
     );
     assert!(world.manager.delete(&alice, first.id()).await.unwrap());
@@ -3563,7 +3519,7 @@ async fn a_workspace_of_the_user_s_scope_is_found_by_every_session_of_theirs() {
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template_s() {
     let world = agent_testing::world().await;
-    let workspaces = world.runtime.workspace_manager();
+    let workspaces = world.kernel.workspace_manager();
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let internal = Classification::general(Confidentiality::Internal);
     let template = template_with_workspace(&world, ScopeTemplate::UserScope, "main").await;
@@ -3659,7 +3615,7 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
         .await
         .expect("one of its own");
     let own = world
-        .runtime
+        .kernel
         .entity_stores()
         .workspaces
         .get(&alice, made.session().workspace.expect("attached"))
@@ -3717,10 +3673,9 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
 
 // --- Commands an agent carries out itself (issue 269) ------------------------
 
-/// A component whose agent carries out `/mark`, for whoever may write in the
-/// channel, and `/seal`, for its owners alone; it keeps the initiator of every
-/// turn it carries one out in, and reads its session there - so that the
-/// policy sees in whose name the core lets the turn act (issue 516).
+/// A component whose agent carries out `/mark`, for whoever may write in the channel, and `/seal`,
+/// for its owners alone; it keeps the initiator of every turn it carries one out in, and reads its
+/// session there - so that the policy sees in whose name the kernel lets the turn act (issue 516).
 #[derive(Debug)]
 struct Commanded(Arc<Mutex<Vec<ActorId>>>);
 
@@ -3779,7 +3734,7 @@ async fn with_a_commanded_agent(
         ..world.personality("commanded", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut commanded)
@@ -3895,11 +3850,10 @@ async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// An agent carries a command out for its owner, on the word of whoever
-/// asked (issue 255): bob's `/mark` runs in a turn whose initiator is bob, and
-/// what it asks the core is asked with the agent as caller and alice as
-/// principal - the core builds that context, the agent names only bob
-/// (issue 516).
+/// An agent carries a command out for its owner, on the word of whoever asked (issue 255): bob's
+/// `/mark` runs in a turn whose initiator is bob, and what it asks the kernel is asked with the
+/// agent as caller and alice as principal - the kernel builds that context, the agent names only
+/// bob (issue 516).
 #[tokio::test]
 async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
     let (world, session, main, seen, mut his) = with_a_commanded_agent().await;
@@ -3945,7 +3899,7 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
     let helper = world.agent("helper", world.alice, &personality).await;
     let alice = World::as_user(world.alice);
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -3970,7 +3924,7 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
         .await
         .unwrap();
     let notes = world
-        .runtime
+        .kernel
         .attachment_manager()
         .create(
             &alice,

@@ -8,12 +8,12 @@
 
 use super::body::AgentBody;
 use crate::message::apply_stage_processors;
+use caelumora_kernel::logging::envelope_span;
+use caelumora_kernel::transport::EventReceiver;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::{AgentChannelState, HearsFrom};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
-use caelumora_runtime::logging::envelope_span;
-use caelumora_runtime::transport::EventReceiver;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
@@ -281,6 +281,9 @@ mod tests {
     use super::*;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
+    use caelumora_kernel::component::ComponentImpl;
+    use caelumora_kernel::kernel::ActorRuntime;
+    use caelumora_kernel::transport::{EventReceiver, InMemoryEventReceiver};
     use caelumora_model::actor::{ActorId, EventContext, RequestReason};
     use caelumora_model::agent::{HearsDuringTurn, OthersWords};
     use caelumora_model::chain::Position;
@@ -290,9 +293,6 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use caelumora_model::work::Work;
-    use caelumora_runtime::component::ComponentImpl;
-    use caelumora_runtime::runtime::ActorRuntime;
-    use caelumora_runtime::transport::{EventReceiver, InMemoryEventReceiver};
     use chrono::Utc;
     use futures::future::BoxFuture;
     use std::future::ready;

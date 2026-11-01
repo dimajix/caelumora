@@ -4,12 +4,12 @@
 //! the request (issue 516). Its body's (`AgentBody`).
 
 use super::body::AgentBody;
+use caelumora_kernel::command::CommandError;
+use caelumora_kernel::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::command::{Command, CommandVisibility};
 use caelumora_model::turn::CommandRequest;
-use caelumora_runtime::command::CommandError;
-use caelumora_runtime::transport::EventSender;
 use tracing::{debug, info, warn};
 
 impl AgentBody {

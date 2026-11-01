@@ -178,10 +178,9 @@ impl Stored for Workspace {
     }
 }
 
-/// What a change of the workspace says is made into its values here (issue
-/// 248). Whether a classification may be given is the runtime's to ask
-/// before - of its storage and its owner's clearance -, and a new access
-/// list is never announced: whoever takes the change over reads it as
+/// What a change of the workspace says is made into its values here (issue 248). Whether a
+/// classification may be given is the kernel's to ask before - of its storage and its owner's
+/// clearance -, and a new access list is never announced: whoever takes the change over reads it as
 /// stored.
 impl Updatable for Workspace {
     type Update = WorkspaceUpdateEvent;

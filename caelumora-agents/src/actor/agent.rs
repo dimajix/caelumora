@@ -12,6 +12,11 @@ use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use anyhow::{anyhow, Context, Error, Result};
 use async_trait::async_trait;
+use caelumora_kernel::actor::{Actor, Answering};
+use caelumora_kernel::component::ComponentImpl;
+use caelumora_kernel::kernel::ActorRuntime;
+use caelumora_kernel::logging::{agent_span, envelope_span};
+use caelumora_kernel::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
@@ -29,11 +34,6 @@ use caelumora_model::turn::TurnState;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::{TurnId, Work};
-use caelumora_runtime::actor::{Actor, Answering};
-use caelumora_runtime::component::ComponentImpl;
-use caelumora_runtime::logging::{agent_span, envelope_span};
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::transport::{EventReceiver, EventSender};
 use chrono::Utc;
 use std::sync::Arc;
 use tracing::{debug, info, warn, Instrument};
@@ -52,8 +52,8 @@ pub(crate) struct AgentActor {
     /// context -, in the order of its components (issue 464).
     activities: Vec<ComponentImpl<dyn ActivityProvider>>,
     emit_out_processors: Vec<ComponentImpl<dyn EmitOutProcessor>>,
-    /// Runs the agent's tool calls with the tools of its components, behind
-    /// the runtime's permission checks (issues 127, 280).
+    /// Runs the agent's tool calls with the tools of its components, behind the kernel's permission
+    /// checks (issues 127, 280).
     tool_executor: ToolExecutor,
 }
 

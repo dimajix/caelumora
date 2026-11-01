@@ -1,14 +1,15 @@
-//! The tools of the workspace through the whole runtime (issues 251, 264,
-//! 267, 290, 428): the plugin joined to the world of the security suite -
-//! the ownership policy, recording what it is asked, and alice, bob and
-//! carol (`caelumora_runtime::testing`) - with the agents
-//! (`caelumora_agents::testing`). The tests of an action that acts in
-//! someone's name assert what it asks, as the suite does for the core's.
+//! The tools of the workspace through the whole kernel (issues 251, 264, 267, 290, 428): the plugin
+//! joined to the world of the security suite - the ownership policy, recording what it is asked,
+//! and alice, bob and carol (`caelumora_kernel::testing`) - with the agents
+//! (`caelumora_agents::testing`). The tests of an action that acts in someone's name assert what it
+//! asks, as the suite does for the kernel's.
 
 use caelumora_agents::testing::{
     asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_scripted, TestAgents,
     ONCE_MODEL_KIND,
 };
+use caelumora_kernel::testing::World;
+use caelumora_kernel::view::Viewer;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::Personality;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -17,8 +18,6 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::Grant;
 use caelumora_model::tool::ToolResultStatus;
 use caelumora_model::user::UserId;
-use caelumora_runtime::testing::World;
-use caelumora_runtime::view::Viewer;
 use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
 use caelumora_workspace_tools::terminal_tool::TERMINAL_TOOL_KIND;
 use serde_json::Value;
@@ -116,13 +115,11 @@ async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_par
     );
 }
 
-/// What an agent is offered of a workspace (issue 290): the tools its list
-/// lets the agent call in its channel - in a turn, as its owner's - those
-/// that only read files where it grants reading, a
-/// call of another refused as unknown before anything is asked of it; every
-/// one where it grants changing; none where the channel uses no workspace,
-/// saying why. A call of one offered is checked again as it runs (the
-/// tool's own tests, and the runtime's suite for what the list grants).
+/// What an agent is offered of a workspace (issue 290): the tools its list lets the agent call in
+/// its channel - in a turn, as its owner's - those that only read files where it grants reading, a
+/// call of another refused as unknown before anything is asked of it; every one where it grants
+/// changing; none where the channel uses no workspace, saying why. A call of one offered is checked
+/// again as it runs (the tool's own tests, and the kernel's suite for what the list grants).
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_channel() {
@@ -145,7 +142,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         ..world.personality("working", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut working)
@@ -154,7 +151,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
     let helper = world.agent("helper", world.bob, &working).await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,

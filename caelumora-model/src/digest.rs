@@ -664,10 +664,9 @@ pub fn prompt(prompt: &str) -> Digest {
     e.finish()
 }
 
-/// The digest of the tool sets a model is offered, in the order it is
-/// offered them (issues 137, 194): of each set its name, description and
-/// whether it is unavailable, of each of its tools all of it - what the
-/// model is told, and how the runtime treats its calls then.
+/// The digest of the tool sets a model is offered, in the order it is offered them (issues 137,
+/// 194): of each set its name, description and whether it is unavailable, of each of its tools all
+/// of it - what the model is told, and how the kernel treats its calls then.
 pub fn tool_sets(sets: &[ToolSet]) -> Digest {
     let mut e = Encoder::new("caelumora.tool-sets.v2");
     e.bytes(&(sets.len() as u64).to_le_bytes());

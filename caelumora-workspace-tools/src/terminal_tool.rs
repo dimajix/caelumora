@@ -40,14 +40,14 @@ use caelumora_agents::tool::{
     ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::component::{
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
+};
+use caelumora_kernel::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
-};
-use caelumora_runtime::workspace::{WorkspaceReader, WorkspaceWriter};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -300,6 +300,9 @@ pub(crate) mod tests {
     use caelumora_agents::testing::with_agent_kinds;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::testing::{self as agent_testing, TestAgents};
+    use caelumora_kernel::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+    use caelumora_kernel::testing::World;
+    use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -308,9 +311,6 @@ pub(crate) mod tests {
     use caelumora_model::security::{Policies, SecurityContext};
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::type_map::TypeKey;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
-    use caelumora_runtime::testing::World;
-    use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::json;
     use std::fs;
 
@@ -328,7 +328,7 @@ pub(crate) mod tests {
         let helper = world.agent("helper", world.alice, &personality).await;
         let alice = World::as_user(world.alice);
         let docs = world
-            .runtime
+            .kernel
             .workspace_manager()
             .create(
                 &alice,
@@ -429,10 +429,10 @@ pub(crate) mod tests {
             component_nodes: vec![ComponentDescriptor::new("terminal", TERMINAL_TOOL_KIND)],
         };
         let world = session_with_workspace().await;
-        // The world runs the core alone: the texts of these tools are added.
+        // The world runs the kernel alone: the texts of these tools are added.
         let context = ComponentContext::new(
             SecurityContext::default(),
-            world.runtime.services().clone().with(catalogue()),
+            world.kernel.services().clone().with(catalogue()),
         );
         let container = ComponentContainer::from_config(
             &config,

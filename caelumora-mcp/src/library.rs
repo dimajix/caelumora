@@ -1,9 +1,9 @@
-//! How the tools of MCP servers are joined to the runtime (issue 325): by
-//! their component kind alone.
+//! How the tools of MCP servers are joined to the kernel (issue 325): by their component kind
+//! alone.
 
 use crate::tool;
 use anyhow::Result;
-use caelumora_runtime::library::{Library, LibraryBuilder};
+use caelumora_kernel::library::{Library, LibraryBuilder};
 
 /// The tools of MCP servers, as a library.
 #[derive(Debug, Default)]

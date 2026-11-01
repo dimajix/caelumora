@@ -1,14 +1,11 @@
-//! Artifacts (issues 271, 328): results an agent published, kept as fixed
-//! versions beyond the workspace they were copied from, as a plugin of
-//! their own. The crate is cut into layers by features (cut 11 of issue
-//! 323): without features it is the entity (`artifact`) and the wire types
-//! (`api`), which a client reads; `runtime` adds the one owner of artifacts
-//! and their content (`manager`), kept in the storages of content of the
-//! core (issue 282), how a viewer reaches them
-//! (`view`), what an agent's work publishes through (`extension`, issue
-//! 516), the questions of who may change, read and add to one
-//! (`access`), the `artifact_tool` component and the plugin that joins all
-//! of it to the runtime (`plugin`); `server` adds the routes.
+//! Artifacts (issues 271, 328): results an agent published, kept as fixed versions beyond the
+//! workspace they were copied from, as a plugin of their own. The crate is cut into layers by
+//! features (cut 11 of issue 323): without features it is the entity (`artifact`) and the wire
+//! types (`api`), which a client reads; `runtime` adds the one owner of artifacts and their content
+//! (`manager`), kept in the storages of content of the kernel (issue 282), how a viewer reaches
+//! them (`view`), what an agent's work publishes through (`extension`, issue 516), the questions of
+//! who may change, read and add to one (`access`), the `artifact_tool` component and the plugin
+//! that joins all of it to the kernel (`plugin`); `server` adds the routes.
 
 pub mod api;
 pub mod artifact;

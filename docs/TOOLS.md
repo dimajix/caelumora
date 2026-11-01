@@ -1,12 +1,12 @@
 # Tools
 
 Agents act through tools. A tool is contributed by a component and run by the agent's
-`ToolExecutor`, which receives the ready providers and has the core decide what is the core's
-(issue 516). This document describes what a tool is, how its calls are run and what they answer,
-and the tools that come with Caelumora.
-Which calls need a person's approval, and how a tool asks a person, is in
-[APPROVALS.md](APPROVALS.md); how components are built in [COMPONENTS.md](COMPONENTS.md); how far a
-tool call may travel in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
+`ToolExecutor`, which receives the ready providers and has the kernel decide what is the kernel's
+(issue 516). This document describes what a tool is, how its calls are run and what they answer, and
+the tools that come with Caelumora. Which calls need a person's approval, and how a tool asks a
+person, is in [APPROVALS.md](APPROVALS.md); how components are built in
+[COMPONENTS.md](COMPONENTS.md); how far a tool call may travel in
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 A component offers tools by implementing `ToolProvider`; one component may expose several `Tool`s.
 Besides running a call, a provider says what its tools are for, which of them it offers in a turn
@@ -85,25 +85,25 @@ Every result is classified: as the tool classified it, else as the tool is confi
 channel. A result that may not flow into the channel (`may_publish`, in the agent's name) never
 reaches the model: it is replaced by the status `withheld` and a message that names the
 classification and asks the model not to obtain it another way. The value is kept nowhere. Results
-that did not come from the tool - refused, denied, timed out - are the runtime's fixed texts,
+that did not come from the tool - refused, denied, timed out - are the agents' fixed texts,
 classified as the turn's label; a failed one, whose error may come from the tool, is the channel's.
-Built-in tools whose answer is derived from the arguments alone classify it as the turn's label
-too. See [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
+Built-in tools whose answer is derived from the arguments alone classify it as the turn's label too.
+See [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
 
 ## Running tool calls
 
 An agent's tool calls are run by its `ToolExecutor`, built with the `ToolProvider`s of its
 components. The executor is no component: how a call runs is its tool's business, but whether it
 runs and what the model is told is never the choice of whoever may write a personality. What of a
-call is the core's to decide it asks of the core, through the agent's runtime (issue 516): whether
-the policy permits the call (`CallTool`) and what the rules of its places say, once, as the call is
-admitted (`ActorRuntime::admit_tool_call`, see [Checked before anyone is
-asked](APPROVALS.md#checked-before-anyone-is-asked)); whether a rule denies it now, again as it
-runs (`rule_denying`); and what may flow where (`may_publish`). Before it hands a call to its tool,
-it checks besides that the call was offered to it. Only agents call tools: the core makes an
-`ActorRuntime` for an agent alone, so that the executor need not ask. Afterwards the executor
-times the call, turns an error into a status and a next step, classifies the result, withholds what
-may not flow into the channel and marks what only the owner sees.
+call is the kernel's to decide it asks of the kernel, through the agent's runtime (issue 516):
+whether the policy permits the call (`CallTool`) and what the rules of its places say, once, as the
+call is admitted (`ActorRuntime::admit_tool_call`, see
+[Checked before anyone is asked](APPROVALS.md#checked-before-anyone-is-asked)); whether a rule
+denies it now, again as it runs (`rule_denying`); and what may flow where (`may_publish`). Before it
+hands a call to its tool, it checks besides that the call was offered to it. Only agents call tools:
+the kernel makes an `ActorRuntime` for an agent alone, so that the executor need not ask. Afterwards
+the executor times the call, turns an error into a status and a next step, classifies the result,
+withholds what may not flow into the channel and marks what only the owner sees.
 
 **Two tools of the same name** are a configuration error that keeps the agent from starting, naming
 both components: resolved by order, one of them would be silently unreachable. User commands follow
@@ -196,10 +196,10 @@ transport:
 { "id": "github-mcp", "kind": "mcp_tool", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
 ```
 
-The kind lives in the library `caelumora-mcp` (issue 325), with `rmcp`, so that the runtime does not
+The kind lives in the library `caelumora-mcp` (issue 325), with `rmcp`, so that the kernel does not
 depend on it; `caelumora-app` and `caelumora-tui` list the library, and a personality names the kind
-as before. What such a component kind may use of the runtime is said in
-[PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-core-may-use).
+as before. What such a component kind may use of the kernel is said in
+[PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-kernel-may-use).
 
 *   **Several servers.** Each server is an instance of its own; its tools are named
     `{component_id}__{remote_tool_name}`, so that servers cannot collide.
@@ -299,10 +299,10 @@ list does not grant, fails and says so. Which calls need approval is configured 
 all - the default -, none, or all but those that only read files.
 
 The kind lives in the library `caelumora-workspace-tools` (issue 428), with the prompt part that
-names its `read_file`, `workspace_prompt_provider`: the workspaces are the core's, what an agent is
-given to work on them is built on the terminal's public API and the agents' tools, as the tools of
-any other subject are. `caelumora-app` and `caelumora-tui` list the library, and a personality names
-the kinds as before.
+names its `read_file`, `workspace_prompt_provider`: the workspaces are the kernel's, what an agent
+is given to work on them is built on the terminal's public API and the agents' tools, as the tools
+of any other subject are. `caelumora-app` and `caelumora-tui` list the library, and a personality
+names the kinds as before.
 
 **Files.** The file tools work over the workspace's terminal, whatever its storage, without a shell:
 those that only read over the `TerminalReader` the workspace's reader hands out, those that change
@@ -338,7 +338,7 @@ dropped call would go on writing into the workspace after the turn that started 
 
 A command handed back as running is ended by the model, or by a user who may change the workspace's
 files in the channel; the agent sees `killed` the next time it follows the command. How long a
-command lives and when the runtime ends it is in [WORKSPACE.md](WORKSPACE.md#commands).
+command lives and when the kernel ends it is in [WORKSPACE.md](WORKSPACE.md#commands).
 
 ### Attachments
 

@@ -4,15 +4,14 @@
 //! Commands are recognised by the frontends, which send them to the channel
 //! as commands instead of as messages; [`parse_input`] is the rule they
 //! follow. What a command does is up to the `ChannelCommandProvider` component that
-//! contributes it (see `caelumora-runtime`).
+//! contributes it (see `caelumora-kernel`).
 
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use serde::{Deserialize, Serialize};
 
-// Unlike every other kind constant, these live in the model, not next to
-// their component in the runtime: `default_commands` - the serde default of
-// `AppConfig::commands` - names them, and the model does not know the
-// runtime (issue 101).
+// Unlike every other kind constant, these live in the model, not next to their component in the
+// kernel: `default_commands` - the serde default of `AppConfig::commands` - names them, and the
+// model does not know the kernel (issue 101).
 
 /// Component kind of the built-in `/help` command.
 pub const HELP_COMMAND_KIND: &str = "help_command";

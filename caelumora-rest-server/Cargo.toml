@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
-caelumora-runtime.workspace = true
+caelumora-kernel.workspace = true
 caelumora-rest-api.workspace = true
 axum = { workspace = true, features = ["macros"] }
 tokio = { workspace = true, features = ["full"] }
@@ -25,7 +25,7 @@ percent-encoding.workspace = true
 
 [dev-dependencies]
 caelumora-model = { workspace = true, features = ["test-support"] }
-caelumora-runtime = { workspace = true, features = ["test-support"] }
+caelumora-kernel = { workspace = true, features = ["test-support"] }
 tower.workspace = true
 tempfile.workspace = true
 # `start_paused`: tests that wait for a token to expire without waiting.

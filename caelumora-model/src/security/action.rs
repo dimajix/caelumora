@@ -10,16 +10,14 @@ use std::fmt::Debug;
 
 /// Everything the `AccessPolicy` is asked about.
 ///
-/// What is done with a stored entity is asked alike for every kind (issue
-/// 323): `Entity`, by the kind, a `Verb` and the entity's
-/// `SecurityAttributes`, so that a policy can decide by its owner and its
-/// access list (issues 11, 23) without being handed the entity itself, and
-/// a new kind brings no new action. `Get`, `Update` and `Delete` carry the
-/// attributes as stored - never those of a new value, which the caller
-/// controls - and `Create` those of the entity to be created. `List` asks
-/// whether the caller may search at all; the result is then filtered with
-/// `Get` for every entity in it. The other variants are acts of the core
-/// that concern no single stored entity alone.
+/// What is done with a stored entity is asked alike for every kind (issue 323): `Entity`, by the
+/// kind, a `Verb` and the entity's `SecurityAttributes`, so that a policy can decide by its owner
+/// and its access list (issues 11, 23) without being handed the entity itself, and a new kind
+/// brings no new action. `Get`, `Update` and `Delete` carry the attributes as stored - never those
+/// of a new value, which the caller controls - and `Create` those of the entity to be created.
+/// `List` asks whether the caller may search at all; the result is then filtered with `Get` for
+/// every entity in it. The other variants are acts of the kernel that concern no single stored
+/// entity alone.
 #[derive(Debug, Clone, Copy)]
 pub enum ActionType<'a> {
     /// Doing `verb` with an entity of `kind` that has `attributes`. What
@@ -37,10 +35,9 @@ pub enum ActionType<'a> {
     ///   version's content, asked with the version's own list besides the
     ///   artifact's: reading a version needs both (issue 316), as a file in
     ///   HDFS needs its directory. Adding a version is `WRITE`.
-    /// - a group (issue 286): who belongs to it, granted to its owner and,
-    ///   by its own access list, to its participants. The participants of a
-    ///   session or channel, and the members of a project, are changed only
-    ///   by the runtime.
+    /// - a group (issue 286): who belongs to it, granted to its owner and, by its own access list,
+    ///   to its participants. The participants of a session or channel, and the members of a
+    ///   project, are changed only by the kernel.
     /// - a project (issue 467): what it is - its name, description, members
     ///   and where it lies -, which its members, whom its list names and the
     ///   participants of the sessions in it read; who reads it publishes into
@@ -233,9 +230,8 @@ impl<'a> ActionType<'a> {
         }
     }
 
-    /// This action as refused (issue 323): named by what it is about - the
-    /// kind of an entity, or what one of the core's own actions concerns -
-    /// and described as the log describes it.
+    /// This action as refused (issue 323): named by what it is about - the kind of an entity, or
+    /// what one of the kernel's own actions concerns - and described as the log describes it.
     pub fn refused(&self) -> Refused {
         let subject = match self {
             ActionType::Entity { kind, .. } | ActionType::List(kind) => kind.name(),
@@ -269,9 +265,8 @@ impl<'a> ActionType<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{action} is not permitted")]
 pub struct Refused {
-    /// What it is about, as the REST API names it in its codes
-    /// (`skill_forbidden`): the kind of an entity, or `context`, `agent`,
-    /// `command`, … for the core's own actions.
+    /// What it is about, as the REST API names it in its codes (`skill_forbidden`): the kind of an
+    /// entity, or `context`, `agent`, `command`, … for the kernel's own actions.
     pub subject: &'static str,
     /// The action as `ActionType::describe` names it.
     pub action: String,
@@ -345,10 +340,9 @@ pub enum Requirement {
 /// Asked in the context of the one who joins.
 pub const JOIN: CustomVerb = CustomVerb { name: "Join", requires: Requirement::Grant(Grant::Join) };
 
-/// Changing the content of what is stored, beside reading it (issue 23) -
-/// what an access list grants `Write`. A verb any kind may use, the core's
-/// or a plugin's (issue 328), for what is written to rather than changed
-/// as a whole: a workspace's files, say.
+/// Changing the content of what is stored, beside reading it (issue 23) - what an access list
+/// grants `Write`. A verb any kind may use, the kernel's or a plugin's (issue 328), for what is
+/// written to rather than changed as a whole: a workspace's files, say.
 pub const WRITE: CustomVerb =
     CustomVerb { name: "Write", requires: Requirement::Grant(Grant::Write) };
 

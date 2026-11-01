@@ -815,7 +815,7 @@ mod tests {
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
     use crate::note::NoteId;
-    use crate::prompt_catalogue::core;
+    use crate::prompt_catalogue::kernel_catalogue;
     use crate::store::testing::{replayed, stored};
     use crate::tool::{Tool, ToolCall, ToolCallState, ToolParameters, ToolVisibility};
     use crate::user::UserId;
@@ -1001,7 +1001,7 @@ mod tests {
         );
         let context = decoded.turn.as_ref().map(|t| t.work.context.clone()).unwrap_or_default();
         assert!(
-            ContextResolver::of(&decoded, core())
+            ContextResolver::of(&decoded, kernel_catalogue())
                 .resolve(&context, turn_id, ActorId::default())
                 .unwrap()
                 .is_some(),
@@ -1373,7 +1373,7 @@ mod tests {
         let recorded = state.context_of(&sent).expect("sent with the answer");
         let turn = first;
         let resolve = |state: &AgentChannelState| {
-            ContextResolver::of(state, core())
+            ContextResolver::of(state, kernel_catalogue())
                 .resolve(&recorded, turn, agent)
                 .unwrap()
                 .map(|r| r.items.len())
@@ -1388,7 +1388,7 @@ mod tests {
                 agent,
                 vec![(said("summary", Classification::PUBLIC), None)],
                 None,
-                core()
+                kernel_catalogue()
             ),
             None,
             "not between turns"
@@ -1405,7 +1405,7 @@ mod tests {
                 agent,
                 vec![(summary.clone(), None)],
                 Some(digest::content(b"elsewhere")),
-                core()
+                kernel_catalogue()
             ),
             None,
             "nor if the transcript is not compacted"
@@ -1431,7 +1431,7 @@ mod tests {
                 agent,
                 vec![(summary.clone(), None), (skill.clone(), Some(knowledge.clone()))],
                 Some(answered),
-                core(),
+                kernel_catalogue(),
             )
             .expect("compacted");
 
@@ -1500,7 +1500,9 @@ mod tests {
             completion_tokens: Some(8),
             ..said("summary", Classification::PUBLIC)
         };
-        state.compact(agent, vec![(summary, None)], kept_from, core()).expect("compacted");
+        state
+            .compact(agent, vec![(summary, None)], kept_from, kernel_catalogue())
+            .expect("compacted");
         assert_eq!(
             state.used.map(|u| (u.calls, u.context_tokens)),
             Some((2, 2 + 1)),
@@ -1544,7 +1546,12 @@ mod tests {
         state.turn.as_mut().unwrap().work.context.frame.prompts = parts.to_vec();
 
         state
-            .compact(agent, vec![(said("summary", Classification::PUBLIC), None)], kept_at, core())
+            .compact(
+                agent,
+                vec![(said("summary", Classification::PUBLIC), None)],
+                kept_at,
+                kernel_catalogue(),
+            )
             .expect("compacted");
 
         let on_new: Vec<Option<String>> = state
@@ -1571,7 +1578,7 @@ mod tests {
         ], "before everything as it was, after the replacement for what it replaced, after the copy for what was kept - a change's after its message");
         let context = state.turn.as_ref().unwrap().work.context.clone();
         assert!(
-            ContextResolver::of(&state, core())
+            ContextResolver::of(&state, kernel_catalogue())
                 .resolve(&context, TurnId::new(), agent)
                 .unwrap()
                 .is_some(),
@@ -1704,7 +1711,7 @@ mod tests {
                 agent,
                 vec![(said("[Summary]", Classification::CHANNEL_DEFAULT), None)],
                 None,
-                core(),
+                kernel_catalogue(),
             )
             .expect("compacted");
         state.transcript.mark_stored();

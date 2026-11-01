@@ -138,7 +138,7 @@ impl Turn<'_> {
     }
 
     /// Places `text`, given in `role`, after the messages the turn has
-    /// produced so far (issue 49): an instruction of the runtime to the
+    /// produced so far (issue 49): an instruction of the turn to the
     /// model, such as the next step of a plan. A prompt part, not a message:
     /// it is kept once by digest like the others, never goes into the
     /// transcript, and is given as the model's profile says a message in
@@ -146,7 +146,7 @@ impl Turn<'_> {
     /// from now on.
     pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
         let after = self.current().work.context.transcript;
-        // Written by the runtime from what the turn produced: as the turn.
+        // Written by the turn from what it produced: as the turn.
         let prompt = self.keep_prompt(role, text, after, Some(self.situation().label()));
         self.current_mut().work.context.frame.prompts.push(prompt);
     }
@@ -157,12 +157,12 @@ mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime};
     use crate::turn::tests::seen;
+    use caelumora_kernel::transport::Discard;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
     use caelumora_model::message::MessageId;
     use caelumora_model::work::Work;
-    use caelumora_runtime::transport::Discard;
     use futures::executor;
 
     /// Issue 282: the model is given along what its profile says - an image, to a model that
@@ -171,6 +171,8 @@ mod tests {
     #[tokio::test]
     async fn the_model_is_given_along_what_its_profile_says_and_the_turn_sees_it() {
         use crate::testing::TestAgents;
+        use caelumora_kernel::session::testing::detached_participant_in;
+        use caelumora_kernel::testing::TestKernel;
         use caelumora_model::channel::testing::bare_channel;
         use caelumora_model::confidentiality::Confidentiality;
         use caelumora_model::config::{AppConfig, BackendConfig, ContentConfig};
@@ -179,8 +181,6 @@ mod tests {
         use caelumora_model::digest;
         use caelumora_model::session::testing::bare_session;
         use caelumora_model::session::SessionId;
-        use caelumora_runtime::session::testing::detached_participant_in;
-        use caelumora_runtime::testing::TestRuntime;
         use std::fs;
         use std::sync::Arc;
         let files = tempfile::tempdir().unwrap();
@@ -191,7 +191,7 @@ mod tests {
             )]
             .into(),
         };
-        let runtime = TestRuntime {
+        let kernel = TestKernel {
             config: AppConfig { content, ..Default::default() },
             libraries: vec![&TestAgents],
             ..Default::default()
@@ -219,7 +219,7 @@ mod tests {
 
         let given = |images: bool, attachments: Vec<ContentRef>| {
             let runtime = detached_participant_in(
-                Arc::clone(&runtime),
+                Arc::clone(&kernel),
                 session.clone(),
                 channel.clone(),
                 ActorId::Agent(AgentId::new()),

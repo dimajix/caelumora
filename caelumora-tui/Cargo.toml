@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
-caelumora-runtime.workspace = true
+caelumora-kernel.workspace = true
 caelumora-agents.workspace = true
 caelumora-logging.workspace = true
 caelumora-skills = { workspace = true, features = ["runtime"] }

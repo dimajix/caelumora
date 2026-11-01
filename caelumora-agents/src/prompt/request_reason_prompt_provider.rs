@@ -20,10 +20,10 @@ use crate::prompt::{
 use crate::situation::Situation;
 use crate::tool::stop_tool::SILENCE_TOOL_NAME;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::RequestReason;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use std::sync::Arc;
 
 pub const REQUEST_REASON_PROMPT_PROVIDER_KIND: &str = "request_reason_prompt_provider";

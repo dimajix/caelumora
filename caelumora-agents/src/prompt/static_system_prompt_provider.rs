@@ -1,7 +1,7 @@
 //! The `static_system_prompt_provider` component: a fixed prompt part, the
 //! system prompt by default (parameters `prompt`, `position` and
 //! `classification`), under the title `title` if it names one (issue 249),
-//! in the form of every part the runtime writes (`agents.titled` of the
+//! in the form of every part the agents write (`agents.titled` of the
 //! prompt catalogue, issue 57). It has none unless it names one: the text
 //! may carry its own.
 
@@ -11,11 +11,11 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptTexts};
-use caelumora_runtime::component::{
+use caelumora_kernel::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, LibraryComponents, Params,
 };
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

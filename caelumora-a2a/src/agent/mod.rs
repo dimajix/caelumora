@@ -29,15 +29,15 @@ use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage,
 };
 use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_kernel::component::{
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, LibraryComponents, Params,
+};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{message_times_by_default, ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::Secrets;
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, LibraryComponents, Params,
-};
 use futures::stream::once;
 use futures::StreamExt;
 use serde::de::IgnoredAny;

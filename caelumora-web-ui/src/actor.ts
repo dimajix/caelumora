@@ -28,7 +28,7 @@ export function isApprover(id: ActorId): boolean {
   return typeof id !== 'string' && 'Approver' in id;
 }
 
-/** Whether `id` is the runtime itself, acting on no one's behalf. */
+/** Whether `id` is the kernel itself, acting on no one's behalf. */
 export function isSystem(id: ActorId): boolean {
   return id === 'System';
 }

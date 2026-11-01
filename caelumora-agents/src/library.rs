@@ -1,23 +1,21 @@
-//! The agents as a library (issues 370, 516): what makes the core more than a chat between users -
-//! its kinds of agent, whose actors run a model here (`AgentActor`) or reach an agent that runs
-//! elsewhere (`ExternalAgentActor`), and the kinds of their components. An essential library: a
-//! program without it runs no agent.
+//! The agents as a library (issues 370, 516): what makes the kernel more than a chat between
+//! users - its kinds of agent, whose actors run a model here (`AgentActor`) or reach an agent that
+//! runs elsewhere (`ExternalAgentActor`), and the kinds of their components. An essential library:
+//! a program without it runs no agent.
 
 use crate::actor::agent::AgentActor;
 use crate::actor::external_agent::ExternalAgentActor;
 use crate::{components, external, llm, prompt, tool};
 use anyhow::Result;
+use caelumora_kernel::actor::Actor;
+use caelumora_kernel::component::LibraryComponents;
+use caelumora_kernel::library::{Library, LibraryBuilder};
 use caelumora_model::agent::PersonalityKind;
-use caelumora_runtime::actor::Actor;
-use caelumora_runtime::component::LibraryComponents;
-use caelumora_runtime::library::{Library, LibraryBuilder};
 
-/// Registers the kinds of an agent's components with `registry` (issue
-/// 370): its context (`prompt`), its model (`llm`), its tools (`tool`), its
-/// memory and notes (`components`) and the facet an agent that runs
-/// elsewhere is reached through (`external`).
-/// What `AgentsLibrary` registers, and a test that builds components without
-/// a runtime.
+/// Registers the kinds of an agent's components with `registry` (issue 370): its context
+/// (`prompt`), its model (`llm`), its tools (`tool`), its memory and notes (`components`) and the
+/// facet an agent that runs elsewhere is reached through (`external`). What `AgentsLibrary`
+/// registers, and a test that builds components without a kernel.
 pub fn register_components(registry: &mut LibraryComponents<'_>) {
     components::register_all(registry);
     prompt::register_all(registry);
@@ -62,19 +60,19 @@ mod tests {
     use crate::actor::external_agent::ExternalAgentActor;
     use crate::testing::{self, test_registry};
     use crate::tool::echo_tool::ECHO_TOOL_KIND;
+    use caelumora_kernel::channel::ChannelLoop;
+    use caelumora_kernel::component::testing::config;
+    use caelumora_kernel::component::{ComponentContainer, ComponentContext};
+    use caelumora_kernel::kernel::Services;
+    use caelumora_kernel::moderator::policy_moderator::POLICY_MODERATOR_KIND;
+    use caelumora_kernel::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_model::agent::PersonalityKind;
     use caelumora_model::component::ComponentConfig;
     use caelumora_model::config::AppConfig;
     use caelumora_model::security::SecurityContext;
     use caelumora_model::store::Persistence;
     use caelumora_model::type_map::TypeKey;
-    use caelumora_runtime::channel::ChannelLoop;
-    use caelumora_runtime::component::testing::config;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-    use caelumora_runtime::moderator::policy_moderator::POLICY_MODERATOR_KIND;
-    use caelumora_runtime::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
-    use caelumora_runtime::runtime::Services;
-    use caelumora_runtime::testing::TestRuntime;
     use serde_json::Value;
     use std::sync::Arc;
 
@@ -87,13 +85,13 @@ mod tests {
     /// what their actors ask for (issue 337).
     #[test]
     fn the_library_brings_both_kinds_of_agent() {
-        let runtime = TestRuntime { libraries: vec![&AgentsLibrary], ..Default::default() }.build();
+        let kernel = TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build();
         assert_eq!(
-            names(runtime.agent_kinds().facets(PersonalityKind::Internal)),
+            names(kernel.agent_kinds().facets(PersonalityKind::Internal)),
             names(Some(AgentActor::COMPONENT_FACETS))
         );
         assert_eq!(
-            names(runtime.agent_kinds().facets(PersonalityKind::External)),
+            names(kernel.agent_kinds().facets(PersonalityKind::External)),
             names(Some(ExternalAgentActor::COMPONENT_FACETS))
         );
     }
@@ -161,7 +159,7 @@ mod tests {
     fn the_configuration_may_replace_the_context_provider_but_only_with_one() {
         let manager = |defaults: Value| {
             let defaults: ComponentConfig = serde_json::from_value(defaults).unwrap();
-            TestRuntime {
+            TestKernel {
                 config: AppConfig { component_defaults: defaults, ..Default::default() },
                 libraries: vec![&AgentsLibrary],
                 ..Default::default()

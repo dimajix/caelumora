@@ -1,0 +1,42 @@
+[package]
+name = "caelumora-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-model.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+uuid = { workspace = true, features = ["v4", "serde"] }
+chrono = { workspace = true, features = ["serde"] }
+dashmap.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "process"] }
+nix.workspace = true
+reqwest = { workspace = true, features = ["stream"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error.workspace = true
+tokio-util = { workspace = true, features = ["io", "rt"] }
+bytes.workspace = true
+rand.workspace = true
+arc-swap.workspace = true
+tracing.workspace = true
+tempfile = { workspace = true, optional = true }
+
+[features]
+# The world of the security suite (`testing`), for the suite and for the
+# tests of a plugin (issue 323); with it, what the model offers tests.
+test-support = ["dep:tempfile", "caelumora-model/test-support"]
+
+[dev-dependencies]
+# `test-util` for `start_paused`: tests that wait for a value to expire without waiting.
+tokio = { workspace = true, features = ["full", "test-util"] }
+axum.workspace = true
+tempfile.workspace = true
+caelumora-kernel = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

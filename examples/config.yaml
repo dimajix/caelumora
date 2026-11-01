@@ -116,11 +116,10 @@ plugins:
 # The sections of the libraries of the agent side (issue 516), each claimed
 # by the library of its name.
 libraries:
-  # ComfyUI (issue 512): the directory of the workflows a `comfyui_tool`
-  # generates images with - each `<name>.json`, exported from ComfyUI with
-  # "Export (API)", with `<name>.yaml` beside it, which says what it is for and
-  # where the parameters of a call go. Read and checked when the runtime is
-  # built.
+  # ComfyUI (issue 512): the directory of the workflows a `comfyui_tool` generates images with -
+  # each `<name>.json`, exported from ComfyUI with "Export (API)", with `<name>.yaml` beside it,
+  # which says what it is for and where the parameters of a call go. Read and checked when the
+  # kernel is built.
   comfyui:
     workflows: examples/comfyui/workflows
 
@@ -201,7 +200,7 @@ component_defaults:
 
 # Variants of the texts given to models (issue 57, docs/CONFIGURATION.md):
 # each a directory with a file per namespace it changes - agents.yaml,
-# core.yaml, skills.yaml, ... -, of the form of the file compiled in
+# kernel.yaml, skills.yaml, ... -, of the form of the file compiled in
 # (caelumora-agents/src/prompts.yaml, say), whose entries it replaces one by
 # one. `default` overrides the texts for every model. Without this section
 # the texts compiled in are used. Sassy's model is given `gemma4`

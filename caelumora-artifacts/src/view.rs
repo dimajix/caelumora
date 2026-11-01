@@ -1,13 +1,10 @@
-//! Artifacts as a viewer reaches them (issues 271, 23, 316): their own and
-//! those shared with them by name, among their artifacts; those published
-//! in a channel they read, through the channel; those that lie in a project
-//! they read, through the project (issue 467) - the plugin's views, an
-//! extension of the runtime's (`ArtifactViews`), of the channel's view
-//! (`ArtifactChannelViews`, issue 328) and of the project's
-//! (`ArtifactProjectViews`). An artifact is read by its list,
-//! wherever the viewer acts and cleared for its classification, with the
-//! versions whose own list they are read by as well
-//! (`Artifact::version_attributes`). Nothing of its content is reachable
+//! Artifacts as a viewer reaches them (issues 271, 23, 316): their own and those shared with them
+//! by name, among their artifacts; those published in a channel they read, through the channel;
+//! those that lie in a project they read, through the project (issue 467) - the plugin's views, an
+//! extension of the kernel's (`ArtifactViews`), of the channel's view (`ArtifactChannelViews`,
+//! issue 328) and of the project's (`ArtifactProjectViews`). An artifact is read by its list,
+//! wherever the viewer acts and cleared for its classification, with the versions whose own list
+//! they are read by as well (`Artifact::version_attributes`). Nothing of its content is reachable
 //! past it but through `content`, which hands out only a version it holds.
 
 use crate::access::ArtifactAccess;
@@ -16,20 +13,20 @@ use crate::artifact::{
 };
 use crate::manager::{ArtifactError, ArtifactManager, ArtifactResult};
 use async_trait::async_trait;
+use caelumora_kernel::terminal::ByteStream;
+use caelumora_kernel::view::{ChannelView, ProjectView, Views};
 use caelumora_model::confidentiality::Reading;
 use caelumora_model::scope::Scope;
 use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::StoreResultExt;
-use caelumora_runtime::terminal::ByteStream;
-use caelumora_runtime::view::{ChannelView, ProjectView, Views};
 use std::collections::BTreeMap;
 use std::mem;
 use std::sync::Arc;
 use tracing::warn;
 
-/// The artifacts the views reach (issue 328): what the runtime's `Views`
-/// offer of artifacts, from the plugin.
+/// The artifacts the views reach (issue 328): what the kernel's `Views` offer of artifacts, from
+/// the plugin.
 #[async_trait]
 pub trait ArtifactViews {
     /// The viewer's artifacts (issues 271, 23, 293, 308, 316): those they
@@ -62,7 +59,7 @@ pub trait ArtifactViews {
     /// The one owner of artifacts, which the plugin offers as a service.
     ///
     /// # Errors
-    /// `NotJoined` if the runtime was built without the plugin.
+    /// `NotJoined` if the kernel was built without the plugin.
     fn artifact_manager(&self) -> ArtifactResult<&Arc<ArtifactManager>>;
 }
 

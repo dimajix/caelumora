@@ -39,14 +39,13 @@ Security is a context that travels with every operation, and explicit checks aga
     `Restore`, `Purge` - and `ActionType::List` by the kind alone. It is named by both in the log
     and in this documentation: `GetSession`, `DeleteWorkspace`; a listing as `List(session)`.
 *   **A kind's own verb** - using a skill (`skill::USE`, the plugin's own), writing a workspace's
-    files or adding an artifact's version (`WRITE`, the core's, which any kind may use, issue
+    files or adding an artifact's version (`WRITE`, the kernel's, which any kind may use, issue
     328) - is a `CustomVerb`, named likewise (`UseSkill`, `WriteWorkspace`). It says what it
-    *requires*, in a right every policy knows: what an entry grants (`Read`, `Write`), or owning
-    the entity. A policy decides it by that, so a kind can map
-    a verb onto a right but never invent one; a policy that decides one verb of one kind otherwise
-    tells it by its kind and name. The verbs every kind has, and the actions of the core that
-    concern no single stored entity, a policy decides one by one, so that a policy that forgets one
-    does not compile.
+    *requires*, in a right every policy knows: what an entry grants (`Read`, `Write`), or owning the
+    entity. A policy decides it by that, so a kind can map a verb onto a right but never invent one;
+    a policy that decides one verb of one kind otherwise tells it by its kind and name. The verbs
+    every kind has, and the actions of the kernel that concern no single stored entity, a policy
+    decides one by one, so that a policy that forgets one does not compile.
 
 ### Who acts, for whom
 
@@ -106,16 +105,16 @@ passes only where every one it needs says yes:
 ### One manager per process
 
 One `AccessPolicy` is built per process and handed to everything that checks - the stores, the
-`SecretManager`, the `RuntimeManager` - as a constructor argument rather than built where it is
-needed, so that a deployment's policy cannot be silently replaced by a default in one corner of the
-runtime. The configuration's `security` section chooses the policy:
+`SecretManager`, the `Kernel` - as a constructor argument rather than built where it is needed, so
+that a deployment's policy cannot be silently replaced by a default in one corner of the kernel. The
+configuration's `security` section chooses the policy:
 
 *   `ownership` - the default, `OwnershipPolicy` (see below);
 *   `allow_all` - `AllowAllPolicy`, which allows every action to everybody; for tests and
     development only. The confidentiality rules apply beside it all the same.
 
 What may flow where, and who is cleared for what, is decided apart from it, by one
-`ConfidentialityPolicy` per process, handed to the runtime beside the `AccessPolicy` (see
+`ConfidentialityPolicy` per process, handed to the kernel beside the `AccessPolicy` (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules)). The two are orthogonal: an act that
 moves information asks both, its own permission first.
 
@@ -160,7 +159,7 @@ list. This is the one place ownership and access are recorded; see [Access lists
 *   A team is owned by the user who made it; only its owner renames it, sets its members and deletes
     it, and its members read it by an entry of its own list that names it. The group of the
     participants of a session or channel is owned by the session's owner and changed only by the
-    runtime, as someone joins or leaves.
+    kernel, as someone joins or leaves.
 *   Every entity has an owner - a user, an agent or the system -, who answers for it (issue
     [491](../issues/491-every-entity-has-an-owner.md)): the store refuses one owned by nobody
     (`SecurityAttributes::validate`). Initial data belongs to the system: what a seed file leaves
@@ -172,8 +171,8 @@ list. This is the one place ownership and access are recorded; see [Access lists
 *   Introductions - a personality's, a user's profile's - are public: they are given to every agent
     in every channel their agents or their user take part in. A personality's introduction is
     written by whoever may change the personality; a user's by the user. The rest of a profile is
-    read by its user alone - their rules on tool calls among it, which the runtime evaluates in
-    their name, as their own answer.
+    read by its user alone - their rules on tool calls among it, which the kernel evaluates in their
+    name, as their own answer.
 *   What a session or channel is for - its summary and briefing - is written by whoever may change
     the place and given to every agent there whose personality wires it in, also to agents owned by
     others. It steers what they say with the weight of the system prompt, never what they may do;
@@ -183,7 +182,7 @@ list. This is the one place ownership and access are recorded; see [Access lists
     name of its personality - not the personality itself, which stays its readers' -, whether it
     runs here or elsewhere, and who owns it, by name, also when they share no session with the
     owner: the agent acts with its owner's authority, and who talks to it should know whose. All of
-    it is read in the runtime's name, like the names of participants.
+    it is read in the kernel's name, like the names of participants.
 
 ### The ownership policy
 
@@ -217,22 +216,22 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
     owner to decide by yet, see [Secrets](#secrets).
 *   Deleting an agent is its owner's. The channels it takes part in are not changed: it rests in
     them, and that its actors stop there - and start again once it is restored - is done in the
-    runtime's name, a consequence of the deletion, not a change of channels owned by others.
+    kernel's name, a consequence of the deletion, not a change of channels owned by others.
 *   What lies in a session's or a channel's scope - personalities, session templates, component
     bundles, agents, workspaces, skills - is deleted and restored with it in the name of whoever
     deletes or restores it (issue 320), and so is what lies in a project's - artifacts - with the
     project, or with the session whose own it is (issue 467); only finding it is done in the
-    runtime's name. Whoever deletes a session deletes what of its scope they may; if something is
+    kernel's name. Whoever deletes a session deletes what of its scope they may; if something is
     left - a contributor's agent, an artifact another participant published into its own project -,
     the session is kept, and they are told what is left, by kind and count (`ScopeNotEmpty`, raised
     by what holds the scope). What they may is deleted all the same, so that what is left to do is
-    plain: its owners delete it.
-    Whoever restores a session restores it and what of its scope they may; the rest stays deleted
-    for its owner to restore. Purging is the system's anyway and done in the runtime's name.
+    plain: its owners delete it. Whoever restores a session restores it and what of its scope they
+    may; the rest stays deleted for its owner to restore. Purging is the system's anyway and done in
+    the kernel's name.
 *   The groups of the participants of a session and its channels are not among it: they go and come
-    back with the session or channel in the runtime's name, as they are made and changed (issue 348,
+    back with the session or channel in the kernel's name, as they are made and changed (issue 348,
     see [Groups](#groups)), whatever whoever deletes or restores it may do with groups.
-*   The runtime acting on its own uses `SecurityContext::system()`, which may do everything. This is
+*   The kernel acting on its own uses `SecurityContext::system()`, which may do everything. This is
     deliberate and never a default: an empty context has no rights.
 *   Only the system itself acts in the system's name (issue
     [477](../issues/477-only-the-system-acts-as-the-system.md)): what may do everything is the
@@ -259,7 +258,7 @@ one `CheckedStore` over a backend's storage - no backend asks a policy, issue 44
     (issue [316](../issues/316-store-checks-artifact-without-versions.md)).
 *   **The clearance** is asked next of what is classified - a channel, a workspace, a skill, an
     artifact (`Stored::classification`, issue 322): who is not cleared for it does not find it
-    either, for every operation below, the deleted included. What the views read in the runtime's
+    either, for every operation below, the deleted included. What the views read in the kernel's
     name they reach themselves: a channel from the reader's place (`view::channel_reading`) - an
     agent may read one it is not cleared for as a whole entry by entry.
 *   **Lists** are filtered by what the caller reaches: what they may read and are cleared for. What
@@ -346,7 +345,7 @@ lies:
 *   **The participants of a session or a channel** lie in its scope and have its id, so that whoever
     names them needs nothing but the session's or channel's id. They hold users and agents; a
     channel's approver is no participant (issue 420). Their one writer is what changes the
-    participants, writing in the runtime's name after the change it follows, which is the act that
+    participants, writing in the kernel's name after the change it follows, which is the act that
     was permitted. The group is derived anew from the participants each time, so that a write that
     failed is corrected by the next. The `GroupManager` refuses to change it.
 *   **The members of a project** lie in its scope and have its id, as the participants of a
@@ -357,22 +356,22 @@ lies:
 The group of the participants of a session or channel goes and comes back with it (issue 348): the
 session's or channel's own list names it, and its members reach it only while the group is there, so
 a session or channel that is there has its group there, too. It is deleted and restored with its
-mark, in the runtime's name like every other write of it - not in the name of whoever deletes or
+mark, in the kernel's name like every other write of it - not in the name of whoever deletes or
 restores the session, as what lies in its scope is (issue 320): it is derived from the participants,
 nobody's to keep or leave behind. All of the groups go or none, and if they cannot go, the session
 or channel is kept; if they cannot come back, it stays deleted. Its mark is the session's or
 channel's (issue 469): the record of the deletion (`Removal::by`) names whoever deleted that, as for
 everything that goes with it.
 
-A project (issue 467) is its owner's: only the owner changes it (`UpdateProject`), sets its
-members, lifts a session's own, or deletes it. Changing its members is asked before it is asked
-whether each member exists, so that who may not change it learns nothing of who exists (issue 312).
-Its list names the group of its members for reading, and the participants of each session that lies
-in it: a session put into a project shares it with them in the runtime's name, since changing the
-session was asked (`UpdateSession`, and reading the project, `GetProject`), and the entry goes as
-the session leaves. Deleting a project deletes the sessions in it through the `SessionManager`, each
-in the deleter's name, as what lies in a scope is (issue 320); the group of its members goes and
-comes back with the project in the runtime's name, as the participants' groups do.
+A project (issue 467) is its owner's: only the owner changes it (`UpdateProject`), sets its members,
+lifts a session's own, or deletes it. Changing its members is asked before it is asked whether each
+member exists, so that who may not change it learns nothing of who exists (issue 312). Its list
+names the group of its members for reading, and the participants of each session that lies in it: a
+session put into a project shares it with them in the kernel's name, since changing the session was
+asked (`UpdateSession`, and reading the project, `GetProject`), and the entry goes as the session
+leaves. Deleting a project deletes the sessions in it through the `SessionManager`, each in the
+deleter's name, as what lies in a scope is (issue 320); the group of its members goes and comes back
+with the project in the kernel's name, as the participants' groups do.
 
 The REST API names the participants of a session or channel by the session's or channel's id
 (`kind: session`, `kind: channel`), a team by its own (`kind: group`).
@@ -392,16 +391,16 @@ rights. In three parts:
 1.  **The agent acts with its owner's rights.** Every context an agent acts in names it as the
     caller, its owner as owner and its principal - its owner - as principal: the one it speaks in
     when nobody asked (`Agent::security_context`) and the one of a turn, the request's continued as
-    the agent. The core builds the context it decides by, at every check, from the agent's record
+    the agent. The kernel builds the context it decides by, at every check, from the agent's record
     and its owner's roles as its controllers hold them; the agent, on the agent side (see
     [ARCHITECTURE.md](ARCHITECTURE.md#principles)), holds none and names none (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). The channel's door builds
     the context it admits an envelope in (see [What enters a channel](#what-enters-a-channel)), the
-    agent's runtime the context of every call its work makes of the core (`ActorRuntime`), from the
-    participant the channel resolved, with the initiator the work names - for the record. A piece of
-    work has one context: the views a turn navigates and the components it calls ask in the turn's;
-    a component's own is only for what it reads while it is built. So what the agent reads, the
-    tools it calls, the credentials they reach with and the clearance it is judged by are its
+    agent's runtime the context of every call its work makes of the kernel (`ActorRuntime`), from
+    the participant the channel resolved, with the initiator the work names - for the record. A
+    piece of work has one context: the views a turn navigates and the components it calls ask in the
+    turn's; a component's own is only for what it reads while it is built. So what the agent reads,
+    the tools it calls, the credentials they reach with and the clearance it is judged by are its
     owner's, whoever asked - within its session too: it reaches another channel if its owner may
     read it or it takes part in it itself, and copies from it what the flow rule lets into its own;
     what it knows itself - its memory, its private notes - it reaches through itself, by the flow
@@ -409,17 +408,17 @@ rights. In three parts:
     whatever it read to whoever it answers next - so what it may read is fixed by its owner, not by
     who happens to ask.
 2.  **The owner checks the request**, where a call is admitted (`ToolExecutor::admit`, which asks
-    the core what is the core's, `ActorRuntime::admit_tool_call`): the policy, the owner's rules
-    for the place - evaluated in their name, as their own answer - and the
-    approval of the owner or whom the agent's list lets read it (see
-    [APPROVALS.md](APPROVALS.md#who-may-approve)). A personality's limiting roles narrow the agent
-    further. A tool that needs no approval is the owner's approval given in advance.
+    the kernel what is the kernel's, `ActorRuntime::admit_tool_call`): the policy, the owner's rules
+    for the place - evaluated in their name, as their own answer - and the approval of the owner or
+    whom the agent's list lets read it (see [APPROVALS.md](APPROVALS.md#who-may-approve)). A
+    personality's limiting roles narrow the agent further. A tool that needs no approval is the
+    owner's approval given in advance.
 3.  **Whoever asks may ask** - today by taking part in the channel the owner put the agent into.
     What comes of it reaches them only as the flow rule lets it into the channel.
 
 Whoever asked stays in the context as its initiator - the root of the chain, the agent itself when
 nobody asked: for the record, and for which request a turn answers - never for rights. The questions
-a tool puts to the agent's owner go to the owner, not to whoever asked. What the runtime asks in
+a tool puts to the agent's owner go to the owner, not to whoever asked. What the kernel asks in
 someone's name on its own - whether a participant of a channel could still start a command there -
 has the system as its initiator.
 
@@ -503,9 +502,9 @@ Such an operation checks with `Enforcement::require(context, action, refusal)`, 
 trait on every `AccessPolicy`. It answers a refusal with the operation's own error and logs every
 refusal alike, at `debug!`, naming the action and what identifies its object, never content such as
 a tool call's arguments. `refusal` is handed what was refused, a `Refused` (`ActionType::refused`:
-what the action is about - the kind of an entity, or `context`, `agent`, `command`, … for the core's
-own actions - and the action as the log names it). The operation's error carries it as its source,
-so that whoever answers the error finds it in the chain, whatever wraps it (issue 323); an
+what the action is about - the kind of an entity, or `context`, `agent`, `command`, … for the
+kernel's own actions - and the action as the log names it). The operation's error carries it as its
+source, so that whoever answers the error finds it in the chain, whatever wraps it (issue 323); an
 operation that answers a refusal as absent, so as not to tell that the object exists, drops it.
 
 **The order.** An operation reaches its object first; what tells the actor only about their own
@@ -535,17 +534,18 @@ act that was checked - cancelling or waking a channel or an actor, interrupting 
 removing a participant, deleting a channel, stopping or deleting a session, a request to answer
 again the channel admitted - and know no caller. Only the channel calls them: the `Actor` trait is
 public, so that a kind of agent can be built in a crate of its own (issue 370), but an actor is
-handed out of the runtime to nobody - the `Moderator` trait that is handed actors and
+handed out of the kernel to nobody - the `Moderator` trait that is handed actors and
 `ChannelLoop::actor` stay crate-internal, and a frontend reaches its user's actor through
 `ChannelLoop::user_actor` and acts through that actor's own methods, never the control methods.
 
 **What is linked into the program is trusted by its level** (see
-[ARCHITECTURE.md](ARCHITECTURE.md#principles)): a plugin that brings what is the core's as the core,
-a library of the agent side for nothing. So the core checks every call of the interface it gives the
-agent side in the name of the actor it made it for; a decision a library needs - whether a tool call
-is admitted, whether its tool set may be offered, whether it may recall what it read elsewhere - is
-a call of the core, decided by the core; and what touches the core's resources - a secret, the
-workspace, what is kept - is checked once more where it is touched, in the same name.
+[ARCHITECTURE.md](ARCHITECTURE.md#principles)): a plugin that brings what is the kernel's as the
+kernel, a library of the agent side for nothing. So the kernel checks every call of the interface it
+gives the agent side in the name of the actor it made it for; a decision a library needs - whether a
+tool call is admitted, whether its tool set may be offered, whether it may recall what it read
+elsewhere - is a call of the kernel, decided by the kernel; and what touches the kernel's
+resources - a secret, the workspace, what is kept - is checked once more where it is touched, in the
+same name.
 
 ### What enters a channel
 
@@ -563,7 +563,7 @@ flow of what it carries -, and what is refused is answered to its sender alone
 
 ## The security suite
 
-`caelumora-runtime/tests/security_suite.rs` runs the whole runtime with the ownership policy, as a
+`caelumora-kernel/tests/security_suite.rs` runs the whole kernel with the ownership policy, as a
 frontend does - and `caelumora-agents/tests/security_suite.rs` the actions of agents, in the same
 world with the agents' library -, with users of different permissions. Its policy records every
 question it is asked; each test of an action asserts the questions asked in a user's name, in order,
@@ -573,12 +573,12 @@ expected and why.
 
 **Every new action that acts in someone's name is added to the suite**, with what it asks and what
 it answers to each of them; so is every change to what an existing action asks. A test of the suite
-that changes is a change of the permissions an action needs, and is reviewed as one. What the
-runtime asks in someone's name on its own, while an action runs, is not the action's: the suite
-leaves it out of the action's questions and records it in a test of its own.
+that changes is a change of the permissions an action needs, and is reviewed as one. What the kernel
+asks in someone's name on its own, while an action runs, is not the action's: the suite leaves it
+out of the action's questions and records it in a test of its own.
 
-The world the suite runs in - the runtime, the recording policy, the users alice, bob and carol, and
-the helpers that put what the system starts from into the store - is `caelumora_runtime::testing`,
+The world the suite runs in - the kernel, the recording policy, the users alice, bob and carol, and
+the helpers that put what the system starts from into the store - is `caelumora_kernel::testing`,
 public behind the feature `test-support` (issue 323). It runs no agent; the actions of agents are
 tested in the same world with the agents' library and the models of a test
 (`caelumora_agents::testing::world`, issue 370). A plugin's actions are tested in the plugin, in the
@@ -592,7 +592,7 @@ event bus choosing whom an event reaches.
 
 ## Views
 
-What a frontend reads, it reads through the runtime's **views** (`caelumora_runtime::view`): the
+What a frontend reads, it reads through the kernel's **views** (`caelumora_kernel::view`): the
 sessions, their channels and their participants as one viewer navigates them. A view is a node the
 viewer stands on; its methods are the edges to the next ones, and each edge asks its own access
 question, in the viewer's name:
@@ -620,18 +620,17 @@ question, in the viewer's name:
     projects holds the shared ones they own, work on or are shared; a session's own is reached
     through the session, whose snapshot shows the project its results go to to whoever reads that.
 *   Agents are reached on their own by reading them (`GetAgent`), wherever they take part. An
-    agent's view reaches the channels it takes part in only as the viewer reaches them through
-    their sessions: reading an agent grants nothing of where it takes part. What it is made of is
-    named in the runtime's name; the personalities listed to make an agent of are those the viewer
-    may read.
+    agent's view reaches the channels it takes part in only as the viewer reaches them through their
+    sessions: reading an agent grants nothing of where it takes part. What it is made of is named in
+    the kernel's name; the personalities listed to make an agent of are those the viewer may read.
 *   `Views::channel_of` reaches what a memory entry's origin or a recorded piece of knowledge names,
     wherever it is, and answers `None` for what is gone or not the viewer's to read.
 
 What does not exist and what the viewer may not read are one answer, so that nothing can be probed.
 A node is reached through the running loop where there is one and from the stores otherwise, so the
 same navigation serves running and stopped sessions alike, and reaching a session does not start it.
-Names are read in the runtime's name. Among what makes a name known: whoever may read something of
-a user's scope learns whose it is, by name (`Views::scope_snapshot`, issue 475).
+Names are read in the kernel's name. Among what makes a name known: whoever may read something of a
+user's scope learns whose it is, by name (`Views::scope_snapshot`, issue 475).
 
 A node answers with a **snapshot** (`caelumora_model::snapshot`) for a client that lists and offers,
 with flags such as `can_change` and `can_read_context` decided for the viewer. What else it holds
@@ -650,11 +649,11 @@ channel is read.
 The agent side reads through **readers** (`SessionReader`, `ChannelReader`, `ParticipantReader`,
 issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): the part of the views
 an agent's work reads through, which the views implement. A turn is handed a reader of its session
-(`ActorRuntime::session`), never a view, so that it reaches no policy, no manager and no
-context through what it reads. What a system service offers an agent's work of its kind - the core
-for its own, the workspace - it binds to every piece of work as its extensions
-(`RuntimeBuilder::extend_readers`, `extend_writers`): traits of its own, made from the work's
-session as the work reads it, and so acting in the work's context - a reader the situation hands out
+(`ActorRuntime::session`), never a view, so that it reaches no policy, no manager and no context
+through what it reads. What a system service offers an agent's work of its kind - the kernel for its
+own, the workspace - it binds to every piece of work as its extensions
+(`KernelBuilder::extend_readers`, `extend_writers`): traits of its own, made from the work's session
+as the work reads it, and so acting in the work's context - a reader the situation hands out
 (`Situation::reader`), a writer the turn (`Turn::writer`); see
 [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work).
 
@@ -663,8 +662,8 @@ session as the work reads it, and so acting in the work's context - a reader the
 Where users come from and how their credentials are verified is pluggable, in the same way as
 secrets. A `UserProvider` is one source of users; the `UserManager` holds an ordered chain of them,
 configured in the `users` section, each a backend that a plugin may add (see
-[ARCHITECTURE.md](ARCHITECTURE.md#backends)). The runtime makes the manager when it is built and
-offers it (`RuntimeManager::user_manager`), since it records users on the runtime's event bus.
+[ARCHITECTURE.md](ARCHITECTURE.md#backends)). The kernel makes the manager when it is built and
+offers it (`Kernel::user_manager`), since it records users on the kernel's event bus.
 
 Looking a user up and verifying a credential are separate operations. Verification never hands out
 the stored credential, so backends that verify by binding (LDAP) fit the same trait as backends that
@@ -718,12 +717,12 @@ read -rs PASSWORD; printf %s "$PASSWORD" | argon2 "$(openssl rand -base64 12)" -
 
 ## Authentication
 
-Users are authenticated by the frontend that serves them; the runtime only receives the
+Users are authenticated by the frontend that serves them; the kernel only receives the
 `SecurityContext` it builds. The REST server logs a user in through the `UserManager` and keeps the
 login as a short-lived signed token in a cookie, renewed by use and bounded in its lifetime, since
 it cannot be revoked (see [REST-SERVER.md](REST-SERVER.md#authentication)). The TUI acts for the
 user its `--user` names, through the same `UserManager`, but without a password: it runs in the
-runtime's own process and holds the stores itself, so it vouches for whom it acts for
+kernel's own process and holds the stores itself, so it vouches for whom it acts for
 (`Credential::Trusted`) - a secret would keep out nobody it does not already let in. Every provider
 takes that for the users it knows, so that the chain answers it for a user where it would answer a
 password.
@@ -739,7 +738,7 @@ add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
 
 Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted. A
 component of a library holds no `SecretManager`: it is handed the secrets that may be read in the
-name of the work it serves (`Secrets`, bound by the core, `ActorRuntime::secrets`, issue 516), and
+name of the work it serves (`Secrets`, bound by the kernel, `ActorRuntime::secrets`, issue 516), and
 each read is checked in that name. The ownership policy allows every one: a secret is a key and a
 value, with no owner and no access list to decide by. So whoever writes a component that names a
 secret decides which credential it uses and where it is sent. Until secrets have an owner

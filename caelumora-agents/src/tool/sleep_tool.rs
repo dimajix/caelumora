@@ -11,13 +11,13 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::Answers;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{
+use caelumora_kernel::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
     LibraryComponents, Params,
 };
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_model::question::Answers;
+use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

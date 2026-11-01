@@ -2,15 +2,15 @@ use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::component::{
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
+};
+use caelumora_kernel::remote::ExpiringCache;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, Secrets};
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents, Params,
-};
-use caelumora_runtime::remote::ExpiringCache;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
 use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;

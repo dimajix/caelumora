@@ -1457,7 +1457,7 @@ export interface ToolSet {
 
 /**
  * A tool of an agent (issues 137, 194): what its model is told of it - name, description,
- * parameters - and what only the runtime acts on.
+ * parameters - and what only the kernel acts on.
  */
 export interface Tool {
   name: string;

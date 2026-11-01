@@ -20,12 +20,12 @@ use caelumora_agents::activity::{ActivityError, ActivityProvider};
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::turn::Turn;
-use caelumora_model::command::{Command, CommandOutput};
-use caelumora_runtime::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_runtime::component::{
+use caelumora_kernel::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_kernel::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
     LibraryComponents, Params,
 };
+use caelumora_model::command::{Command, CommandOutput};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -222,13 +222,13 @@ mod tests {
     use super::*;
     use crate::testing::{two_calls, Scripted};
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::agent::AgentId;
     use caelumora_model::command::CommandVisibility;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageId, MessageRole};
-    use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::Value;
 
     /// The component with `strategy`, keeping a tenth of the context.

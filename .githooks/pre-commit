@@ -22,10 +22,10 @@
 #   block (docs/CODING-GUIDELINES.md, "Imports"): `scripts/import-blocks.sh` must find none out of
 #   order and no split block in the Rust files a commit adds or changes, read whole from the
 #   working tree.
-# - A library names nothing only the core may hold (docs/ARCHITECTURE.md, "The core decides, the
-#   agent side asks"): `scripts/library-names.sh` must find no `SecurityContext`, policy or manager
-#   of the core in the code of the libraries' Rust files a commit adds or changes, read whole from
-#   the working tree.
+# - A library names nothing only the kernel may hold (docs/ARCHITECTURE.md, "The kernel decides,
+#   the agent side asks"): `scripts/library-names.sh` must find no `SecurityContext`, policy or
+#   manager of the kernel in the code of the libraries' Rust files a commit adds or changes, read
+#   whole from the working tree.
 #
 # `git commit --no-verify` skips all seven.
 set -eu

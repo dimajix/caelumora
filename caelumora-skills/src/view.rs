@@ -1,20 +1,20 @@
 //! Skills as a user reaches them (issue 22): among the skills they may read - the plugin's views,
-//! an extension of the runtime's (`SkillViews`, issue 323). What an agent's work loads and writes
-//! is the `SkillReader`'s and the `SkillWriter`'s (`extension`, issue 516). A node decides nothing:
+//! an extension of the kernel's (`SkillViews`, issue 323). What an agent's work loads and writes is
+//! the `SkillReader`'s and the `SkillWriter`'s (`extension`, issue 516). A node decides nothing:
 //! whoever changes or loads it asks again.
 
 use crate::access::SkillAccess;
 use crate::manager::{SkillError, SkillManager, SkillResult};
 use crate::skill::{Skill, SkillBody, SkillId, SkillSnapshot};
 use async_trait::async_trait;
+use caelumora_kernel::view::Views;
 use caelumora_model::snapshot::DeletedSnapshot;
 use caelumora_model::store::query::Query;
 use caelumora_model::store::StoreResultExt;
-use caelumora_runtime::view::Views;
 use std::sync::Arc;
 
-/// The skills the views reach (issue 323): what the runtime's `Views`
-/// offer of skills, from the plugin.
+/// The skills the views reach (issue 323): what the kernel's `Views` offer of skills, from the
+/// plugin.
 #[async_trait]
 pub trait SkillViews {
     /// The skills the store lists for the viewer (issues 22, 322): their
@@ -41,7 +41,7 @@ pub trait SkillViews {
     /// The one writer of skills, which the plugin offers as a service.
     ///
     /// # Errors
-    /// `NotJoined` if the runtime was built without the plugin.
+    /// `NotJoined` if the kernel was built without the plugin.
     fn skill_manager(&self) -> SkillResult<&Arc<SkillManager>>;
 }
 

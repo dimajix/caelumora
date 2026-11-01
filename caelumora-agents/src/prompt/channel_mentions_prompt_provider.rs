@@ -20,9 +20,9 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::PromptTexts;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use std::sync::Arc;
 
 pub const CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND: &str = "channel_mentions_prompt_provider";
@@ -51,7 +51,7 @@ impl PromptProvider for ChannelMentionsPromptProvider {
         } else {
             String::new()
         };
-        // A rule of the runtime's, no secret of anything.
+        // A rule of the agents', no secret of anything.
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
 }

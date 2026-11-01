@@ -1,8 +1,7 @@
-//! Skills through the whole runtime (issues 22, 323): the plugin joined to
-//! the world of the security suite - the ownership policy, recording what
-//! it is asked, and alice, bob and carol (`caelumora_runtime::testing`).
-//! The tests of an action that acts in someone's name assert what it asks,
-//! as the suite does for the core's.
+//! Skills through the whole kernel (issues 22, 323): the plugin joined to the world of the security
+//! suite - the ownership policy, recording what it is asked, and alice, bob and carol
+//! (`caelumora_kernel::testing`). The tests of an action that acts in someone's name assert what it
+//! asks, as the suite does for the kernel's.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -19,6 +18,11 @@ use caelumora_agents::turn::Turn;
 use caelumora_compaction::component::COMPACTION_KIND;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_compaction::KnowledgeRestorer;
+use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::session::SessionLoop;
+use caelumora_kernel::testing::{asked_for, shown, TestKernel, World, STAFF};
+use caelumora_kernel::view::Viewer;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -39,11 +43,6 @@ use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
-use caelumora_runtime::actor::user::ChannelWatch;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::testing::{asked_for, shown, TestRuntime, World, STAFF};
-use caelumora_runtime::view::Viewer;
 use caelumora_skills::component::{
     SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
     SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,
@@ -64,7 +63,7 @@ async fn world() -> World {
 
 /// The one writer of skills of `world`.
 fn manager(world: &World) -> Arc<SkillManager> {
-    Arc::clone(world.runtime.services().get::<SkillManager>().expect("a service of the plugin"))
+    Arc::clone(world.kernel.services().get::<SkillManager>().expect("a service of the plugin"))
 }
 
 /// The store of skills of `world`, as the plugin has it.
@@ -76,7 +75,7 @@ fn component(world: &World) -> SkillsComponent {
     SkillsComponent::new(
         PromptPosition::Start,
         ApprovalMode::Always,
-        PromptTexts::new(Arc::clone(world.runtime.prompts()), None),
+        PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
     )
     .unwrap()
 }
@@ -293,7 +292,7 @@ async fn an_approver_is_shown_the_skill_whole() {
     let unapproved = SkillsComponent::new(
         PromptPosition::Start,
         ApprovalMode::Never,
-        PromptTexts::new(Arc::clone(world.runtime.prompts()), None),
+        PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
     )
     .unwrap()
     .tools();
@@ -429,7 +428,7 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         ..world.personality("skilled", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut skilled)
@@ -639,8 +638,8 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
     let seed = dir.path().join("seed.yaml");
     fs::write(&seed, "skills:\n- id: 4f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: quiz\n  description: How to run a quiz\n  body: Ask.\n  classification: { level: internal }\n").unwrap();
     let seeds = [seed];
-    world.runtime.seed(&seeds).await.unwrap();
-    world.runtime.seed(&seeds).await.expect("seeding again is no conflict");
+    world.kernel.seed(&seeds).await.unwrap();
+    world.kernel.seed(&seeds).await.expect("seeding again is no conflict");
     let skills =
         store(&world).list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
     assert_eq!(skills.len(), 1, "once");
@@ -668,7 +667,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         ..world.personality("skilled", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut skilled)
@@ -821,7 +820,7 @@ async fn with_a_writing_agent(
         ..world.personality("writing", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut writing)
@@ -954,10 +953,10 @@ async fn a_skill_of_a_sessions_scope_is_deleted_and_restored_with_it() {
 #[tokio::test]
 async fn a_skill_is_changed_once_more_when_it_was_written_meanwhile() {
     let (store, refusals) = ContendedStore::stores(Skill::KIND);
-    let runtime =
-        TestRuntime { store: store.clone(), plugins: vec![&SkillsPlugin], ..Default::default() }
+    let kernel =
+        TestKernel { store: store.clone(), plugins: vec![&SkillsPlugin], ..Default::default() }
             .build();
-    let manager = runtime.services().get::<SkillManager>().expect("a service of the plugin");
+    let manager = kernel.services().get::<SkillManager>().expect("a service of the plugin");
     let system = SecurityContext::system();
     let skill = manager
         .create(

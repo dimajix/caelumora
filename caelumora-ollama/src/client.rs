@@ -45,6 +45,11 @@ use bytes::Buf;
 use caelumora_agents::llm::control_tokens::ControlTokens;
 use caelumora_agents::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
 use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_kernel::component::{
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
+};
+use caelumora_kernel::remote::{describe_chain, describe_request_error};
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentRef;
 use caelumora_model::context::{
@@ -55,11 +60,6 @@ use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
-    LibraryComponents, Params,
-};
-use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::{BoxStream, StreamExt};
@@ -1070,6 +1070,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use caelumora_kernel::component::{ComponentContainer, ComponentContext, ComponentRegistry};
+    use caelumora_kernel::kernel::Services;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageRole};
@@ -1077,8 +1079,6 @@ mod tests {
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::type_map::TypeKey;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentRegistry};
-    use caelumora_runtime::runtime::Services;
     use futures::stream as futures_stream;
     use serde_json::json;
     use std::io::Error;

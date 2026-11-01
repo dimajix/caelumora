@@ -1,10 +1,8 @@
-//! Skills (issue 22) in the API: whoever may read them lists and reads
-//! them, their owner makes, changes, deletes and restores them. One of a
-//! session's scope is written by an agent in that session, not here. Using
-//! a skill is no request of its own: an agent loads it in a turn, or a
-//! participant gives it to an agent with `/skill`. Served behind the core's
-//! login (`RestPlugin`, issue 323), each handler with the `SkillManager`
-//! in its state.
+//! Skills (issue 22) in the API: whoever may read them lists and reads them, their owner makes,
+//! changes, deletes and restores them. One of a session's scope is written by an agent in that
+//! session, not here. Using a skill is no request of its own: an agent loads it in a turn, or a
+//! participant gives it to an agent with `/skill`. Served behind the kernel's login (`RestPlugin`,
+//! issue 323), each handler with the `SkillManager` in its state.
 
 use crate::api::{
     CreateSkillRequest, RenameSkillRequest, SkillBodyRequest, SkillDescriptionRequest,
@@ -30,8 +28,8 @@ use caelumora_rest_server::state::AppState;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// What the handlers of skills share: the state of every handler, and the
-/// one writer of skills, taken from the runtime when the routes are built.
+/// What the handlers of skills share: the state of every handler, and the one writer of skills,
+/// taken from the kernel when the routes are built.
 #[derive(Clone)]
 struct Skills {
     app: Arc<AppState>,
@@ -40,11 +38,9 @@ struct Skills {
 
 impl RestPlugin for SkillsPlugin {
     fn routes(&self, app: Arc<AppState>) -> Router {
-        // Without the plugin registered with the runtime there are no
-        // skills to serve.
-        let Some(manager) = app.runtime_manager.services().get::<SkillManager>().map(Arc::clone)
-        else {
-            tracing::error!("The skills plugin serves no routes: the runtime was built without it");
+        // Without the plugin registered with the kernel there are no skills to serve.
+        let Some(manager) = app.kernel.services().get::<SkillManager>().map(Arc::clone) else {
+            tracing::error!("The skills plugin serves no routes: the kernel was built without it");
             return Router::new();
         };
         Router::new()
@@ -78,8 +74,7 @@ impl From<SkillError> for ApiError {
                 Self::bad_request("invalid_scope", detail)
             }
             SkillError::Store(e) => e.into(),
-            // A caller that is no user, a runtime without skills: not the
-            // client's request.
+            // A caller that is no user, a kernel without skills: not the client's request.
             SkillError::OwnerNotAUser | SkillError::NotJoined => {
                 Self::internal("internal_error", "the request", &error.into())
             }

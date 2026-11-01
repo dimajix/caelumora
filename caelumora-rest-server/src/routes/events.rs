@@ -7,9 +7,9 @@ use axum::{
     extract::State,
     response::sse::{Event, Sse},
 };
+use caelumora_kernel::event::SubscriptionTopic;
 use caelumora_model::snapshot::Detail;
 use caelumora_rest_api::stream::{GlobalSnapshot, StreamOptions};
-use caelumora_runtime::event::SubscriptionTopic;
 use futures::stream::Stream;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -24,7 +24,7 @@ pub(super) async fn global_events(
     // Only the events about what this user may read (issue 39), decided by
     // the same policy as reading it through the store.
     let receiver = state
-        .runtime_manager
+        .kernel
         .event_bus()
         .subscribe(user.security_context(), vec![SubscriptionTopic::All])
         .into_receiver();
@@ -48,9 +48,8 @@ pub(super) async fn global_events(
     )
 }
 
-/// Every session the user may read, with the channels they may read, as the
-/// sessions' events refer to them by id alone - described by the runtime,
-/// running or not (issue 80).
+/// Every session the user may read, with the channels they may read, as the sessions' events refer
+/// to them by id alone - described by the kernel, running or not (issue 80).
 async fn global_snapshot(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,

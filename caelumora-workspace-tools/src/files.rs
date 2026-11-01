@@ -24,6 +24,9 @@ use crate::terminal_tool::{tool, TerminalTool, TerminalToolConfig};
 use bytes::Bytes;
 use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::terminal::{
+    ByteStream, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
+};
 use caelumora_model::approval::{ArgumentMatcher, ToolMatcher};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -31,9 +34,6 @@ use caelumora_model::digest::{self, ContentDigest, Digest};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use caelumora_model::workspace::{Workspace, WorkspaceId};
-use caelumora_runtime::terminal::{
-    ByteStream, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
-};
 use futures::stream;
 use futures::StreamExt;
 use regex::{Regex, RegexBuilder};
@@ -662,10 +662,10 @@ mod tests {
     use crate::terminal_tool::tests::tool as terminal_tool;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
+    use caelumora_kernel::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::digest;
     use caelumora_model::digest::Digest;
-    use caelumora_runtime::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
     use std::fs;
 
     fn knowledge(state: &AgentChannelState) -> Vec<KnowledgeRef> {

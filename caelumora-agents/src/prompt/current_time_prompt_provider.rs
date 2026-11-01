@@ -19,9 +19,9 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 

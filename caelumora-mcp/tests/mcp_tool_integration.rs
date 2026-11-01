@@ -9,6 +9,10 @@ use axum::Router;
 use caelumora_agents::testing::{agent_runtime, offered_anywhere, TestAgents};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::component::{ComponentContainer, ComponentContext, BUNDLE_REF_KIND};
+use caelumora_kernel::kernel::{ActorRuntime, Kernel};
+use caelumora_kernel::session::testing::detached_participant_in;
+use caelumora_kernel::testing::{asked_for, TestKernel, World};
 use caelumora_mcp::library::McpLibrary;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
 use caelumora_model::actor::ActorId;
@@ -27,10 +31,6 @@ use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::work::Work;
-use caelumora_runtime::component::{ComponentContainer, ComponentContext, BUNDLE_REF_KIND};
-use caelumora_runtime::runtime::{ActorRuntime, RuntimeManager};
-use caelumora_runtime::session::testing::detached_participant_in;
-use caelumora_runtime::testing::{asked_for, TestRuntime, World};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
@@ -124,9 +124,9 @@ fn names(tools: &[Tool]) -> Vec<String> {
     names
 }
 
-/// A runtime over `store` with the library of MCP servers, as the programs build theirs.
-fn runtime(store: &Persistence) -> Arc<RuntimeManager> {
-    TestRuntime { store: store.clone(), libraries: vec![&McpLibrary], ..Default::default() }.build()
+/// A kernel over `store` with the library of MCP servers, as the programs build theirs.
+fn kernel(store: &Persistence) -> Arc<Kernel> {
+    TestKernel { store: store.clone(), libraries: vec![&McpLibrary], ..Default::default() }.build()
 }
 
 /// The tool provider of the one MCP tool component configured with
@@ -152,10 +152,9 @@ async fn executed(
 
 /// A container with one MCP tool component configured with `params`.
 async fn build_container(params: Value) -> ComponentContainer {
-    let runtime_manager = runtime(&Persistence::in_memory());
-    let registry = runtime_manager.component_registry();
-    let context =
-        ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
+    let kernel = kernel(&Persistence::in_memory());
+    let registry = kernel.component_registry();
+    let context = ComponentContext::new(SecurityContext::default(), kernel.services().clone());
 
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -189,8 +188,8 @@ fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
         Classification::CHANNEL_DEFAULT,
         None,
     );
-    let runtime = runtime(&Persistence::in_memory());
-    let runtime = detached_participant_in(runtime, session, channel, ActorId::Agent(agent));
+    let kernel = kernel(&Persistence::in_memory());
+    let runtime = detached_participant_in(kernel, session, channel, ActorId::Agent(agent));
     agent_runtime(runtime)
 }
 
@@ -304,10 +303,9 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
         .await
         .unwrap();
 
-    let runtime_manager = runtime(&store);
-    let registry = runtime_manager.component_registry();
-    let context =
-        ComponentContext::new(SecurityContext::default(), runtime_manager.services().clone());
+    let kernel = kernel(&store);
+    let registry = kernel.component_registry();
+    let context = ComponentContext::new(SecurityContext::default(), kernel.services().clone());
 
     let ref_config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -493,7 +491,7 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
     let mut working =
         Personality { components: ComponentConfig { component_nodes: vec![mcp] }, ..personality };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut working)

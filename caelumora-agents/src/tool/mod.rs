@@ -1,5 +1,5 @@
 //! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that runs an agent's tool calls
-//! with the tools of its providers and with the checks the runtime keeps to itself (issues 127,
+//! with the tools of its providers and with the checks the kernel keeps to itself (issues 127,
 //! 280), what tools share - a text given a page at a time (`page_of`, issue 282) -, and the
 //! built-in tool components, one file per component kind. A component that offers tools along with
 //! another facet - a prompt part, say - stays in `components`.
@@ -19,6 +19,16 @@ use crate::prompt::NAMESPACE;
 use crate::situation::Situation;
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::attachment::AttachmentError;
+use caelumora_kernel::backend::StorageGone;
+use caelumora_kernel::component::{ComponentImpl, ComponentResult, LibraryComponents};
+use caelumora_kernel::content::ContentError;
+use caelumora_kernel::kernel::{ActorRuntime, CallPermit};
+use caelumora_kernel::terminal::TerminalError;
+use caelumora_kernel::view::ViewError;
+use caelumora_kernel::workspace::{
+    WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter,
+};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::confidentiality::{Classification, Compartment, Confidentiality};
 use caelumora_model::content::ContentRef;
@@ -29,16 +39,6 @@ use caelumora_model::tool::{
     ToolSet, ToolVisibility,
 };
 use caelumora_model::turn::GivenUpReason;
-use caelumora_runtime::attachment::AttachmentError;
-use caelumora_runtime::backend::StorageGone;
-use caelumora_runtime::component::{ComponentImpl, ComponentResult, LibraryComponents};
-use caelumora_runtime::content::ContentError;
-use caelumora_runtime::runtime::{ActorRuntime, CallPermit};
-use caelumora_runtime::terminal::TerminalError;
-use caelumora_runtime::view::ViewError;
-use caelumora_runtime::workspace::{
-    WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter,
-};
 use chrono::Utc;
 use providers::ToolProviders;
 use serde::de::DeserializeOwned;
@@ -396,7 +396,7 @@ pub(crate) fn unanswered_result(prompts: &PromptTexts) -> String {
 /// The result for a call that was approved but has no result when its
 /// agent is loaded again (issue 75): the server or the session stopped
 /// before the call ran (issue 377), or before its result was stored. The
-/// runtime cannot tell which, so it never runs the call again - the model
+/// executor cannot tell which, so it never runs the call again - the model
 /// decides.
 pub(crate) fn not_executed_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "not_executed", ()))
@@ -404,7 +404,7 @@ pub(crate) fn not_executed_result(prompts: &PromptTexts) -> String {
 
 /// The result for a call that was running when its turn was cancelled or
 /// given up (issue 161): it was interrupted, and what it did before stays
-/// done. The runtime cannot tell how far it got - the model checks before
+/// done. The executor cannot tell how far it got - the model checks before
 /// it calls it again.
 pub(crate) fn interrupted_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted", ()))
@@ -472,8 +472,8 @@ pub(crate) enum TurnEnd<'a> {
 }
 
 impl TurnEnd<'_> {
-    /// The key of the text that says why: the core's for a turn given up
-    /// (`core.given_up_cause`), the agents' otherwise.
+    /// The key of the text that says why: the kernel's for a turn given up
+    /// (`kernel.given_up_cause`), the agents' otherwise.
     fn key(&self) -> String {
         match self {
             TurnEnd::Committed { cancelled: true } => {
@@ -719,28 +719,25 @@ fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
     turn.tools().any(|tool| tool.name == call.function_name)
 }
 
-/// Runs an agent's tool calls with the tools of its components' providers
-/// (`ToolProviders`), and has the core decide what is the core's (issues 127,
-/// 133, 280, 516): only an agent calls tools, and only what the core admits
-/// (`ActorRuntime::admit_tool_call`) - the policy (`CallTool`), asked once
-/// before a call is put up for approval (`admit`, which also decides whether
-/// a user is asked), and the rules of the places the agent works in (issue
-/// 13), the system's, its session's and its channel's, as they stand: a rule
-/// that denies refuses a call as the policy does, before anyone is asked and
-/// again when it is run (`ActorRuntime::rule_denying`), and a rule that asks
-/// puts the call to a person for a decision of their own, whatever its tool
-/// says. And the result the model is given is made here, the one place: what
-/// the tool gave, or what went wrong and what to do next (issue 15),
-/// classified - as the tool classified it, else as the tool is configured,
-/// else as the channel - and withheld if that may not flow into the channel
-/// (`ActorRuntime::may_publish`), before the model sees it. A tool only ever
-/// sees permitted calls, and never decides what the model is told. It is no
-/// component: how a call runs is its tool's business (issue 280), and what is
-/// checked is never the choice of whoever may write a personality.
+/// Runs an agent's tool calls with the tools of its components' providers (`ToolProviders`), and
+/// has the kernel decide what is the kernel's (issues 127, 133, 280, 516): only an agent calls
+/// tools, and only what the kernel admits (`ActorRuntime::admit_tool_call`) - the policy
+/// (`CallTool`), asked once before a call is put up for approval (`admit`, which also decides
+/// whether a user is asked), and the rules of the places the agent works in (issue 13), the
+/// system's, its session's and its channel's, as they stand: a rule that denies refuses a call as
+/// the policy does, before anyone is asked and again when it is run (`ActorRuntime::rule_denying`),
+/// and a rule that asks puts the call to a person for a decision of their own, whatever its tool
+/// says. And the result the model is given is made here, the one place: what the tool gave, or what
+/// went wrong and what to do next (issue 15), classified - as the tool classified it, else as the
+/// tool is configured, else as the channel - and withheld if that may not flow into the channel
+/// (`ActorRuntime::may_publish`), before the model sees it. A tool only ever sees permitted calls,
+/// and never decides what the model is told. It is no component: how a call runs is its tool's
+/// business (issue 280), and what is checked is never the choice of whoever may write a
+/// personality.
 #[derive(Debug)]
 pub struct ToolExecutor {
     providers: ToolProviders,
-    /// The agent's runtime, which decides what is the core's to decide of its calls (issue 516) -
+    /// The agent's runtime, which decides what is the kernel's to decide of its calls (issue 516) -
     /// whether one may be called, the rules of its places, what may flow where -, through which a
     /// call's questions are put to the users of its channel, and what its tool gave its model is
     /// kept for the channel (issue 512).
@@ -809,7 +806,7 @@ impl ToolExecutor {
             Err(interruption) => {
                 let after = (finished_at - started_at).to_std().unwrap_or_default();
                 info!(tool = %call.function_name, duration_ms = after.as_millis(), by_user = matches!(interruption, Interruption::ByUser(_)), "Tool interrupted");
-                // A fixed text of the runtime's: as the turn (issue 168).
+                // A fixed text of the agents': as the turn (issue 168).
                 let mut result = ToolCallResult::of(
                     call,
                     ToolResultStatus::Interrupted,
@@ -925,17 +922,15 @@ impl ToolExecutor {
         self.runtime.create_media(initiator, classification.clone(), media).await.map_err(not_kept)
     }
 
-    /// How `call`, made by the model in `turn`, is admitted: a call that
-    /// cannot succeed is answered at once rather than put to a user who
-    /// could only approve it in vain - in the order `execute` would find
-    /// out: first what the core decides of it (`ActorRuntime::admit_tool_call`,
-    /// issue 516) - the policy (`CallTool`) and a rule of a place that denies
-    /// it (issue 13; `execute` asks the rules again) -, then the call itself
-    /// (issue 118) and the questions it asks (issue 165). Otherwise a user is
-    /// asked if a rule of a place asks for it - explicitly, for a decision
-    /// of their own - or if its tool, as the turn began with it (issue 137),
-    /// requires approval, and shown what the tool says of the call; the
-    /// questions are asked once it is approved, or at once.
+    /// How `call`, made by the model in `turn`, is admitted: a call that cannot succeed is answered
+    /// at once rather than put to a user who could only approve it in vain - in the order `execute`
+    /// would find out: first what the kernel decides of it (`ActorRuntime::admit_tool_call`, issue
+    /// 516) - the policy (`CallTool`) and a rule of a place that denies it (issue 13; `execute`
+    /// asks the rules again) -, then the call itself (issue 118) and the questions it asks (issue
+    /// 165). Otherwise a user is asked if a rule of a place asks for it - explicitly, for a
+    /// decision of their own - or if its tool, as the turn began with it (issue 137), requires
+    /// approval, and shown what the tool says of the call; the questions are asked once it is
+    /// approved, or at once.
     pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
         let agent = turn.situation().agent_id();
         if !offered(call, turn) {
@@ -949,8 +944,8 @@ impl ToolExecutor {
                 turn,
             )));
         }
-        // The one question of the call's permission (issue 304, rule 4) is
-        // asked as it is admitted, not again when it runs: the core's.
+        // The one question of the call's permission (issue 304, rule 4) is asked as it is admitted,
+        // not again when it runs: the kernel's.
         let permit = self.runtime.admit_tool_call(turn.situation().initiator(), call).await;
         let forbidden = || {
             Admission::Answered(Box::new(ToolCallResult::of(
@@ -1034,10 +1029,10 @@ impl ToolExecutor {
         offered
     }
 
-    /// Nothing if `call` may be run now: it was offered and no rule of a place denies it - one
-    /// may have been set while the call waited. Whether the policy permits it was asked as it was
+    /// Nothing if `call` may be run now: it was offered and no rule of a place denies it - one may
+    /// have been set while the call waited. Whether the policy permits it was asked as it was
     /// admitted (`admit`), once (issue 304); that its caller is an agent, the runtime it acts
-    /// through says, which the core makes for an agent alone (issue 516).
+    /// through says, which the kernel makes for an agent alone (issue 516).
     async fn check(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<()> {
         if !offered(call, turn) {
             return Err(ToolError::UnknownTool(call.function_name.clone()));
@@ -1064,6 +1059,9 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime, TestAgents};
+    use caelumora_kernel::controller::SessionController;
+    use caelumora_kernel::kernel::ChannelRuntime;
+    use caelumora_kernel::testing::{participant_runtime_in, TestKernel, World};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::approval::{ApprovalRule, RuleDecision};
@@ -1084,9 +1082,6 @@ mod tests {
     use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
-    use caelumora_runtime::controller::SessionController;
-    use caelumora_runtime::runtime::ChannelRuntime;
-    use caelumora_runtime::testing::{participant_runtime_in, TestRuntime, World};
     use serde_json::json;
     use std::fs;
     use std::future;
@@ -1390,7 +1385,7 @@ mod tests {
             None,
         );
         channel.approval_rules = places.channel;
-        let runtime = TestRuntime {
+        let kernel = TestKernel {
             access_policy,
             confidentiality,
             config,
@@ -1398,7 +1393,7 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let channel = ChannelRuntime::outside_a_session(runtime, session, channel);
+        let channel = ChannelRuntime::outside_a_session(kernel, session, channel);
         let session = channel.session_controller_of();
         let executor =
             ToolExecutor::new(providers, agent_runtime(channel.new_participant_runtime(actor)));

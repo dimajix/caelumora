@@ -10,10 +10,10 @@
 //! remote side (`ConversationId`, `TaskId`), which the actor stores.
 
 use async_trait::async_trait;
+use caelumora_kernel::component::LibraryComponents;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::secret::{SecretError, Secrets};
-use caelumora_runtime::component::LibraryComponents;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -114,11 +114,10 @@ pub type ExternalAgentResult<T> = Result<T, ExternalAgentError>;
 /// `ExternalAgent::cancel`.
 pub type ExternalStream = BoxStream<'static, ExternalAgentResult<ExternalEvent>>;
 
-/// An agent that runs elsewhere, as an external personality reaches it
-/// (issue 179). Every call carries the secrets that may be read in the name
-/// it is made in, bound by the core (`ActorRuntime::secrets`, issue 516), so
-/// that credentials are resolved for whoever acts - shared, as what follows
-/// a task after the call resolves them too.
+/// An agent that runs elsewhere, as an external personality reaches it (issue 179). Every call
+/// carries the secrets that may be read in the name it is made in, bound by the kernel
+/// (`ActorRuntime::secrets`, issue 516), so that credentials are resolved for whoever acts -
+/// shared, as what follows a task after the call resolves them too.
 #[async_trait]
 pub trait ExternalAgent: Send + Sync + Debug {
     /// Hands `message` to the remote agent within `conversation` - `None`

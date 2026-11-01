@@ -11,16 +11,16 @@ use caelumora_agents::tool::{
     arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
+use caelumora_kernel::component::{
+    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
+};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::identifier::Identifier;
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
-    LibraryComponents, Params,
-};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

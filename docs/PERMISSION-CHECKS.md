@@ -1,15 +1,15 @@
 # Permission Checks
 
-This document is the map of every place where the runtime asks a permission question: which
-operation asks, in whose name, what, which concept decides it, by which of the five reasons it is
-asked, and where the same question is asked again on the way. It records what the code does at the
-end of issue [304](../issues/304-review-of-the-permission-concept.md) (2026-10-11), redone from the
-code, and brought up to date by issues [312](../issues/312-order-and-reach-not-everywhere.md) and
+This document is the map of every place where the kernel asks a permission question: which operation
+asks, in whose name, what, which concept decides it, by which of the five reasons it is asked, and
+where the same question is asked again on the way. It records what the code does at the end of issue
+[304](../issues/304-review-of-the-permission-concept.md) (2026-10-11), redone from the code, and
+brought up to date by issues [312](../issues/312-order-and-reach-not-everywhere.md) and
 [322](../issues/322-clearance-decided-outside-the-store.md). The rules it is measured against - the
 three decisions, the order, the five reasons to ask - are in
 [SECURITY.md](SECURITY.md#where-permission-checks-go) and [CONFIDENTIALITY.md](CONFIDENTIALITY.md);
 what each action is expected to ask is asserted by the security suite
-(`caelumora-runtime/tests/security_suite.rs`, issue 198; an agent's actions in
+(`caelumora-kernel/tests/security_suite.rs`, issue 198; an agent's actions in
 `caelumora-agents/tests/security_suite.rs`, issue 370). A new action, or a change to what one asks,
 changes this map as it changes the suite.
 
@@ -64,8 +64,8 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 | **Store** (`caelumora-model/src/store/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for what was deleted) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ProjectController`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
 | **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
-| **Owners of acts** (`ToolExecutor` - asking the core through the agent's runtime, issue 516 -, `CommandExecutor`, the approver, components on what they keep - asking it the same way), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, a left-out answer |
-| **Views** (`caelumora-runtime/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a participant's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
+| **Owners of acts** (`ToolExecutor` - asking the kernel through the agent's runtime, issue 516 -, `CommandExecutor`, the approver, components on what they keep - asking it the same way), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, a left-out answer |
+| **Views** (`caelumora-kernel/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a participant's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
 | **Filters** (event bus, command lists, store lists), rule 5 | the read question per item | `check` | silently left out |
 
 The REST server asks nothing itself. It builds one context per request (`auth.rs`, without a place:
@@ -168,9 +168,9 @@ actor can send (issue 228) -, an attachment that is none of the user's uploads f
 
 | Operation | Questions in order | Rule | Again | Refusal |
 |---|---|---|---|---|
-| Admit a tool call (`ToolExecutor::admit`) | offered; asked of the core (`ActorRuntime::admit_tool_call`, issue 516): `CallTool` (T,3), the place's rules; approval | R4 | not again as it runs: offered, an agent, the place's rules (`ActorRuntime::rule_denying`) | a forbidden result |
-| A tool's result (`ToolExecutor::admitted`) | `may_publish` of the result into the turn (T,2), asked of the core (`ActorRuntime::may_publish`) | R4: the agent's context is a destination of its own | the channel as the result enters it (R3) | the result withheld |
-| Tool sets offered (`ToolExecutor::tool_sets`) | per set with a destination `may_publish` of the channel into it (T,2), asked of the core (`ActorRuntime::may_publish`) | R5 | - | the set not offered |
+| Admit a tool call (`ToolExecutor::admit`) | offered; asked of the kernel (`ActorRuntime::admit_tool_call`, issue 516): `CallTool` (T,3), the place's rules; approval | R4 | not again as it runs: offered, an agent, the place's rules (`ActorRuntime::rule_denying`) | a forbidden result |
+| A tool's result (`ToolExecutor::admitted`) | `may_publish` of the result into the turn (T,2), asked of the kernel (`ActorRuntime::may_publish`) | R4: the agent's context is a destination of its own | the channel as the result enters it (R3) | the result withheld |
+| Tool sets offered (`ToolExecutor::tool_sets`) | per set with a destination `may_publish` of the channel into it (T,2), asked of the kernel (`ActorRuntime::may_publish`) | R5 | - | the set not offered |
 | Who may approve (`ApproverActor::approvers_of`) | per user `may_approve` (their own context, 3) | R5 | - | left out; nobody, denied at once |
 | An approval by click (`ApproverActor::handle_response`) | admitted by the channel (*What enters a channel*); the approver checks only that it names the agent that asked | R3 | `approvers_of` for the strategy (R5) | `MessageRejected` to its sender; an answer for another agent left out |
 | An approval by a person's rule (`UserActor::answer_by_rule`) | `may_approve` (U,3), then as a click | R5 | three times per answer: whether the rule answers, the admission, whom to wait for | the rule does not answer |
@@ -178,7 +178,7 @@ actor can send (issue 228) -, an attachment that is none of the user's uploads f
 | Commands shown (`CommandExecutor::visible`, `/help`, completion) | per command `ShowCommand` (U,3) | R5 | - | left out |
 | A command of an agent asked for (`UserActor::request_command`) | whom it names: the agents' commands as the issuer sees them (`ChannelLoop::commands_of`: `ShowAgentCommand`, U,3) | R5 | at the door (*What enters a channel*) | `Unknown`, `InvalidArguments` |
 | An agent carries a command out (`AgentBody::carry_out`) | nothing: admitted at the door (issue 516) | - | - | `CommandFailed` for one it does not carry out |
-| A secret (`SecretManager::resolve`) | `ReadSecret` (3) - T at a call, of the secrets the core binds to the work (`ActorRuntime::secrets`, issue 516), C as a component of the core is built, S for a storage | R4 | - | `SecretError::PermissionDenied` |
+| A secret (`SecretManager::resolve`) | `ReadSecret` (3) - T at a call, of the secrets the kernel binds to the work (`ActorRuntime::secrets`, issue 516), C as a component of the kernel is built, S for a storage | R4 | - | `SecretError::PermissionDenied` |
 | An extension handed out (`ActorRuntime::reader`, `writer`: a skill's, an artifact's, the workspace's) | `may_read_session` (T,1), as the work's session is reached; what the face asks it asks as it is used | reach | at each use | none handed out (`None`) |
 
 ### What an agent reads beyond its channel
@@ -192,9 +192,9 @@ An agent's views are built per piece of work, with the agent's place, and handed
 | A channel by name or id (`SessionReader::channel`, `channel_named`; `read_history`, `read_notes`) | `channel_reading`: `GetChannel` (T,1), `copyable_information` of the channel into the place (T,2) - as a whole or entry by entry; entry by entry what it answers (`Reading`) judges each message or note by its classification, a page of the history as a filter in the store (issue 421) | reach | `ChannelNotFound`, `NoChannelNamed` alike |
 | All channels (`channels`, `all_channels`) | as above per channel | reach | left out |
 | Its own private notes of other channels (`own_private_notes`) | no `GetChannel` - its own knowledge -; per note `may_copy_from` (T,2) | reach | left out |
-| Its memory (`AgentMemory::recalled`, `find`, `update`, `forget`) | per entry `may_copy_information` of its origin, by the origin's privacy then and now, asked of the core (`Situation::may_copy_information`, issue 516) | R4: the agent's own knowledge, as its private notes | left out |
-| Reclassify a note (`AgentNotes::reclassify`) | the note is there; asked of the core (`Turn::may_reclassify`, issue 516): `Reclassify` of the note with its channel's attributes (T,3), `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
-| Reclassify a memory entry (`AgentMemory::reclassify`) | the entry recalled; asked of the core as a note is: `Reclassify` with the channel's attributes (T,3), `require_publish` (T,2) | R4 | as above |
+| Its memory (`AgentMemory::recalled`, `find`, `update`, `forget`) | per entry `may_copy_information` of its origin, by the origin's privacy then and now, asked of the kernel (`Situation::may_copy_information`, issue 516) | R4: the agent's own knowledge, as its private notes | left out |
+| Reclassify a note (`AgentNotes::reclassify`) | the note is there; asked of the kernel (`Turn::may_reclassify`, issue 516): `Reclassify` of the note with its channel's attributes (T,3), `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
+| Reclassify a memory entry (`AgentMemory::reclassify`) | the entry recalled; asked of the kernel as a note is: `Reclassify` with the channel's attributes (T,3), `require_publish` (T,2) | R4 | as above |
 
 ### Skills
 
@@ -214,7 +214,7 @@ An agent's views are built per piece of work, with the agent's place, and handed
 | A user works in it directly (`WorkspaceController::terminal`, the file routes) | store `GetWorkspace` (U,1), `cleared_for` (U,2), else `NotFound`; for a change `WriteWorkspace` (U,1) | reach (store), then R4 | - | `NotFound`, `ReadOnly` |
 | In a channel (`WorkspaceController::usable_in_channel`, behind `terminal_in` and `shell_in`: the workspace's extension for the terminal, artifact and attachment tools and the workspace prompt - the reader's terminal, which reads alone, the writer's terminal and shell (issue 516) -, the REST server's to end a command) | session and channel as the running session holds them, as stored for the `CommandReaper`; `may_read_session` (1); `channel_reading`; `usable_in`: the channel uses it, the caller takes part, scope, `may_read_workspace` (1), `may_publish` both ways (2); for a change `WriteWorkspace` (1) | reach, then R4 | - | `NotUsableInChannel`, `ReadOnly` |
 | A running command goes on (`may_run`, as the channel's participants or the workspace change) | the chain of *In a channel* per current participant | an act that lasts, asked again as what permitted it changes | per participant and event | the command ended |
-| The channel's workspace offered (`WorkspaceReader`, the core's extension) | `usable_in` (V) | R5 | - | none |
+| The channel's workspace offered (`WorkspaceReader`, the kernel's extension) | `usable_in` (V) | R5 | - | none |
 | Create (`WorkspaceManager::create`, behind a template) | `require_classifiable`; `require_storable` into the storage's destination (U,2); `require_cleared_for` (U,2); in a session's scope `CreateWorkspace` (U,1); the holder of the scope (`ScopeHolders::require`, issue 458): store `GetSession`, `GetChannel` or `GetProject` (U,1), a channel's session in S - what lies there keeps the session from being deleted; store `CreateWorkspace` (U,1); the holder again in S, afterwards - gone, the workspace purged with its place | R4 (flow) + R1 | `CreateWorkspace` (pair, in a session's scope) | `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied`, `NotFound`, `NameTaken` |
 | Change, reclassify (`WorkspaceController::update_*`) | reached (store `GetWorkspace` U,1, `cleared_for` U,2); a classification as creating; store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 (+ flow) | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `ClassificationRefused`, `StorageNotCleared`, `NotCleared`, `PermissionDenied` |
 | Share (`update_access`, `share`) | reached; `require_nameable`: store `GetGroup` per newly named group - the caller's own question (issue 312); store `GetWorkspace`, `cleared_for` + `UpdateWorkspace` | reach (store) + R1 | `GetWorkspace`, `cleared_for` (store) | `NotFound`, `PermissionDenied`, `Validation` |
@@ -283,7 +283,7 @@ An agent's views are built per piece of work, with the agent's place, and handed
 | Flags of a session, channel, member, agent, workspace, skill, group, artifact | `may_change_session`, `may_change_channel`, `may_read_agent_context`, `may_read_agent_tools`, `may_read_agent_components`, `may_approve`, `may_retry_message`, `may_cancel_channel`, `may_change_agent`, `may_delete_agent`, the member's commands, `may_change_workspace`, `may_write_workspace`, `may_change_skill` (`SkillAccess`), `may_change_group`, `may_change_artifact`, `may_write_artifact` (`ArtifactAccess`) | R5 | a flag false |
 | A participant's tools, components, context, private notes (`tool_sets`, `components`, `context`) | `ReadAgentTools`, `ReadAgentComponents`, `ReadAgentContext` (V,1), the context also only of a channel read whole | R4: reading them is the views' act | `Forbidden` |
 | What was deleted (every `deleted_*`, through `Views::deleted_of`) | store `ReadDeleted` per item; flags `may_restore` - false for one whose purge is begun (issue 492) -, `may_purge`; for a session's channels also `may_change_session`, once, without which none may be restored - `may_purge` is asked, and none is purged alone | R1 + R5 | - |
-| An event reaching a subscriber (`EventBus::subscribe` in someone's name; the runtime's own, as the system, are not asked) | per event, of every such subscriber at once, `may_reach_each` - `may_reach` as the store asks it, by `check_each`, which reads a group once per question - for an event about a part, once for the whole and once for the part (issue 503): the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; `HearDeleted` instead for a deletion -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
+| An event reaching a subscriber (`EventBus::subscribe` in someone's name; the kernel's own, as the system, are not asked) | per event, of every such subscriber at once, `may_reach_each` - `may_reach` as the store asks it, by `check_each`, which reads a group once per question - for an event about a part, once for the whole and once for the part (issue 503): the read question - `GetChannel` for a channel's events, its members' and an agent's state in it; `GetAgent`, `GetUser`, `GetUserProfile`, `GetWorkspace`, `GetSkill`, `GetGroup`, `GetArtifact` by kind; `GetSession` for a session's; `HearDeleted` instead for a deletion -, and for what is classified `cleared_for` the classification it has, or had as it is reclassified (issues 312, 322) | R5 + reach | not delivered |
 
 ### Users
 
@@ -291,7 +291,7 @@ An agent's views are built per piece of work, with the agent's place, and handed
 |---|---|---|---|
 | A profile read or changed, approval rules (`UserController`) | store `GetUserProfile`, `UpdateUserProfile` (U,1); the first change `CreateUserProfile` (U,1) | R1 | `NotFound`, `PermissionDenied` |
 | A channel marked read (`UserController::mark_read`) | store `GetChannel` (U,1), the clearance included; the message from where the user's view begins, structural; the state is the user's own, stored without a question | R1 | `NotFound` for the channel and the message alike |
-| Users, agents, personalities, profiles read by the runtime (controllers, names in the views) | in S | - | - |
+| Users, agents, personalities, profiles read by the kernel (controllers, names in the views) | in S | - | - |
 | Templates listed | store `GetSessionTemplate` per item (U,1) | R1 | left out |
 | Roles, limiting roles | no question: carried by the context, put there by the `UserController` and the `AgentController` from the roles as they are now, the limit from the `PersonalityController` as it last took the personality in | - | - |
 
@@ -310,9 +310,9 @@ An agent's views are built per piece of work, with the agent's place, and handed
   Likewise a tool's result is asked into the agent's context before the channel asks it into
   itself: two destinations.
 - **Memory.** An agent recalls its memory by the flow of each entry's origin itself - its own
-  knowledge, reached through itself as its private notes of other channels are. Memory and notes
-  are named in the core, each with its own enforcement; a generic one for every component's state
-  was rejected (issue [65](../issues/65-generic-component-state.md)).
+  knowledge, reached through itself as its private notes of other channels are. Memory and notes are
+  named in the kernel, each with its own enforcement; a generic one for every component's state was
+  rejected (issue [65](../issues/65-generic-component-state.md)).
 - **The reach is one function for offering and acting.** `channel_reading` and
   `WorkspaceController::usable_in` are built from `may_*` and answer with an option: the views turn
   `None` into "not there", an operation into "not found". It is neither enforcing nor offering, but
@@ -328,7 +328,7 @@ An agent's views are built per piece of work, with the agent's place, and handed
 - **Running commands.** A command in a workspace lasts; whether it may go on is asked again, in
   every participant's name, whenever the participants or the workspace change (`may_run`).
 - **A new version of an artifact.** `publish` asks `WriteArtifact` of an artifact found in the
-  runtime's name, so that one not the caller's to add to is refused as such rather than taken for a
+  kernel's name, so that one not the caller's to add to is refused as such rather than taken for a
   name to make anew.
 - **`GetPersonality` twice.** An agent's personality is read as the participant is admitted and
   again as the channel is built: two acts.
@@ -362,8 +362,8 @@ An agent's views are built per piece of work, with the agent's place, and handed
   `cleared_for` after every Read, the deleted alike. The views and the managers no longer ask it of
   what they read through the store; an operation asks it twice where it reads before it stores,
   as it asks `Get*` twice.
-- **What the views read in the runtime's name stays theirs.** They read channels and artifacts in
-  S and decide the reach themselves: a channel's depends on where the reader reads from - an agent
+- **What the views read in the kernel's name stays theirs.** They read channels and artifacts in S
+  and decide the reach themselves: a channel's depends on where the reader reads from - an agent
   reads one it is not cleared for as a whole entry by entry -, which a context does not carry; an
   artifact's on its versions' lists until issue
   [316](../issues/316-store-checks-artifact-without-versions.md).
@@ -393,13 +393,13 @@ An agent's views are built per piece of work, with the agent's place, and handed
 
 ### Decided in issue 316
 
-- **Reading a version needs the artifact's list and the version's**, as in HDFS and ADLS. The
-  store checks an artifact by its own list, as every kind, and the views read artifacts in V, no
-  longer in S; they cut the versions by their own lists (`Views::readable_artifact`). Publishing
-  lets the channel's participants read the artifact as well as the version, in the runtime's name
-  for whom `WriteArtifact` lets add a version. An event about a version reaches whoever reads both
-  (`EventBus::publish_classified_part`). No method merges the lists for the store: a predicate
-  over an entity's own attributes (issue [332](../issues/332-policy-as-a-predicate.md)) holds for
+- **Reading a version needs the artifact's list and the version's**, as in HDFS and ADLS. The store
+  checks an artifact by its own list, as every kind, and the views read artifacts in V, no longer in
+  S; they cut the versions by their own lists (`Views::readable_artifact`). Publishing lets the
+  channel's participants read the artifact as well as the version, in the kernel's name for whom
+  `WriteArtifact` lets add a version. An event about a version reaches whoever reads both
+  (`EventBus::publish_classified_part`). No method merges the lists for the store: a predicate over
+  an entity's own attributes (issue [332](../issues/332-policy-as-a-predicate.md)) holds for
   artifacts as for every kind.
 
 ### Open

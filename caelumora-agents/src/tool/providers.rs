@@ -6,10 +6,10 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
+use caelumora_kernel::component::{ComponentError, ComponentImpl, ComponentResult};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::{Answers, Questions};
 use caelumora_model::tool::{ToolCall, ToolSet};
-use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentResult};
 use tracing::warn;
 
 /// The tool providers of an agent's components. It keeps the providers,

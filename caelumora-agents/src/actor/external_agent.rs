@@ -34,6 +34,11 @@ use crate::prompt::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
 use crate::prompt::{ContextProvider, ModelProfileProvider};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use caelumora_kernel::actor::{Actor, Answering};
+use caelumora_kernel::component::ComponentImpl;
+use caelumora_kernel::kernel::ActorRuntime;
+use caelumora_kernel::logging::envelope_span;
+use caelumora_kernel::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::agent::RetryRefused;
@@ -50,11 +55,6 @@ use caelumora_model::turn::GivenUpReason;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::{TurnId, Work};
-use caelumora_runtime::actor::{Actor, Answering};
-use caelumora_runtime::component::ComponentImpl;
-use caelumora_runtime::logging::envelope_span;
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::transport::{EventReceiver, EventSender};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use futures::stream;
@@ -697,7 +697,7 @@ impl ExternalAgentActor {
 
     /// Who began the request the open `task` answers - as a turn answers the initiator of its
     /// request (issue 211) - else, for a task stored before its request was kept, the agent itself.
-    /// In whose name and with whose rights it is done the core decides (issue 516).
+    /// In whose name and with whose rights it is done the kernel decides (issue 516).
     fn initiator_of(&self, state: &AgentChannelState, task: &TaskId) -> ActorId {
         state.remote.work_of(task).map_or_else(|| self.id(), |work| work.initiator())
     }

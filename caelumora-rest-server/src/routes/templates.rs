@@ -14,7 +14,7 @@ pub(super) async fn list_templates(
 ) -> Result<Json<Vec<TemplateResponse>>, ApiError> {
     let ctx = user.security_context();
     let templates = state
-        .runtime_manager
+        .kernel
         .entity_stores()
         .session_templates
         .list(&ctx, &Query::all())

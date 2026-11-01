@@ -1,4 +1,4 @@
-//! How skills are joined to the runtime (issue 323): the store of their kind, the `SkillManager` as
+//! How skills are joined to the kernel (issue 323): the store of their kind, the `SkillManager` as
 //! a service - what the views and the routes reach it by - and as a member of a scope, the
 //! `SkillReader` and the `SkillWriter` bound to the views of an agent's work - what the component
 //! reaches skills by (issue 516) -, the `skills` component, and the section `skills` of the seed
@@ -11,11 +11,11 @@ use crate::skill::Skill;
 use crate::{NAMESPACE, PROMPTS};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_kernel::component::LibraryComponents;
+use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::seed::{create_unless_taken, SeedSection};
 use caelumora_model::store::EntityStore;
-use caelumora_runtime::component::LibraryComponents;
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
-use caelumora_runtime::seed::{create_unless_taken, SeedSection};
 use serde_json::Value;
 use std::fmt;
 use std::sync::Arc;
@@ -33,27 +33,27 @@ impl Plugin for SkillsPlugin {
         SKILLS
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
-        let skills = runtime.entity_store::<Skill>()?;
+    fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
+        let skills = kernel.entity_store::<Skill>()?;
         let manager = Arc::new(SkillManager::new(
             Arc::clone(&skills),
-            Arc::clone(runtime.scope_holders()),
-            Arc::clone(runtime.event_bus()),
-            Arc::clone(runtime.confidentiality()),
+            Arc::clone(kernel.scope_holders()),
+            Arc::clone(kernel.event_bus()),
+            Arc::clone(kernel.confidentiality()),
         ));
-        runtime.provide(Arc::clone(&manager));
-        runtime.scope_member(manager);
-        runtime.extend_readers::<dyn SkillReader, _, _>(|session| async move {
+        kernel.provide(Arc::clone(&manager));
+        kernel.scope_member(manager);
+        kernel.extend_readers::<dyn SkillReader, _, _>(|session| async move {
             Some(Arc::new(session.views().clone()) as Arc<dyn SkillReader>)
         })?;
-        runtime.extend_writers::<dyn SkillWriter, _, _>(|session| async move {
+        kernel.extend_writers::<dyn SkillWriter, _, _>(|session| async move {
             Some(Arc::new(session.views().clone()) as Arc<dyn SkillWriter>)
         })?;
-        runtime.seed_section(SKILLS, Arc::new(SeededSkills(skills)))?;
-        runtime.prompts().add(NAMESPACE, PROMPTS)?;
+        kernel.seed_section(SKILLS, Arc::new(SeededSkills(skills)))?;
+        kernel.prompts().add(NAMESPACE, PROMPTS)?;
         // Its component kind is a library's (issue 516), though the crate registers as a plugin
         // until it is cut in two (step 5d of issue 516).
-        component::register(&mut LibraryComponents::new(runtime.components()));
+        component::register(&mut LibraryComponents::new(kernel.components()));
         Ok(())
     }
 }

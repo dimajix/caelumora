@@ -2,22 +2,18 @@
 //! it should know across its channels and sessions - kept in its
 //! `AgentState`, not in one channel.
 //!
-//! It translates the tools `remember`, `update_memory` and `forget` and
-//! renders the prompt part; the logic is `crate::memory::AgentMemory`. Changes are applied
-//! to the agent's state as it is when the turn completes
-//! (`Turn::commit`), so that actors of the same agent in
-//! other channels and sessions neither lose nor overwrite them. The prompt
-//! part shows the entries that may be recalled in the current channel: those
-//! written in a channel it may read, as the core decides when the component
-//! asks in the agent's name (`Situation::may_copy_information`, issues 131,
-//! 516). Under the ownership policy that is the flow rule of issue
-//! 133 - the entry's channel's classification must flow into this one's -
-//! within the session, and beyond it only where the entry's session permits
-//! it, then and now (issue 134). Only those can be
-//! updated or forgotten here. Its tools are
-//! `ToolVisibility::HIDDEN`: like private notes, memory is the agent's
-//! own, seen by its owner in the context panel only. Its entries are
-//! numbered differently from notes, on purpose: see `AgentMemory::remember`.
+//! It translates the tools `remember`, `update_memory` and `forget` and renders the prompt part;
+//! the logic is `crate::memory::AgentMemory`. Changes are applied to the agent's state as it is
+//! when the turn completes (`Turn::commit`), so that actors of the same agent in other channels and
+//! sessions neither lose nor overwrite them. The prompt part shows the entries that may be recalled
+//! in the current channel: those written in a channel it may read, as the kernel decides when the
+//! component asks in the agent's name (`Situation::may_copy_information`, issues 131, 516). Under
+//! the ownership policy that is the flow rule of issue 133 - the entry's channel's classification
+//! must flow into this one's - within the session, and beyond it only where the entry's session
+//! permits it, then and now (issue 134). Only those can be updated or forgotten here. Its tools are
+//! `ToolVisibility::HIDDEN`: like private notes, memory is the agent's own, seen by its owner in
+//! the context panel only. Its entries are numbered differently from notes, on purpose: see
+//! `AgentMemory::remember`.
 
 use crate::components::notes::NOTE_PRESENTATION;
 use crate::memory::AgentMemory;
@@ -32,13 +28,13 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::memory::{Memory, MemoryId};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use serde_json::Value;
 use std::fmt;
 use std::fmt::Debug;
@@ -54,7 +50,7 @@ pub const RECLASSIFY_MEMORY_TOOL_NAME: &str = "reclassify_memory";
 /// The text of its prompt part in the prompt catalogue.
 const TEXT: &str = "agents.agent_memory";
 
-/// What may be recalled and how an entry is reclassified, the core decides, asked in the context
+/// What may be recalled and how an entry is reclassified, the kernel decides, asked in the context
 /// of the work it serves - the agent's, with its owner's rights (issues 131, 255, 516).
 pub struct AgentMemoryComponent {
     /// The texts of its prompt part (issue 57).
@@ -287,6 +283,11 @@ mod tests {
     use crate::testing;
     use crate::testing::detached_participant;
     use crate::tool::ToolError;
+    use caelumora_kernel::agent::state::{AgentStateHandle, AgentStates};
+    use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
+    use caelumora_kernel::session::testing::{owned_kernel_under, participant_runtime_in, spec};
+    use caelumora_kernel::session::{ChannelSpec, SessionLoop, SessionManager};
+    use caelumora_kernel::transport::Discard;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::main_channel;
@@ -305,11 +306,6 @@ mod tests {
     use caelumora_model::user::testing::{make_user, record_users};
     use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::{AgentStateHandle, AgentStates};
-    use caelumora_runtime::runtime::{AgentRuntime, ParticipantRuntime};
-    use caelumora_runtime::session::testing::{owned_runtime_under, participant_runtime_in, spec};
-    use caelumora_runtime::session::{ChannelSpec, SessionLoop, SessionManager};
-    use caelumora_runtime::transport::Discard;
     use std::collections::HashMap;
     use std::ops::Deref;
     use std::sync::OnceLock;
@@ -337,10 +333,10 @@ mod tests {
             state.begin_turn(Work::new(in_channel(at), None, at.1.clone(), Default::default()));
         }
 
-        /// The runtime a turn of `agent` in channel `at` acts through: its actor's there, run
-        /// by its session, acting with its owner's rights (issue 255). The agent takes no part,
-        /// so the test gives the runtime the context the core builds for a participant
-        /// (`acting_as`, issue 516).
+        /// The runtime a turn of `agent` in channel `at` acts through: its actor's there, run by
+        /// its session, acting with its owner's rights (issue 255). The agent takes no part, so the
+        /// test gives the runtime the context the kernel builds for a participant (`acting_as`,
+        /// issue 516).
         fn runtime_in(&self, sessions: &Sessions, at: &At, agent: AgentId) -> ParticipantRuntime {
             let context = SecurityContext::new(self.owner, at.0 .0, at.0 .1).next(
                 ActorId::Agent(agent),
@@ -372,10 +368,9 @@ mod tests {
             .unwrap()
     }
 
-    /// The sessions of a test, as a turn reaches them: made as the runtime
-    /// makes a session (`SessionManager::create`, issue 486) and running,
-    /// with every channel a turn works in, through which it reaches its
-    /// session and reads its privacy from its loop. Each is changed,
+    /// The sessions of a test, as a turn reaches them: made as the kernel makes a session
+    /// (`SessionManager::create`, issue 486) and running, with every channel a turn works in,
+    /// through which it reaches its session and reads its privacy from its loop. Each is changed,
     /// deleted and restored by its owner.
     struct Sessions {
         stores: EntityStores,
@@ -386,9 +381,8 @@ mod tests {
     }
 
     impl Sessions {
-        /// The sessions of a runtime under the ownership policy, which
-        /// learns who belongs to a group from its store, with `rules` as the
-        /// confidentiality policy (`owned_runtime`).
+        /// The sessions of a kernel under the ownership policy, which learns who belongs to a group
+        /// from its store, with `rules` as the confidentiality policy (`owned_kernel`).
         fn under(rules: ConfidentialityRules) -> Self {
             Self::policed(Arc::new(rules))
         }
@@ -396,8 +390,8 @@ mod tests {
         /// As `under`, with `confidentiality` as the confidentiality policy: what a turn's
         /// runtime decides what is recalled by (issue 516).
         fn policed(confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
-            let (runtime, manager) = owned_runtime_under(confidentiality);
-            let stores = runtime.entity_stores().clone();
+            let (kernel, manager) = owned_kernel_under(confidentiality);
+            let stores = kernel.entity_stores().clone();
             Self { stores, manager, loops: HashMap::new(), made: 0 }
         }
 

@@ -10,11 +10,11 @@ use crate::manager::{SkillError, SkillResult};
 use crate::skill::{Skill, SkillId};
 use crate::view::SkillViews;
 use async_trait::async_trait;
+use caelumora_kernel::view::Views;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::scope::{found_from, Scope};
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::value::name::Name;
-use caelumora_runtime::view::Views;
 
 /// The skills an agent's work may load where it reads from.
 #[async_trait]

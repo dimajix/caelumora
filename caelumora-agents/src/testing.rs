@@ -1,7 +1,7 @@
 //! The world of the tests of the agents' logic (issue 370): the world of the security suite
-//! (`caelumora_runtime::testing::World`) with the agents' library and the models of a test, and
-//! what those tests share - a turn to work in, the models, a call an agent makes in a workspace.
-//! Behind the feature `test-support`, as the runtime's `testing` is.
+//! (`caelumora_kernel::testing::World`) with the agents' library and the models of a test, and what
+//! those tests share - a turn to work in, the models, a call an agent makes in a workspace. Behind
+//! the feature `test-support`, as the kernel's `testing` is.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -16,6 +16,17 @@ use crate::tool::ToolProvider;
 use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_kernel::agent::state::AgentStateHandle;
+use caelumora_kernel::component::{
+    ComponentFacets, ComponentKind, ComponentRegistry, LibraryComponents,
+};
+use caelumora_kernel::kernel::{ActorRuntime, AgentRuntime, ParticipantRuntime};
+use caelumora_kernel::library::{Library, LibraryBuilder};
+use caelumora_kernel::session::testing::detached_participant_in;
+use caelumora_kernel::session::SessionLoop;
+use caelumora_kernel::testing::TestKernel;
+use caelumora_kernel::testing::{participant_runtime_in, test_registry as runtime_registry, World};
+use caelumora_kernel::workspace::testing::WithWorkspace;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::channel::testing::bare_channel;
@@ -23,7 +34,7 @@ use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::context::ModelProfile;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, CORE, CORE_PROMPTS};
+use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts, KERNEL, KERNEL_PROMPTS};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::Grant;
 use caelumora_model::session::testing::bare_session;
@@ -33,19 +44,6 @@ use caelumora_model::tool::{Tool, ToolCall, ToolVisibility};
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::user::UserId;
 use caelumora_model::work::Work;
-use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_runtime::component::{
-    ComponentFacets, ComponentKind, ComponentRegistry, LibraryComponents,
-};
-use caelumora_runtime::library::{Library, LibraryBuilder};
-use caelumora_runtime::runtime::{ActorRuntime, AgentRuntime, ParticipantRuntime};
-use caelumora_runtime::session::testing::detached_participant_in;
-use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::testing::TestRuntime;
-use caelumora_runtime::testing::{
-    participant_runtime_in, test_registry as runtime_registry, World,
-};
-use caelumora_runtime::workspace::testing::WithWorkspace;
 use futures::stream;
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -60,7 +58,7 @@ use tokio::time::{sleep, timeout};
 
 /// The agents in the world of a test, as a library (issues 373, 516): the agents' library
 /// (`AgentsLibrary`) and a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
-/// default of the model's facets. A test gives it to the runtime's `World` with its own plugins and
+/// default of the model's facets. A test gives it to the kernel's `World` with its own plugins and
 /// libraries. Naming the default model is the program's (issue 329); the tests have no program that
 /// names one, so this library declares it.
 #[derive(Debug, Default)]
@@ -92,7 +90,7 @@ pub fn turn<'a>(
     state: &'a mut AgentChannelState,
 ) -> Turn<'a> {
     let channel = &session.channels()[0];
-    // On the owner's word; with the rights the core builds for the agent (issue 516).
+    // On the owner's word; with the rights the kernel builds for the agent (issue 516).
     state.begin_turn(Work::new(
         EventContext::new(session.id(), channel.id(), ActorId::User(owner), String::new()),
         None,
@@ -140,7 +138,7 @@ pub async fn asked_for_a_call(
         ..world.personality("working", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut working)
@@ -149,7 +147,7 @@ pub async fn asked_for_a_call(
     let helper = world.agent("helper", owner, &working).await;
     let alice = World::as_user(world.alice);
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -227,13 +225,13 @@ pub fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
 }
 
 /// The runtime of the participant `agent` in a channel of no running session, never attached, as
-/// the runtime's (`caelumora_runtime::session::testing`), with the agents' library - and so the
+/// the kernel's (`caelumora_kernel::session::testing`), with the agents' library - and so the
 /// agents' texts (issue 57).
 pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     let session = bare_session(SessionId::new());
     let channel = bare_channel(session.id);
     detached_participant_in(
-        TestRuntime { libraries: vec![&TestAgents], ..Default::default() }.build(),
+        TestKernel { libraries: vec![&TestAgents], ..Default::default() }.build(),
         session,
         channel,
         ActorId::Agent(agent),
@@ -246,7 +244,7 @@ pub fn agent_runtime(runtime: ParticipantRuntime) -> Arc<dyn ActorRuntime> {
     Arc::new(AgentRuntime::in_test(runtime, AgentStateHandle::detached()))
 }
 
-/// The prompt catalogue with the core's texts and the agents', as the runtime and `AgentsLibrary`
+/// The prompt catalogue with the kernel's texts and the agents', as the kernel and `AgentsLibrary`
 /// add them - for what resolves a context in a test.
 pub fn catalogue() -> Arc<PromptCatalogue> {
     catalogue_of(&[])
@@ -258,18 +256,18 @@ pub fn prompts() -> PromptTexts {
     PromptTexts::new(catalogue(), None)
 }
 
-/// The prompt catalogue with the core's texts, the agents' and a library's `texts` under
-/// `namespace`, as the runtime and the libraries add them - for what a library's test makes itself.
+/// The prompt catalogue with the kernel's texts, the agents' and a library's `texts` under
+/// `namespace`, as the kernel and the libraries add them - for what a library's test makes itself.
 pub fn catalogue_with(namespace: &str, texts: &str) -> Arc<PromptCatalogue> {
     catalogue_of(&[(namespace, texts)])
 }
 
-/// The prompt catalogue with the core's texts, the agents' and `more`, each its namespace and
-/// its texts.
+/// The prompt catalogue with the kernel's texts, the agents' and `more`, each its namespace and its
+/// texts.
 fn catalogue_of(more: &[(&str, &str)]) -> Arc<PromptCatalogue> {
     let mut catalogue = PromptCatalogue::new();
     // The texts are compiled in; that they can be read is what this tests too.
-    for (namespace, texts) in [(CORE, CORE_PROMPTS), (NAMESPACE, PROMPTS)].iter().chain(more) {
+    for (namespace, texts) in [(KERNEL, KERNEL_PROMPTS), (NAMESPACE, PROMPTS)].iter().chain(more) {
         catalogue
             .add(namespace, texts)
             .unwrap_or_else(|e| panic!("the texts of '{namespace}' cannot be read: {e}"));
@@ -282,8 +280,8 @@ pub fn prompts_with(namespace: &str, texts: &str) -> PromptTexts {
     PromptTexts::new(catalogue_with(namespace, texts), None)
 }
 
-/// The component kinds a test of the agents builds components with that has no runtime, resolving
-/// the bundles a `ref` names in `store`: the runtime's (`testing::test_registry`) and an agent's
+/// The component kinds a test of the agents builds components with that has no kernel, resolving
+/// the bundles a `ref` names in `store`: the kernel's (`testing::test_registry`) and an agent's
 /// (`with_agent_kinds`).
 pub fn test_registry(store: &Persistence) -> ComponentRegistry {
     let mut registry = runtime_registry(store);
@@ -291,10 +289,9 @@ pub fn test_registry(store: &Persistence) -> ComponentRegistry {
     registry
 }
 
-/// Registers with `registry` the kinds of an agent's components
-/// (`register_components`) and a model that is not to be asked as the
-/// default (`with_unasked_model`) - for tests that build components without
-/// a runtime; a runtime gets them from `TestAgents`.
+/// Registers with `registry` the kinds of an agent's components (`register_components`) and a model
+/// that is not to be asked as the default (`with_unasked_model`) - for tests that build components
+/// without a kernel; a kernel gets them from `TestAgents`.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
     let mut components = LibraryComponents::new(registry);
     register_components(&mut components);
@@ -302,8 +299,8 @@ pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
 }
 
 /// Registers with `components` a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
-/// default of the model's facets - the core names none, each program names its own (issue 329), and
-/// the tests declare this one.
+/// default of the model's facets - the kernel names none, each program names its own (issue 329),
+/// and the tests declare this one.
 fn with_unasked_model(components: &mut LibraryComponents<'_>) {
     components.register(
         ComponentKind::new(UNASKED_MODEL_KIND)
@@ -484,7 +481,7 @@ impl Turn<'_> {
 /// test of a tool on the workspace calls it.
 pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState) -> Turn<'a> {
     let channel = &with.session.channels()[0];
-    // On the owner's word; with the rights the core builds for the agent, a participant of the
+    // On the owner's word; with the rights the kernel builds for the agent, a participant of the
     // channel (issue 516).
     let asked_by = with.context.initiator_id;
     state.begin_turn(Work::new(

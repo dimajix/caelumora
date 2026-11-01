@@ -7,8 +7,8 @@
 //! - `SecurityAttributes` (`attributes`) are what an entity carries of who
 //!   may reach it: its owner and its access list of `Subject`s and their
 //!   `Grant`s.
-//! - An `ActionType` (`action`) is what is asked: what is done with a
-//!   stored entity of any kind, by a `Verb`, or one of the core's acts.
+//! - An `ActionType` (`action`) is what is asked: what is done with a stored entity of any kind, by
+//!   a `Verb`, or one of the kernel's acts.
 //! - An `Admission` (`admission`) is the policy's rule for a verb on
 //!   entities, by their attributes alone: what it decides one entity by,
 //!   and what a store narrows a list by (issue 332).

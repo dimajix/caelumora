@@ -17,27 +17,25 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
+use caelumora_kernel::kernel::OwnRecord;
+use caelumora_kernel::view::SessionReader;
 use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::digest::Digest;
 use caelumora_model::ledger::Staged;
 use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::session::SessionId;
-use caelumora_runtime::runtime::OwnRecord;
-use caelumora_runtime::view::SessionReader;
 use tracing::warn;
 
 /// An agent's memory as a turn sees it: every function takes the turn.
 pub(crate) struct AgentMemory;
 
 impl AgentMemory {
-    /// What may be recalled in `turn`'s channel: entries written in a
-    /// channel it may read, as the memory is now - without the turn's own
-    /// changes. Whether it may is asked of the core in the work's context -
-    /// the agent's, with its owner's rights (`Situation::may_copy_information`,
-    /// issues 131, 255, 516), once per
-    /// channel, classification and session the entries come with; the
-    /// turn's channel is judged by the classification the turn began with.
+    /// What may be recalled in `turn`'s channel: entries written in a channel it may read, as the
+    /// memory is now - without the turn's own changes. Whether it may is asked of the kernel in the
+    /// work's context - the agent's, with its owner's rights (`Situation::may_copy_information`,
+    /// issues 131, 255, 516), once per channel, classification and session the entries come with;
+    /// the turn's channel is judged by the classification the turn began with.
     ///
     /// An entry of another session (issue 134) is recalled only where both
     /// the privacy its session had when it was written and the one it has
@@ -192,12 +190,10 @@ impl AgentMemory {
         true
     }
 
-    /// Reclassifies entry `id` as `classification` (issue 133) - one the
-    /// turn may change (see [`find`](Self::find)) - if the core lets the
-    /// agent (`Turn::may_reclassify`, issue 516): never above the turn's
-    /// channel. Taken over when the turn completes;
-    /// from then on the entry is recalled where its new classification may
-    /// be read.
+    /// Reclassifies entry `id` as `classification` (issue 133) - one the turn may change (see
+    /// [`find`](Self::find)) - if the kernel lets the agent (`Turn::may_reclassify`, issue 516):
+    /// never above the turn's channel. Taken over when the turn completes; from then on the entry
+    /// is recalled where its new classification may be read.
     ///
     /// # Errors
     /// `InvalidParameter` if there is no such entry here, `PermissionDenied`

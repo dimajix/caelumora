@@ -9,6 +9,11 @@ use crate::state::AppState;
 use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response, Sse};
 use axum::{extract::State, http::StatusCode};
+use caelumora_kernel::actor::user::{ChannelWatch, UserActor};
+use caelumora_kernel::actor::Shown;
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::session::ChannelSpec;
+use caelumora_kernel::view::{ChannelView, ParticipantView, Reached, SessionView, Viewer};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
@@ -34,11 +39,6 @@ use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::StreamOptions;
-use caelumora_runtime::actor::user::{ChannelWatch, UserActor};
-use caelumora_runtime::actor::Shown;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::session::ChannelSpec;
-use caelumora_runtime::view::{ChannelView, ParticipantView, Reached, SessionView, Viewer};
 use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -172,7 +172,7 @@ pub(super) async fn mark_read(
     user: AuthenticatedUser,
     Json(payload): Json<ReadRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let controller = state.runtime_manager.controller_manager().user_controller(user.id).await?;
+    let controller = state.kernel.controller_manager().user_controller(user.id).await?;
     controller
         .mark_read(&user.security_context(), SessionId(id), ChannelId(cid), payload.message_id)
         .await?;
@@ -937,15 +937,15 @@ mod tests {
     use axum::http::header::{CONTENT_TYPE, COOKIE};
     use axum::http::Request;
     use axum::Router;
+    use caelumora_kernel::channel::ChannelError;
+    use caelumora_kernel::command::CommandError;
+    use caelumora_kernel::session::testing::create;
+    use caelumora_kernel::view::{AgentContextError, ViewError};
     use caelumora_model::message::MessageId;
     use caelumora_model::security::Refused;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Participant;
     use caelumora_model::user::UserId;
-    use caelumora_runtime::channel::ChannelError;
-    use caelumora_runtime::command::CommandError;
-    use caelumora_runtime::session::testing::create;
-    use caelumora_runtime::view::{AgentContextError, ViewError};
     use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::time;

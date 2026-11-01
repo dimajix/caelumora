@@ -1,9 +1,9 @@
-//! How external agents reached over A2A are joined to the runtime (issue
-//! 326): by their component kind alone.
+//! How external agents reached over A2A are joined to the kernel (issue 326): by their component
+//! kind alone.
 
 use crate::agent;
 use anyhow::Result;
-use caelumora_runtime::library::{Library, LibraryBuilder};
+use caelumora_kernel::library::{Library, LibraryBuilder};
 
 /// External agents reached over A2A, as a library.
 #[derive(Debug, Default)]

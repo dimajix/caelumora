@@ -7,10 +7,10 @@ use crate::error::{ApiError, Json, Path};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
+use caelumora_kernel::controller::UserController;
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_rest_api::profile::{ApprovalRuleRequest, ProfileRequest, ProfileResponse};
-use caelumora_runtime::controller::UserController;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -19,7 +19,7 @@ pub(super) async fn get_profile(
     State(state): State<Arc<AppState>>,
     user: AuthenticatedUser,
 ) -> Result<Json<ProfileResponse>, ApiError> {
-    let profiles = &state.runtime_manager.entity_stores().user_profiles;
+    let profiles = &state.kernel.entity_stores().user_profiles;
     let profile = profiles
         .get(&user.security_context(), user.id)
         .await
@@ -100,7 +100,7 @@ async fn controller_of(
     user: &AuthenticatedUser,
 ) -> Result<Arc<UserController>, ApiError> {
     state
-        .runtime_manager
+        .kernel
         .controller_manager()
         .user_controller(user.id)
         .await

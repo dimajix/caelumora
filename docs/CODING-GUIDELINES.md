@@ -38,25 +38,25 @@ against this list, rule by rule, before it is reported (the self-review of
 *   REST handlers return `Result<_, crate::error::ApiError>`; never map an error to a bare status
     code ([REST errors](#rest-errors)). Keep the REST API compatible with `caelumora-web-ui`
     ([Crates and interfaces](#crates-and-interfaces)).
-*   A type takes the services it uses - the `AccessPolicy`, the stores, the event bus - when it
-    is made and keeps them as fields; it does not fetch them through the runtime at every use
+*   A type takes the services it uses - the `AccessPolicy`, the stores, the event bus - when it is
+    made and keeps them as fields; it does not fetch them through the kernel at every use
     ([Services are held, not fetched](#services-are-held-not-fetched)).
 *   A pure access question is a method of `AccessQuestions`, an operation checks its own permission
     with `Enforcement::require` - before it asks anything of others - and a frontend never asks the
-    `AccessPolicy` itself (see [SECURITY.md](SECURITY.md)). A plugin does the same through
-    extension traits of its own - its questions on `AccessQuestions`, its views on `Views` - and
-    adds nothing about its kind to the core (see [PLUGINS.md](PLUGINS.md)).
+    `AccessPolicy` itself (see [SECURITY.md](SECURITY.md)). A plugin does the same through extension
+    traits of its own - its questions on `AccessQuestions`, its views on `Views` - and adds nothing
+    about its kind to the kernel (see [PLUGINS.md](PLUGINS.md)).
 *   A library of the agent side - `caelumora-agents`, a crate that brings an agent's components -
-    names no `SecurityContext`, policy, view, manager or controller of the core or of a plugin, nor
-    the runtime of a participant, and registers through its `LibraryBuilder` alone, naming no
-    `RuntimeBuilder`, `Plugin` or `ComponentRegistry`: it asks the core through `ActorRuntime`,
+    names no `SecurityContext`, policy, view, manager or controller of the kernel or of a plugin,
+    nor the runtime of a participant, and registers through its `LibraryBuilder` alone, naming no
+    `KernelBuilder`, `Plugin` or `ComponentRegistry`: it asks the kernel through `ActorRuntime`,
     `Situation` and `Turn`, and reads through the readers
     ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/library-names.sh` checks it).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
-    test in the security suite (`caelumora-runtime/tests/security_suite.rs`, an agent's in
+    test in the security suite (`caelumora-kernel/tests/security_suite.rs`, an agent's in
     `caelumora-agents/tests/security_suite.rs`, see
     [SECURITY.md](SECURITY.md#the-security-suite)) - a plugin's in its own tests, in the suite's
-    world (`caelumora_runtime::testing`, feature `test-support`; with agents,
+    world (`caelumora_kernel::testing`, feature `test-support`; with agents,
     `caelumora_agents::testing`).
 *   A change to what is stored comes without compatibility code; the summary says which stored
     data has to be deleted ([Crates and interfaces](#crates-and-interfaces)).
@@ -68,7 +68,7 @@ against this list, rule by rule, before it is reported (the self-review of
     ([Conditions are made by `Filter`](#conditions-are-made-by-filter)).
 *   An operation of a manager or a controller takes a channel by its coordinates or its document,
     never by a view or a loop; a loop acts on no other resource for its callers
-    ([Runtimes and their entities](#runtimes-and-their-entities)).
+    ([Running objects and their entities](#running-objects-and-their-entities)).
 *   Rust code is laid out by rustfmt: `cargo fmt --all --check` passes
     ([Comments and documentation](#comments-and-documentation)).
 *   `cargo clippy --workspace --all-targets` stays silent
@@ -205,8 +205,8 @@ or changes.
 
 ## Crates and interfaces
 
-*   **Model and runtime.** When you change `caelumora-model`, keep `caelumora-runtime` compatible
-    with it.
+*   **Model and kernel.** When you change `caelumora-model`, keep `caelumora-kernel` compatible with
+    it.
 *   **REST and web UI.** When you change the REST API - its routes in `caelumora-rest-server`, its
     types in `caelumora-rest-api` -, keep `caelumora-web-ui` compatible with it.
 *   **Components.** A new component kind is registered in the `ComponentRegistry` - a library's
@@ -297,37 +297,36 @@ about (`lying_within`, beside the range of a number, `within`). A predicate that
 the same way stays with the entity and returns `bool` (`Group::has_member`, `Scope::contains`); the
 condition's doc comment names it, and a test holds both together.
 
-### Runtimes and their entities
+### Running objects and their entities
 
 A running object - `SessionLoop`, `ChannelLoop`, `ParticipantRuntime` - and the stored entity it
 holds (`Session`, `Channel`) share their work by three rules:
 
 *   **The model derives.** A value derived from an entity is computed in `caelumora-model` - a
     method of the entity (`Agent::security_context`) or a constructor of the derived type
-    (`SessionPrivacy::of(&Session)`) - never in the runtime, so that the stored document and the
+    (`SessionPrivacy::of(&Session)`) - never in the kernel, so that the stored document and the
     running object cannot disagree about it.
-*   **A runtime answers about its own entity, not about the one above.** A loop may have getters for
-    attributes of its own entity that callers need often; they return owned values. Its snapshot -
-    `channel()`, `session()` - is an `Arc`, not an `arc_swap::Guard`: what a caller is given it may
-    hand on to an operation and hold across an `await`, which a `Guard` should not be (each thread
-    has few slots for them), and the interface says nothing of how the loop keeps it. Everything
-    else is read from its snapshot. The
-    entity above is reached through the parent - `channel.session_loop()` - never through a
-    forwarder such as a `session_privacy()` on the channel's loop. What holds when the parent is
-    missing is the caller's to decide.
-*   **The actor's runtime is its interface.** The one exception to the rule above: an actor
-    reaches its channel through its runtime - the `ParticipantRuntime`, and an agent's actor the
-    `ActorRuntime` the core serves from it (issue 516). The channel as it stands, its
-    classification and attributes are read from the channel's controller, which the runtime holds
-    as the session's (issue 374); what only the running channel can answer - its users for the
+*   **A running object answers about its own entity, not about the one above.** A loop may have
+    getters for attributes of its own entity that callers need often; they return owned values. Its
+    snapshot - `channel()`, `session()` - is an `Arc`, not an `arc_swap::Guard`: what a caller is
+    given it may hand on to an operation and hold across an `await`, which a `Guard` should not be
+    (each thread has few slots for them), and the interface says nothing of how the loop keeps it.
+    Everything else is read from its snapshot. The entity above is reached through the parent -
+    `channel.session_loop()` - never through a forwarder such as a `session_privacy()` on the
+    channel's loop. What holds when the parent is missing is the caller's to decide.
+*   **The actor's runtime is its interface.** The one exception to the rule above: an actor reaches
+    its channel through its runtime - the `ParticipantRuntime`, and an agent's actor the
+    `ActorRuntime` the kernel serves from it (issue 516). The channel as it stands, its
+    classification and attributes are read from the channel's controller, which the runtime holds as
+    the session's (issue 374); what only the running channel can answer - its users for the
     questions of a tool call (issue 370) - is asked of the channel; the session's workspace is asked
     of its `WorkspaceController`, reached through the session's loop - for the workspace's writer
     with the session and the channel as their controllers hold them, for its reader as its views
     reached them (`WorkspaceWriter`, `WorkspaceReader`). Both answer `None` or refuse while the
-    channel is being built or once it is gone, so that the caller still decides what that means.
-    The public API of `ChannelLoop` is the frontends'; it acts in a user's name too
+    channel is being built or once it is gone, so that the caller still decides what that means. The
+    public API of `ChannelLoop` is the frontends'; it acts in a user's name too
     (`ChannelLoop::user_actor`), and is not an actor's. What an actor needs of its channel and does
-    not find on its runtime is added there. `ParticipantRuntime::channel_loop` stays the runtime's
+    not find on its runtime is added there. `ParticipantRuntime::channel_loop` stays the kernel's
     (`pub(crate)`): for the user's and the approver's actors, which act for a person as the
     frontends do, for the views, and for the runtime of an agent (`AgentRuntime`), which answers
     what the agent asks of its channel.
@@ -341,10 +340,10 @@ holds (`Session`, `Channel`) share their work by three rules:
     runtime - and decided, in reaching them, that the caller reads the channel; the manager
     asks what is its own. A loop does not act on other resources for its callers: it holds no
     forwarder to a workspace or a manager.
-*   **One name, one kind of thing.** In the core, `channel()` and `session()` return the entity's
+*   **One name, one kind of thing.** In the kernel, `channel()` and `session()` return the entity's
     document as it is now; `channel_loop()` and `session_loop()` the running object above; loading
     any stored entity is `load_…` (`ActorRuntime::load_channel_state`). On the interface of the
-    agent side - `ActorRuntime`, `Situation` -, which holds no document of the core, `channel` and
+    agent side - `ActorRuntime`, `Situation` -, which holds no document of the kernel, `channel` and
     `session` are the readers of the entity, in the name of a piece of work (`ChannelReader`,
     `SessionReader`, issue 516).
 *   **Found by id, by name, for someone.** What a running object holds is found by its id under the
@@ -358,22 +357,22 @@ holds (`Session`, `Channel`) share their work by three rules:
 A type takes the services it works with - the `AccessPolicy`, the stores, the event bus, the
 `ComponentRegistry` - when it is made, and keeps them as fields:
 
-*   **Constructor injection.** `new` takes the services, or takes them once from the runtime it is
-    given, and stores them as `Arc<dyn Trait>`: `dyn`, since the policy and the stores are chosen
-    at run time, and `Arc`, since the type lives in a task. No service is fetched again through the
-    runtime at every use, and none sits in a global (`static`, `OnceLock`), which would hide the
-    dependency and tie every test to one instance. The services never change while the process
-    runs, so a held one cannot go stale.
-*   **What it holds says what it needs.** A type holds the services it uses, not the runtime that
-    reaches all of them. Several services that go together travel as a small context holding
-    exactly those - `ComponentContext`, `Views` - never as one that holds everything again. A
-    scoped runtime such as `ParticipantRuntime` is such a context; it does not hand out the
-    `RuntimeManager` behind it, so that its users cannot reach past it (issue 359).
+*   **Constructor injection.** `new` takes the services, or takes them once from the kernel or the
+    runtime it is given, and stores them as `Arc<dyn Trait>`: `dyn`, since the policy and the stores
+    are chosen at run time, and `Arc`, since the type lives in a task. No service is fetched again
+    through the kernel at every use, and none sits in a global (`static`, `OnceLock`), which would
+    hide the dependency and tie every test to one instance. The services never change while the
+    process runs, so a held one cannot go stale.
+*   **What it holds says what it needs.** A type holds the services it uses, not the kernel that
+    reaches all of them. Several services that go together travel as a small context holding exactly
+    those - `ComponentContext`, `Views` - never as one that holds everything again. A scoped runtime
+    such as `ParticipantRuntime` is such a context; it does not hand out the `Kernel` behind it, so
+    that its users cannot reach past it (issue 359).
 *   **The policies travel as a pair.** A type that asks both the `AccessPolicy` and the
     `ConfidentialityPolicy` holds them as one `Policies` (`caelumora_model::security`) and is made
-    with `&Policies`, as a manager is made with `&EntityStores`, and a function that asks both
-    takes `&Policies` (`may_reach`, `channel_reading`); who hands them out lends `policies()` beside
-    `access_policy()` and `confidentiality()` for whoever asks one. A component of the core is the
+    with `&Policies`, as a manager is made with `&EntityStores`, and a function that asks both takes
+    `&Policies` (`may_reach`, `channel_reading`); who hands them out lends `policies()` beside
+    `access_policy()` and `confidentiality()` for whoever asks one. A component of the kernel is the
     exception: it takes each policy as a service of its own from its `ComponentContext`, where the
     services are found by their type; one of a library holds none (issue 516).
 *   **No threading next to the owner.** A service is not passed into a function beside the object
@@ -381,7 +380,7 @@ A type takes the services it works with - the `AccessPolicy`, the stores, the ev
 *   **Accessors lend.** An accessor returns `&Arc<dyn …>` or `&dyn …`; whoever keeps the service
     clones it, with `Arc::clone` (see below).
 *   **One step to ask.** A check reads as the question it is -
-    `views.access_policy().may_approve(views.context(), …)` - not as a walk through the runtime. A
+    `views.access_policy().may_approve(views.context(), …)` - not as a walk through the kernel. A
     type that is asked often in someone's name holds that name with the services, as `Views` holds
     its viewer.
 
@@ -402,20 +401,20 @@ Errors carry what failed, and only what may be shown goes to users.
 
 ### Types
 
-*   Use `anyhow::Result` for general application logic, especially in the runtime, where diverse
-    error types are aggregated: code that gathers errors and passes them on, within an operation
-    or at the top of a task - not at the boundary to implementations of others.
+*   Use `anyhow::Result` for general application logic, especially in the kernel, where diverse
+    error types are aggregated: code that gathers errors and passes them on, within an operation or
+    at the top of a task - not at the boundary to implementations of others.
 *   Use `thiserror` for domain-specific error types, as in `caelumora-model`.
 *   A method of a trait answers a specific error type, never `anyhow`: who implements it is not
-    fixed - a module of the core today, a plugin tomorrow -, and its caller has to tell its errors
-    apart. The type is the contract: what the caller can distinguish - what may be shown, a
-    refusal, a store's error -, and the compiler makes every implementation translate into it.
-    Context that `anyhow` attaches with `.context(…)` becomes a variant of the type
-    (`ContextError::Component`). For a plugin, the type is one of the core's (see
-    [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)). The exceptions
-    are named, so that "its caller only logs it" is no excuse for the next one: traits whose only
-    caller is the top of the program or of a task and logs the error whole - `Plugin::register`,
-    `Library::register`, `SeedSection::seed` and `Actor::run`.
+    fixed - a module of the kernel today, a plugin tomorrow -, and its caller has to tell its errors
+    apart. The type is the contract: what the caller can distinguish - what may be shown, a refusal,
+    a store's error -, and the compiler makes every implementation translate into it. Context that
+    `anyhow` attaches with `.context(…)` becomes a variant of the type (`ContextError::Component`).
+    For a plugin, the type is one of the kernel's (see
+    [PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-kernel-in-the-kernels-types)). The
+    exceptions are named, so that "its caller only logs it" is no excuse for the next one: traits
+    whose only caller is the top of the program or of a task and logs the error whole -
+    `Plugin::register`, `Library::register`, `SeedSection::seed` and `Actor::run`.
 *   Avoid `unwrap()` and `expect()` in production code. Use `?` or handle the error explicitly.
 
 ### Messages name what failed
@@ -424,32 +423,31 @@ Errors carry what failed, and only what may be shown goes to users.
     `ComponentError::Build` wraps every failure of a component graph with the component's id and
     kind.
 *   An error caused by a remote system names the endpoint, without credentials, query or fragment
-    (`caelumora_model::remote::redact_endpoint`), and the chain of its causes (the runtime's
+    (`caelumora_model::remote::redact_endpoint`), and the chain of its causes (the kernel's
     `remote::describe_chain`; for a failed request without the URL `reqwest` writes into it,
-    `describe_request_error`). `LLMError`
-    names the endpoint, the model and the backend's own explanation (`Connection`, `Rejected`,
-    `Backend`, `InvalidResponse`).
+    `describe_request_error`). `LLMError` names the endpoint, the model and the backend's own
+    explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
 *   Messages never contain secret values or file paths, because they may be shown to users.
 
 ### What users see
 
-What users may see is decided by whoever defines an error type, in one function each: the runtime's
-types in `caelumora_runtime::error::user_message`, the types of the agents' logic - the errors of
-its facets - in `caelumora_agents::error::user_message` (issue 370). Each looks through an error
-chain for a domain error written to be read and returns its message; the agents' asks its own
-judgement first and the runtime's for the rest, in one walk (`error::user_message_with`), so that
-the outermost error that may be shown is shown. Anything else stays in the log.
+What users may see is decided by whoever defines an error type, in one function each: the kernel's
+types in `caelumora_kernel::error::user_message`, the types of the agents' logic - the errors of its
+facets - in `caelumora_agents::error::user_message` (issue 370). Each looks through an error chain
+for a domain error written to be read and returns its message; the agents' asks its own judgement
+first and the kernel's for the rest, in one walk (`error::user_message_with`), so that the outermost
+error that may be shown is shown. Anything else stays in the log.
 
 A new error type meant for users must meet the rules above and be added to the function of whoever
-defines it. A plugin's error type is never added there: where the plugin answers the core or the
+defines it. A plugin's error type is never added there: where the plugin answers the kernel or the
 agents' logic, it answers in a type of theirs (see
-[PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
+[PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-kernel-in-the-kernels-types)).
 
 ### Rolling back
 
-An operation that stored something and then fails part of the way is rolled back: what it stored
-is set back to how it was before - in the runtime's name, since the operation was permitted -, and
-its caller gets the error. A step that does so is named `roll_back_…` after what it rolls back
+An operation that stored something and then fails part of the way is rolled back: what it stored is
+set back to how it was before - in the kernel's name, since the operation was permitted -, and its
+caller gets the error. A step that does so is named `roll_back_…` after what it rolls back
 (`SessionManager::roll_back_creation`, `SessionLoop::roll_back_channel_deletion`). It is no
 transaction: what cannot be set back is logged and stays (issue 354).
 
@@ -461,8 +459,8 @@ component, a failing tool executor - the agent logs it, discards the turn's unfi
 let a turn-time error escape `AgentActor::run`.
 
 Moderators forward `TurnGivenUp` to the users, whose actors pass it on to the UI. The failure's
-message is not given to a model: what it is told of a turn given up is a fixed text of the
-runtime's, with the reason. What a model is told of a failed tool call is the `ToolExecutor`'s (see
+message is not given to a model: what it is told of a turn given up is a fixed text of the kernel's,
+with the reason. What a model is told of a failed tool call is the `ToolExecutor`'s (see
 [TOOLS.md](TOOLS.md#results)).
 
 ### REST errors
@@ -532,7 +530,7 @@ fields: `span_id`, `event_id`, `correlation_id` and `span_depth`. There are thre
 *   **`request`** - one REST request, with `method`, `uri`, `request_id`, the authenticated
     `user_id`, and the `span_id` of the envelopes the request started.
 *   **`envelope`** - handling one envelope in the `ChannelLoop` or an idle agent
-    (`caelumora_runtime::logging::envelope_span`), with session, channel, sender and event kind.
+    (`caelumora_kernel::logging::envelope_span`), with session, channel, sender and event kind.
 *   **`turn`** - one iteration of an agent's cognitive cycle, with agent and state and the ids of
     the turn's `EventContext`. An idle or sleeping agent runs in an `agent` span instead.
 
@@ -554,46 +552,45 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     do (`channel::testing`, `session::testing`, `workspace::testing`, `component::testing`, issue
     370). What such a module adds to a type for tests - `ChannelLoop::actor_of` - is named apart
     from the type's own API and widens nothing outside `test-support`. The tests of the actors in a
-    running channel live in `channel/tests/` of the runtime, those of the agents in
-    `channel_tests/` of `caelumora-agents`.
-*   **Documents in tests:** a test that needs a document of the model starts from what the
-    `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
-    `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in
+    running channel live in `channel/tests/` of the kernel, those of the agents in `channel_tests/`
+    of `caelumora-agents`.
+*   **Documents in tests:** a test that needs a document of the model starts from what the `testing`
+    module of its kind makes - `make_personality`, `make_session`, `make_user`, `make_template`,
+    `make_channel`, `make_message` - and writes beside it only what it differs in
     (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
     one place and every test says what is particular about its document. These modules are the
-    model's, so that its own tests reach them too; so is what stores documents in `EntityStores`
-    and needs nothing of the runtime - `stored_agent`, `record_users`. The runtime's `testing`
-    modules build what runs and stores - a runtime, a running or a stored session.
-*   **A runtime in tests:** a test builds its runtime with `testing::TestRuntime` (issue 375), whose
+    model's, so that its own tests reach them too; so is what stores documents in `EntityStores` and
+    needs nothing of the kernel - `stored_agent`, `record_users`. The kernel's `testing` modules
+    build what runs and stores - a kernel, a running or a stored session.
+*   **A kernel in tests:** a test builds its kernel with `testing::TestKernel` (issue 375), whose
     parts all have defaults - a new memory store, no policy, the default rules, the default
-    configuration, the runtime's component kinds and agents that answer "ok" - and names only those
-    it differs in: `TestRuntime { libraries: vec![&AgentsLibrary], ..Default::default() }.build()`,
-    or `try_build()` for a test of what refuses to be built. Nobody else calls `RuntimeBuilder::new`
-    in a test but the program's own (`caelumora-app`), which builds the runtime as the program does,
+    configuration, the kernel's component kinds and agents that answer "ok" - and names only those
+    it differs in: `TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build()`,
+    or `try_build()` for a test of what refuses to be built. Nobody else calls `KernelBuilder::new`
+    in a test but the program's own (`caelumora-app`), which builds the kernel as the program does,
     so that a change to it is a change to one place, and what a test differs in is what it names; a
-    test of building from a configuration goes through `RuntimeBuilder::from_config`, as the
-    programs do. `session::testing::test_runtime()` and `owned_runtime(rules)` are the two runtimes
-    most tests share.
-*   **Sessions in tests:** a test that needs a session makes it as the runtime does - running,
-    with `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and
-    not started, with `session::testing::persist` -: the session with the groups of its
-    participants, a project of its own and its channels (issues 471, 486). Its document, by the
-    rule above, comes from the model's `session::testing::make_session`: a user's session, as a
-    template builds one. `bare_session` of the same module is the system's session that holds
-    nothing but its id; a test starts from it where the session is nobody's in particular - in the
-    tests of the stores, whose subject the document is, and of what the model derives from a
-    session's fields -, and where it stores a session's document alone - a controller's, a step of
-    `create_from_template` -, which says why where it makes or stores it. Outside
-    `caelumora-runtime`, a session is started by its manager alone: `SessionLoop::new` is the
-    crate's.
-*   **Agents in the runtime's tests:** a test of what a channel, a session or the views do with an
+    test of building from a configuration goes through `KernelBuilder::from_config`, as the programs
+    do. `session::testing::test_kernel()` and `owned_kernel(rules)` are the two kernels most tests
+    share.
+*   **Sessions in tests:** a test that needs a session makes it as the kernel does - running, with
+    `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and not
+    started, with `session::testing::persist` -: the session with the groups of its participants, a
+    project of its own and its channels (issues 471, 486). Its document, by the rule above, comes
+    from the model's `session::testing::make_session`: a user's session, as a template builds one.
+    `bare_session` of the same module is the system's session that holds nothing but its id; a test
+    starts from it where the session is nobody's in particular - in the tests of the stores, whose
+    subject the document is, and of what the model derives from a session's fields -, and where it
+    stores a session's document alone - a controller's, a step of `create_from_template` -, which
+    says why where it makes or stores it. Outside `caelumora-kernel`, a session is started by its
+    manager alone: `SessionLoop::new` is the crate's.
+*   **Agents in the kernel's tests:** a test of what a channel, a session or the views do with an
     agent among their participants runs a scripted agent (`testing::ScriptedAgents`, issue 370),
     which begins, ends or hangs in its answers as told; a test of what an agent does runs the
     agents' library, in `caelumora-agents`. A test that puts an actor straight into a channel or
     before a moderator - whom it finds, wakes or cancels, whoever the actor is - puts a
     `testing::StandIn` there, which does nothing (issue 372). No other test implements `Actor`,
-    except one that needs what no actor of the runtime can do, such as sending envelopes in
-    another's name - and then names the actor so.
+    except one that needs what no actor of the kernel can do, such as sending envelopes in another's
+    name - and then names the actor so.
 *   **Async tests:** use `#[tokio::test]` for tests involving async code.
 *   **Naming:** use descriptive names, e.g.
     `an_answer_is_its_whole_messages_and_what_was_being_written`.

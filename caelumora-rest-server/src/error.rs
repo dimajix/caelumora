@@ -9,7 +9,7 @@
 //!
 //! How much is disclosed: client errors (4xx) state their cause. Server errors
 //! (5xx) state it only if the error is one written to be read by users (see
-//! `caelumora_runtime::error::user_message`) - naming a component, an endpoint
+//! `caelumora_kernel::error::user_message`) - naming a component, an endpoint
 //! or an entity, never file paths or secret values. Everything else gets a
 //! generic `detail`; the full error chain goes to the log only.
 
@@ -21,26 +21,26 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use caelumora_kernel::agent::AgentError;
+use caelumora_kernel::attachment::AttachmentError;
+use caelumora_kernel::backend::StorageGone;
+use caelumora_kernel::channel::ChannelError;
+use caelumora_kernel::command::CommandError;
+use caelumora_kernel::content::ContentError;
+use caelumora_kernel::error::{refusal, user_message};
+use caelumora_kernel::group::GroupError;
+use caelumora_kernel::project::ProjectError;
+use caelumora_kernel::scoped::ScopeNotEmpty;
+use caelumora_kernel::session::SessionError;
+use caelumora_kernel::terminal::TerminalError;
+use caelumora_kernel::view::{AgentContextError, ViewError};
+use caelumora_kernel::workspace::WorkspaceError;
 use caelumora_model::confidentiality::ClassificationError;
 use caelumora_model::question::QuestionError;
 use caelumora_model::security::Refused;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
-use caelumora_runtime::agent::AgentError;
-use caelumora_runtime::attachment::AttachmentError;
-use caelumora_runtime::backend::StorageGone;
-use caelumora_runtime::channel::ChannelError;
-use caelumora_runtime::command::CommandError;
-use caelumora_runtime::content::ContentError;
-use caelumora_runtime::error::{refusal, user_message};
-use caelumora_runtime::group::GroupError;
-use caelumora_runtime::project::ProjectError;
-use caelumora_runtime::scoped::ScopeNotEmpty;
-use caelumora_runtime::session::SessionError;
-use caelumora_runtime::terminal::TerminalError;
-use caelumora_runtime::view::{AgentContextError, ViewError};
-use caelumora_runtime::workspace::WorkspaceError;
 use serde::Serialize;
 use std::borrow::Cow;
 use tracing::field;
@@ -459,8 +459,8 @@ impl From<SessionError> for ApiError {
             SessionError::ChannelUnavailable { .. } => {
                 Self::conflict("channel_unavailable", detail)
             }
-            // The request's fault where the runtime may show why; a store that failed while a
-            // bundle was looked for is the server's, and withheld (issue 457).
+            // The request's fault where the kernel may show why; a store that failed while a bundle
+            // was looked for is the server's, and withheld (issue 457).
             SessionError::InvalidComponents(_) => {
                 let error = Error::new(error);
                 match user_message(&error) {
@@ -565,14 +565,12 @@ impl From<CommandError> for ApiError {
 }
 
 impl From<Error> for ApiError {
-    /// What an operation that answers `anyhow` failed with: an invalid
-    /// value wherever in the chain it is; otherwise the outermost error of
-    /// a type the core knows, as it answers itself; otherwise a name taken
-    /// or a refusal wherever in the chain they are - also in an error of a
-    /// type unknown here, such as a plugin's. A `StoreError::NotFound` met on
-    /// the way - a personality missing while a session is loaded - is no
-    /// answer to what the request named, and so a server error; whatever
-    /// else is not known is one too.
+    /// What an operation that answers `anyhow` failed with: an invalid value wherever in the chain
+    /// it is; otherwise the outermost error of a type the kernel knows, as it answers itself;
+    /// otherwise a name taken or a refusal wherever in the chain they are - also in an error of a
+    /// type unknown here, such as a plugin's. A `StoreError::NotFound` met on the way - a
+    /// personality missing while a session is loaded - is no answer to what the request named, and
+    /// so a server error; whatever else is not known is one too.
     fn from(error: Error) -> Self {
         if let Some(e) = error.chain().find_map(|e| e.downcast_ref::<ValueError>()) {
             return Self::invalid_value(e);
@@ -698,6 +696,7 @@ mod tests {
     use axum::body;
     use axum::http::Request;
     use axum::Router;
+    use caelumora_kernel::component::ComponentError;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
     use caelumora_model::confidentiality::Classification;
@@ -712,7 +711,6 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use caelumora_model::workspace::WorkspaceId;
-    use caelumora_runtime::component::ComponentError;
     use serde::Deserialize;
     use serde_json::Value;
     use std::error;
@@ -832,7 +830,7 @@ mod tests {
         assert_eq!((e.status.as_u16(), e.code.as_ref()), (403, "channel_forbidden"));
         assert!(
             e.detail.starts_with("adding a participant to channel"),
-            "in the runtime's words: {}",
+            "in the kernel's words: {}",
             e.detail
         );
         assert_eq!(
@@ -845,8 +843,8 @@ mod tests {
             (403, "agent_forbidden".to_string()),
             "as the web UI reads it"
         );
-        // A plugin's error, unknown here, inside the core's `anyhow`, below
-        // a context: found by the refusal it carries.
+        // A plugin's error, unknown here, inside the kernel's `anyhow`, below a context: found by
+        // the refusal it carries.
         #[derive(Debug)]
         struct PluginError(Refused);
         impl fmt::Display for PluginError {
@@ -897,7 +895,7 @@ mod tests {
 
     #[test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
-    fn the_core_s_errors_answer_with_status_and_code() {
+    fn the_kernel_s_errors_answer_with_status_and_code() {
         let (session, channel) = (SessionId::new(), ChannelId::new());
         let someone = ActorId::None;
         assert_eq!(
@@ -1080,9 +1078,9 @@ mod tests {
         );
     }
 
-    /// Components that cannot be built are the request's fault, told as the
-    /// runtime tells them - unless a store failed while a bundle was looked
-    /// for, which is the server's and not shown (issue 457).
+    /// Components that cannot be built are the request's fault, told as the kernel tells them -
+    /// unless a store failed while a bundle was looked for, which is the server's and not shown
+    /// (issue 457).
     #[test]
     fn invalid_components_are_the_requests_fault_unless_a_store_failed() {
         let bundle = |cause| {

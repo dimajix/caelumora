@@ -4,7 +4,7 @@ Which settings of `ollama_client` suit which model, as far as it was measured. T
 themselves are described in [CONFIGURATION.md](CONFIGURATION.md#the-model); the rules they set, in
 [AGENT-TURN.md](AGENT-TURN.md). `ollama_client` is the kind of the library `caelumora-ollama`, which
 `caelumora-app` and `caelumora-tui` name as their default model where `component_defaults` names
-none (issue 329); the core names no model. What is not measured is said so: a setting without a
+none (issue 329); the kernel names no model. What is not measured is said so: a setting without a
 measurement is the default, not a recommendation.
 
 The measurements are in `work/sender_names/` (`RESULTS.md`, scripts and summaries); they ran

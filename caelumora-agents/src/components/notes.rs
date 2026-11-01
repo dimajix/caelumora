@@ -22,6 +22,7 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -31,7 +32,6 @@ use caelumora_model::question::Answers;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::PublishedNotes;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -102,7 +102,7 @@ impl ToolProvider for NotesComponent {
 }
 
 impl NotesComponent {
-    /// The component, its texts from `prompts`; whether a note may be reclassified, the core
+    /// The component, its texts from `prompts`; whether a note may be reclassified, the kernel
     /// decides, asked in the turn's context (`Turn::may_reclassify`, issue 516).
     ///
     /// # Errors
@@ -413,6 +413,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime, TestAgents};
+    use caelumora_kernel::kernel::ParticipantRuntime;
+    use caelumora_kernel::session::testing::detached_participant_in;
+    use caelumora_kernel::testing::TestKernel;
+    use caelumora_kernel::transport::Discard;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::message::MessageId;
@@ -420,10 +424,6 @@ mod tests {
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::work::Work;
-    use caelumora_runtime::runtime::ParticipantRuntime;
-    use caelumora_runtime::session::testing::detached_participant_in;
-    use caelumora_runtime::testing::TestRuntime;
-    use caelumora_runtime::transport::Discard;
     use chrono::Utc;
     use std::iter;
 
@@ -432,13 +432,13 @@ mod tests {
     fn owned_runtime_of(agent: AgentId) -> ParticipantRuntime {
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
-        let runtime = TestRuntime {
+        let kernel = TestKernel {
             access_policy: Arc::new(OwnershipPolicy::new()),
             libraries: vec![&TestAgents],
             ..Default::default()
         }
         .build();
-        detached_participant_in(runtime, session, channel, ActorId::Agent(agent))
+        detached_participant_in(kernel, session, channel, ActorId::Agent(agent))
     }
 
     /// A turn of `agent` under way in `state`, through the runtime of its actor under the
@@ -504,7 +504,7 @@ mod tests {
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
         let tools = NotesComponent::new(testing::prompts()).unwrap();
-        // Asked in the context the core builds for the agent, the author of its own note.
+        // Asked in the context the kernel builds for the agent, the author of its own note.
         let mut turn = turn_of(agent, &mut state);
         tools
             .execute(WRITE_NOTE_TOOL_NAME, &serde_json::json!({ "text": "tea" }), None, &mut turn)

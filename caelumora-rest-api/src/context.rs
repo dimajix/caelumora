@@ -33,11 +33,10 @@ pub struct MessageContextResponse {
     pub tool_sets: Vec<ToolSet>,
 }
 
-/// The tools an agent has now in a channel, in their tool sets (issue
-/// 194), each tool with what the runtime acts on - whether a call needs
-/// approval, who sees it, how its results are classified. None if it has
-/// none here: it is no agent run here or has left - and also while the
-/// channel does not run.
+/// The tools an agent has now in a channel, in their tool sets (issue 194), each tool with what the
+/// kernel acts on - whether a call needs approval, who sees it, how its results are classified.
+/// None if it has none here: it is no agent run here or has left - and also while the channel does
+/// not run.
 #[derive(Debug, Serialize)]
 pub struct AgentToolsResponse {
     pub tool_sets: Vec<ToolSet>,

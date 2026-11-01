@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
-caelumora-runtime.workspace = true
+caelumora-kernel.workspace = true
 caelumora-agents.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
@@ -19,7 +19,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 caelumora-agents = { workspace = true, features = ["test-support"] }
-caelumora-runtime = { workspace = true, features = ["test-support"] }
+caelumora-kernel = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
 rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
 axum.workspace = true

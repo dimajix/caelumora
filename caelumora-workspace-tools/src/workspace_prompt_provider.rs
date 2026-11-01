@@ -3,12 +3,11 @@
 //! classified, what it holds as its owner describes it, and whether it can
 //! run commands there - or that it has none here, so that it does not try.
 //!
-//! It says what is there, whatever tools a personality has to work on it,
-//! so a personality with several gets it once. Read afresh at the start of
-//! every turn through the core's reader of it: the workspace the channel may
-//! use now (`WorkspaceReader`, issue 516). In the system prompt by default
-//! (parameter `position`): it changes rarely. The part is classified as the
-//! workspace, which flows into the channel where it may be used there.
+//! It says what is there, whatever tools a personality has to work on it, so a personality with
+//! several gets it once. Read afresh at the start of every turn through the kernel's reader of it:
+//! the workspace the channel may use now (`WorkspaceReader`, issue 516). In the system prompt by
+//! default (parameter `position`): it changes rarely. The part is classified as the workspace,
+//! which flows into the channel where it may be used there.
 //!
 //! It names the files at the workspace's root that say how to work on it
 //! (issue 279) - those of the parameter `instruction_files` that are there,
@@ -25,14 +24,14 @@ use caelumora_agents::prompt::{
     texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
 };
 use caelumora_agents::situation::Situation;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_runtime::component::{
+use caelumora_kernel::component::{
     config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentResult,
     LibraryComponents, Params,
 };
-use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
-use caelumora_runtime::workspace::WorkspaceReader;
+use caelumora_kernel::terminal::{TerminalError, WorkspacePath};
+use caelumora_kernel::workspace::WorkspaceReader;
+use caelumora_model::confidentiality::Classification;
+use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use futures::future;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -207,9 +206,9 @@ mod tests {
     use super::*;
     use crate::prompts;
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::security::SecurityContext;
-    use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::{json, Value};
     use std::fs;
 

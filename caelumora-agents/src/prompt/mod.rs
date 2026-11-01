@@ -23,15 +23,15 @@ pub mod turn_context_provider;
 
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_kernel::component::{
+    config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentResult,
+    LibraryComponents, Params,
+};
+use caelumora_kernel::view::ViewError;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
 use caelumora_model::store::StoreError;
-use caelumora_runtime::component::{
-    config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentResult,
-    LibraryComponents, Params,
-};
-use caelumora_runtime::view::ViewError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
@@ -193,16 +193,14 @@ pub trait ContextProvider: Send + Sync + Debug {
     ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
 }
 
-/// How an agent's model is to be given its context (issue 57): the profile
-/// of the model - which reasoning of earlier messages it is given back, how
-/// the senders of others' messages are marked, say (issues 63, 135). A
-/// property of the model, fixed for as long as its component lives, kept in
-/// the context of every turn and applied where the model's input is
-/// resolved (`ContextResolver`). An agent has exactly one: its model's
-/// component provides it beside its `LLMClient`, an external agent's beside
-/// its `ExternalAgent` - so what writes for a model learns how without
-/// asking the model itself. Without a default in the core, as the
-/// `LLMClient`: the program names the kind of its model for both.
+/// How an agent's model is to be given its context (issue 57): the profile of the model - which
+/// reasoning of earlier messages it is given back, how the senders of others' messages are marked,
+/// say (issues 63, 135). A property of the model, fixed for as long as its component lives, kept in
+/// the context of every turn and applied where the model's input is resolved (`ContextResolver`).
+/// An agent has exactly one: its model's component provides it beside its `LLMClient`, an external
+/// agent's beside its `ExternalAgent` - so what writes for a model learns how without asking the
+/// model itself. Without a default in the kernel, as the `LLMClient`: the program names the kind of
+/// its model for both.
 pub trait ModelProfileProvider: Send + Sync + Debug {
     fn profile(&self) -> ModelProfile;
 }
@@ -283,6 +281,11 @@ mod tests {
     use crate::testing::{agent_runtime, TestAgents};
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
+    use caelumora_kernel::component::{
+        ComponentContainer, ComponentContext, ComponentFacets, ComponentRegistry,
+    };
+    use caelumora_kernel::session::testing::detached_participant_in;
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::bare_channel;
@@ -297,11 +300,6 @@ mod tests {
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::work::Work;
-    use caelumora_runtime::component::{
-        ComponentContainer, ComponentContext, ComponentFacets, ComponentRegistry,
-    };
-    use caelumora_runtime::session::testing::detached_participant_in;
-    use caelumora_runtime::testing::TestRuntime;
     use futures::stream;
     use futures::stream::BoxStream;
     use futures::StreamExt;
@@ -359,7 +357,7 @@ mod tests {
             prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(),
             ..AppConfig::default()
         };
-        let runtime = TestRuntime {
+        let kernel = TestKernel {
             store,
             config,
             components: Box::new(components),
@@ -375,11 +373,11 @@ mod tests {
                 ComponentDescriptor::new("calculator", CALCULATOR_TOOL_KIND),
             ],
         };
-        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
+        let context = ComponentContext::new(SecurityContext::system(), kernel.services().clone());
         let built = ComponentContainer::from_config(
             &components,
             &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()],
-            runtime.component_registry(),
+            kernel.component_registry(),
             &context,
         )
         .await
@@ -399,7 +397,7 @@ mod tests {
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
         let actor_runtime = agent_runtime(detached_participant_in(
-            Arc::clone(&runtime),
+            Arc::clone(&kernel),
             session,
             channel,
             ActorId::Agent(AgentId::new()),

@@ -1,9 +1,8 @@
-//! Artifacts through the whole runtime (issues 271, 23, 316, 328): the
-//! plugin joined to the world of the security suite - the ownership
-//! policy, recording what it is asked, and alice, bob and carol
-//! (`caelumora_runtime::testing`), whose storage of content "kept" lies
-//! beside the workspaces' files. The tests of an action that acts in someone's name
-//! assert what it asks, as the suite does for the core's.
+//! Artifacts through the whole kernel (issues 271, 23, 316, 328): the plugin joined to the world of
+//! the security suite - the ownership policy, recording what it is asked, and alice, bob and carol
+//! (`caelumora_kernel::testing`), whose storage of content "kept" lies beside the workspaces'
+//! files. The tests of an action that acts in someone's name assert what it asks, as the suite does
+//! for the kernel's.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -28,6 +27,16 @@ use caelumora_artifacts::component::{
 use caelumora_artifacts::manager::{ArtifactError, ArtifactManager};
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_artifacts::view::{ArtifactChannelViews, ArtifactProjectViews, ArtifactViews};
+use caelumora_kernel::backend::StorageGone;
+use caelumora_kernel::content::ContentError;
+use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
+use caelumora_kernel::kernel::Kernel;
+use caelumora_kernel::scoped::ScopeNotEmpty;
+use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop};
+use caelumora_kernel::terminal::{ByteStream, WorkspacePath};
+use caelumora_kernel::testing::{quiet, TestKernel, World, STAFF};
+use caelumora_kernel::view::Viewer;
+use caelumora_kernel::workspace::testing::{reader_in, terminal_in};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -56,16 +65,6 @@ use caelumora_rest_server::error::ApiError;
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes::api;
 use caelumora_rest_server::state::AppState;
-use caelumora_runtime::backend::StorageGone;
-use caelumora_runtime::content::ContentError;
-use caelumora_runtime::event::{EventBus, EventSubscription, SubscriptionTopic};
-use caelumora_runtime::runtime::RuntimeManager;
-use caelumora_runtime::scoped::ScopeNotEmpty;
-use caelumora_runtime::session::{ChannelSpec, SessionError, SessionLoop};
-use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
-use caelumora_runtime::testing::{quiet, TestRuntime, World, STAFF};
-use caelumora_runtime::view::Viewer;
-use caelumora_runtime::workspace::testing::{reader_in, terminal_in};
 use futures::stream;
 use futures::StreamExt;
 use serde_json::{json, Value};
@@ -86,7 +85,7 @@ async fn world() -> World {
 
 /// The one owner of artifacts of `world`.
 fn manager(world: &World) -> Arc<ArtifactManager> {
-    Arc::clone(world.runtime.services().get::<ArtifactManager>().expect("a service of the plugin"))
+    Arc::clone(world.kernel.services().get::<ArtifactManager>().expect("a service of the plugin"))
 }
 
 /// The store of artifacts of `world`, as the plugin has it.
@@ -130,7 +129,7 @@ async fn with_the_tool(
     let personality = world.personality("plain", None, &[]).await;
     let helper = world.agent("helper", world.alice, &personality).await;
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -145,7 +144,7 @@ async fn with_the_tool(
     let session = world.shared_session(&[helper], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
     let tool =
-        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.runtime.prompts()), None))
+        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.kernel.prompts()), None))
             .expect("parameters it takes");
     (session, helper, docs, tool)
 }
@@ -317,7 +316,7 @@ async fn the_tool_is_not_offered_without_a_storage_of_content() {
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;
     let tool = |params: Value| {
-        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.runtime.prompts()), None))
+        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.kernel.prompts()), None))
             .unwrap()
     };
     let asks =
@@ -335,7 +334,7 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     assert!(
         ArtifactTool::new(
             &json!({ "requires": true }),
-            &PromptTexts::new(Arc::clone(world.runtime.prompts()), None)
+            &PromptTexts::new(Arc::clone(world.kernel.prompts()), None)
         )
         .is_err(),
         "nor parameters it does not take"
@@ -347,7 +346,7 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
 /// A storage of content takes no version classified above its
 /// `destination` (`require_storable`, issue 282): refused before anything
 /// is kept.
-/// A runtime over `store` with the plugin and one storage of content, "kept", a local one whose
+/// A kernel over `store` with the plugin and one storage of content, "kept", a local one whose
 /// destination is public: what a test of publishing into it needs.
 struct Kept {
     /// Where "kept" keeps its files.
@@ -370,7 +369,7 @@ async fn kept_in(store: Persistence) -> Kept {
     )]
     .into();
     let config = AppConfig { content: ContentConfig { storage }, ..Default::default() };
-    let runtime = TestRuntime {
+    let kernel = TestKernel {
         store,
         config,
         plugins: vec![&ArtifactsPlugin],
@@ -378,19 +377,14 @@ async fn kept_in(store: Persistence) -> Kept {
         ..Default::default()
     }
     .build();
-    let manager = Arc::clone(runtime.services().get::<ArtifactManager>().unwrap());
+    let manager = Arc::clone(kernel.services().get::<ArtifactManager>().unwrap());
     let owner = UserId::new();
     let alice = SecurityContext::new(ActorId::User(owner), SessionId::new(), ChannelId::new());
     let mut project = Project::new(
         ScopedName::new("report", Scope::UserScope { user_id: owner }).unwrap(),
         owner,
     );
-    runtime
-        .entity_stores()
-        .projects
-        .create(&SecurityContext::system(), &mut project)
-        .await
-        .unwrap();
+    kernel.entity_stores().projects.create(&SecurityContext::system(), &mut project).await.unwrap();
     let name = ScopedName::new("r.csv", project.holds()).unwrap();
     Kept { files, manager, alice, name }
 }
@@ -435,7 +429,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
     let world = world().await;
     assert!(manager(&world).is_configured(), "kept, the one there is");
 
-    fn built(names: &[&str], section: Value) -> Result<RuntimeManager, String> {
+    fn built(names: &[&str], section: Value) -> Result<Kernel, String> {
         let storage = names
             .iter()
             .map(|name| (name.to_string(), BackendConfig::new("local", json!({ "root": name }))))
@@ -451,7 +445,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
             plugins: [("artifacts".to_string(), section)].into(),
             ..Default::default()
         };
-        TestRuntime {
+        TestKernel {
             config,
             plugins: vec![&ArtifactsPlugin],
             libraries: vec![&TestAgents],
@@ -460,8 +454,8 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
         .try_build()
         .map_err(|e| format!("{e:#}"))
     }
-    let configured = |runtime: RuntimeManager| {
-        runtime.services().get::<ArtifactManager>().is_some_and(|manager| manager.is_configured())
+    let configured = |kernel: Kernel| {
+        kernel.services().get::<ArtifactManager>().is_some_and(|manager| manager.is_configured())
     };
     assert!(!configured(built(&[], json!({})).unwrap()), "no storage unless configured");
     let message = built(&["a", "b"], json!({})).map(|_| ()).expect_err("which one");
@@ -530,7 +524,7 @@ async fn an_artifacts_errors_answer_with_status_and_code() {
         answer(ArtifactError::Content(ContentError::Changed)).await,
         (400, "changed".to_string())
     );
-    assert_eq!(answer(ArtifactError::NotJoined).await.0, 500, "nor a runtime without the plugin");
+    assert_eq!(answer(ArtifactError::NotJoined).await.0, 500, "nor a kernel without the plugin");
 }
 
 /// What publishing failed of, as the artifact tool tells its model (issue 466): what a storage of
@@ -556,7 +550,7 @@ fn an_artifacts_errors_are_told_the_model_as_a_storages_are() {
 
 /// The API of `world` with the plugin's routes, which lets anybody log in - as one of the staff.
 fn api_of(world: &World) -> Router {
-    let users = Arc::clone(&world.runtime.entity_stores().users);
+    let users = Arc::clone(&world.kernel.entity_stores().users);
     let provider =
         AcceptAnyUserProvider::with_roles(Arc::clone(&users), BTreeMap::new(), vec![*STAFF]);
     let auth = Arc::new(Auth {
@@ -565,13 +559,13 @@ fn api_of(world: &World) -> Router {
         users: Arc::new(UserManager::new(
             vec![Arc::new(provider)],
             users,
-            Arc::<EventBus>::clone(world.runtime.event_bus()),
+            Arc::<EventBus>::clone(world.kernel.event_bus()),
         )),
-        controllers: Arc::clone(world.runtime.controller_manager()),
+        controllers: Arc::clone(world.kernel.controller_manager()),
     });
     let state = Arc::new(AppState {
         auth,
-        runtime_manager: Arc::clone(&world.runtime),
+        kernel: Arc::clone(&world.kernel),
         session_manager: Arc::clone(&world.manager),
         project_manager: Arc::clone(&world.projects),
         compartments: Default::default(),
@@ -609,10 +603,9 @@ async fn get(api: &Router, cookie: &str, uri: &str) -> (StatusCode, Vec<u8>) {
     (status, to_bytes(response.into_body(), 1 << 20).await.unwrap().to_vec())
 }
 
-/// The plugin's routes are served behind the core's login, under the paths
-/// and in the form the web UI knows: the artifacts of a user, one with
-/// where its versions were published, a version's content, and the
-/// artifacts of a channel.
+/// The plugin's routes are served behind the kernel's login, under the paths and in the form the
+/// web UI knows: the artifacts of a user, one with where its versions were published, a version's
+/// content, and the artifacts of a channel.
 #[tokio::test]
 async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
     let world = world().await;
@@ -623,7 +616,7 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
 
     let alice = World::as_user(world.alice);
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -734,9 +727,9 @@ async fn an_artifact_shared_with_a_team_is_among_its_members_artifacts() {
     let alice = World::as_user(world.alice);
     let bob = World::as_user(world.bob);
     let carol = World::as_user(world.carol);
-    let groups = world.runtime.group_manager();
+    let groups = world.kernel.group_manager();
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -856,7 +849,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     let artifacts = manager(&world);
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -1012,7 +1005,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
 async fn session_with_artifacts(world: &World) -> (Arc<SessionLoop>, Artifact, Artifact) {
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -1089,7 +1082,7 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
         "asked in her name, who reads bob's but may not delete it: {artifact_checks:?}"
     );
     assert!(
-        world.runtime.entity_stores().sessions.get(&alice, session_id).await.is_ok(),
+        world.kernel.entity_stores().sessions.get(&alice, session_id).await.is_ok(),
         "the session is kept"
     );
     assert!(
@@ -1149,7 +1142,7 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
     let world = world().await;
     let alice = World::as_user(world.alice);
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -1179,10 +1172,8 @@ async fn what_goes_and_comes_back_with_a_session_is_announced_to_whoever_reads_i
         "bob reads it as a member of the channel"
     );
 
-    let mut bobs = world
-        .runtime
-        .event_bus()
-        .subscribe(World::as_user(world.bob), vec![SubscriptionTopic::All]);
+    let mut bobs =
+        world.kernel.event_bus().subscribe(World::as_user(world.bob), vec![SubscriptionTopic::All]);
     world.manager.stop(&alice, session_id).await.unwrap();
     assert!(world.manager.delete(&alice, session_id).await.unwrap());
     hears(
@@ -1218,7 +1209,7 @@ async fn drafts_of_an_artifact_stay_with_the_channel_they_were_published_in() {
     let world = world().await;
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -1361,7 +1352,7 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
     let world = world().await;
     let alice = World::as_user(world.alice);
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -1384,7 +1375,7 @@ async fn an_artifact_of_a_lifted_project_drops_its_channel_once_the_session_is_p
         publish(&world, &alice, session_id, main, &at, "report.md", None).await.unwrap();
     let project = session.session().project;
     world
-        .runtime
+        .kernel
         .controller_manager()
         .project_controller(project)
         .await
@@ -1429,7 +1420,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
         .await
         .unwrap();
     world
-        .runtime
+        .kernel
         .controller_manager()
         .project_controller(project.id)
         .await
@@ -1438,7 +1429,7 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
         .await
         .unwrap();
     let docs = world
-        .runtime
+        .kernel
         .workspace_manager()
         .create(
             &alice,
@@ -1632,7 +1623,7 @@ async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_ne
         .unwrap();
     assert!(manager.delete(&alice, artifact.id).await.unwrap());
     // Another instance, which keeps content nowhere: its content cannot be removed there.
-    let elsewhere = TestRuntime {
+    let elsewhere = TestKernel {
         store: persistence.clone(),
         plugins: vec![&ArtifactsPlugin],
         libraries: vec![&TestAgents],

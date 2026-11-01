@@ -1223,3 +1223,17 @@ so do the sections of this one above, written when they were decided.
   is the kernel - the crate `caelumora-kernel`, its `Kernel` built by the `KernelBuilder`, *the
   kernel* in the documents -, and a runtime what something runs with; 5d.1 renames, 5d.2 cuts
   skills and artifacts into a plugin and a library. Decision 18 is open.
+- **2026-11-01** — Step 5d.1: the kernel is named. The crate is `caelumora-kernel`, its module
+  `kernel`; the `Kernel` (was `RuntimeManager`) is built by the `KernelBuilder` (was
+  `RuntimeBuilder`), a test's by `TestKernel`; the texts' namespace is `kernel` (`KERNEL`,
+  `KERNEL_PROMPTS`), and so is every field, variable and test helper that holds the kernel
+  (`ParticipantRuntime::kernel`, `SessionManager::kernel`, `test_kernel`). *The core*, and *the
+  runtime* where it named the whole, became *the kernel* in the documents, the comments, the texts
+  of errors and the names of tests; ARCHITECTURE.md says that a runtime is what a channel or an
+  actor runs with, given by the kernel, and that a library sees the kernel through its API alone.
+  Where *the runtime* had meant the system as against the model, but the text or the rule is the
+  agents', it now names them, the executor or the turn. After the review of the step: the `Kernel`
+  lies in the module's `mod.rs`, as `manager.rs` is a kind's manager's; CODING-GUIDELINES.md calls
+  a loop a running object, not a runtime (*Running objects and their entities*); the test
+  catalogue of the model is `kernel_catalogue`. No behaviour changes. Stored data: none; a
+  variants file `core.yaml` becomes `kernel.yaml`, and a log filter names `caelumora_kernel`.

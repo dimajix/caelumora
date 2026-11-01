@@ -80,10 +80,9 @@ impl SecurityContext {
         self.roles.iter().copied().filter(|role| self.has_role(*role)).collect()
     }
 
-    /// The context of the runtime acting on its own - for work that follows
-    /// from an action already permitted, or that no user started (initial
-    /// data, records kept in step with events). The ownership policy allows
-    /// it everything, so it is used deliberately and never as a fallback.
+    /// The context of the kernel acting on its own - for work that follows from an action already
+    /// permitted, or that no user started (initial data, records kept in step with events). The
+    /// ownership policy allows it everything, so it is used deliberately and never as a fallback.
     pub fn system() -> Self {
         Self::new(ActorId::System, SessionId::default(), ChannelId::default())
     }

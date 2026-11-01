@@ -34,14 +34,14 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_kernel::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_kernel::view::PrivateNotesElsewhere;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::note::{Note, NoteId};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_runtime::view::PrivateNotesElsewhere;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -98,7 +98,7 @@ impl ToolProvider for PrivateNotesComponent {
 }
 
 impl PrivateNotesComponent {
-    /// The component, its texts from `prompts`; whether a note may be reclassified, the core
+    /// The component, its texts from `prompts`; whether a note may be reclassified, the kernel
     /// decides, asked in the turn's context (`Turn::may_reclassify`, issue 516).
     ///
     /// # Errors
@@ -311,10 +311,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing;
+    use caelumora_kernel::transport::Discard;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::message::MessageId;
     use caelumora_model::session::ChannelId;
-    use caelumora_runtime::transport::Discard;
     use chrono::Utc;
 
     fn note(id: u32, text: &str) -> Note {

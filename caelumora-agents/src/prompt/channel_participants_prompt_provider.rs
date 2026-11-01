@@ -23,13 +23,13 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_kernel::component::{
+    config_of_params, ComponentFacets, ComponentKind, LibraryComponents,
+};
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::Introduction;
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, LibraryComponents,
-};
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND: &str = "channel_participants_prompt_provider";
@@ -172,6 +172,10 @@ mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime, TestAgents};
     use crate::turn::Turn;
+    use caelumora_kernel::session::testing::participant_runtime_in;
+    use caelumora_kernel::session::SessionManager;
+    use caelumora_kernel::testing::TestKernel;
+    use caelumora_kernel::view::ViewError;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
@@ -186,10 +190,6 @@ mod tests {
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
-    use caelumora_runtime::session::testing::participant_runtime_in;
-    use caelumora_runtime::session::SessionManager;
-    use caelumora_runtime::testing::TestRuntime;
-    use caelumora_runtime::view::ViewError;
     use std::slice;
 
     fn participant(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
@@ -312,18 +312,15 @@ mod tests {
     #[tokio::test]
     async fn the_participants_of_the_channel_are_read_with_their_introductions() {
         let store = Persistence::in_memory();
-        let runtime = TestRuntime {
-            store: store.clone(),
-            libraries: vec![&TestAgents],
-            ..Default::default()
-        }
-        .build();
+        let kernel =
+            TestKernel { store: store.clone(), libraries: vec![&TestAgents], ..Default::default() }
+                .build();
         let system = SecurityContext::system();
 
         let kaya = make_user("Kaya");
         let bob = make_user("Bob");
-        record_users(runtime.entity_stores(), &[&kaya, &bob]).await;
-        runtime
+        record_users(kernel.entity_stores(), &[&kaya, &bob]).await;
+        kernel
             .entity_stores()
             .user_profiles
             .create(
@@ -362,12 +359,12 @@ mod tests {
         let session = Session { participants, channels: vec![channel.id], ..session };
         let as_owner =
             SecurityContext::new(ActorId::User(kaya.id), Default::default(), Default::default());
-        let session_loop = SessionManager::new(Arc::clone(&runtime))
+        let session_loop = SessionManager::new(Arc::clone(&kernel))
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();
         // One who no longer exists: deleted once it founded the channel with the others.
-        runtime.agent_manager().delete(&system, gone.id).await.unwrap();
+        kernel.agent_manager().delete(&system, gone.id).await.unwrap();
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             EventContext::new(session.id, channel.id, ActorId::None, String::new()),

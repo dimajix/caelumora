@@ -1,12 +1,10 @@
-//! The body of an agent in one channel (issue 355): what both kinds of
-//! agent are there alike - the `AgentActor`, whose mind is a model run
-//! here, and the `ExternalAgentActor`, whose mind runs elsewhere. Who the
-//! agent is in the channel and the runtime it asks the core through - which
-//! builds in whose name it acts (issue 516) -, what it holds of the
-//! channel (its `AgentChannelState`), how it takes in what it hears there
-//! (`intake`), the commands it carries out itself (`commands`), and where
-//! its actor stands and what `cancel` and `stop` asked of it (`RunControl`,
-//! issue 363). What the two minds do with it is their actors'.
+//! The body of an agent in one channel (issue 355): what both kinds of agent are there alike - the
+//! `AgentActor`, whose mind is a model run here, and the `ExternalAgentActor`, whose mind runs
+//! elsewhere. Who the agent is in the channel and the runtime it asks the kernel through - which
+//! builds in whose name it acts (issue 516) -, what it holds of the channel (its
+//! `AgentChannelState`), how it takes in what it hears there (`intake`), the commands it carries
+//! out itself (`commands`), and where its actor stands and what `cancel` and `stop` asked of it
+//! (`RunControl`, issue 363). What the two minds do with it is their actors'.
 
 use super::intake::TakenIn;
 use super::run_control::RunControl;
@@ -16,6 +14,11 @@ use crate::prompt::{ContextProvider, ModelProfileProvider};
 use crate::situation::Situation;
 use crate::turn::Turn;
 use anyhow::{Context, Result};
+use caelumora_kernel::actor::Answering;
+use caelumora_kernel::command::CommandSet;
+use caelumora_kernel::component::{ComponentContainer, ComponentImpl};
+use caelumora_kernel::kernel::ActorRuntime;
+use caelumora_kernel::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
@@ -27,11 +30,6 @@ use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::Work;
-use caelumora_runtime::actor::Answering;
-use caelumora_runtime::command::CommandSet;
-use caelumora_runtime::component::{ComponentContainer, ComponentImpl};
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::transport::{EventReceiver, EventSender};
 use futures::future::BoxFuture;
 use std::future::ready;
 use std::sync::Arc;
@@ -62,7 +60,7 @@ fn hand_over_nothing<'a>(
 /// state in the channel.
 #[derive(Debug)]
 pub(super) struct AgentBody {
-    /// What it asks the core through (issue 516): who the agent and its personality are as they
+    /// What it asks the kernel through (issue 516): who the agent and its personality are as they
     /// are now - how it is introduced, who sees its reasoning (issue 406) -, its own state, shared
     /// with its actors in other channels and sessions (issue 62), and what it asks of its channel.
     /// Its components stay as they were built from its personality.
@@ -109,9 +107,9 @@ impl AgentBody {
         runtime: Arc<dyn ActorRuntime>,
         resume: impl FnOnce(&mut AgentChannelState),
     ) -> Result<(Self, ComponentContainer)> {
-        // Its components get nothing of its runtime (issue 128); what they read of the session
-        // they read through their work (issue 163). They are built in its name as the core holds
-        // it (issue 516).
+        // Its components get nothing of its runtime (issue 128); what they read of the session they
+        // read through their work (issue 163). They are built in its name as the kernel holds it
+        // (issue 516).
         let components =
             runtime.build_components(&runtime.personality().components, defaults, facets).await?;
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
@@ -365,9 +363,9 @@ mod testing {
     use super::*;
     use crate::prompt::external_context_provider::ExternalContextProvider;
     use crate::testing::{detached_actor_runtime, detached_participant};
+    use caelumora_kernel::agent::state::AgentStateHandle;
+    use caelumora_kernel::kernel::AgentRuntime;
     use caelumora_model::agent::Personality;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::runtime::AgentRuntime;
 
     impl AgentBody {
         /// The body of an agent in a channel outside a session, perceiving
