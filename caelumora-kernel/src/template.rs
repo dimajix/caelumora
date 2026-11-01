@@ -17,13 +17,14 @@ use caelumora_model::agent::{Agent, AgentId, PersonalityId};
 use caelumora_model::channel::Participant;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResultExt};
+use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::template::{
     ParticipantRequest, SessionTemplate, TemplateError, TemplateResult, WorkspaceTemplate,
 };
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_store::{EntityStore, EntityStores};
 
 /// The participants of a session template as they are found for a session
 /// (`resolve_participants`): its users, each with its name in the template,
@@ -240,14 +241,15 @@ mod tests {
     use caelumora_model::security::{AccessPolicy, ActionType, Policies, SecurityAttributes, Verb};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::Session;
-    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::{Persistence, Stored};
+    use caelumora_model::store::Stored;
     use caelumora_model::template::testing::make_template;
     use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, TemplateError};
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::User;
     use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_store::memory::MemoryStore;
+    use caelumora_store::Persistence;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, OnceLock};
 

@@ -72,8 +72,8 @@ mod tests {
     use caelumora_model::component::ComponentConfig;
     use caelumora_model::config::AppConfig;
     use caelumora_model::security::SecurityContext;
-    use caelumora_model::store::Persistence;
     use caelumora_model::type_map::TypeKey;
+    use caelumora_store::Persistence;
     use serde_json::Value;
     use std::sync::Arc;
 

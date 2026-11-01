@@ -33,9 +33,10 @@ pub use manager::GroupManager;
 
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::security::{AclEntry, SecurityContext, Subject};
-use caelumora_model::store::{EntityStore, StoreError, StoreResult, StoreResultExt};
+use caelumora_model::store::{StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use caelumora_model::value::ValueError;
+use caelumora_store::EntityStore;
 use chrono::Utc;
 use tracing::{debug, warn};
 
@@ -199,12 +200,13 @@ mod tests {
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{AllowAllPolicy, Grant, Policies, SecurityAttributes};
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::documents::Document;
-    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::{Page, Query};
-    use caelumora_model::store::testing::ContendedStore;
-    use caelumora_model::store::{Deleted, EntityStores, Persistence, PersistenceBackend, Stored};
+    use caelumora_model::store::Stored;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_store::documents::Document;
+    use caelumora_store::memory::MemoryStore;
+    use caelumora_store::testing::ContendedStore;
+    use caelumora_store::{Deleted, EntityStores, Persistence, PersistenceBackend};
     use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;

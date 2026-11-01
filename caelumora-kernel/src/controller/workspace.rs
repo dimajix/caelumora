@@ -20,8 +20,9 @@ use caelumora_model::security::{
     AccessQuestions, AclEntry, Grant, Policies, SecurityContext, Subject,
 };
 use caelumora_model::session::{Channel, Session};
-use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt};
+use caelumora_model::store::{StoreResult, StoreResultExt};
 use caelumora_model::workspace::{Workspace, WorkspaceId, WorkspaceUpdateEvent};
+use caelumora_store::{EntityStore, EntityStores};
 use std::slice;
 use std::sync::Arc;
 use tracing::warn;

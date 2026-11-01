@@ -540,8 +540,9 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::ChannelId;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
+    use caelumora_store::testing::record_users;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;

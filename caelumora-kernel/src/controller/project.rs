@@ -12,10 +12,9 @@ use caelumora_model::scope::Scope;
 use caelumora_model::security::{
     AccessPolicy, AclEntry, ActionType, Enforcement, Grant, SecurityContext, Subject,
 };
-use caelumora_model::store::{
-    EntityStore, EntityStores, StoreError, StoreResult, StoreResultExt, Stored,
-};
+use caelumora_model::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::user::{User, UserId};
+use caelumora_store::{EntityStore, EntityStores};
 use std::slice;
 use std::sync::Arc;
 use tracing::error;

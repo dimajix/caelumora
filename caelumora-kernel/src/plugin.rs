@@ -48,16 +48,14 @@ mod tests {
     use caelumora_model::removal::Removal;
     use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
     use caelumora_model::security::{Policies, Secured, SecurityAttributes, SecurityContext};
-    use caelumora_model::store::documents::{DocumentOf, DocumentStorage};
-    use caelumora_model::store::history::HistoryStore;
-    use caelumora_model::store::memory::MemoryStore;
     use caelumora_model::store::query::NoField;
-    use caelumora_model::store::transcript::TranscriptStore;
-    use caelumora_model::store::{
-        EntityKind, EntityStore, NoEntity, Persistence, PersistenceBackend, Revision, StateStore,
-        StoreError, StoreResult, Stored,
-    };
+    use caelumora_model::store::{EntityKind, NoEntity, Revision, StoreError, StoreResult, Stored};
     use caelumora_model::type_map::TypeKey;
+    use caelumora_store::documents::{DocumentOf, DocumentStorage};
+    use caelumora_store::history::HistoryStore;
+    use caelumora_store::memory::MemoryStore;
+    use caelumora_store::transcript::TranscriptStore;
+    use caelumora_store::{EntityStore, Persistence, PersistenceBackend, StateStore};
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use std::fs;

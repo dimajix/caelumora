@@ -96,8 +96,8 @@ the `AppState`; the API serves them behind the same login as the kernel's (`rout
 that brings a component of a channel alone, such as `caelumora-decision` (issue 403), registers its
 kind in `register`. One that brings backends alone, such as `caelumora-open-terminal` (issue 327) or
 `caelumora-store-json` (issue 446), registers them in `backends` and nothing in `register`. A
-backend of the stores runs the store suite of the model in its own tests
-(`caelumora_model::store::suite`, feature `test-support`). A plugin's tests use the world of the
+backend of the stores runs the store suite in its own tests (`caelumora_store::suite`, feature
+`test-support`). A plugin's tests use the world of the
 security suite - the kernel with the recording ownership policy and three users -,
 `caelumora_kernel::testing`, as a dev-dependency with the feature `test-support`. That world runs no
 agent unless a library brings them (`World::with(plugins, libraries, …)`).

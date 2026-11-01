@@ -47,9 +47,9 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
-    purge_behind, Deleted, EntityKind, EntityStore, EntityStores, NoEntity, StoreError,
-    StoreResult, StoreResultExt, Stored,
+    EntityKind, NoEntity, StoreError, StoreResult, StoreResultExt, Stored,
 };
+use caelumora_store::{purge_behind, Deleted, EntityStore, EntityStores};
 use std::fmt;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -554,9 +554,10 @@ mod tests {
     use caelumora_model::security::{Policies, SecurityAttributes, SecurityContext};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::{EntityStores, Persistence, StoreError};
+    use caelumora_model::store::StoreError;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_store::{EntityStores, Persistence};
     use std::sync::Arc;
 
     /// Whether `holders` refuse `scope` for want of its holder.

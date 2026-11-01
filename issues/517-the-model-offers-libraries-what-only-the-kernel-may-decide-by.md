@@ -187,3 +187,16 @@ name the context, so the stores leave before it.
   `content` and `terminal` do), and their configurations and `FileUserProvider` are private to it.
   `User::new` is public, as its maker is no longer in the model. `argon2` and `tokio` are no longer
   among the model's dependencies, but for its tests. No behaviour changes. Stored data: none.
+- **2026-11-01** — Step 2: `caelumora-store`. The stores left the model - `EntityStore`,
+  `EntityStores`, `Persistence`, `PersistenceBackend`, `StateStore`, `Presence`, `Deleted`, the
+  checked store and its access, the history and transcript stores, `kept_chain`,
+  `StoreMemberships`, `MemoryStore`, the suite and `ContendedStore`; the model keeps the words of
+  the stores (`caelumora_model::store`: `Stored`, `EntityKind`, `Revision`, `Journaled`,
+  `StoreError`, `query`, `HistoryField`). What a test stores its world by went with them
+  (`caelumora_store::testing::{stored_agent, record_users}`), as did the one test of the model that
+  opened a store (a user's profile); the policies a test opens the stores by stay with `Policies`
+  (`permitting_all`, `by_default_rules`, under `test-support`). Made public as the stores ask them
+  across the new boundary: `Admission::may_admit`, `Cursor::after` and `Cursor::id`, `meeting`.
+  The kernel, the REST server and the stores' plugins link the crate, the crates on both levels
+  with `kernel`, `caelumora-agents` with `test-support`, the other libraries for their tests only.
+  No behaviour changes. Stored data: none.

@@ -41,12 +41,13 @@ use caelumora_model::security::{
     ActionType, Enforcement, Policies, Refused, SecurityAttributes, SecurityContext,
 };
 use caelumora_model::session::SessionId;
-use caelumora_model::store::history::HistoryStore;
-use caelumora_model::store::{StateStore, StoreError};
+use caelumora_model::store::StoreError;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::Name;
 use caelumora_model::work::TurnId;
+use caelumora_store::history::HistoryStore;
+use caelumora_store::StateStore;
 use futures::future;
 use std::any::Any;
 use std::collections::HashMap;

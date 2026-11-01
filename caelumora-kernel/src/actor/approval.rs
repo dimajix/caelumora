@@ -492,11 +492,12 @@ mod tests {
     use caelumora_model::security::{Grant, OwnershipPolicy, Policies, Subject};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::tool::ToolCall;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserId};
     use caelumora_model::value::name::ScopedName;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::{EntityStores, Persistence};
     use serde_json::json;
     use std::any::Any;
     use std::time::Duration;

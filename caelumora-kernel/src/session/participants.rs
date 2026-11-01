@@ -202,7 +202,7 @@ mod tests {
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::testing::{make_personality, stored_agent};
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::AgentId;
     use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::{self, Channel, HistoryAccess};
@@ -214,8 +214,10 @@ mod tests {
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{Session, SessionUpdateEvent};
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserId};
+    use caelumora_store::testing::record_users;
+    use caelumora_store::testing::stored_agent;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;

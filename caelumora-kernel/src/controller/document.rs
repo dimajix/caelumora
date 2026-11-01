@@ -7,9 +7,8 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::Group;
 use caelumora_model::security::{AclEntry, SecuredMut, SecurityContext, Subject};
-use caelumora_model::store::{
-    Address, EntityStore, StoreResult, StoreResultExt, Stored, Updatable,
-};
+use caelumora_model::store::{Address, StoreResult, StoreResultExt, Stored, Updatable};
+use caelumora_store::EntityStore;
 use chrono::Utc;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
@@ -338,9 +337,9 @@ mod tests {
     use caelumora_model::group::GroupId;
     use caelumora_model::scope::Scope;
     use caelumora_model::security::{Grant, Policies};
-    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_store::{EntityStores, Persistence};
     use std::time::Duration;
     use tokio::time;
 

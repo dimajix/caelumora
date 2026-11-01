@@ -42,10 +42,13 @@
 //! answer the store gives - "not found" for what the caller may not see -
 //! except filtering a list, which is a question.
 
-use crate::confidentiality::{may_reach, ConfidentialityQuestions};
-use crate::removal::Removal;
-use crate::security::{ActionType, Admission, Enforcement, Policies, Refused, SecurityContext};
-use crate::store::{Presence, StoreError, StoreResult, Stored};
+use crate::Presence;
+use caelumora_model::confidentiality::{may_reach, ConfidentialityQuestions};
+use caelumora_model::removal::Removal;
+use caelumora_model::security::{
+    ActionType, Admission, Enforcement, Policies, Refused, SecurityContext,
+};
+use caelumora_model::store::{StoreError, StoreResult, Stored};
 use std::slice;
 
 // Every method takes the kind of entity it asks about (issue 323): every
@@ -258,20 +261,21 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::actor::ActorId;
-    use crate::confidentiality::ConfidentialityRules;
-    use crate::removal::Removal;
-    use crate::role::RoleId;
-    use crate::security::{
+    use crate::{EntityStores, Persistence};
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::confidentiality::ConfidentialityRules;
+    use caelumora_model::removal::Removal;
+    use caelumora_model::role::RoleId;
+    use caelumora_model::security::{
         AccessPolicy, ActionType, OwnershipPolicy, Policies, SecurityAttributes, SecurityContext,
         Subject, Verb,
     };
-    use crate::session::testing::bare_session;
-    use crate::session::{Session, SessionId};
-    use crate::store::query::Query;
-    use crate::store::{EntityStores, Persistence, StoreError, Stored};
-    use crate::user::testing::make_user;
-    use crate::user::UserId;
+    use caelumora_model::session::testing::bare_session;
+    use caelumora_model::session::{Session, SessionId};
+    use caelumora_model::store::query::Query;
+    use caelumora_model::store::{StoreError, Stored};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_model::user::UserId;
     use std::sync::Arc;
 
     /// Owners do everything, whom the list names read, nobody acts for
@@ -315,12 +319,14 @@ mod tests {
     /// restore or purge - the deleted alike, so that both lists agree.
     #[tokio::test]
     async fn what_the_caller_is_not_cleared_for_does_not_exist_for_them() {
-        use crate::confidentiality::{Classification, Clearance, Compartments, Confidentiality};
-        use crate::role::Roles;
-        use crate::scope::Scope;
-        use crate::security::AllowAllPolicy;
-        use crate::value::name::ScopedName;
-        use crate::workspace::Workspace;
+        use caelumora_model::confidentiality::{
+            Classification, Clearance, Compartments, Confidentiality,
+        };
+        use caelumora_model::role::Roles;
+        use caelumora_model::scope::Scope;
+        use caelumora_model::security::AllowAllPolicy;
+        use caelumora_model::value::name::ScopedName;
+        use caelumora_model::workspace::Workspace;
         let staff = RoleId::new();
         let roles = Roles::new([(
             staff,
@@ -593,9 +599,9 @@ mod tests {
 
     #[tokio::test]
     async fn users_are_read_by_everybody_and_changed_by_the_system_alone() {
-        use crate::scope::Scope;
-        use crate::user::User;
-        use crate::value::name::ScopedName;
+        use caelumora_model::scope::Scope;
+        use caelumora_model::user::User;
+        use caelumora_model::value::name::ScopedName;
 
         let store = EntityStores::open(
             &Persistence::in_memory(),

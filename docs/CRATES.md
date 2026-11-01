@@ -44,6 +44,7 @@ flowchart TD
     rest_api["caelumora-rest-api"]
     rest_client["caelumora-rest-client"]
     rest_server["caelumora-rest-server"]
+    store["caelumora-store"]
 
     both -. "library" .-> agents
     both -. "api" .-> api
@@ -52,6 +53,7 @@ flowchart TD
     both --> model
     both --> rest_api
     both -. "server" .-> rest_server
+    both -. "kernel" .-> store
     plugins --> api
     plugins --> kernel
     plugins --> model
@@ -59,8 +61,10 @@ flowchart TD
     libraries --> api
     agents -. "test-support" .-> kernel
     libraries --> model
-    api & kernel & logging & rest_api & rest_server --> model
+    agents -. "test-support" .-> store
+    api & kernel & logging & rest_api & rest_server & store --> model
     kernel & rest_server --> api
+    kernel & rest_server & store_json & store_postgres --> store
     rest_server --> kernel
     rest_server --> rest_api
 ```
@@ -76,8 +80,8 @@ those it takes with other features than their default ones.
 <!-- crate-graph.sh: programs -->
 | Program | Depends on |
 |---|---|
-| `caelumora-app` | every crate of the graph but `caelumora-rest-api` and `caelumora-rest-client` |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client` and `caelumora-rest-server`; `caelumora-artifacts` and `caelumora-skills` with `kernel` and `library` alone |
+| `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client` and `caelumora-store` |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server` and `caelumora-store`; `caelumora-artifacts` and `caelumora-skills` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
 `caelumora-rest-client` depends on no crate of the workspace, and none on it; it is reserved for a

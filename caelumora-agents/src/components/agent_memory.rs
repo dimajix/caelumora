@@ -301,11 +301,12 @@ mod tests {
     use caelumora_model::security::{SecurityAttributes, SecurityContext};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, Session, SessionId};
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::{EntityStores, StateStore};
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::work::Work;
+    use caelumora_store::memory::MemoryStore;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::{EntityStores, StateStore};
     use std::collections::HashMap;
     use std::ops::Deref;
     use std::sync::OnceLock;

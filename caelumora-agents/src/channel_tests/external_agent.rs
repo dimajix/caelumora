@@ -18,7 +18,7 @@ use caelumora_kernel::session::SessionManager;
 use caelumora_kernel::testing::TestKernel;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Envelope};
-use caelumora_model::agent::testing::{make_personality, stored_agent};
+use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::{
     AgentChannelState, AgentId, Personality, PersonalityKind, RetryRefused,
 };
@@ -34,9 +34,11 @@ use caelumora_model::history::Heard;
 use caelumora_model::security::{SecurityAttributes, SecurityContext};
 use caelumora_model::session::testing::{bare_session, make_session};
 use caelumora_model::session::{ChannelId, Participant, SessionId};
-use caelumora_model::store::Persistence;
-use caelumora_model::user::testing::{make_user, record_users};
+use caelumora_model::user::testing::make_user;
 use caelumora_model::work::Work;
+use caelumora_store::testing::record_users;
+use caelumora_store::testing::stored_agent;
+use caelumora_store::Persistence;
 use chrono::Utc;
 use std::iter;
 use std::sync::Arc;

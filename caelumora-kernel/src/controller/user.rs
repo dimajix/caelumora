@@ -11,12 +11,11 @@ use caelumora_model::history::Reader;
 use caelumora_model::message::MessageId;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::history::HistoryStore;
-use caelumora_model::store::{
-    EntityStore, EntityStores, StateStore, StoreError, StoreResult, StoreResultExt,
-};
+use caelumora_model::store::{StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
 use caelumora_model::value::language::Language;
+use caelumora_store::history::HistoryStore;
+use caelumora_store::{EntityStore, EntityStores, StateStore};
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -336,10 +335,10 @@ mod tests {
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::role::RoleId;
     use caelumora_model::security::{OwnershipPolicy, Policies, SecurityAttributes};
-    use caelumora_model::store::Persistence;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserUpdateEvent;
     use caelumora_model::value::text::Introduction;
+    use caelumora_store::Persistence;
     use std::slice;
     use std::sync::Mutex;
 

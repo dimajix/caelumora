@@ -18,6 +18,7 @@ tokio = { workspace = true, features = ["time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+caelumora-store = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
 axum.workspace = true
 uuid = { workspace = true, features = ["v4"] }

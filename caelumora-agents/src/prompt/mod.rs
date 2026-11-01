@@ -294,10 +294,10 @@ mod tests {
     use caelumora_model::security::SecurityContext;
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
-    use caelumora_model::store::Persistence;
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::work::Work;
+    use caelumora_store::Persistence;
     use futures::stream;
     use futures::stream::BoxStream;
     use futures::StreamExt;

@@ -13,8 +13,9 @@ use caelumora_model::component::ComponentBundle;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::parse_yaml;
 use caelumora_model::security::SecurityContext;
-use caelumora_model::store::{EntityStore, EntityStores, StoreResult, StoreResultExt, Stored};
+use caelumora_model::store::{StoreResult, StoreResultExt, Stored};
 use caelumora_model::template::SessionTemplate;
+use caelumora_store::{EntityStore, EntityStores};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -188,7 +189,7 @@ mod tests {
     use caelumora_model::config::AppConfig;
     use caelumora_model::security::Policies;
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::Persistence;
+    use caelumora_store::Persistence;
     use std::sync::Mutex;
 
     /// The policy of the example configuration, which knows the roles the

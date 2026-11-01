@@ -37,11 +37,10 @@ use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, DEFAULT_VARIANT, KERNEL, KERNEL_PROMPTS};
 use caelumora_model::secret::{SecretManager, SecretProvider};
 use caelumora_model::security::{AccessPolicy, Policies};
-use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::{
-    EntityStore, EntityStores, Persistence, PersistenceBackend, StoreResult, Stored,
-};
+use caelumora_model::store::{StoreResult, Stored};
 use caelumora_model::type_map::{ErasedArc, TypeKey};
+use caelumora_store::memberships::StoreMemberships;
+use caelumora_store::{EntityStore, EntityStores, Persistence, PersistenceBackend};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};

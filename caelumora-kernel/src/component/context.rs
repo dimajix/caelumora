@@ -29,7 +29,7 @@ mod tests {
     use caelumora_api::component::ComponentError;
     use caelumora_api::component::ComponentKind;
     use caelumora_model::security::{AccessPolicy, Policies};
-    use caelumora_model::store::{EntityStores, Persistence};
+    use caelumora_store::{EntityStores, Persistence};
     use std::sync::Arc;
     use std::sync::Mutex;
 

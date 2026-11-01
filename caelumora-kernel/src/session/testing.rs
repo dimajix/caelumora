@@ -28,18 +28,18 @@ use caelumora_model::security::SecurityContext;
 use caelumora_model::security::{AccessPolicy, Admission, OwnershipPolicy};
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::Session;
-use caelumora_model::store::documents::{Document, DocumentOf, DocumentStorage};
-use caelumora_model::store::history::HistoryStore;
-use caelumora_model::store::memberships::StoreMemberships;
-use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, Filter};
-use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::store::Persistence;
-use caelumora_model::store::{
-    EntityKind, PersistenceBackend, Presence, Revision, StateStore, StoreError, StoreResult,
-};
-use caelumora_model::user::testing::{make_user, record_users};
+use caelumora_model::store::{EntityKind, Revision, StoreError, StoreResult};
+use caelumora_model::user::testing::make_user;
 use caelumora_model::value::name::ScopedName;
+use caelumora_store::documents::{Document, DocumentOf, DocumentStorage};
+use caelumora_store::history::HistoryStore;
+use caelumora_store::memberships::StoreMemberships;
+use caelumora_store::memory::MemoryStore;
+use caelumora_store::testing::record_users;
+use caelumora_store::transcript::TranscriptStore;
+use caelumora_store::Persistence;
+use caelumora_store::{PersistenceBackend, Presence, StateStore};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

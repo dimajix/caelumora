@@ -486,7 +486,7 @@ mod tests {
     use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_kernel::user_provider::UserProvider;
     use caelumora_model::security::Policies;
-    use caelumora_model::store::{EntityStores, Persistence};
+    use caelumora_store::{EntityStores, Persistence};
     use tower::ServiceExt;
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";

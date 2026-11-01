@@ -184,11 +184,12 @@ mod tests {
     use caelumora_model::security::{Policies, SecurityContext};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
-    use caelumora_model::store::{EntityStores, Persistence};
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::{EntityStores, Persistence};
     use std::slice;
 
     fn participant(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {

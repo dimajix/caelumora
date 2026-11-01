@@ -318,7 +318,8 @@ mod tests {
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
     use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_store::testing::record_users;
     use std::sync::Arc;
 
     #[tokio::test]

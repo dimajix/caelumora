@@ -1,7 +1,11 @@
 //! `Policies`: the `AccessPolicy` and the `ConfidentialityPolicy` of a process, as one pair.
 
 use super::AccessPolicy;
+#[cfg(any(test, feature = "test-support"))]
+use super::AllowAllPolicy;
 use crate::confidentiality::ConfidentialityPolicy;
+#[cfg(any(test, feature = "test-support"))]
+use crate::confidentiality::ConfidentialityRules;
 use std::sync::Arc;
 
 /// The `AccessPolicy` and the `ConfidentialityPolicy` of the process (issue 449): what the kernel
@@ -31,5 +35,20 @@ impl Policies {
     /// What may flow where, and who is cleared for what (issue 304).
     pub fn confidentiality(&self) -> &Arc<dyn ConfidentialityPolicy> {
         &self.confidentiality
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Policies {
+    /// The policies that permit everything (`AllowAllPolicy`) by the default rules - for what a
+    /// test writes before it runs what it tests, and for what a test runs that checks nothing.
+    pub fn permitting_all() -> Self {
+        Self::by_default_rules(Arc::new(AllowAllPolicy::new()))
+    }
+
+    /// The policies of `access_policy` by the default rules (`ConfidentialityRules::default`) - for
+    /// a test of what `access_policy` decides.
+    pub fn by_default_rules(access_policy: Arc<dyn AccessPolicy>) -> Self {
+        Self::new(access_policy, Arc::new(ConfidentialityRules::default()))
     }
 }

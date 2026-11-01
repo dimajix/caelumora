@@ -36,11 +36,10 @@ use caelumora_model::security::{
     AclEntry, ActionType, Enforcement, Policies, SecuredMut, SecurityAttributes, SecurityContext,
     Subject, WRITE,
 };
-use caelumora_model::store::{
-    purge_behind, Address, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
-};
+use caelumora_model::store::{Address, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
+use caelumora_store::{purge_behind, EntityStore};
 use chrono::Utc;
 use serde::Deserialize;
 use std::fmt;

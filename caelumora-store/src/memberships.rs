@@ -1,10 +1,11 @@
 //! What the policy learns of actors from the store (issues 23, 286): the
 //! group an access list names, with who belongs to it.
 
-use crate::group::{Group, GroupId};
-use crate::security::{Memberships, SecurityContext};
-use crate::store::{EntityStore, StoreResult, StoreResultExt};
+use crate::EntityStore;
 use async_trait::async_trait;
+use caelumora_model::group::{Group, GroupId};
+use caelumora_model::security::{Memberships, SecurityContext};
+use caelumora_model::store::{StoreResult, StoreResultExt};
 use std::sync::{Arc, OnceLock, Weak};
 
 /// `Memberships` read from the store of groups in the system's name, each
@@ -72,12 +73,12 @@ impl Memberships for StoreMemberships {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::ActorId;
-    use crate::removal::Removal;
-    use crate::security::Policies;
-    use crate::store::{EntityStores, Persistence};
-    use crate::user::UserId;
-    use crate::value::name::ScopedName;
+    use crate::{EntityStores, Persistence};
+    use caelumora_model::actor::ActorId;
+    use caelumora_model::removal::Removal;
+    use caelumora_model::security::Policies;
+    use caelumora_model::user::UserId;
+    use caelumora_model::value::name::ScopedName;
 
     #[tokio::test]
     async fn a_group_is_read_also_once_it_was_deleted() {

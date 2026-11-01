@@ -971,7 +971,8 @@ mod tests {
     use caelumora_model::actor::EventContext;
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::session::testing::bare_session;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
+    use caelumora_store::testing::record_users;
     use std::iter;
     use std::time::Duration;
     use tokio::time;

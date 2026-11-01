@@ -43,8 +43,8 @@ bytes.workspace = true
 # channels, sessions, users, templates and personalities they write
 # (`message::testing`, `content::testing`, `channel::testing`,
 # `session::testing`, `user::testing`, `template::testing`, `agent::testing`),
-# the suite every backend of the stores runs (`store::suite`, issue 446) and
-# the stores that refuse a write as outdated (`store::testing`, issue 492).
+# and the policies a test opens the stores by (`Policies::permitting_all`,
+# issue 449).
 test-support = []
 
 [dev-dependencies]

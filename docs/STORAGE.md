@@ -9,7 +9,7 @@ stores are used is configured in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The entity store
 
-The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived domain entities:
+The entity stores (`EntityStore<T>`, in `caelumora-store`) keep the long-lived domain entities:
 
 *   **Personalities**, the definitions of agents, **component bundles**, the components several of
     them include (see [Component bundles](#component-bundles)), and **session templates**, which
@@ -37,7 +37,7 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
 Each kind is kept by a store of its own, `EntityStore<T>` (issue
 [323](../issues/323-kinds-enumerated-in-the-core.md)), with the same operations for every kind.
 
-**A backend keeps, the model checks** (issue
+**A backend keeps, the store checks** (issue
 [446](../issues/446-stores-check-access-each-and-are-enumerated.md)). A backend - `MemoryStore`, for
 tests, or `JsonFileStore`, of the plugin `caelumora-store-json` - is a `PersistenceBackend`: it
 keeps the documents of every kind, each kind in a `DocumentStorage` of its own, and the states with
@@ -51,7 +51,7 @@ are taken from one backend. A storage keeps documents serialized, by id, and is 
 that a backend opens the storage of any kind, a plugin's too, without knowing its type: the memory
 store keeps them in a map, the JSON store one file per document in the kind's directory,
 `entities/<kind>/<id>.json`. What every kind's store does - read the document as its type, ask the
-policies, order the steps - is written once, in the model (`CheckedStore`, over `store::access`),
+policies, order the steps - is written once, in `caelumora-store` (`CheckedStore`, over `access`),
 for every backend alike.
 
 A backend is made ready once, at start (`PersistenceBackend::open`, issue
@@ -417,7 +417,7 @@ it is. So does one that was deleted, whose id stays taken: every seeder creates 
 
 ## The state store
 
-The `StateStore` (in `caelumora-model`) stores the runtime state of channels and agents:
+The `StateStore` (in `caelumora-store`) stores the runtime state of channels and agents:
 
 *   **`ChannelState`**: the channel's history (see [Histories](#histories)).
 *   **`AgentChannelState`**: an agent in one channel, of either kind - processing state,

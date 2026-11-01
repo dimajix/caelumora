@@ -8,17 +8,17 @@
 //! of the frames the contexts of its messages had (issue 426), held only
 //! until they are stored.
 
-use crate::agent::{AgentChannelState, AgentId};
-use crate::chain::Node;
-use crate::channel::ChannelId;
-use crate::context::{ContextRef, FrameRef};
-use crate::digest::Digest;
-use crate::kept::Kept;
-use crate::message::{Message, MessageId};
-use crate::store::StoreResult;
-use crate::tool::ToolSet;
-use crate::transcript::TranscriptEntry;
 use async_trait::async_trait;
+use caelumora_model::agent::{AgentChannelState, AgentId};
+use caelumora_model::chain::Node;
+use caelumora_model::channel::ChannelId;
+use caelumora_model::context::{ContextRef, FrameRef};
+use caelumora_model::digest::Digest;
+use caelumora_model::kept::Kept;
+use caelumora_model::message::{Message, MessageId};
+use caelumora_model::store::StoreResult;
+use caelumora_model::tool::ToolSet;
+use caelumora_model::transcript::TranscriptEntry;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Debug;
 

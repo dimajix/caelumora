@@ -288,11 +288,11 @@ mod tests {
     use caelumora_model::secret::SecretManager;
     use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_model::store::query::Query;
-    use caelumora_model::store::Persistence;
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
     use caelumora_skills::skill::Skill;
+    use caelumora_store::Persistence;
     use serde_json::json;
     use std::path::Path;
     use tower::ServiceExt;

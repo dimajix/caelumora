@@ -249,8 +249,8 @@ Whether an agent may reach the channel it copies from at all is the policy's, as
 
 ### How stores check
 
-The stores ask the same way for every entity kind and every backend (`store::access`, asked by the
-one `CheckedStore` over a backend's storage - no backend asks a policy, issue 446):
+The stores ask the same way for every entity kind and every backend (`caelumora_store::access`,
+asked by the one `CheckedStore` over a backend's storage - no backend asks a policy, issue 446):
 
 *   **Reads** are checked with the attributes as stored. An entity the caller may not read is
     reported as not found, so ids cannot be probed. What lies within an entity under a list of its

@@ -61,7 +61,7 @@ impl Admission {
     /// the groups: an entry for a group counts as admitting. More than
     /// `admits`, never less - what a storage that does not keep the groups
     /// narrows a list by (issue 332).
-    pub(crate) fn may_admit(&self, attributes: &SecurityAttributes) -> bool {
+    pub fn may_admit(&self, attributes: &SecurityAttributes) -> bool {
         self.admits_without_groups(attributes) || self.groups_named(attributes).next().is_some()
     }
 

@@ -7,7 +7,7 @@ use caelumora_api::component::Params;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_model::store::PersistenceBackend;
+use caelumora_store::PersistenceBackend;
 use std::sync::Arc;
 
 /// The backend `json` of the stores (`JsonFileStore`), as a plugin.
@@ -43,8 +43,8 @@ mod tests {
     use caelumora_api::component::Services;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::security::Policies;
-    use caelumora_model::store::Persistence;
     use caelumora_model::user::User;
+    use caelumora_store::Persistence;
     use serde_json::json;
 
     /// The stores keep their data in JSON files once the plugin is there,

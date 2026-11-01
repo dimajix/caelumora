@@ -8,9 +8,9 @@ use caelumora_model::chain::Position;
 use caelumora_model::channel::{ChannelId, HistoryAccess, HistoryStart};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::query::Filter;
 use caelumora_model::store::StoreResult;
+use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
 use tracing::warn;
 

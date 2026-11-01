@@ -58,8 +58,7 @@ use caelumora_model::security::{
     AclEntry, Grant, Policies, Refused, Secured, SecurityAttributes, SecurityContext, Subject,
 };
 use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::testing::ContendedStore;
-use caelumora_model::store::{EntityStore, Persistence, StoreError, Stored};
+use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::workspace::Workspace;
@@ -68,6 +67,8 @@ use caelumora_rest_server::error::ApiError;
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes::api;
 use caelumora_rest_server::state::AppState;
+use caelumora_store::testing::ContendedStore;
+use caelumora_store::{EntityStore, Persistence};
 use futures::stream;
 use futures::StreamExt;
 use serde_json::{json, Value};

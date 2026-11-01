@@ -62,21 +62,21 @@ use caelumora_model::security::{
 };
 use caelumora_model::session::testing::make_session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::memberships::StoreMemberships;
 use caelumora_model::store::query::Query;
-use caelumora_model::store::{
-    EntityKind, EntityStore, EntityStores, Persistence, StoreError, Stored,
-};
+use caelumora_model::store::{EntityKind, StoreError, Stored};
 use caelumora_model::template::testing::{make_channel_template, make_template};
 use caelumora_model::template::{
     ChannelTemplate, InternalActorTemplate, ParticipantTemplate, ScopeTemplate, SessionTemplate,
     SessionTemplateId,
 };
-use caelumora_model::user::testing::{make_user, record_users};
+use caelumora_model::user::testing::make_user;
 use caelumora_model::user::{User, UserId, UserUpdateEvent};
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::value::text::{Description, Introduction};
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_store::memberships::StoreMemberships;
+use caelumora_store::testing::record_users;
+use caelumora_store::{EntityStore, EntityStores, Persistence};
 use futures::stream;
 use futures::StreamExt;
 use serde_json::json;

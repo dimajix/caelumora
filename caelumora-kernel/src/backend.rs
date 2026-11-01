@@ -26,9 +26,9 @@ use caelumora_api::component::{
 };
 use caelumora_api::error::StorageGone;
 use caelumora_model::config::BackendConfig;
-use caelumora_model::store::memory::MemoryStore;
-use caelumora_model::store::PersistenceBackend;
 use caelumora_model::type_map::TypeKey;
+use caelumora_store::memory::MemoryStore;
+use caelumora_store::PersistenceBackend;
 use serde_json::Value;
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
@@ -277,8 +277,8 @@ mod tests {
     use caelumora_model::role::{RoleId, Roles};
     use caelumora_model::secret::{SecretManager, SecretProvider};
     use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
-    use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::user::{User, UserId};
+    use caelumora_store::{EntityStores, Persistence};
     use serde::Deserialize;
     use serde_json::json;
     use std::env;

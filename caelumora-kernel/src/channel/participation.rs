@@ -17,9 +17,8 @@ use caelumora_model::security::{
     ActionType, Enforcement, Policies, Refused, SecurityAttributes, SecurityContext, JOIN,
 };
 use caelumora_model::session::SessionId;
-use caelumora_model::store::{
-    EntityKind, EntityStore, StoreError, StoreResult, StoreResultExt, Stored,
-};
+use caelumora_model::store::{EntityKind, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_store::EntityStore;
 use std::iter;
 use std::sync::Arc;
 
@@ -361,7 +360,7 @@ mod tests {
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionManager};
     use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::testing::{make_personality, stored_agent};
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::Agent;
     use caelumora_model::channel::testing::main_channel;
     use caelumora_model::channel::{Channel, HistoryAccess, Participant};
@@ -370,10 +369,12 @@ mod tests {
     use caelumora_model::security::{Grant, SecurityContext, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{ChannelId, SessionId};
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::testing::stored_agent;
     use std::sync::Arc;
 
     #[tokio::test]

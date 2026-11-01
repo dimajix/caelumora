@@ -1120,10 +1120,10 @@ mod tests {
     use super::*;
     use caelumora_model::agent::AgentId;
     use caelumora_model::channel::ChannelId;
-    use caelumora_model::store::memory::MemoryStore;
-    use caelumora_model::store::transcript::TranscriptStore;
-    use caelumora_model::store::StateStore;
     use caelumora_model::user::UserId;
+    use caelumora_store::memory::MemoryStore;
+    use caelumora_store::transcript::TranscriptStore;
+    use caelumora_store::StateStore;
 
     fn said(sender: ActorId, name: &str, text: &str) -> Message {
         Message {

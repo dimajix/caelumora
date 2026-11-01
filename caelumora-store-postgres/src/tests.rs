@@ -30,15 +30,16 @@ use caelumora_model::security::{
     Admission, AllowAllPolicy, Grant, OwnershipPolicy, Policies, SecurityAttributes,
     SecurityContext, Subject,
 };
-use caelumora_model::store::documents::Document;
-use caelumora_model::store::history::Memberships;
-use caelumora_model::store::memory::MemoryStore;
 use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
-use caelumora_model::store::{suite, EntityStores, Persistence, Presence, Revision, StoreError};
+use caelumora_model::store::{Revision, StoreError};
 use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::work::Work;
+use caelumora_store::documents::Document;
+use caelumora_store::history::Memberships;
+use caelumora_store::memory::MemoryStore;
+use caelumora_store::{suite, EntityStores, Persistence, Presence};
 use chrono::Utc;
 use serde_json::json;
 use std::env;

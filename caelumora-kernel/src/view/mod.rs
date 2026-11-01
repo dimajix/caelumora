@@ -74,13 +74,12 @@ use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{
     AccessSnapshot, DeletedSnapshot, PersonalitySnapshot, ScopeSnapshot,
 };
-use caelumora_model::store::history::HistoryStore;
 use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::transcript::TranscriptStore;
-use caelumora_model::store::{
-    Deleted, EntityStore, EntityStores, StateStore, StoreResult, StoreResultExt, Stored,
-};
+use caelumora_model::store::{StoreResult, StoreResultExt, Stored};
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_store::history::HistoryStore;
+use caelumora_store::transcript::TranscriptStore;
+use caelumora_store::{Deleted, EntityStore, EntityStores, StateStore};
 use std::fmt;
 use std::fmt::Debug;
 use std::iter;
@@ -977,7 +976,7 @@ mod tests {
     use caelumora_api::error::AttachmentError;
     use caelumora_api::reader::{ChannelReader, SessionReader};
     use caelumora_model::actor::Rejection;
-    use caelumora_model::agent::testing::{make_personality, stored_agent};
+    use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
     use caelumora_model::approval::ToolMatcher;
     use caelumora_model::channel::testing::{founded, main_channel};
@@ -990,14 +989,16 @@ mod tests {
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{Participant as SessionParticipant, Session};
     use caelumora_model::snapshot::Detail;
-    use caelumora_model::store::Persistence;
     use caelumora_model::turn::GivenUpReason;
-    use caelumora_model::user::testing::{make_user, record_users};
+    use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
     use caelumora_model::value::text::{Briefing, Summary};
     use caelumora_model::work::TurnId;
+    use caelumora_store::testing::record_users;
+    use caelumora_store::testing::stored_agent;
+    use caelumora_store::Persistence;
     use chrono::Utc;
     use std::slice;
     use std::time::Duration;

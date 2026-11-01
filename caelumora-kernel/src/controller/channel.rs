@@ -14,8 +14,9 @@ use caelumora_model::group::Group;
 use caelumora_model::message::Message;
 use caelumora_model::removal::Removal;
 use caelumora_model::security::{SecurityContext, Subject};
-use caelumora_model::store::{EntityStore, EntityStores, StoreError, StoreResult};
+use caelumora_model::store::{StoreError, StoreResult};
 use caelumora_model::value::name::Name;
+use caelumora_store::{EntityStore, EntityStores};
 use std::sync::Arc;
 use tracing::error;
 
