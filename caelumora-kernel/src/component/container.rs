@@ -345,7 +345,7 @@ mod tests {
     use crate::component::testing::*;
     use caelumora_api::component::ComponentFacets;
     use caelumora_api::component::ComponentKind;
-    use caelumora_model::security::Policies;
+    use caelumora_security::Policies;
     use caelumora_store::{EntityStores, Persistence};
     use std::sync::atomic::{AtomicUsize, Ordering};
 

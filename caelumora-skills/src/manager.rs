@@ -16,16 +16,15 @@ use crate::skill::{Skill, SkillBody, SkillId, SkillUpdateEvent};
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
 use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{
-    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
-};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
+use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use chrono::Utc;
 use std::fmt;

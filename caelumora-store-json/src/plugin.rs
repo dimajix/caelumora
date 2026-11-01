@@ -42,8 +42,8 @@ mod tests {
     use super::*;
     use caelumora_api::component::Services;
     use caelumora_model::config::BackendConfig;
-    use caelumora_model::security::Policies;
     use caelumora_model::user::User;
+    use caelumora_security::Policies;
     use caelumora_store::Persistence;
     use serde_json::json;
 

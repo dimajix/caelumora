@@ -13,12 +13,13 @@ use caelumora_api::logging::envelope_span;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_model::chain::Position;
 use caelumora_model::channel::ChannelState;
-use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::history::{Audience, Heard, Reader, Recorded};
 use caelumora_model::message::Message;
-use caelumora_model::security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use caelumora_model::store::StoreResult;
 use caelumora_model::value::name::Name;
+use caelumora_security::confidentiality::ConfidentialityQuestions;
+use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use std::collections::HashMap;
 use std::iter;
 use std::sync::atomic::Ordering;
@@ -1006,14 +1007,14 @@ mod tests {
     use caelumora_model::content::ContentRef;
     use caelumora_model::history::{HistoryEntry, Recipients};
     use caelumora_model::message::{Message, MessageId, MessageRole};
-    use caelumora_model::security::AllowAllPolicy;
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::session::ChannelId;
     use caelumora_model::tool::{ToolCall, ToolCallResult, ToolMedia};
     use caelumora_model::turn::GivenUpReason;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
+    use caelumora_security::AllowAllPolicy;
+    use caelumora_security::SecurityContext;
     use chrono::Utc;
     use std::mem;
     use std::slice;
@@ -1592,7 +1593,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_admits_only_what_may_flow_into_it_in_its_senders_name() {
-        use caelumora_model::security::OwnershipPolicy;
+        use caelumora_security::OwnershipPolicy;
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let alice_id = ActorId::User(alice.id);
@@ -1638,7 +1639,7 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_change_to_a_message_enters_the_channel_only_from_its_author_as_it_stands() {
-        use caelumora_model::security::OwnershipPolicy;
+        use caelumora_security::OwnershipPolicy;
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
@@ -1888,7 +1889,7 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_user_changes_only_their_own_message_and_learns_why_not() {
-        use caelumora_model::security::OwnershipPolicy;
+        use caelumora_security::OwnershipPolicy;
         let (alice, bob) = (make_user("alice"), make_user("bob"));
         let channel = channel_with(&[&alice, &bob], Arc::new(OwnershipPolicy::new())).await;
         let (alice_id, bob_id) = (ActorId::User(alice.id), ActorId::User(bob.id));

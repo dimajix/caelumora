@@ -25,15 +25,14 @@ use caelumora_model::history::testing::{items_of, messages_of};
 use caelumora_model::history::{HistoryEntry, Reader};
 use caelumora_model::message::Message;
 use caelumora_model::message::MessageId;
-use caelumora_model::security::{
-    AccessPolicy, ActionType, Policies, SecurityAttributes, SecurityContext,
-};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
 use caelumora_model::store::StoreResult;
 use caelumora_model::user::testing::make_user;
 use caelumora_model::user::UserId;
 use caelumora_model::work::TurnId;
+use caelumora_security::{AccessPolicy, ActionType, Policies, SecurityContext};
 use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
 use caelumora_store::{EntityStores, Persistence};

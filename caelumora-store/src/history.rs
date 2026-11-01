@@ -20,7 +20,7 @@ use caelumora_model::channel::ChannelId;
 use caelumora_model::digest::Digest;
 use caelumora_model::history::{HistoryEntry, HistoryPage, Reader, Recorded};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::HistoryField;
+use caelumora_model::store::history::{HistoryField, KeptItem};
 use caelumora_model::store::query::{meeting, Filter};
 use caelumora_model::store::StoreResult;
 use serde::{Deserialize, Serialize};
@@ -286,26 +286,6 @@ impl From<Vec<(Position, Recorded)>> for StandingItems {
 impl From<StandingItems> for Vec<(Position, Recorded)> {
     fn from(items: StandingItems) -> Self {
         items.items
-    }
-}
-
-/// An item as it is kept to be judged (issue 451): the item as it is
-/// recorded, with its position and whether it is published - derived as it
-/// is made, as the item is from the chain -, so that a filter of a page
-/// names them (`HistoryField`). What a database keeps of an item, and what
-/// a store in memory judges a filter on.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct KeptItem {
-    pub seq: Position,
-    pub published: bool,
-    #[serde(flatten)]
-    pub item: Recorded,
-}
-
-impl KeptItem {
-    /// `item`, at the position `seq`, as it is kept.
-    pub fn of(seq: Position, item: Recorded) -> Self {
-        Self { seq, published: item.entry.is_published(), item }
     }
 }
 

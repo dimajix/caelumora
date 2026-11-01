@@ -23,7 +23,6 @@ use caelumora_model::confidentiality::{Classification, LabelCauses};
 use caelumora_model::context::{ContextItem, KnowledgeRef, KnowledgeSource};
 use caelumora_model::message::{Message, MessageId};
 use caelumora_model::question::QuestionId;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::Detail;
 use caelumora_rest_api::channel::{
@@ -39,6 +38,7 @@ use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::StreamOptions;
+use caelumora_security::SecurityContext;
 use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;

@@ -146,13 +146,13 @@ mod tests {
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::{Channel, Participant};
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::Session;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
+    use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
 

@@ -6,9 +6,9 @@ use super::Views;
 use caelumora_model::actor::ActorId;
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::snapshot::GroupSnapshot;
 use caelumora_model::store::StoreResultExt;
+use caelumora_security::{AccessQuestions, SecurityContext};
 
 #[derive(Clone)]
 pub struct GroupView {

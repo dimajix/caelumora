@@ -97,10 +97,10 @@ that brings a component of a channel alone, such as `caelumora-decision` (issue 
 kind in `register`. One that brings backends alone, such as `caelumora-open-terminal` (issue 327) or
 `caelumora-store-json` (issue 446), registers them in `backends` and nothing in `register`. A
 backend of the stores runs the store suite in its own tests (`caelumora_store::suite`, feature
-`test-support`). A plugin's tests use the world of the
-security suite - the kernel with the recording ownership policy and three users -,
-`caelumora_kernel::testing`, as a dev-dependency with the feature `test-support`. That world runs no
-agent unless a library brings them (`World::with(plugins, libraries, …)`).
+`test-support`). A plugin's tests use the world of the security suite - the kernel with the
+recording ownership policy and three users -, `caelumora_kernel::testing`, as a dev-dependency with
+the feature `test-support`. That world runs no agent unless a library brings them
+(`World::with(plugins, libraries, …)`).
 
 ## What a library is
 
@@ -111,14 +111,15 @@ of agent and the built-in components (issue 370) - or brings components for an a
 `caelumora-workspace-tools` (issue 428), `caelumora-compaction` (issue 464), `caelumora-comfyui`
 (issue 512), and the library sides of `caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`,
 `ArtifactsLibrary`). It is linked into the program as a plugin is, but trusted for nothing, and
-links the kernel's API (`caelumora-api`), the model and other libraries, never the kernel: the
-kernel is a dev-dependency of its tests alone, which build the kernel's world - for
-`caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`
-checks, run by the pre-commit hook. It implements `caelumora_api::library::Library` - a name for
-messages and `register` -, and the programs list it in `libraries()`, the agents' library first, and
-register each with `KernelBuilder::library` once their plugins registered. A library registers with
-a `LibraryBuilder`, a trait of the API the kernel implements, which offers what a library registers
-and nothing of the kernel - no store, no policy, no secret, no controller:
+links the kernel's API (`caelumora-api`), the model and other libraries, never the kernel,
+`caelumora-security` or `caelumora-store`: they are dev-dependencies of its tests alone, which build
+the kernel's world - for `caelumora-agents` its `testing` too, under `test-support` -, which
+`scripts/library-deps.sh` checks, run by the pre-commit hook. It implements
+`caelumora_api::library::Library` - a name for messages and `register` -, and the programs list it
+in `libraries()`, the agents' library first, and register each with `KernelBuilder::library` once
+their plugins registered. A library registers with a `LibraryBuilder`, a trait of the API the kernel
+implements, which offers what a library registers and nothing of the kernel - no store, no policy,
+no secret, no controller:
 
 *   its component kinds (`components()`, a `LibraryComponents`), marked as a library's;
 *   its kinds of agent (`register_agent_kind`): for a kind of personality, what builds its agents'

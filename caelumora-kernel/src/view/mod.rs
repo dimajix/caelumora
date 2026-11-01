@@ -58,18 +58,14 @@ use caelumora_api::component::Services;
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
-use caelumora_model::confidentiality::{
-    ConfidentialityPolicy, ConfidentialityQuestions, Place, Reading,
-};
+use caelumora_model::confidentiality::{Place, Reading};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::project::ProjectId;
 use caelumora_model::prompt_catalogue::PromptCatalogue;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{
-    AccessPolicy, AccessQuestions, AclEntry, Policies, SecurityAttributes, SecurityContext, Subject,
-};
+use caelumora_model::security::{AclEntry, SecurityAttributes, Subject};
 use caelumora_model::session::{ChannelId, SessionField, SessionId};
 use caelumora_model::snapshot::{
     AccessSnapshot, DeletedSnapshot, PersonalitySnapshot, ScopeSnapshot,
@@ -77,6 +73,8 @@ use caelumora_model::snapshot::{
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{StoreResult, StoreResultExt, Stored};
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_security::{AccessPolicy, AccessQuestions, Policies, SecurityContext};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::transcript::TranscriptStore;
 use caelumora_store::{Deleted, EntityStore, EntityStores, StateStore};
@@ -981,7 +979,7 @@ mod tests {
     use caelumora_model::approval::ToolMatcher;
     use caelumora_model::channel::testing::{founded, main_channel};
     use caelumora_model::channel::{Channel, ChannelState, Participant};
-    use caelumora_model::confidentiality::{Classification, ConfidentialityRules};
+    use caelumora_model::confidentiality::Classification;
     use caelumora_model::context::{ContextItem, ContextRef};
     use caelumora_model::history::{Audience, HistoryEntry, HistoryPage, Recorded};
     use caelumora_model::message::Message;
@@ -996,6 +994,7 @@ mod tests {
     use caelumora_model::value::text::Introduction;
     use caelumora_model::value::text::{Briefing, Summary};
     use caelumora_model::work::TurnId;
+    use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
     use caelumora_store::Persistence;
@@ -2806,7 +2805,8 @@ mod tests {
             let confidentiality = Arc::clone(confidentiality);
             let context = alice_ctx.clone();
             async move {
-                use caelumora_model::confidentiality::{ConfidentialityQuestions, Place};
+                use caelumora_model::confidentiality::Place;
+                use caelumora_security::confidentiality::ConfidentialityQuestions;
                 let place = |channel: &ChannelLoop| Place {
                     channel: channel.id(),
                     classification: channel.classification(),

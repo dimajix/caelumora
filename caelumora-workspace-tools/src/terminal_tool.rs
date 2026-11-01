@@ -308,8 +308,8 @@ pub(crate) mod tests {
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::scope::Scope;
     use caelumora_model::security::Grant;
-    use caelumora_model::security::{Policies, SecurityContext};
     use caelumora_model::type_map::TypeKey;
+    use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use serde_json::json;
     use std::fs;

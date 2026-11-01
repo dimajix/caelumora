@@ -30,10 +30,10 @@ test-support = [
     "dep:caelumora-kernel",
     "caelumora-kernel/test-support",
     "dep:caelumora-store",
-    "caelumora-store/test-support",
 ]
 
 [dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
 caelumora-store = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
 caelumora-model = { workspace = true, features = ["test-support"] }

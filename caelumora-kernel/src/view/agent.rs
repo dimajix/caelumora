@@ -6,10 +6,10 @@ use super::{ChannelView, Views};
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId};
-use caelumora_model::security::{AccessQuestions, SecurityContext};
 use caelumora_model::snapshot::AgentSnapshot;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::StoreResultExt;
+use caelumora_security::{AccessQuestions, SecurityContext};
 
 #[derive(Clone)]
 pub struct AgentView {

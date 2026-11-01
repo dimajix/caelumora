@@ -1074,9 +1074,9 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::security::{Policies, SecurityContext};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::type_map::TypeKey;
+    use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use futures::stream as futures_stream;
     use serde_json::json;

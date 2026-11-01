@@ -29,10 +29,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField};
-use caelumora_model::security::{
-    AccessQuestions, ActionType, Enforcement, Policies, SecurityAttributes, SecurityContext,
-    Subject, JOIN,
-};
+use caelumora_model::security::{SecurityAttributes, Subject};
 use caelumora_model::session;
 use caelumora_model::session::{ChannelId, Session, SessionId};
 use caelumora_model::store::query::{Filter, Query};
@@ -45,6 +42,9 @@ use caelumora_model::value::language::Language;
 use caelumora_model::value::name::Name;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::workspace::WorkspaceChoice;
+use caelumora_security::{
+    AccessQuestions, ActionType, Enforcement, Policies, SecurityContext, JOIN,
+};
 use caelumora_store::{purge_behind, Deleted, EntityStores, StateStore};
 use dashmap::DashMap;
 use futures::future::join_all;
@@ -1150,7 +1150,7 @@ mod tests {
     use caelumora_model::project::Project;
     use caelumora_model::removal::Removal;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Grant, Secured, SecurityAttributes, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, Secured, SecurityAttributes, Subject};
     use caelumora_model::session;
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::ChannelId;
@@ -1170,6 +1170,7 @@ mod tests {
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::value::ValueError;
     use caelumora_model::workspace::{Workspace, WorkspaceChoice};
+    use caelumora_security::SecurityContext;
     use caelumora_store::memory::MemoryStore;
     use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;

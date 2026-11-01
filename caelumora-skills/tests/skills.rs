@@ -35,7 +35,7 @@ use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::privacy::SessionPrivacy;
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{Grant, Policies, SecurityAttributes, SecurityContext, Subject};
+use caelumora_model::security::{Grant, SecurityAttributes, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::query::Query;
 use caelumora_model::store::{StoreError, Stored};
@@ -43,6 +43,7 @@ use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
+use caelumora_security::{Policies, SecurityContext};
 use caelumora_skills::component::{
     SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
     SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,

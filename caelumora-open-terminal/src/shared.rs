@@ -19,8 +19,8 @@ use caelumora_kernel::terminal::{
 };
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::SecretManager;
 use caelumora_model::workspace::WorkspaceId;
+use caelumora_security::secret::SecretManager;
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -231,9 +231,10 @@ mod tests {
     use caelumora_kernel::secret::file::FileSecretProvider;
     use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
     use caelumora_model::remote::RemoteAuthConfig;
-    use caelumora_model::secret::{SecretProvider, SecretResult};
-    use caelumora_model::security::AllowAllPolicy;
+    use caelumora_model::secret::SecretResult;
     use caelumora_model::workspace::CommandStatus;
+    use caelumora_security::secret::SecretProvider;
+    use caelumora_security::AllowAllPolicy;
     use futures::stream;
     use futures::StreamExt;
     use serde_json::json;

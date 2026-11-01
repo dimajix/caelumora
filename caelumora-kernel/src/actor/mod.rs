@@ -12,8 +12,8 @@ pub use manager::{ActorManager, Shown};
 
 use caelumora_api::actor::Answering;
 use caelumora_model::actor::EventContext;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_security::SecurityContext;
 use uuid::Uuid;
 
 /// What of an `Answering` the kernel alone builds (issue 516): one in the channel's name, in a span

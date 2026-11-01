@@ -1,7 +1,7 @@
 //! The environment a configuration of components is built in (`BuildContext`).
 
 use caelumora_api::component::Services;
-use caelumora_model::security::SecurityContext;
+use caelumora_security::SecurityContext;
 
 /// The environment a configuration of components is built in (issues 321, 516): the name of its
 /// owner - an agent's own, a channel's owner's -, in which every `ref` is resolved and the graph
@@ -28,7 +28,7 @@ mod tests {
     use crate::component::ComponentRegistry;
     use caelumora_api::component::ComponentError;
     use caelumora_api::component::ComponentKind;
-    use caelumora_model::security::{AccessPolicy, Policies};
+    use caelumora_security::{AccessPolicy, Policies};
     use caelumora_store::{EntityStores, Persistence};
     use std::sync::Arc;
     use std::sync::Mutex;

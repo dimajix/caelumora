@@ -12,12 +12,11 @@ use crate::access::Access;
 use crate::{Deleted, EntityStore, Presence};
 use async_trait::async_trait;
 use caelumora_model::removal::{Removal, RemovalId};
-use caelumora_model::security::{
-    ActionType, Admission, Policies, SecurityAttributes, SecurityContext,
-};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::store::query::{Cursor, FieldPath, Filter, Page, Query};
 use caelumora_model::store::{Revision, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
+use caelumora_security::{ActionType, Admission, Policies, SecurityContext};
 use serde_json::Value;
 use std::fmt::{self, Debug, Display};
 use std::marker::PhantomData;

@@ -43,12 +43,12 @@ use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::project::Project;
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, Scoped, ScopedField};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Filter, Query};
 use caelumora_model::store::{
     EntityKind, NoEntity, StoreError, StoreResult, StoreResultExt, Stored,
 };
+use caelumora_security::SecurityContext;
 use caelumora_store::{purge_behind, Deleted, EntityStore, EntityStores};
 use std::fmt;
 use std::sync::Arc;
@@ -551,12 +551,13 @@ mod tests {
     use caelumora_model::project::Project;
     use caelumora_model::removal::Removal;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Policies, SecurityAttributes, SecurityContext};
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::StoreError;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use std::sync::Arc;
 

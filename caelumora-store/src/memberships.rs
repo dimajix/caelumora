@@ -4,8 +4,8 @@
 use crate::EntityStore;
 use async_trait::async_trait;
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::security::{Memberships, SecurityContext};
 use caelumora_model::store::{StoreResult, StoreResultExt};
+use caelumora_security::{Memberships, SecurityContext};
 use std::sync::{Arc, OnceLock, Weak};
 
 /// `Memberships` read from the store of groups in the system's name, each
@@ -76,9 +76,9 @@ mod tests {
     use crate::{EntityStores, Persistence};
     use caelumora_model::actor::ActorId;
     use caelumora_model::removal::Removal;
-    use caelumora_model::security::Policies;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_security::Policies;
 
     #[tokio::test]
     async fn a_group_is_read_also_once_it_was_deleted() {

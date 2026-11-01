@@ -13,18 +13,17 @@ use caelumora_api::error::{AttachmentError, AttachmentResult};
 use caelumora_api::terminal::ByteStream;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::{
-    Classification, ConfidentialityPolicy, ConfidentialityQuestions,
-};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::config::AttachmentsConfig;
 use caelumora_model::content::{self, ContentId, ContentRef};
 use caelumora_model::context::ModelProfile;
 use caelumora_model::digest;
 use caelumora_model::message::Message;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::ChannelId;
 use caelumora_model::tool::ToolMedia;
 use caelumora_model::value::text::FileName;
+use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
+use caelumora_security::SecurityContext;
 use futures::{stream, StreamExt};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -547,9 +546,9 @@ mod tests {
     use bytes::Bytes;
     use caelumora_model::confidentiality::{Compartment, Confidentiality};
     use caelumora_model::digest;
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::{ToolCall, ToolCallResult};
     use caelumora_model::user::UserId;
+    use caelumora_security::SecurityContext;
     use serde_json::Value;
     use std::fs;
     use std::slice;

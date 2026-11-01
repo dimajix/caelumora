@@ -14,7 +14,6 @@ use caelumora_model::context::FrameRef;
 use caelumora_model::digest::Digest;
 use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
 use caelumora_model::message::{Message, MessageId};
-use caelumora_model::security::Admission;
 use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
 use caelumora_model::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
@@ -22,6 +21,7 @@ use caelumora_model::tool::ToolSet;
 use caelumora_model::transcript::{known, Transcript, TranscriptEntry};
 use caelumora_model::user::{UserChannelState, UserId};
 use caelumora_model::value::name::ScopedName;
+use caelumora_security::Admission;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::mem;
@@ -688,11 +688,10 @@ mod tests {
     use crate::suite;
     use crate::{EntityStores, Persistence};
     use caelumora_model::group::GroupId;
-    use caelumora_model::security::{
-        Grant, OwnershipPolicy, Policies, SecurityAttributes, SecurityContext, Subject,
-    };
+    use caelumora_model::security::{Grant, SecurityAttributes, Subject};
     use caelumora_model::store::query::Query;
     use caelumora_model::user::UserId;
+    use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
 
     /// The stores of a memory store, permitting everything.
     fn permitting() -> EntityStores {

@@ -2,15 +2,16 @@
 //! asked from outside an entity (`AccessQuestions`) and the way an
 //! operation enforces its own permission (`Enforcement`).
 
-use super::{ActionType, Admission, Refused, SecurityAttributes, SecurityContext, Verb, WRITE};
-use crate::agent::Agent;
-use crate::channel::Channel;
-use crate::group::Group;
-use crate::project::Project;
-use crate::session::Session;
-use crate::store::{EntityKind, Stored};
-use crate::workspace::Workspace;
+use crate::{ActionType, Admission, SecurityContext, Verb, WRITE};
 use async_trait::async_trait;
+use caelumora_model::agent::Agent;
+use caelumora_model::channel::Channel;
+use caelumora_model::group::Group;
+use caelumora_model::project::Project;
+use caelumora_model::security::{Refused, SecurityAttributes};
+use caelumora_model::session::Session;
+use caelumora_model::store::{EntityKind, Stored};
+use caelumora_model::workspace::Workspace;
 use std::fmt::Debug;
 
 /// Decides what is done in someone's name (issues 11, 23): one per process.
@@ -70,8 +71,8 @@ pub(super) async fn check_one_by_one<P: AccessPolicy + ?Sized>(
 /// question goes here, not onto the entity.
 ///
 /// What a client is shown or offered - may it change a channel, read an agent's context - comes
-/// from a view (`crate::view`, issue 80) that the kernel builds with these questions; clients do
-/// not ask them themselves.
+/// from a view (`caelumora_kernel::view`, issue 80) that the kernel builds with these questions;
+/// clients do not ask them themselves.
 #[async_trait]
 pub trait AccessQuestions {
     /// Whether `context` may read the session with `session` attributes -
@@ -445,8 +446,8 @@ impl AccessPolicy for AllowAllPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::security::testing::*;
-    use crate::security::OwnershipPolicy;
+    use crate::testing::*;
+    use crate::OwnershipPolicy;
 
     #[tokio::test]
     async fn access_questions_ask_the_policy() {

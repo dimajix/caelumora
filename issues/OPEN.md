@@ -62,12 +62,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [378](378-resource-management-epic.md) | open | medium | epic | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
-## Code structure
-
-| No. | Status | Priority | Type | Issue |
-|---|---|---|---|---|
-| [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md) | in progress | medium | refactoring | A library links the model, and the model still holds the `SecurityContext`, the policies, the secret manager, the user providers and the traits of the stores, so the compiler lets a library name what only the kernel may decide by, and only a script finds it; the plan draws two crates out of the model, `caelumora-security` and `caelumora-store`. |
-
 ## Low priority
 
 | No. | Status | Priority | Type | Issue |

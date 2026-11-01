@@ -47,12 +47,11 @@ against this list, rule by rule, before it is reported (the self-review of
     traits of its own - its questions on `AccessQuestions`, its views on `Views` - and adds nothing
     about its kind to the kernel (see [PLUGINS.md](PLUGINS.md)).
 *   A library of the agent side - `caelumora-agents`, a crate that brings an agent's components -
-    links `caelumora-api`, the model and other libraries, never the kernel - but as a
-    dev-dependency, for the world of its tests -, and names no `SecurityContext`, policy, manager or
-    store the model offers: it registers through its `LibraryBuilder` alone, asks the kernel through
-    `ActorRuntime`, `Situation` and `Turn`, and reads through the readers
-    ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/library-deps.sh` checks its
-    dependencies, `scripts/library-names.sh` the names).
+    links `caelumora-api`, the model and other libraries, never the kernel, `caelumora-security` or
+    `caelumora-store` - but as a dev-dependency, for the world of its tests -: it registers through
+    its `LibraryBuilder` alone, asks the kernel through `ActorRuntime`, `Situation` and `Turn`, and
+    reads through the readers ([ARCHITECTURE.md](ARCHITECTURE.md#principles);
+    `scripts/library-deps.sh` checks its dependencies).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-kernel/tests/security_suite.rs`, an agent's in
     `caelumora-agents/tests/security_suite.rs`, see
@@ -304,8 +303,9 @@ A running object - `SessionLoop`, `ChannelLoop`, `ParticipantRuntime` - and the 
 holds (`Session`, `Channel`) share their work by three rules:
 
 *   **The model derives.** A value derived from an entity is computed in `caelumora-model` - a
-    method of the entity (`Agent::security_context`) or a constructor of the derived type
-    (`SessionPrivacy::of(&Session)`) - never in the kernel, so that the stored document and the
+    method of the entity (`Session::effective_time_zone`) or a constructor of the derived type
+    (`SessionPrivacy::of(&Session)`) -, a context of an entity in `caelumora-security`
+    (`SecurityContext::of_agent`) - never in the kernel, so that the stored document and the
     running object cannot disagree about it.
 *   **A running object answers about its own entity, not about the one above.** A loop may have
     getters for attributes of its own entity that callers need often; they return owned values. Its
@@ -370,8 +370,8 @@ A type takes the services it works with - the `AccessPolicy`, the stores, the ev
     such as `ParticipantRuntime` is such a context; it does not hand out the `Kernel` behind it, so
     that its users cannot reach past it (issue 359).
 *   **The policies travel as a pair.** A type that asks both the `AccessPolicy` and the
-    `ConfidentialityPolicy` holds them as one `Policies` (`caelumora_model::security`) and is made
-    with `&Policies`, as a manager is made with `&EntityStores`, and a function that asks both takes
+    `ConfidentialityPolicy` holds them as one `Policies` (`caelumora-security`) and is made with
+    `&Policies`, as a manager is made with `&EntityStores`, and a function that asks both takes
     `&Policies` (`may_reach`, `channel_reading`); who hands them out lends `policies()` beside
     `access_policy()` and `confidentiality()` for whoever asks one. A component of the kernel is the
     exception: it takes each policy as a service of its own from its `ComponentContext`, where the
@@ -563,9 +563,11 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     `make_channel`, `make_message` - and writes beside it only what it differs in
     (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
     one place and every test says what is particular about its document. These modules are the
-    model's, so that its own tests reach them too; so is what stores documents in `EntityStores` and
-    needs nothing of the kernel - `stored_agent`, `record_users`. The kernel's `testing` modules
-    build what runs and stores - a kernel, a running or a stored session.
+    model's, so that its own tests reach them too; what stores documents in `EntityStores` and needs
+    nothing of the kernel - `stored_agent`, `record_users` - is the stores'
+    (`caelumora_store::testing`), and the policies a test opens them by are
+    `caelumora_security::testing`'s. The kernel's `testing` modules build what runs and stores - a
+    kernel, a running or a stored session.
 *   **A kernel in tests:** a test builds its kernel with `testing::TestKernel` (issue 375), whose
     parts all have defaults - a new memory store, no policy, the default rules, the default
     configuration, the kernel's component kinds and agents that answer "ok" - and names only those

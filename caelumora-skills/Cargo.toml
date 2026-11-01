@@ -16,6 +16,7 @@ kernel = [
     "api",
     "dep:caelumora-kernel",
     "dep:caelumora-store",
+    "dep:caelumora-security",
     "dep:tracing",
     "dep:anyhow",
     "dep:serde_json",
@@ -34,6 +35,7 @@ chrono = { workspace = true, features = ["serde"] }
 caelumora-api = { workspace = true, optional = true }
 caelumora-kernel = { workspace = true, optional = true }
 caelumora-store = { workspace = true, optional = true }
+caelumora-security = { workspace = true, optional = true }
 caelumora-agents = { workspace = true, optional = true }
 caelumora-compaction = { workspace = true, optional = true }
 caelumora-rest-server = { workspace = true, optional = true }
@@ -45,6 +47,7 @@ thiserror = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
 caelumora-store = { workspace = true, features = ["test-support"] }
 caelumora-agents = { workspace = true, features = ["test-support"] }
 caelumora-kernel = { workspace = true, features = ["test-support"] }

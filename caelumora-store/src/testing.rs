@@ -1,9 +1,9 @@
-//! What tests open the stores by, stand-ins for them, and checks of what they keep.
+//! What tests store their world by, and stand-ins for the stores.
 //!
-//! `Policies::permitting_all` opens the stores for what a test writes before it runs what it tests,
-//! `Policies::by_default_rules` for a test of an access policy (issue 449). `ContendedStore` stands
-//! in for a storage that another writer got to first (issue 492): stores in memory whose documents
-//! of one kind refuse to be written as many times as a test says.
+//! `stored_agent` and `record_users` store an agent with its personality and users, by the system,
+//! for a test that reads them. `ContendedStore` stands in for a storage that another writer got to
+//! first (issue 492): stores in memory whose documents of one kind refuse to be written as many
+//! times as a test says.
 #![expect(clippy::expect_used, reason = "test code: what fails here fails the test that runs it")]
 
 use crate::documents::{Document, DocumentOf, DocumentStorage};
@@ -16,11 +16,11 @@ use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, Personality};
 use caelumora_model::channel::Participant;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{Admission, SecurityContext};
 use caelumora_model::store::query::{FieldPath, Filter};
 use caelumora_model::store::{EntityKind, Revision, StoreError, StoreResult};
 use caelumora_model::user::User;
 use caelumora_model::value::name::ScopedName;
+use caelumora_security::{Admission, SecurityContext};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;

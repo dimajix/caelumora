@@ -32,10 +32,11 @@ mod manager;
 pub use manager::GroupManager;
 
 use caelumora_model::group::{Group, GroupId};
-use caelumora_model::security::{AclEntry, SecurityContext, Subject};
+use caelumora_model::security::{AclEntry, Subject};
 use caelumora_model::store::{StoreError, StoreResult, StoreResultExt};
 use caelumora_model::user::UserId;
 use caelumora_model::value::ValueError;
+use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use chrono::Utc;
 use tracing::{debug, warn};
@@ -198,11 +199,12 @@ mod tests {
     use caelumora_model::project::Project;
     use caelumora_model::removal::{Removal, RemovalId};
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::{AllowAllPolicy, Grant, Policies, SecurityAttributes};
+    use caelumora_model::security::{Grant, SecurityAttributes};
     use caelumora_model::session::SessionId;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::store::Stored;
     use caelumora_model::value::name::ScopedName;
+    use caelumora_security::{AllowAllPolicy, Policies};
     use caelumora_store::documents::Document;
     use caelumora_store::memory::MemoryStore;
     use caelumora_store::testing::ContendedStore;

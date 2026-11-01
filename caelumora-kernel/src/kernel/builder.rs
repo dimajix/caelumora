@@ -32,13 +32,13 @@ use caelumora_api::library::Library;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, DEFAULT_VARIANT, KERNEL, KERNEL_PROMPTS};
-use caelumora_model::secret::{SecretManager, SecretProvider};
-use caelumora_model::security::{AccessPolicy, Policies};
 use caelumora_model::store::{StoreResult, Stored};
 use caelumora_model::type_map::{ErasedArc, TypeKey};
+use caelumora_security::confidentiality::ConfidentialityPolicy;
+use caelumora_security::secret::{SecretManager, SecretProvider};
+use caelumora_security::{AccessPolicy, Policies};
 use caelumora_store::memberships::StoreMemberships;
 use caelumora_store::{EntityStore, EntityStores, Persistence, PersistenceBackend};
 use serde::de::DeserializeOwned;
@@ -356,11 +356,11 @@ impl KernelBuilder {
         let backends = Backends::with_plugins(plugins);
         // The policy is made before the store it guards, and bound to the kernel's once it exists.
         let memberships = Arc::new(StoreMemberships::new());
-        let access_policy =
-            config.create_access_policy(Arc::<StoreMemberships>::clone(&memberships));
-        let confidentiality = config.create_confidentiality_policy();
-        let secret_services =
-            Services::empty().with(Arc::clone(&access_policy)).with(Arc::clone(&confidentiality));
+        let policies = Policies::configured(config, Arc::<StoreMemberships>::clone(&memberships));
+        let access_policy = Arc::clone(policies.access_policy());
+        let secret_services = Services::empty()
+            .with(Arc::clone(&access_policy))
+            .with(Arc::clone(policies.confidentiality()));
         let secret_providers = backends.make_chain::<dyn SecretProvider>(
             "secret provider",
             &config.secrets.providers,
@@ -378,7 +378,6 @@ impl KernelBuilder {
         let entities = backend("entity store", "entity_store", &config.persistence.entity_store)?;
         let persistence =
             Persistence::new(entities, states).context("Cannot make the state store")?;
-        let policies = Policies::new(access_policy, confidentiality);
         let mut builder =
             Self::new(persistence.clone(), secret_manager, policies, config, backends)?;
         memberships.bind(&builder.entity_stores().groups);
@@ -669,7 +668,7 @@ mod tests {
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
     use caelumora_model::prompt_catalogue::PromptVariant;
-    use caelumora_model::security::AllowAllPolicy;
+    use caelumora_security::AllowAllPolicy;
     use std::fs;
 
     #[tokio::test]

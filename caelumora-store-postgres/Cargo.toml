@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
+caelumora-security.workspace = true
 caelumora-store.workspace = true
 caelumora-api.workspace = true
 caelumora-kernel.workspace = true
@@ -23,6 +24,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
 caelumora-store = { workspace = true, features = ["test-support"] }
 chrono.workspace = true
 caelumora-model = { workspace = true, features = ["test-support"] }

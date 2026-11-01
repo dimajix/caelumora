@@ -13,15 +13,24 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-model`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
     `User`, `SessionTemplate`, `Workspace`, `Group`, `Project`), the values with rules
     their fields hold (`value`: `Name`, `Language`, free text such as `Summary`), messages and
-    events, the words of the stores - what an entity is to be stored, how a store fails -, the
-    security and confidentiality model, and the configuration (`AppConfig`). It holds data and
-    rules, but runs nothing.
+    events, the words of the stores - what an entity is to be stored, how a store fails -, what an
+    entity carries of who may reach it (`SecurityAttributes`) and what a refusal says (`Refused`),
+    the classifications and the one flow rule over them, and the configuration (`AppConfig`). It
+    holds data and the rules over its values, but decides nothing in anyone's name and runs
+    nothing.
+*   **`caelumora-security`** - who may do what, and what may flow where (issue 517): the
+    `SecurityContext` every operation is asked in, the actions asked about (`ActionType`), the
+    access policy (`AccessPolicy`, `OwnershipPolicy`), the policy of confidentiality
+    (`ConfidentialityPolicy`, `ConfidentialityRules`) and of privacy (`PrivacyPolicy`), the
+    `Policies` of a process as the configuration chooses them, and the `SecretManager`. It depends
+    on the model; the stores and the kernel decide by it, and a library does not link it. See
+    [SECURITY.md](SECURITY.md).
 *   **`caelumora-store`** - the stores (issue 517): the entities of every kind behind one checked
     interface (`EntityStore`), the stores of the states, the histories and the transcripts, opened
     from a backend (`Persistence`, `PersistenceBackend`), the checked store every backend is asked
     through (`CheckedStore`), the store in memory and the suite every backend runs. It depends on
-    the model; the kernel opens it, a plugin of the stores brings a backend of it, and a library
-    does not link it. See [STORAGE.md](STORAGE.md).
+    the model and `caelumora-security`; the kernel opens it, a plugin of the stores brings a backend
+    of it, and a library does not link it. See [STORAGE.md](STORAGE.md).
 *   **`caelumora-kernel`** - the kernel, where everything runs: sessions, channels and the actors of
     their users and approvers, the kinds of agent registered with it (`AgentKinds`), components, the
     views, the event bus, the controllers that keep entities live, workspaces, the storages of
@@ -474,11 +483,11 @@ The design repeats a few decisions; new code follows them.
     component kind of a library provides a facet the kernel builds in its own name or uses a service
     of the kernel but the texts (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A library links the API,
-    the model and other libraries, never the kernel - `scripts/library-deps.sh` checks its
-    dependencies, run by the pre-commit hook -, so the compiler refuses it what is the kernel's: a
-    view, a manager, a controller, the runtime of a participant, the `KernelBuilder`. What the model
-    still offers - the context, the policies, its managers and stores - the code keeps as a rule,
-    which `scripts/library-names.sh` checks.
+    the model and other libraries, never the kernel, `caelumora-security` or `caelumora-store` -
+    `scripts/library-deps.sh` checks its dependencies, run by the pre-commit hook -, so the
+    compiler refuses it what decides: a view, a manager, a controller, the runtime of a
+    participant, the `KernelBuilder`, a `SecurityContext`, a policy, the `SecretManager`, a store
+    (issue [517](../issues/517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md)).
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

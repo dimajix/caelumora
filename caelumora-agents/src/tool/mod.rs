@@ -1065,22 +1065,22 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::approval::{ApprovalRule, RuleDecision};
     use caelumora_model::channel::Channel;
-    use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_model::config::{AppConfig, ApprovalsConfig};
     use caelumora_model::content::testing::make_content_ref;
     use caelumora_model::content::ContentId;
     use caelumora_model::context::{ContextRef, FrameRef};
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::note::NoteId;
-    use caelumora_model::security::{
-        AccessPolicy, ActionType, AllowAllPolicy, OwnershipPolicy, SecurityContext,
-    };
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
     use caelumora_model::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
+    use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
+    use caelumora_security::{
+        AccessPolicy, ActionType, AllowAllPolicy, OwnershipPolicy, SecurityContext,
+    };
     use serde_json::json;
     use std::fs;
     use std::future;
@@ -1740,7 +1740,8 @@ mod tests {
     /// An executor whose flow knows the compartment "hr", and which lets
     /// every action (issue 304: the flow is the policy's apart).
     fn with_hr() -> ToolExecutor {
-        use caelumora_model::confidentiality::{Compartment, Compartments, ConfidentialityRules};
+        use caelumora_model::confidentiality::{Compartment, Compartments};
+        use caelumora_security::confidentiality::ConfidentialityRules;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let tools: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: true });
         guarding_under(

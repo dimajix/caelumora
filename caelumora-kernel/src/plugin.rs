@@ -46,11 +46,13 @@ mod tests {
     use caelumora_model::define_id;
     use caelumora_model::group::Group;
     use caelumora_model::removal::Removal;
-    use caelumora_model::secret::{SecretManager, SecretProvider, SecretResult};
-    use caelumora_model::security::{Policies, Secured, SecurityAttributes, SecurityContext};
+    use caelumora_model::secret::SecretResult;
+    use caelumora_model::security::{Secured, SecurityAttributes};
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{EntityKind, NoEntity, Revision, StoreError, StoreResult, Stored};
     use caelumora_model::type_map::TypeKey;
+    use caelumora_security::secret::{SecretManager, SecretProvider};
+    use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::documents::{DocumentOf, DocumentStorage};
     use caelumora_store::history::HistoryStore;
     use caelumora_store::memory::MemoryStore;

@@ -11,7 +11,7 @@ use caelumora_model::define_id;
 use caelumora_model::digest::{Digest, Encoder};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField, Scoped};
-use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
+use caelumora_model::security::{Secured, SecurityAttributes};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::ScopeSnapshot;
 use caelumora_model::store::{EntityKind, NoEntity, Revision, Stored};
@@ -22,14 +22,6 @@ use serde::{Deserialize, Serialize};
 use std::ops::Not;
 
 define_id!(SkillId);
-
-/// Loading a skill into a turn (issue 22): what the agent then follows,
-/// asked in the turn's context - the agent for its owner, whoever asked as
-/// initiator. Apart from reading, so that a policy can let a skill be read
-/// but not used, or the other way round; granted as reading by default.
-/// Whether its classification may flow into the channel is asked besides
-/// (`may_publish`).
-pub const USE: CustomVerb = CustomVerb { name: "Use", requires: Requirement::Grant(Grant::Read) };
 
 /// A change of a skill, as it was asked: what it says is made into the
 /// skill's values as it is applied (issue 248).

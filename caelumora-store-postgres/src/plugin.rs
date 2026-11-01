@@ -8,7 +8,7 @@ use caelumora_api::component::Params;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_model::secret::SecretManager;
+use caelumora_security::secret::SecretManager;
 use caelumora_store::PersistenceBackend;
 use std::sync::Arc;
 

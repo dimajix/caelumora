@@ -12,7 +12,6 @@ serde_json.workspace = true
 serde-saphyr.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
 chrono = { workspace = true, features = ["serde"] }
-anyhow.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 # The texts given to models (issue 57).
@@ -43,12 +42,11 @@ bytes.workspace = true
 # channels, sessions, users, templates and personalities they write
 # (`message::testing`, `content::testing`, `channel::testing`,
 # `session::testing`, `user::testing`, `template::testing`, `agent::testing`),
-# and the policies a test opens the stores by (`Policies::permitting_all`,
-# issue 449).
+# the classifications and compartments they write (`confidentiality::testing`)
+# and the actors and attributes they share an entity with (`security::testing`).
 test-support = []
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt", "sync"] }
 tempfile.workspace = true
 
 [lints]

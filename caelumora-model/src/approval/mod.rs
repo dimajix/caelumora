@@ -2,8 +2,7 @@ mod shell;
 
 use crate::actor::ActorId;
 use crate::agent::AgentId;
-use crate::channel::{Channel, ChannelId};
-use crate::security::SecurityContext;
+use crate::channel::ChannelId;
 use crate::session::SessionId;
 use crate::tool::{ArgumentLanguage, ToolCall, ToolParameters};
 use chrono::{DateTime, Utc};
@@ -24,16 +23,6 @@ impl Approver {
     /// A new approver, deciding by `strategy`.
     pub fn new(strategy: ApprovalStrategy) -> Self {
         Self { id: ApproverId::new(), strategy }
-    }
-
-    /// The context the approver acts in, in `channel`: its own, answered for
-    /// by the owner of its channel (issue 341) - what its actor continues a
-    /// request in, and what the channel admits its envelopes in (issue 516).
-    pub fn security_context(&self, channel: &Channel) -> SecurityContext {
-        SecurityContext {
-            owner_id: channel.security_attributes.owner_id,
-            ..SecurityContext::new(ActorId::Approver(self.id), channel.session_id, channel.id)
-        }
     }
 }
 

@@ -26,13 +26,14 @@ use caelumora_model::component::{
 };
 use caelumora_model::confidentiality::{Classification, Confidentiality};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{Policies, SecurityAttributes, SecurityContext};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::SessionId;
 use caelumora_model::tool::Tool;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::{Name, ScopedName};
 use caelumora_model::work::Work;
+use caelumora_security::{Policies, SecurityContext};
 use caelumora_store::{EntityStores, Persistence};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;

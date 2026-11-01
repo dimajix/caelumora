@@ -170,7 +170,7 @@ mod tests {
     use axum::Router;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::AgentId;
-    use caelumora_model::security::SecurityContext;
+    use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use std::sync::Arc;
     use tower::ServiceExt;

@@ -26,7 +26,7 @@ Who may do what is decided by four concepts. Since issue 304 each has its own fu
 
 ## Which concept decides each action
 
-From `OwnershipPolicy::check` (`caelumora-model/src/security/ownership.rs`). The system itself -
+From `OwnershipPolicy::check` (`caelumora-security/src/ownership.rs`). The system itself -
 caller, owner and principal the system (`SecurityContext::is_system`, issue 477) - is allowed
 everything before any variant is looked at. "Principal" is the context's principal - a user
 themselves, an agent its owner -, "caller" the one acting - the agent itself. What is done with a

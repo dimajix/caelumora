@@ -10,11 +10,11 @@ mod transcripts;
 use async_trait::async_trait;
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::channel::{ChannelId, ChannelState};
-use caelumora_model::security::Admission;
 use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
 use caelumora_model::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
 use caelumora_model::user::{UserChannelState, UserId};
 use caelumora_model::value::name::ScopedName;
+use caelumora_security::Admission;
 use caelumora_store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::transcript::{load_named_by_turn, TranscriptStore};
@@ -790,7 +790,6 @@ mod tests {
     use caelumora_model::message::testing::{id, make_message};
     use caelumora_model::note::{NoteChange, NoteId};
     use caelumora_model::removal::Removal;
-    use caelumora_model::security::{OwnershipPolicy, Policies, SecurityContext};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId};
     use caelumora_model::store::query::Query;
@@ -798,6 +797,7 @@ mod tests {
     use caelumora_model::turn::TurnState;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Description;
+    use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
     use caelumora_store::{suite, EntityStore, EntityStores, Persistence};
     use tempfile::tempdir;
     use tokio::task::JoinSet;

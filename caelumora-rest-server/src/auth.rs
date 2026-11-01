@@ -29,11 +29,12 @@ use axum::Router;
 use caelumora_kernel::controller::ControllerManager;
 use caelumora_kernel::user_provider::{AuthError, Credential, UserManager};
 use caelumora_model::config::AuthConfig;
-use caelumora_model::secret::{SecretError, SecretManager};
-use caelumora_model::security::SecurityContext;
+use caelumora_model::secret::SecretError;
 use caelumora_model::store::StoreError;
 use caelumora_model::user::UserId;
 use caelumora_rest_api::auth::{LoginRequest, UserResponse};
+use caelumora_security::secret::SecretManager;
+use caelumora_security::SecurityContext;
 use chrono::Utc;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -485,7 +486,7 @@ mod tests {
     use caelumora_kernel::event::EventBus;
     use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_kernel::user_provider::UserProvider;
-    use caelumora_model::security::Policies;
+    use caelumora_security::Policies;
     use caelumora_store::{EntityStores, Persistence};
     use tower::ServiceExt;
 

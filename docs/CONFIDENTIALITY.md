@@ -279,7 +279,7 @@ reads. A channel may always be copied into itself. Otherwise the rules allow it 
 
 *   the entry's classification flows into the reader's, and
 *   both channels belong to the same session, or the source's session lets the reader's read it
-    (`SessionPrivacy::permits`).
+    (`PrivacyPolicy::permits`, of the policy the source's session chose).
 
 That is a question of classification and privacy alone. Whether the agent may reach the other
 channel at all is asked before, as for a user: `GetChannel`, which an agent may if its owner may

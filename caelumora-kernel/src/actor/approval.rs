@@ -14,8 +14,9 @@ use caelumora_model::approval::{
 };
 use caelumora_model::channel::{self, Channel, Participant};
 use caelumora_model::event::GlobalEvent;
-use caelumora_model::security::{AccessPolicy, AccessQuestions, SecurityAttributes};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::value::name::Name;
+use caelumora_security::{AccessPolicy, AccessQuestions};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, HashSet};
 use std::future;
@@ -488,14 +489,15 @@ mod tests {
     use caelumora_model::approval::ApprovalRequest;
     use caelumora_model::channel::testing::make_channel;
     use caelumora_model::channel::{Channel, InternalActor};
-    use caelumora_model::security::SecurityContext;
-    use caelumora_model::security::{Grant, OwnershipPolicy, Policies, Subject};
+    use caelumora_model::security::{Grant, Subject};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::tool::ToolCall;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserId};
     use caelumora_model::value::name::ScopedName;
+    use caelumora_security::SecurityContext;
+    use caelumora_security::{OwnershipPolicy, Policies};
     use caelumora_store::testing::record_users;
     use caelumora_store::{EntityStores, Persistence};
     use serde_json::json;

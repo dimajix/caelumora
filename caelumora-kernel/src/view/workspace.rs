@@ -8,10 +8,10 @@
 
 use super::Views;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::AccessQuestions;
 use caelumora_model::snapshot::WorkspaceSnapshot;
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_security::AccessQuestions;
 
 #[derive(Clone)]
 pub struct WorkspaceView {

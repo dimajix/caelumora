@@ -1,6 +1,6 @@
 # 517 — The model offers the libraries what only the kernel may decide by
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -200,3 +200,23 @@ name the context, so the stores leave before it.
   The kernel, the REST server and the stores' plugins link the crate, the crates on both levels
   with `kernel`, `caelumora-agents` with `test-support`, the other libraries for their tests only.
   No behaviour changes. Stored data: none.
+- **2026-11-01** — Step 3: `caelumora-security`. The context, the actions and their verbs, the
+  access policy with `Admission` and `Memberships`, the policies of confidentiality and of privacy,
+  `Policies` and the secret manager with its providers' trait left the model, which keeps
+  `SecurityAttributes`, `Refused`, the values of confidentiality and of privacy, and `Secrets`. The
+  model builds no context any more: `Agent::security_context` and `Approver::security_context` are
+  `SecurityContext::of_agent` and `of_approver`, and `Questions::resolve` takes the owner and the
+  initiator. `AppConfig`'s two methods that chose the policies are `Policies::configured`, and
+  beside it `ConfidentialityRules::configured`, which `caelumora-app` and a test of the seed ask
+  for the rules alone - a constructor the plan did not name. A session's policy of privacy is
+  chosen as `<dyn PrivacyPolicy>::of`. The policies a test opens the stores by are
+  `caelumora_security::testing`'s, the classifications and the actors tests write
+  `caelumora_model::confidentiality::testing`'s and `caelumora_model::security::testing`'s. The
+  verb `USE` of a skill moved to its access, under `kernel`, so that the data of `caelumora-skills`
+  links no policy. `library-deps.sh` refuses `caelumora-security` and `caelumora-store` among a
+  library's normal dependencies, and `library-names.sh` is deleted.
+  After the review of step 2: `KeptItem` is the model's again, beside the fields that address its
+  shape (`HistoryField`); the stores' dependencies are narrowed (`uuid` without `v4`, `chrono` for
+  the suite alone), and the crates whose tests use nothing of the stores' `test-support` link them
+  without it; module docs and documents that still placed the stores in the model are corrected.
+  Every point of *Done when* holds. No behaviour changes. Stored data: none.

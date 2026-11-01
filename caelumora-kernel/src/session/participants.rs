@@ -7,9 +7,9 @@ use crate::channel::{ChannelLoop, ResolvedParticipant};
 use anyhow::Result;
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::{Channel, ChannelId, HistoryAccess, Participant};
-use caelumora_model::security::{ActionType, Enforcement, SecurityContext};
 use caelumora_model::session::Session;
 use caelumora_model::store::{StoreError, Stored};
+use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use std::sync::Arc;
 use tracing::info;
 
@@ -208,14 +208,13 @@ mod tests {
     use caelumora_model::channel::{self, Channel, HistoryAccess};
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::group::GroupId;
-    use caelumora_model::security::{
-        AclEntry, Grant, SecurityAttributes, SecurityContext, Subject,
-    };
+    use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::{Session, SessionUpdateEvent};
     use caelumora_model::store::StoreError;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::{User, UserId};
+    use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
     use std::sync::Arc;

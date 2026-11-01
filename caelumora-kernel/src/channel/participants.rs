@@ -15,9 +15,10 @@ use caelumora_model::channel::Participant;
 use caelumora_model::command::Command;
 use caelumora_model::mention::{handle_of, MentionDirectory};
 use caelumora_model::question::{QuestionError, Questions};
-use caelumora_model::security::{ActionType, SecurityAttributes, SecurityContext};
+use caelumora_model::security::SecurityAttributes;
 use caelumora_model::store::Stored;
 use caelumora_model::value::name::Name;
+use caelumora_security::{ActionType, SecurityContext};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time;
@@ -495,7 +496,7 @@ impl ChannelLoop {
             .into_iter()
             .filter(|id| matches!(id, ActorId::User(_)))
             .collect();
-        questions.resolve(&self.mentions.load(), &users, context)
+        questions.resolve(&self.mentions.load(), &users, context.owner_id, context.initiator_id)
     }
 
     /// Whom of `actors`, those of `channel`, a mention can name: its
@@ -537,11 +538,12 @@ mod tests {
     use caelumora_model::channel::{Channel, HistoryAccess, JOINED, LEFT};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::history::HistoryEntry;
-    use caelumora_model::security::{Grant, SecurityContext, Subject};
+    use caelumora_model::security::{Grant, Subject};
     use caelumora_model::session::testing::make_session;
     use caelumora_model::session::ChannelId;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::user::UserId;
+    use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use std::collections::HashSet;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -613,10 +615,11 @@ mod tests {
     async fn only_who_is_cleared_takes_part_in_or_reads_a_channel() {
         use crate::channel::ChannelError;
         use caelumora_model::confidentiality::{
-            Clearance, Compartment, Compartments, Confidentiality, ConfidentialityRules,
+            Clearance, Compartment, Compartments, Confidentiality,
         };
         use caelumora_model::role::{RoleId, Roles};
         use caelumora_model::user::User;
+        use caelumora_security::confidentiality::ConfidentialityRules;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let roles = Roles::new([

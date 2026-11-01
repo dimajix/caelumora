@@ -44,6 +44,7 @@ flowchart TD
     rest_api["caelumora-rest-api"]
     rest_client["caelumora-rest-client"]
     rest_server["caelumora-rest-server"]
+    security["caelumora-security"]
     store["caelumora-store"]
 
     both -. "library" .-> agents
@@ -53,17 +54,20 @@ flowchart TD
     both --> model
     both --> rest_api
     both -. "server" .-> rest_server
+    both -. "kernel" .-> security
     both -. "kernel" .-> store
     plugins --> api
     plugins --> kernel
     plugins --> model
+    plugins --> security
     a2a & comfyui & compaction & mcp & ollama & workspace_tools --> agents
     libraries --> api
     agents -. "test-support" .-> kernel
     libraries --> model
     agents -. "test-support" .-> store
-    api & kernel & logging & rest_api & rest_server & store --> model
+    api & kernel & logging & rest_api & rest_server & security & store --> model
     kernel & rest_server --> api
+    kernel & rest_server & store --> security
     kernel & rest_server & store_json & store_postgres --> store
     rest_server --> kernel
     rest_server --> rest_api
@@ -80,8 +84,8 @@ those it takes with other features than their default ones.
 <!-- crate-graph.sh: programs -->
 | Program | Depends on |
 |---|---|
-| `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client` and `caelumora-store` |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server` and `caelumora-store`; `caelumora-artifacts` and `caelumora-skills` with `kernel` and `library` alone |
+| `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-security` and `caelumora-store` |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server`, `caelumora-security` and `caelumora-store`; `caelumora-artifacts` and `caelumora-skills` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
 `caelumora-rest-client` depends on no crate of the workspace, and none on it; it is reserved for a
@@ -95,12 +99,13 @@ The graph is not only what has grown, but holds rules of the design:
 *   `caelumora-model` depends on no crate of the workspace, `caelumora-api` and
     `caelumora-rest-api` on the model alone: the API is what the agent side is given of the kernel,
     the wire of the REST API is read without the server.
-*   A library links the API, the model and other libraries, never the kernel (issue 516): it reaches
-    the kernel through the API alone. `scripts/library-deps.sh` checks it, from the pre-commit hook,
-    for the libraries and for the library side of the crates that are a plugin and a library at
-    once - without their features, and with `library` alone. `caelumora-agents` links the kernel
-    only with `test-support`, the feature its tests and those of other libraries build the kernel
-    with.
+*   A library links the API, the model and other libraries, never the kernel, `caelumora-security`
+    or `caelumora-store` (issues 516, 517): it reaches the kernel through the API alone, and nothing
+    that decides is there for it to name. `scripts/library-deps.sh` checks it, from the pre-commit
+    hook, for the libraries and for the library side of the crates that are a plugin and a library
+    at once - without their features, and with `library` alone. `caelumora-agents` links the kernel
+    and the stores only with `test-support`, the feature its tests and those of other libraries
+    build the kernel's world with.
 *   A plugin links the kernel, which it extends (see [PLUGINS.md](PLUGINS.md)).
 *   Nothing but the programs depends on a plugin, and only the crates that are a plugin and a
     library at once, with `server`, on `caelumora-rest-server`.

@@ -13,9 +13,9 @@ use caelumora_api::component::{
 use caelumora_api::component::{ComponentError, ComponentResult};
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::scope::Scope;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::type_map::TypeKey;
 use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use futures::future::BoxFuture;
 use serde::Deserialize;
@@ -796,10 +796,11 @@ mod tests {
     use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
     use caelumora_model::removal::{Removal, RemovalId};
     use caelumora_model::scope::ScopeField;
-    use caelumora_model::security::{Policies, SecurityAttributes};
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::query::{Page, Query};
     use caelumora_model::store::{StoreError, StoreResult};
     use caelumora_model::user::UserId;
+    use caelumora_security::Policies;
     use caelumora_store::{Deleted, EntityStores, Persistence};
     use serde_json::json;
     use std::sync::atomic::{AtomicUsize, Ordering};

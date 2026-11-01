@@ -11,10 +11,10 @@ use caelumora_api::terminal::{Shell, Terminal, TerminalReader};
 use caelumora_api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, Session};
 use caelumora_model::value::text::Description;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_security::SecurityContext;
 use std::sync::Arc;
 use tracing::warn;
 

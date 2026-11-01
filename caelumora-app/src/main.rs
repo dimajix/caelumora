@@ -285,12 +285,13 @@ mod tests {
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::config::BackendConfig;
     use caelumora_model::removal::Removal;
-    use caelumora_model::secret::SecretManager;
-    use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_model::store::query::Query;
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
+    use caelumora_security::confidentiality::ConfidentialityRules;
+    use caelumora_security::secret::SecretManager;
+    use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_skills::skill::Skill;
     use caelumora_store::Persistence;
     use serde_json::json;
@@ -339,7 +340,7 @@ mod tests {
         let mut builder = KernelBuilder::new(
             store.clone(),
             secrets,
-            Policies::new(access_policy, config.create_confidentiality_policy()),
+            Policies::new(access_policy, Arc::new(ConfidentialityRules::configured(config))),
             config,
             Backends::with_plugins(&plugins),
         )

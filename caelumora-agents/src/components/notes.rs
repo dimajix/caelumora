@@ -420,10 +420,10 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::message::MessageId;
-    use caelumora_model::security::OwnershipPolicy;
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::work::Work;
+    use caelumora_security::OwnershipPolicy;
     use chrono::Utc;
     use std::iter;
 

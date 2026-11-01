@@ -3,9 +3,9 @@
 
 use super::{AuthError, AuthResult, Credential, UserProvider};
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{StoreError, StoreResultExt};
 use caelumora_model::user::{User, UserId, UserUpdateEvent};
+use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -178,10 +178,11 @@ mod tests {
     use caelumora_model::event::EntityChange;
     use caelumora_model::removal::Removal;
     use caelumora_model::role::RoleId;
-    use caelumora_model::security::{Policies, SecurityAttributes};
+    use caelumora_model::security::SecurityAttributes;
     use caelumora_model::store::Stored;
     use caelumora_model::user::testing::make_user;
     use caelumora_model::value::name::Name;
+    use caelumora_security::Policies;
     use caelumora_store::testing::ContendedStore;
     use caelumora_store::{EntityStores, Persistence};
     use std::collections::HashMap;

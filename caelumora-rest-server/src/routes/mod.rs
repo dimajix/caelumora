@@ -401,9 +401,9 @@ pub(crate) mod tests {
     use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_kernel::user_provider::UserManager;
     use caelumora_model::config::{AppConfig, AuthConfig};
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::template::testing::{make_channel_template, make_template};
     use caelumora_model::template::{ChannelTemplate, SessionTemplate};
+    use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use tower::ServiceExt;
     use uuid::Uuid;

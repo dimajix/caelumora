@@ -1,9 +1,8 @@
 use crate::approval::ApprovalRule;
 use crate::command::default_commands;
 use crate::component::ComponentConfig;
-use crate::confidentiality::{Compartments, ConfidentialityPolicy, ConfidentialityRules};
+use crate::confidentiality::Compartments;
 use crate::role::Roles;
-use crate::security::{AccessPolicy, AllowAllPolicy, Memberships, OwnershipPolicy};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -13,7 +12,6 @@ use std::fs;
 use std::io::Error;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -393,29 +391,6 @@ impl AppConfig {
             })?;
         }
         Ok(())
-    }
-
-    /// The one `AccessPolicy` of the process, as configured, learning
-    /// who belongs to a group from `memberships` (issues 23, 286).
-    pub fn create_access_policy(&self, memberships: Arc<dyn Memberships>) -> Arc<dyn AccessPolicy> {
-        match self.security {
-            SecurityConfig::Ownership => Arc::new(OwnershipPolicy::with_memberships(memberships)),
-            SecurityConfig::AllowAll => {
-                tracing::warn!("Security policy 'allow_all' is configured: every user may do everything. Development only.");
-                Arc::new(AllowAllPolicy::new())
-            }
-        }
-    }
-
-    /// The one `ConfidentialityPolicy` of the process (issue 304): the rules
-    /// of the configured compartments and roles - also under `allow_all`,
-    /// which allows every action but no flow the rules refuse.
-    pub fn create_confidentiality_policy(&self) -> Arc<dyn ConfidentialityPolicy> {
-        let rules = ConfidentialityRules::new(self.compartments.clone());
-        Arc::new(match &self.roles {
-            Some(roles) => rules.with_roles(roles.clone()),
-            None => rules,
-        })
     }
 }
 

@@ -1,24 +1,18 @@
-//! A history as a store keeps it (issue 379): its chain, which is the truth
-//! and only appended to, and beside it the items as they stand - every
-//! message with every change since folded into it - and who was a member
-//! when (`Memberships`), both derived from the chain and rebuilt from it at
-//! any time. The chain is written by the put of the state that holds it
-//! (`StateStore`); the `HistoryStore` is the read side, for whoever reads a
-//! history without holding it - always as a reader, who is given what of
-//! each entry they may see (`Recorded::as_seen_by`, issue 417): a predicate
-//! over what the store keeps of an entry and the reader's ranges, which the
-//! model gives as data too (`Filter::seen_by`, issue 451), so that a
-//! database answers it as a `WHERE`. What else a page keeps - the messages
-//! of one sender, those heard, those of a classification the reader may
-//! copy - is a condition as data as well (`Filter<HistoryField>`, issue
-//! 421). Both are judged on an item as it is kept (`KeptItem`).
+//! What a page of a history is filtered by (issues 421, 451): an item as it is kept to be judged
+//! (`KeptItem`) - the item as it is recorded, its position and whether it is published -, the
+//! fields of it a filter names (`HistoryField`), and the conditions over them
+//! (`Filter<HistoryField>`): what a reader may be given of each entry (`Filter::seen_by`, as
+//! `Recorded::as_seen_by` decides it, issue 417), the messages of one sender, those heard, those of
+//! a classification the reader may copy - conditions as data, so that a database answers them as a
+//! `WHERE`. The histories a store keeps, and how it reads them, are `caelumora_store::history`'s.
 
 use crate::actor::ActorId;
 use crate::chain::Position;
 use crate::confidentiality::{Classification, Compartments, Confidentiality, Reading};
-use crate::history::Reader;
+use crate::history::{Reader, Recorded};
 use crate::message::MessageRole;
 use crate::store::query::{Field, Filter};
+use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::Range;
 
@@ -209,5 +203,25 @@ impl Filter<HistoryField> {
             Filter::is_in(HistoryField::Level, levels),
             Filter::Or(vec![Filter::IsNull(HistoryField::Compartments), meant_for_each]),
         ])
+    }
+}
+
+/// An item as it is kept to be judged (issue 451): the item as it is
+/// recorded, with its position and whether it is published - derived as it
+/// is made, as the item is from the chain -, so that a filter of a page
+/// names them (`HistoryField`). What a database keeps of an item, and what
+/// a store in memory judges a filter on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeptItem {
+    pub seq: Position,
+    pub published: bool,
+    #[serde(flatten)]
+    pub item: Recorded,
+}
+
+impl KeptItem {
+    /// `item`, at the position `seq`, as it is kept.
+    pub fn of(seq: Position, item: Recorded) -> Self {
+        Self { seq, published: item.entry.is_published(), item }
     }
 }

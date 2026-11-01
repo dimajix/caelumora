@@ -273,11 +273,11 @@ impl Backends {
 mod tests {
     use super::*;
     use crate::user_provider::{Credential, UserManager, UserProvider};
-    use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::secret::{SecretManager, SecretProvider};
-    use caelumora_model::security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_model::user::{User, UserId};
+    use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
+    use caelumora_security::secret::{SecretManager, SecretProvider};
+    use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use serde::Deserialize;
     use serde_json::json;

@@ -10,11 +10,11 @@ use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use caelumora_model::agent::Personality;
 use caelumora_model::component::ComponentBundle;
-use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::parse_yaml;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::store::{StoreResult, StoreResultExt, Stored};
 use caelumora_model::template::SessionTemplate;
+use caelumora_security::confidentiality::ConfidentialityPolicy;
+use caelumora_security::SecurityContext;
 use caelumora_store::{EntityStore, EntityStores};
 use serde::Deserialize;
 use serde_json::Value;
@@ -187,8 +187,9 @@ pub async fn load(
 mod tests {
     use super::*;
     use caelumora_model::config::AppConfig;
-    use caelumora_model::security::Policies;
     use caelumora_model::store::query::Query;
+    use caelumora_security::confidentiality::ConfidentialityRules;
+    use caelumora_security::Policies;
     use caelumora_store::Persistence;
     use std::sync::Mutex;
 
@@ -198,7 +199,7 @@ mod tests {
         let config =
             AppConfig::load(Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/config.yaml"))
                 .unwrap();
-        config.create_confidentiality_policy()
+        Arc::new(ConfidentialityRules::configured(&config))
     }
 
     #[tokio::test]

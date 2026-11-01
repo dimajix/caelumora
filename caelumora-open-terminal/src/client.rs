@@ -7,8 +7,8 @@
 use caelumora_api::remote::describe_request_error;
 use caelumora_api::terminal::{TerminalError, TerminalResult};
 use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityContext;
+use caelumora_security::secret::SecretManager;
+use caelumora_security::SecurityContext;
 use reqwest::{Client as HttpClient, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use std::fmt;

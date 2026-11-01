@@ -25,20 +25,19 @@ use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
+use caelumora_model::confidentiality::Classification;
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::content::ContentId;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_model::group::{Group, GroupId};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{
-    AclEntry, ActionType, Enforcement, Policies, SecuredMut, SecurityAttributes, SecurityContext,
-    Subject, WRITE,
-};
+use caelumora_model::security::{AclEntry, SecuredMut, SecurityAttributes, Subject};
 use caelumora_model::store::{Address, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
+use caelumora_security::confidentiality::ConfidentialityQuestions;
+use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext, WRITE};
 use caelumora_store::{purge_behind, EntityStore};
 use chrono::Utc;
 use serde::Deserialize;

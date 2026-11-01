@@ -6,9 +6,9 @@ use super::{SessionView, Views};
 use caelumora_api::reader::ViewResult;
 use caelumora_model::actor::ActorId;
 use caelumora_model::project::{Project, ProjectId};
-use caelumora_model::security::AccessQuestions;
 use caelumora_model::snapshot::ProjectSnapshot;
 use caelumora_model::store::query::{Filter, Query};
+use caelumora_security::AccessQuestions;
 
 #[derive(Clone)]
 pub struct ProjectView {

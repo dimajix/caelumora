@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
-use caelumora_model::security::SecurityContext;
+use caelumora_security::SecurityContext;
 use std::sync::Arc;
 
 pub const MENTIONS_ONLY_POLICY_KIND: &str = "mentions_only_policy";

@@ -42,10 +42,7 @@ use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::removal::{Removal, RemovalId};
 use caelumora_model::role::RoleId;
 use caelumora_model::scope::{Scope, Scoped};
-use caelumora_model::security::{
-    AccessPolicy, AclEntry, ActionType, Grant, OwnershipPolicy, Secured, SecurityAttributes,
-    SecurityContext, Subject, Verb,
-};
+use caelumora_model::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use caelumora_model::session::testing::bare_session;
 use caelumora_model::session::{Session, SessionId};
 use caelumora_model::store::query::{Field, Filter, Page, Query};
@@ -64,6 +61,7 @@ use caelumora_model::value::text::Introduction;
 use caelumora_model::work::TurnId;
 use caelumora_model::work::Work;
 use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_security::{AccessPolicy, ActionType, OwnershipPolicy, SecurityContext, Verb};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};

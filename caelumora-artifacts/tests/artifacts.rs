@@ -54,9 +54,7 @@ use caelumora_model::group::{Group, GroupId};
 use caelumora_model::project::Project;
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::scope::Scope;
-use caelumora_model::security::{
-    AclEntry, Grant, Policies, Refused, Secured, SecurityAttributes, SecurityContext, Subject,
-};
+use caelumora_model::security::{AclEntry, Grant, Refused, Secured, SecurityAttributes, Subject};
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::store::{StoreError, Stored};
 use caelumora_model::user::UserId;
@@ -67,6 +65,7 @@ use caelumora_rest_server::error::ApiError;
 use caelumora_rest_server::plugin::RestPlugin;
 use caelumora_rest_server::routes::api;
 use caelumora_rest_server::state::AppState;
+use caelumora_security::{Policies, SecurityContext};
 use caelumora_store::testing::ContendedStore;
 use caelumora_store::{EntityStore, Persistence};
 use futures::stream;

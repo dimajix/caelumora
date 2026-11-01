@@ -27,7 +27,6 @@ use caelumora_model::component::ComponentBundle;
 use caelumora_model::group::Group;
 use caelumora_model::project::Project;
 use caelumora_model::removal::{Removal, RemovalId};
-use caelumora_model::security::{Policies, SecurityContext, Verb};
 use caelumora_model::session::Session;
 use caelumora_model::store::query::{Page, Query};
 use caelumora_model::store::{EntityKind, StoreError, StoreResult, Stored};
@@ -36,6 +35,7 @@ use caelumora_model::type_map::TypeKey;
 use caelumora_model::user::{User, UserChannelState, UserId, UserProfile};
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::workspace::Workspace;
+use caelumora_security::{Policies, SecurityContext, Verb};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ptr;
@@ -495,14 +495,13 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::define_id;
     use caelumora_model::removal::Removal;
-    use caelumora_model::security::{
-        OwnershipPolicy, Secured, SecurityAttributes, SecurityContext,
-    };
+    use caelumora_model::security::{Secured, SecurityAttributes};
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::store::query::NoField;
     use caelumora_model::store::{NoEntity, Revision};
     use caelumora_model::value::name::Name;
+    use caelumora_security::{OwnershipPolicy, SecurityContext};
     use serde::{Deserialize, Serialize};
     use std::ops::Not;
     use std::sync::Arc;
@@ -725,58 +724,6 @@ mod tests {
                 .await
                 .is_ok(),
             "one storage of a kind in a backend"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_user_writes_their_own_profile_and_no_one_else_s() {
-        use crate::Persistence;
-        use caelumora_model::channel::ChannelId;
-        use caelumora_model::security::{OwnershipPolicy, SecurityContext};
-        use caelumora_model::session::SessionId;
-        use caelumora_model::store::StoreError;
-        use caelumora_model::value::text::Introduction;
-        use std::sync::Arc;
-
-        let store = EntityStores::open(
-            &Persistence::in_memory(),
-            &Policies::by_default_rules(Arc::new(OwnershipPolicy::new())),
-        )
-        .unwrap()
-        .user_profiles;
-        let (alice, bob) = (UserId::new(), UserId::new());
-        let as_user = |id| {
-            SecurityContext::new(ActorId::User(id), SessionId::default(), ChannelId::default())
-        };
-
-        let mut hers =
-            UserProfile::new(alice, Some(Introduction::new("I run the budget.").unwrap()));
-        assert!(
-            matches!(
-                store.create(&as_user(bob), &mut hers).await,
-                Err(StoreError::PermissionDenied(_))
-            ),
-            "nobody writes a profile of someone else"
-        );
-        store.create(&as_user(alice), &mut hers).await.expect("her own");
-        let mut changed =
-            UserProfile::new(alice, Some(Introduction::new("Bob decides everything.").unwrap()));
-        assert!(
-            matches!(
-                store.update(&as_user(bob), &mut changed).await,
-                Err(StoreError::NotFound { .. })
-            ),
-            "nor changes it"
-        );
-        assert_eq!(
-            store
-                .get(&SecurityContext::system(), alice)
-                .await
-                .unwrap()
-                .introduction
-                .as_ref()
-                .map(Introduction::as_str),
-            Some("I run the budget.")
         );
     }
 }

@@ -112,11 +112,11 @@ mod tests {
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::command::Command;
     use caelumora_model::scope::Scope;
-    use caelumora_model::security::AccessPolicy;
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::SessionId;
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_security::AccessPolicy;
     use std::sync::Weak;
 
     /// The names of `facets`, to compare them by.
