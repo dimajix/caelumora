@@ -31,9 +31,6 @@ pub trait Plugin: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::component::service_of;
-    use crate::api::component::{ComponentFacets, ComponentKind};
-    use crate::api::component::{NoParams, Params};
     use crate::component::BuildContext;
     use crate::kernel::Kernel;
     use crate::seed::SeedSection;
@@ -41,6 +38,9 @@ mod tests {
     use crate::testing::TestKernel;
     use crate::view::Viewer;
     use async_trait::async_trait;
+    use caelumora_api::component::service_of;
+    use caelumora_api::component::{ComponentFacets, ComponentKind};
+    use caelumora_api::component::{NoParams, Params};
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::config::AppConfig;
     use caelumora_model::define_id;

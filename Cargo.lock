@@ -377,7 +377,7 @@ dependencies = [
  "axum",
  "bytes",
  "caelumora-agents",
- "caelumora-kernel",
+ "caelumora-api",
  "caelumora-model",
  "futures",
  "reqwest",
@@ -397,6 +397,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -413,6 +414,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "caelumora-model",
+ "chrono",
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-app"
 version = "0.1.0"
 dependencies = [
@@ -420,6 +442,7 @@ dependencies = [
  "axum",
  "caelumora-a2a",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-artifacts",
  "caelumora-comfyui",
  "caelumora-compaction",
@@ -455,6 +478,7 @@ dependencies = [
  "axum",
  "bytes",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "caelumora-rest-api",
@@ -480,6 +504,7 @@ dependencies = [
  "axum",
  "bytes",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "rand 0.10.3",
@@ -501,6 +526,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -520,6 +546,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "reqwest",
@@ -540,6 +567,7 @@ dependencies = [
  "async-trait",
  "axum",
  "bytes",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -564,7 +592,7 @@ name = "caelumora-logging"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "caelumora-kernel",
+ "caelumora-api",
  "caelumora-model",
  "serde_json",
  "tracing",
@@ -580,6 +608,7 @@ dependencies = [
  "async-trait",
  "axum",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -630,6 +659,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -654,6 +684,7 @@ dependencies = [
  "axum",
  "bollard",
  "bytes",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -696,6 +727,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "caelumora-rest-api",
@@ -723,6 +755,7 @@ dependencies = [
  "async-trait",
  "axum",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-compaction",
  "caelumora-kernel",
  "caelumora-model",
@@ -744,6 +777,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -761,6 +795,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "chrono",
@@ -779,6 +814,7 @@ dependencies = [
  "anyhow",
  "caelumora-a2a",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-artifacts",
  "caelumora-comfyui",
  "caelumora-compaction",
@@ -810,6 +846,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "caelumora-agents",
+ "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
  "futures",

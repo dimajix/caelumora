@@ -5,7 +5,7 @@ use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::ActorState;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;

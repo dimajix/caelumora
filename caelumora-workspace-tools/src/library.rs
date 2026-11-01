@@ -3,7 +3,7 @@
 
 use crate::{terminal_tool, workspace_prompt_provider, NAMESPACE, PROMPTS};
 use anyhow::Result;
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::library::{Library, LibraryBuilder};
 
 /// The tools of the workspace and its prompt part, as a library.
 #[derive(Debug, Default)]

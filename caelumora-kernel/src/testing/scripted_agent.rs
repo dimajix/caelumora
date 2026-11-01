@@ -5,12 +5,12 @@
 //! their participants. It tells where it stands, begins and ends its answers
 //! as an agent does, and keeps what it hears.
 
-use crate::api::actor::{agent_factory, Actor, Answering};
-use crate::api::library::{Library, LibraryBuilder};
-use crate::api::runtime::ActorRuntime;
-use crate::api::transport::{EventReceiver, EventSender};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_api::actor::{agent_factory, Actor, Answering};
+use caelumora_api::library::{Library, LibraryBuilder};
+use caelumora_api::runtime::ActorRuntime;
+use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::PersonalityKind;
 use caelumora_model::message::{Message, MessageId, MessageRole};

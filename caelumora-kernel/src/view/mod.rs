@@ -48,14 +48,14 @@ pub use session::SessionView;
 pub use workspace::WorkspaceView;
 
 use crate::actor::ActorManager;
-use crate::api::component::Services;
-use crate::api::reader::{ViewError, ViewResult};
 use crate::attachment::AttachmentManager;
 use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
 use crate::kernel::Kernel;
 use crate::session::{Found, SessionLoop, SessionManager};
 use crate::workspace::WorkspaceManager;
+use caelumora_api::component::Services;
+use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentId, Personality};
 use caelumora_model::confidentiality::{
@@ -970,12 +970,12 @@ impl Debug for Views {
 mod tests {
     use super::*;
     use crate::actor::user::ChannelWatch;
-    use crate::api::error::AttachmentError;
-    use crate::api::reader::{ChannelReader, SessionReader};
     use crate::channel::ChannelLoop;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
     use crate::testing::{Script, ScriptedAgents, TestKernel};
+    use caelumora_api::error::AttachmentError;
+    use caelumora_api::reader::{ChannelReader, SessionReader};
     use caelumora_model::actor::Rejection;
     use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
@@ -2894,7 +2894,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_released_message_is_read_where_its_channel_is_not() {
-        use crate::api::reader::ViewError;
+        use caelumora_api::reader::ViewError;
         use caelumora_model::actor::ActorId;
         use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
 

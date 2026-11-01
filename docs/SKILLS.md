@@ -137,11 +137,11 @@ change and use a skill as an extension trait on the `AccessPolicy` (`access::Ski
 `SkillsPlugin` (`plugin`), which joins them to the kernel; `library` adds the `skills` component
 (`component`) and `SkillsLibrary` (`library`), which registers it with its texts; `server` adds the
 routes and how a `SkillError` is answered (`routes`). The plugin's side builds without the agents
-(`kernel` alone), the library's without the plugin (`library` alone), which the pre-commit hook
-checks; the library without the plugin keeps the kernel from being built, as no plugin binds the
-reader it reaches skills by. Its tests run in the world of the security suite (`tests/skills.rs`).
-`caelumora-app` lists the plugin with its routes and the library, `caelumora-tui` the plugin and the
-library without the routes.
+(`kernel` alone), the library's without the plugin (`library` alone) and links no kernel, which the
+pre-commit hook checks; the library without the plugin keeps the kernel from being built, as no
+plugin binds the reader it reaches skills by. Its tests run in the world of the security suite
+(`tests/skills.rs`). `caelumora-app` lists the plugin with its routes and the library,
+`caelumora-tui` the plugin and the library without the routes.
 
 ## Not decided yet
 

@@ -17,8 +17,6 @@ pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant}
 use crate::actor::approval::ApproverActor;
 use crate::actor::user::UserActor;
 use crate::actor::AgentKinds;
-use crate::api::actor::Actor;
-use crate::api::component::{ComponentError, ComponentImpl};
 use crate::attachment::AttachmentManager;
 use crate::component::BuildContext;
 use crate::controller::{ChannelController, ControllerManager};
@@ -28,6 +26,8 @@ use crate::session::SessionError;
 use crate::session::SessionLoop;
 use anyhow::{Error, Result};
 use arc_swap::ArcSwap;
+use caelumora_api::actor::Actor;
+use caelumora_api::component::{ComponentError, ComponentImpl};
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::actor::Envelope;

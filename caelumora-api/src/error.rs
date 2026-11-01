@@ -5,17 +5,18 @@
 //! that must not be disclosed -, others, like a store backend failure, may carry file paths or
 //! other internals and belong in the log only.
 
-use crate::api::command::CommandError;
-use crate::api::component::ComponentError;
-use crate::api::reader::ViewError;
-use crate::api::terminal::TerminalError;
-use crate::api::workspace::WorkspaceError;
+use crate::command::CommandError;
+use crate::component::ComponentError;
+use crate::reader::ViewError;
+use crate::terminal::TerminalError;
+use crate::workspace::WorkspaceError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentId;
 use caelumora_model::store::StoreError;
 use caelumora_model::template::TemplateError;
 use caelumora_model::value::ValueError;
 use std::error::Error;
+use std::io;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ContentError {
@@ -34,6 +35,14 @@ pub enum ContentError {
     /// The storage failed: what happened, never where.
     #[error("the storage of content failed: {0}")]
     Unavailable(String),
+}
+
+impl ContentError {
+    /// What a failure of reading or writing is, as an error of a storage says it: its kind, never
+    /// the path.
+    pub fn unavailable(error: io::Error) -> Self {
+        Self::Unavailable(error.kind().to_string())
+    }
 }
 
 /// A backend that something kept names as where it lies - a workspace, an artifact's version, an

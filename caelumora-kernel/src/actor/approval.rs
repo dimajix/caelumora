@@ -1,12 +1,12 @@
 //! `ApproverActor`: the actor that decides an agent's requests for approval in its channel, by
 //! the answers of those taking part who may approve (issues 14, 81).
 
-use crate::api::actor::{Actor, Answering};
-use crate::api::transport::{is_closed, EventReceiver, EventSender};
 use crate::controller::ChannelController;
 use crate::kernel::ParticipantRuntime;
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_api::actor::{Actor, Answering};
+use caelumora_api::transport::{is_closed, EventReceiver, EventSender};
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{

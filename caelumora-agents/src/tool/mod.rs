@@ -19,17 +19,15 @@ use crate::prompt::NAMESPACE;
 use crate::situation::Situation;
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_kernel::api::component::LibraryComponents;
-use caelumora_kernel::api::component::{ComponentImpl, ComponentResult};
-use caelumora_kernel::api::error::AttachmentError;
-use caelumora_kernel::api::error::ContentError;
-use caelumora_kernel::api::error::StorageGone;
-use caelumora_kernel::api::reader::ViewError;
-use caelumora_kernel::api::runtime::{ActorRuntime, CallPermit};
-use caelumora_kernel::api::terminal::TerminalError;
-use caelumora_kernel::api::workspace::{
-    WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter,
-};
+use caelumora_api::component::LibraryComponents;
+use caelumora_api::component::{ComponentImpl, ComponentResult};
+use caelumora_api::error::AttachmentError;
+use caelumora_api::error::ContentError;
+use caelumora_api::error::StorageGone;
+use caelumora_api::reader::ViewError;
+use caelumora_api::runtime::{ActorRuntime, CallPermit};
+use caelumora_api::terminal::TerminalError;
+use caelumora_api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::confidentiality::{Classification, Compartment, Confidentiality};
 use caelumora_model::content::ContentRef;

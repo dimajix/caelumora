@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use caelumora_agents::llm::LLMClient;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::ActorId;
 use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};

@@ -34,8 +34,8 @@ use bollard::query_parameters::{
     RemoveVolumeOptions, StopContainerOptions,
 };
 use bollard::Docker;
-use caelumora_kernel::api::component::{ComponentError, ComponentResult, Params};
-use caelumora_kernel::api::terminal::{Shell, Terminal, TerminalError, TerminalResult};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
+use caelumora_api::terminal::{Shell, Terminal, TerminalError, TerminalResult};
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::terminal::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
@@ -627,9 +627,9 @@ mod tests {
     use super::*;
     use crate::plugin::OpenTerminalPlugin;
     use bytes::Bytes;
-    use caelumora_kernel::api::component::config_of_params;
-    use caelumora_kernel::api::component::Services;
-    use caelumora_kernel::api::terminal::{ByteStream, WorkspacePath};
+    use caelumora_api::component::config_of_params;
+    use caelumora_api::component::Services;
+    use caelumora_api::terminal::{ByteStream, WorkspacePath};
     use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::workspace::CommandStatus;

@@ -4,7 +4,7 @@
 use crate::component;
 use crate::{ARTIFACTS, NAMESPACE, PROMPTS};
 use anyhow::Result;
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::library::{Library, LibraryBuilder};
 
 /// Artifacts, as a library: what of them an agent uses.
 #[derive(Debug, Default)]

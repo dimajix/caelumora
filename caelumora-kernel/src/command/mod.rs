@@ -11,18 +11,18 @@
 //!
 //! The built-in command components live here too, one file per command. What an agent's commands
 //! are made of - `ProvidesCommands`, the `CommandSet`, the `CommandError` - is the API's
-//! (`api::command`, issue 516).
+//! (`caelumora_api::command`, issue 516).
 
 pub mod help_command;
 pub mod nudge_command;
 pub mod wakeup_command;
 
 use crate::actor::user::UserActor;
-use crate::api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
-use crate::api::component::{ComponentImpl, ComponentResult};
 use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::ComponentRegistry;
 use async_trait::async_trait;
+use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
+use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_model::security::{
     AccessPolicy, ActionType, Enforcement, SecurityAttributes, SecurityContext,

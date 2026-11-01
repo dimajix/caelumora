@@ -42,10 +42,10 @@ use crate::situation::Situation;
 #[cfg(test)]
 use crate::testing::detached_actor_runtime;
 use anyhow::Result;
-use caelumora_kernel::api::actor::Answering;
-use caelumora_kernel::api::error::AttachmentResult;
-use caelumora_kernel::api::runtime::{ActorRuntime, OwnRecord};
-use caelumora_kernel::api::transport::EventSender;
+use caelumora_api::actor::Answering;
+use caelumora_api::error::AttachmentResult;
+use caelumora_api::runtime::{ActorRuntime, OwnRecord};
+use caelumora_api::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;

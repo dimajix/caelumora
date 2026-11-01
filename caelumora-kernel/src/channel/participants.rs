@@ -522,7 +522,6 @@ impl ChannelLoop {
 mod tests {
     use crate::actor::user::ChannelWatch;
     use crate::actor::Shown;
-    use crate::api::actor::Actor;
     use crate::channel::tests::*;
     use crate::channel::ChannelLoop;
     use crate::error::is_forbidden;
@@ -531,6 +530,7 @@ mod tests {
     use crate::testing::Script;
     use crate::view::Viewer;
     use anyhow::Error;
+    use caelumora_api::actor::Actor;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::Envelope;
     use caelumora_model::chain::Position;

@@ -3,14 +3,18 @@
 //! built with (`ComponentContext`), the graph the kernel builds (`ComponentGraph`) and what its
 //! owner holds of it (`ComponentContainer`), a built component as one of its facets
 //! (`ComponentImpl`), and what building one fails with (`ComponentError`). How kinds are
-//! registered, a configuration is planned and a graph is built is the kernel's (`component`).
+//! registered, a configuration is planned and a graph is built is the kernel's
+//! (`caelumora_kernel::component`).
 
-use crate::api::remote::describe_chain;
+use crate::remote::describe_chain;
 use async_trait::async_trait;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::prompt_catalogue::PromptError;
+use caelumora_model::secret::file::FileSecretConfig;
 use caelumora_model::store::StoreError;
 use caelumora_model::type_map::{TypeKey, TypeMap};
+use caelumora_model::user_provider::accept_any::AcceptAnyConfig;
+use caelumora_model::user_provider::file::FileUserConfig;
 use futures::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -167,6 +171,12 @@ pub fn config_of_params<T: Params>(params: &Value) -> ComponentResult<T> {
 pub struct NoParams {}
 
 impl Params for NoParams {}
+
+// The parameters of the kernel's backends whose types the model defines, which knows nothing of
+// `Params`: implemented here, where the trait is, as neither lies in the kernel.
+impl Params for FileSecretConfig {}
+impl Params for FileUserConfig {}
+impl Params for AcceptAnyConfig {}
 
 /// Whether `T` is among the facets `declared` to be asked for.
 ///

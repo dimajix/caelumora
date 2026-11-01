@@ -16,7 +16,7 @@
 //! owner's name and the kernel's services (`context`) - as a graph (`container`), which its owner
 //! holds as a `ComponentContainer`, handing out the facets as `ComponentImpl`s. What a library
 //! declares and is given - the kind, the factory, the `ComponentContext` a component is built with,
-//! the container - is the API's (`api::component`, issue 516).
+//! the container - is the API's (`caelumora_api::component`, issue 516).
 
 mod container;
 mod context;

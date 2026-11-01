@@ -1,11 +1,11 @@
 //! How the views serve the readers of the API (issue 516): each reader is the part of a view an
-//! agent's work reads through (`api::reader`).
+//! agent's work reads through (`caelumora_api::reader`).
 
 use super::{ChannelView, ParticipantView, SessionView};
-use crate::api::reader::{ChannelReader, ParticipantReader, SessionReader};
-use crate::api::reader::{PrivateNotesElsewhere, ViewResult};
-use crate::api::terminal::ByteStream;
 use async_trait::async_trait;
+use caelumora_api::reader::{ChannelReader, ParticipantReader, SessionReader};
+use caelumora_api::reader::{PrivateNotesElsewhere, ViewResult};
+use caelumora_api::terminal::ByteStream;
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::chain::Position;
 use caelumora_model::confidentiality::{Classification, Place};

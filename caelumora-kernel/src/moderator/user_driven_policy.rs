@@ -1,10 +1,10 @@
 //! The `user_driven_policy` component: asks every agent to respond to what a
 //! user wrote, and nobody to what an agent wrote (issue 175).
 
-use crate::api::component::{ComponentFacets, ComponentKind};
 use crate::component::ComponentRegistry;
 use crate::moderator::{ResponderPolicy, Undecided};
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;

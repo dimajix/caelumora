@@ -40,9 +40,9 @@ use caelumora_agents::tool::{
     ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::api::component::{config_of_params, Params};
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_kernel::api::workspace::{WorkspaceReader, WorkspaceWriter};
+use caelumora_api::component::{config_of_params, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;

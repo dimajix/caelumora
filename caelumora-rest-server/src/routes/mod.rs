@@ -27,7 +27,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use caelumora_kernel::api::terminal::ByteStream;
+use caelumora_api::terminal::ByteStream;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::{ChannelView, Viewer, Views};

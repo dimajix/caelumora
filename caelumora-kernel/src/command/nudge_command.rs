@@ -1,12 +1,12 @@
 //! The built-in `/nudge` command (issue 278).
 
-use crate::api::command::{CommandError, CommandResult, ProvidesCommands};
-use crate::api::component::{ComponentFacets, ComponentKind};
 use crate::channel::ChannelError;
 use crate::command::{named_participant, ChannelCommandProvider, CommandContext};
 use crate::component::ComponentRegistry;
 use crate::error::user_message;
 use async_trait::async_trait;
+use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_model::command::{Command, CommandOutput, NUDGE_COMMAND_KIND};
 use std::sync::Arc;
 

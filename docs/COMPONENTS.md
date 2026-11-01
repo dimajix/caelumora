@@ -32,7 +32,7 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
 
 What a library declares and is given of components - a kind (`ComponentKind`) and its factory, the
 context a component is built with (`ComponentContext`), the container its owner holds, a component
-as one of its facets (`ComponentImpl`) - is the kernel's API (`caelumora_kernel::api::component`,
+as one of its facets (`ComponentImpl`) - is the kernel's API (`caelumora_api::component`,
 issue 516), typed over the graph the kernel builds (`ComponentGraph`); the registry, the planning of
 a configuration and the graph are the kernel's.
 

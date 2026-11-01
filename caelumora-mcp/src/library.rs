@@ -3,7 +3,7 @@
 
 use crate::tool;
 use anyhow::Result;
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::library::{Library, LibraryBuilder};
 
 /// The tools of MCP servers, as a library.
 #[derive(Debug, Default)]

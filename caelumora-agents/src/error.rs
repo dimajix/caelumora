@@ -3,7 +3,7 @@
 //! (`ToolError`), a context's (`ContextError`), a message stage's (`ProcessingError`) and an
 //! activity's (`ActivityError`) - which the plugins that serve those facets answer in (PLUGINS.md),
 //! judged here, by whoever defines them; everything else as the kernel judges it
-//! (`caelumora_kernel::api::error::user_message_with`).
+//! (`caelumora_api::error::user_message_with`).
 
 use crate::activity::ActivityError;
 use crate::external::ExternalAgentError;
@@ -11,7 +11,7 @@ use crate::llm::LLMError;
 use crate::message::ProcessingError;
 use crate::prompt::ContextError;
 use crate::tool::ToolError;
-use caelumora_kernel::api::error::{store_message, user_message_with, view_message};
+use caelumora_api::error::{store_message, user_message_with, view_message};
 use std::error::Error;
 
 /// The message to show a user for `error`: the outermost error in its chain whose type - the
@@ -73,7 +73,7 @@ fn context_message(error: &ContextError) -> Option<String> {
 mod tests {
     use super::*;
     use anyhow::Error;
-    use caelumora_kernel::api::component::ComponentError;
+    use caelumora_api::component::ComponentError;
     use caelumora_model::store::StoreError;
 
     #[test]

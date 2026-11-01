@@ -12,9 +12,9 @@ use caelumora_agents::testing::{
     about_agent_commands, activities_until_the_turn_ends, register_scripted, saying, TestAgents,
 };
 use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
+use caelumora_api::command::CommandError;
 use caelumora_compaction::component::COMPACTION_KIND;
 use caelumora_compaction::library::CompactionLibrary;
-use caelumora_kernel::api::command::CommandError;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::{shown, World};

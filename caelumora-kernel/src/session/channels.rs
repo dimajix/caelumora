@@ -4,12 +4,12 @@ use super::{
     purge_channel_document, require_classification, ChannelEntry, ChannelRun, Listed, SessionError,
     SessionLoop,
 };
-use crate::api::component::ComponentError;
 use crate::channel::ChannelLoop;
 use crate::group::keep_participants;
 use crate::scoped::ScopeNotEmpty;
 use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
+use caelumora_api::component::ComponentError;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{self, Channel, Participant};
@@ -676,7 +676,6 @@ impl SessionLoop {
 #[cfg(test)]
 mod tests {
     use super::unavailable_components;
-    use crate::api::component::ComponentError;
     use crate::channel::ChannelLoop;
     use crate::error::is_forbidden;
     use crate::moderator::broadcast_policy::BROADCAST_POLICY_KIND;
@@ -686,6 +685,7 @@ mod tests {
     use crate::view::Viewer;
     use anyhow::Error;
     use anyhow::Result;
+    use caelumora_api::component::ComponentError;
     use caelumora_model::actor::ActorId;
     use caelumora_model::approval::ApprovalStrategy;
     use caelumora_model::channel::moderation_components;

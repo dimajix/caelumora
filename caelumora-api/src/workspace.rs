@@ -2,10 +2,10 @@
 //! of its session the work may use in its channel it reads, and its files to read
 //! (`WorkspaceReader`) - and a writer - its files to change and its shell (`WorkspaceWriter`) -,
 //! and what using a workspace fails with (`WorkspaceError`). The kernel binds both to every piece
-//! of work and asks in the work's context at every use (`workspace::extension`).
+//! of work and asks in the work's context at every use (`caelumora_kernel::workspace::extension`).
 
-use crate::api::error::StorageGone;
-use crate::api::terminal::{Shell, Terminal, TerminalError, TerminalReader};
+use crate::error::StorageGone;
+use crate::terminal::{Shell, Terminal, TerminalError, TerminalReader};
 use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::Refused;

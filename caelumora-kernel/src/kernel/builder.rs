@@ -7,10 +7,6 @@ use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
 use crate::agent::state::AgentStates;
 use crate::agent::AgentManager;
-use crate::api::component::Face;
-use crate::api::component::Services;
-use crate::api::library::Library;
-use crate::api::workspace::{WorkspaceReader, WorkspaceWriter};
 use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
 use crate::channel::{ChannelLoop, Participation};
@@ -29,6 +25,10 @@ use crate::view::SessionView;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::{UsableWorkspace, WorkspaceManager, WorkspaceUse};
 use anyhow::{bail, Context, Result};
+use caelumora_api::component::Face;
+use caelumora_api::component::Services;
+use caelumora_api::library::Library;
+use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::component::ComponentConfig;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
@@ -663,11 +663,11 @@ impl KernelBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-    use crate::api::library::LibraryBuilder;
     use crate::command::ChannelCommandProvider;
     use crate::moderator::{Moderator, ResponderPolicy};
     use crate::testing::TestKernel;
+    use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+    use caelumora_api::library::LibraryBuilder;
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::security::AllowAllPolicy;
     use caelumora_model::user_provider::Credential;

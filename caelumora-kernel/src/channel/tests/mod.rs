@@ -5,8 +5,6 @@ mod commands;
 pub(super) use crate::channel::testing::*;
 
 use super::*;
-use crate::api::actor::Actor;
-use crate::api::component::ComponentImpl;
 use crate::command::help_command::HelpCommandProvider;
 use crate::command::wakeup_command::WakeupCommandProvider;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
@@ -14,6 +12,8 @@ use crate::component::ComponentRegistry;
 use crate::kernel::ChannelRuntime;
 use crate::moderator::{Moderator, Routing};
 use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestKernel};
+use caelumora_api::actor::Actor;
+use caelumora_api::component::ComponentImpl;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_model::agent::testing::make_personality;
 use caelumora_model::agent::AgentId;
@@ -177,7 +177,7 @@ pub(super) async fn channel_moderated_by(
     users: &[&User],
     moderator: Arc<dyn Moderator>,
 ) -> Arc<ChannelLoop> {
-    use crate::api::component::{ComponentFacets, ComponentKind};
+    use caelumora_api::component::{ComponentFacets, ComponentKind};
     let store = Persistence::in_memory();
     let participants =
         record_users(&EntityStores::open(&store, &Policies::permitting_all()).unwrap(), users)

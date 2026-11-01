@@ -3,12 +3,12 @@
 //! written whole or not at all, as the files of a local workspace are.
 
 use super::{ContentResult, ContentStorage};
-use crate::api::component::Params;
-use crate::api::error::ContentError;
-use crate::api::terminal::ByteStream;
 use crate::backend::Backends;
 use crate::terminal::{write_whole, WriteFailure};
 use async_trait::async_trait;
+use caelumora_api::component::Params;
+use caelumora_api::error::ContentError;
+use caelumora_api::terminal::ByteStream;
 use caelumora_model::confidentiality::Classification;
 use serde::Deserialize;
 use std::io::ErrorKind;

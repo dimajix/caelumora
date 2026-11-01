@@ -7,26 +7,26 @@
 //! log only.
 
 use crate::agent::AgentError;
-use crate::api::error::{component_message, store_message, user_message_with};
 use crate::channel::ChannelError;
 use crate::project::ProjectError;
 use crate::scoped::ScopeNotEmpty;
 use crate::session::SessionError;
 use crate::view::AgentContextError;
+use caelumora_api::error::{component_message, store_message, user_message_with};
 use caelumora_model::security::Refused;
 use std::error::Error;
 
 /// The message to show a user for `error`: the outermost error in its chain whose type is known to
 /// be safe to disclose, or `None` if there is none - in which case the caller should show a generic
 /// message and point to the log. Judged by the kernel's types and the API's
-/// (`api::error::user_message_with`); a crate that defines error types of its own for others to
-/// answer in judges them itself (issue 370).
+/// (`caelumora_api::error::user_message_with`); a crate that defines error types of its own for
+/// others to answer in judges them itself (issue 370).
 pub fn user_message(error: &anyhow::Error) -> Option<String> {
     user_message_with(error, judged)
 }
 
 /// What the kernel shows of `e`, if it is of a type of the kernel's own - not the API's
-/// (`api::error::user_message_with`) - that may be shown.
+/// (`caelumora_api::error::user_message_with`) - that may be shown.
 fn judged(e: &(dyn Error + 'static)) -> Option<String> {
     if let Some(e) = e.downcast_ref::<AgentContextError>() {
         Some(e.to_string())
@@ -81,12 +81,12 @@ pub fn is_forbidden(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::component::ComponentError;
-    use crate::api::error::AttachmentError;
-    use crate::api::error::ContentError;
-    use crate::api::error::StorageGone;
-    use crate::api::reader::ViewError;
-    use crate::api::workspace::WorkspaceError;
+    use caelumora_api::component::ComponentError;
+    use caelumora_api::error::AttachmentError;
+    use caelumora_api::error::ContentError;
+    use caelumora_api::error::StorageGone;
+    use caelumora_api::reader::ViewError;
+    use caelumora_api::workspace::WorkspaceError;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::Agent;
     use caelumora_model::channel::ChannelId;

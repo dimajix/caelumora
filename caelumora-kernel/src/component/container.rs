@@ -3,10 +3,10 @@
 //! singles.
 
 use super::{BuildContext, ComponentRegistry};
-use crate::api::component::{
+use async_trait::async_trait;
+use caelumora_api::component::{
     BuiltComponent, ComponentContainer, ComponentError, ComponentGraph, ComponentResult,
 };
-use async_trait::async_trait;
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_model::type_map::TypeKey;
 use futures::future::BoxFuture;
@@ -342,9 +342,9 @@ impl ComponentGraph for Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::component::ComponentFacets;
-    use crate::api::component::ComponentKind;
     use crate::component::testing::*;
+    use caelumora_api::component::ComponentFacets;
+    use caelumora_api::component::ComponentKind;
     use caelumora_model::security::Policies;
     use caelumora_model::store::{EntityStores, Persistence};
     use std::sync::atomic::{AtomicUsize, Ordering};

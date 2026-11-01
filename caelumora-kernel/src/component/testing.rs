@@ -4,9 +4,9 @@
 
 use super::BuildContext;
 use super::ComponentRegistry;
-use crate::api::component::Services;
-use crate::api::component::{ComponentError, Params};
-use crate::api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::component::Services;
+use caelumora_api::component::{ComponentError, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_model::security::{AccessPolicy, AllowAllPolicy, Policies, SecurityContext};
 use caelumora_model::store::{EntityStores, Persistence};

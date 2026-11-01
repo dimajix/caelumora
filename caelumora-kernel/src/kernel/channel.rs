@@ -4,13 +4,13 @@
 use super::actor::Acting;
 use super::{Kernel, ParticipantRuntime};
 use crate::actor::AgentKinds;
-use crate::api::component::Services;
 use crate::attachment::AttachmentManager;
 use crate::channel::{ChannelLoop, Participation, ResolvedParticipant};
 use crate::command::CommandExecutor;
 use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
+use caelumora_api::component::Services;
 use caelumora_model::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_model::channel::Channel;

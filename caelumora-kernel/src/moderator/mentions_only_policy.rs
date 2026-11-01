@@ -1,10 +1,10 @@
 //! The `mentions_only_policy` component: asks nobody, so that agents respond
 //! only when a user mentions them (issue 44).
 
-use crate::api::component::{ComponentFacets, ComponentKind};
 use crate::component::ComponentRegistry;
 use crate::moderator::{ResponderPolicy, Undecided};
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::message::Message;
 use caelumora_model::security::SecurityContext;

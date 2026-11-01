@@ -3,14 +3,14 @@
 use super::participant::{participant_state, AgentParticipant, ParticipantState};
 use super::{AgentContextView, SessionView, Views, WorkspaceView};
 use crate::actor::user::ChannelWatch;
-use crate::api::error::component_message;
-use crate::api::error::AttachmentError;
-use crate::api::reader::{ViewError, ViewResult};
-use crate::api::terminal::ByteStream;
 use crate::channel::ChannelLoop;
 use crate::moderator::Moderator;
 use crate::moderator::ResponderPolicy;
 use crate::session::ChannelRun;
+use caelumora_api::error::component_message;
+use caelumora_api::error::AttachmentError;
+use caelumora_api::reader::{ViewError, ViewResult};
+use caelumora_api::terminal::ByteStream;
 use caelumora_model::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, PersonalityKind};
 use caelumora_model::approval::ApprovalRequest;

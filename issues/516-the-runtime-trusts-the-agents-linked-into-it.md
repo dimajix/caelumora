@@ -1,6 +1,6 @@
 # 516 — The runtime trusts the agents linked into it
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -1368,3 +1368,20 @@ after this one.
   its one caller names the agent -, and the agents' judgement of an error reads the API's types, not
   the kernel's own (`SessionError`, `ProjectError`, …), which no call of the API answers. Stored
   data: none.
+- **2026-11-01** — Step 6.2: the crate. `caelumora-api` is made of the module `api` of 6.1 and
+  depends on the model alone; the kernel depends on it and implements it. The libraries -
+  `caelumora-agents`, `-mcp`, `-a2a`, `-ollama`, `-comfyui`, `-workspace-tools`, `-compaction` -
+  link the API and the model, the kernel as a dev-dependency for the world of their tests, and
+  `caelumora-agents` under `test-support` too; the feature `api` of skills and artifacts depends on
+  the API, `library` no longer on the kernel. As the kernel may implement no foreign trait for a
+  foreign type, `Params` is implemented for the model's configurations of the kernel's backends in
+  the API, beside the trait, and `ContentError::unavailable` moved with its type. The pre-commit
+  hook fails where `cargo tree -e normal` finds `caelumora-kernel` under a library or the library
+  side of skills and artifacts, or a crate of Caelumora but the model under the API;
+  `scripts/library-names.sh` keeps the names the model still offers - the context, the policies,
+  its managers, and now its stores, as *Done when* asks -, as the compiler refuses the kernel's.
+  After the review of the step: the dependency check is a script of its own
+  (`scripts/library-deps.sh`), which compares the names of packages and fails where `cargo tree`
+  does; the list of the libraries lies in one place (`scripts/libraries.sh`), which the scripts and
+  the hook read. Every point of *Done when* holds; the policies, the context and the store traits
+  leave the model in an issue of their own (decision 22). No behaviour changes. Stored data: none.

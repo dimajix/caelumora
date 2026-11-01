@@ -7,9 +7,9 @@ use crate::actor::agent::AgentActor;
 use crate::actor::external_agent::ExternalAgentActor;
 use crate::{components, external, llm, prompt, tool};
 use anyhow::Result;
-use caelumora_kernel::api::actor::{agent_factory, Actor};
-use caelumora_kernel::api::component::LibraryComponents;
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::actor::{agent_factory, Actor};
+use caelumora_api::component::LibraryComponents;
+use caelumora_api::library::{Library, LibraryBuilder};
 use caelumora_model::agent::PersonalityKind;
 
 /// Registers the kinds of an agent's components with `registry` (issue 370): its context
@@ -61,7 +61,7 @@ mod tests {
     use crate::actor::external_agent::ExternalAgentActor;
     use crate::testing::{self, test_registry};
     use crate::tool::echo_tool::ECHO_TOOL_KIND;
-    use caelumora_kernel::api::component::Services;
+    use caelumora_api::component::Services;
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::component::testing::config;
     use caelumora_kernel::component::BuildContext;

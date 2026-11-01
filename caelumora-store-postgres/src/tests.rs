@@ -7,7 +7,7 @@ use super::*;
 use crate::connection::{quoted, sql};
 use crate::filter::Condition;
 use crate::plugin::PostgresStorePlugin;
-use caelumora_kernel::api::component::Services;
+use caelumora_api::component::Services;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_model::actor::{ActorId, ActorState, EventContext};

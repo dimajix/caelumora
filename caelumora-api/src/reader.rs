@@ -4,8 +4,8 @@
 //! views implement them and keep their full surface for the frontends; the agent side is handed a
 //! reader, never a view, so it reaches no policy, no manager and no context through it.
 
-use crate::api::error::AttachmentError;
-use crate::api::terminal::ByteStream;
+use crate::error::AttachmentError;
+use crate::terminal::ByteStream;
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_model::actor::{ActorDescription, ActorId};
@@ -140,7 +140,7 @@ pub trait ParticipantReader: Send + Sync {
 }
 
 /// Why an edge could not be followed. The messages are meant for users
-/// (see `crate::api::error::user_message_with`) - or, through `ToolError`, for the
+/// (see `crate::error::user_message_with`) - or, through `ToolError`, for the
 /// model that asked.
 ///
 /// What does not exist and what the viewer may not read are one case each,

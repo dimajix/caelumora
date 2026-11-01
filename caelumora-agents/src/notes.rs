@@ -13,7 +13,7 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
-use caelumora_kernel::api::runtime::OwnRecord;
+use caelumora_api::runtime::OwnRecord;
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::Digest;

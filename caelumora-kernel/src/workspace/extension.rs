@@ -1,14 +1,14 @@
 //! How the kernel serves the workspace an agent's work uses (issue 516): an extension of the
-//! kernel's, its reader and its writer (`api::workspace`) bound to the session of every piece of
-//! work as the work reads it, and the workspace's controller asking in the work's context at every
-//! use of a terminal or a shell (`WorkspaceController::terminal_in`, `shell_in`).
+//! kernel's, its reader and its writer (`caelumora_api::workspace`) bound to the session of every
+//! piece of work as the work reads it, and the workspace's controller asking in the work's context
+//! at every use of a terminal or a shell (`WorkspaceController::terminal_in`, `shell_in`).
 
-use crate::api::terminal::{Shell, Terminal, TerminalReader};
-use crate::api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter};
 use crate::controller::WorkspaceController;
 use crate::session::SessionLoop;
 use crate::view::{ChannelView, SessionView, WorkspaceView};
 use async_trait::async_trait;
+use caelumora_api::terminal::{Shell, Terminal, TerminalReader};
+use caelumora_api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter};
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::SecurityContext;

@@ -3,9 +3,9 @@
 //! are the agents' (`agent_commands`).
 
 use super::*;
-use crate::api::command::{CommandError, CommandResult};
 use crate::command::CommandContext;
 use crate::error::is_forbidden;
+use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_model::agent::AgentId;
 use caelumora_model::command::{CommandOutput, CommandVisibility};
 use caelumora_model::user::testing::make_user;

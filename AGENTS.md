@@ -92,9 +92,10 @@ under `## History`), and numbers are never reused.
     also", something is on the wrong object. Logic that belongs together by subject lives together -
     its data, rules and checks in one place - and is not spread over crates because its callers
     happen to be there: `caelumora-model` holds data and rules, `caelumora-kernel` where everything
-    runs, `caelumora-agents` what an agent does there, `caelumora-rest-server` only maps HTTP to the
-    kernel (see [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an owner
-    does not offer, extend the owner rather than computing it at the caller.
+    runs, `caelumora-api` what the agent side is given of it, `caelumora-agents` what an agent does
+    there, `caelumora-rest-server` only maps HTTP to the kernel (see
+    [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an owner does not offer,
+    extend the owner rather than computing it at the caller.
 *   **Few generic types, not many helpers.** A new type or trait needs a responsibility of its own.
     One that only bundles parameters, wraps a single call, or serves a single call site is a sign
     that the responsibility belongs to an existing type. Before adding a trait, check whether an

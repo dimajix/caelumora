@@ -28,8 +28,8 @@
 use crate::client::{Answer, DecisionClient, DecisionError, Question, MAX_OPTIONS, MAX_QUESTIONS};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_kernel::api::component::{config_of_params, ComponentError, ComponentResult, Params};
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::moderator::{ResponderPolicy, Undecided};
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};

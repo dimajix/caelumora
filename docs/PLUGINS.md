@@ -110,12 +110,15 @@ of agent and the built-in components (issue 370) - or brings components for an a
 `caelumora-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-ollama` (issue 329),
 `caelumora-workspace-tools` (issue 428), `caelumora-compaction` (issue 464), `caelumora-comfyui`
 (issue 512), and the library sides of `caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`,
-`ArtifactsLibrary`). It is linked into the program as a plugin is, but trusted for nothing. It
-implements `caelumora_kernel::api::library::Library` - a name for messages and `register` -, and the
-programs list it in `libraries()`, the agents' library first, and register each with
-`KernelBuilder::library` once their plugins registered. A library registers with a `LibraryBuilder`,
-a trait of the API the kernel implements, which offers what a library registers and nothing of the
-kernel - no store, no policy, no secret, no controller:
+`ArtifactsLibrary`). It is linked into the program as a plugin is, but trusted for nothing, and
+links the kernel's API (`caelumora-api`), the model and other libraries, never the kernel: the
+kernel is a dev-dependency of its tests alone, which build the kernel's world - for
+`caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`
+checks, run by the pre-commit hook. It implements `caelumora_api::library::Library` - a name for
+messages and `register` -, and the programs list it in `libraries()`, the agents' library first, and
+register each with `KernelBuilder::library` once their plugins registered. A library registers with
+a `LibraryBuilder`, a trait of the API the kernel implements, which offers what a library registers
+and nothing of the kernel - no store, no policy, no secret, no controller:
 
 *   its component kinds (`components()`, a `LibraryComponents`), marked as a library's;
 *   its kinds of agent (`register_agent_kind`): for a kind of personality, what builds its agents'
@@ -206,7 +209,7 @@ plugin or a library depends on:
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
     `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
-*   **If it talks to a remote system:** `caelumora_kernel::api::remote`, which describes its errors
+*   **If it talks to a remote system:** `caelumora_api::remote`, which describes its errors
     as the kernel's are described - `describe_request_error`, `describe_chain` (issue 326) -, and
     the `Secrets` its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
     `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516).
@@ -226,13 +229,13 @@ inside an `anyhow`, whatever a plugin's error says is shown as a failure that po
 agents' library, which defines the facets most plugins serve, is a judge of its own in this: what an
 agent's owner is told when an answer fails is judged by `caelumora_agents::error::user_message`,
 which knows the error types of those facets and asks the API's judgement for the rest
-(`api::error::user_message_with`, issues 370, 516). A registry of judgements the plugins add is not
-needed, and would be the registry of downcasts rejected below. A library may define a facet in turn
-that other libraries serve - `caelumora-compaction` the `KnowledgeRestorer`, which the `skills`
-component serves (issue 464) -: they depend on it and answer in its error type, `CompactionError`,
-as they answer the agents in theirs; what is shown of it, the defining library decides where it
-answers the agents - the `compaction` component carries its text into its `ActivityError` and
-`CommandError`.
+(`caelumora_api::error::user_message_with`, issues 370, 516). A registry of judgements the plugins
+add is not needed, and would be the registry of downcasts rejected below. A library may define a
+facet in turn that other libraries serve - `caelumora-compaction` the `KnowledgeRestorer`, which the
+`skills` component serves (issue 464) -: they depend on it and answer in its error type,
+`CompactionError`, as they answer the agents in theirs; what is shown of it, the defining library
+decides where it answers the agents - the `compaction` component carries its text into its
+`ActivityError` and `CommandError`.
 
 So the trait names its error type, and the plugin translates its own error into it where it
 answers - deciding there what may be shown, what is a refusal and what is a failure:

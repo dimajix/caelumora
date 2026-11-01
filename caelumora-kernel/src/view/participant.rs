@@ -14,8 +14,8 @@
 
 use super::context::AgentContextView;
 use super::Views;
-use crate::api::reader::{ViewError, ViewResult};
 use async_trait::async_trait;
+use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality};
 use caelumora_model::channel::Participant;

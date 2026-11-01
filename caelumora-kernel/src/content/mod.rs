@@ -13,24 +13,16 @@
 
 mod local;
 
-use crate::api::error::ContentError;
-use crate::api::terminal::ByteStream;
 use crate::backend::Backends;
 use async_trait::async_trait;
+use caelumora_api::error::ContentError;
+use caelumora_api::terminal::ByteStream;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::digest::{ContentDigest, Digest};
 use futures::StreamExt;
+use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::{fmt, io};
 use tracing::warn;
-
-impl ContentError {
-    /// What a failure of reading or writing is, as an error of a storage says it: its kind, never
-    /// the path.
-    pub fn unavailable(error: io::Error) -> Self {
-        Self::Unavailable(error.kind().to_string())
-    }
-}
 
 pub type ContentResult<T> = Result<T, ContentError>;
 

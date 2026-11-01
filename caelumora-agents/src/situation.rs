@@ -12,8 +12,8 @@
 //! what it offers - are given a `Situation` rather than a `Turn`, so that
 //! they serve both kinds of agent.
 
-use caelumora_kernel::api::reader::{ChannelReader, SessionReader, ViewResult};
-use caelumora_kernel::api::runtime::ActorRuntime;
+use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
+use caelumora_api::runtime::ActorRuntime;
 use caelumora_model::actor::{ActorId, RequestReason};
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::confidentiality::{Classification, Place};

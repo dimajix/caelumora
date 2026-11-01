@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
+caelumora-api.workspace = true
 caelumora-kernel.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true

@@ -14,9 +14,9 @@ pub mod random_policy;
 pub mod round_robin_policy;
 pub mod user_driven_policy;
 
-use crate::api::actor::Actor;
 use crate::component::ComponentRegistry;
 use async_trait::async_trait;
+use caelumora_api::actor::Actor;
 use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, Envelope, RequestReason};
 use caelumora_model::history::Audience;
 use caelumora_model::message::{Message, MessageId};

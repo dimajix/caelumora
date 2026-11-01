@@ -6,8 +6,8 @@
 //! kernel builds in its own name or uses a service of the kernel but the texts. Which libraries are
 //! in is the program's choice, as which plugins are.
 
-use crate::api::actor::AgentFactory;
-use crate::api::component::LibraryComponents;
+use crate::actor::AgentFactory;
+use crate::component::LibraryComponents;
 use anyhow::{Context, Result};
 use caelumora_model::agent::PersonalityKind;
 use caelumora_model::prompt_catalogue::PromptError;

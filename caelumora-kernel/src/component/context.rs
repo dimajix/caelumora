@@ -1,6 +1,6 @@
 //! The environment a configuration of components is built in (`BuildContext`).
 
-use crate::api::component::Services;
+use caelumora_api::component::Services;
 use caelumora_model::security::SecurityContext;
 
 /// The environment a configuration of components is built in (issues 321, 516): the name of its
@@ -24,10 +24,10 @@ impl BuildContext {
 #[cfg(test)]
 mod tests {
 
-    use crate::api::component::ComponentError;
-    use crate::api::component::ComponentKind;
     use crate::component::testing::*;
     use crate::component::ComponentRegistry;
+    use caelumora_api::component::ComponentError;
+    use caelumora_api::component::ComponentKind;
     use caelumora_model::security::{AccessPolicy, Policies};
     use caelumora_model::store::{EntityStores, Persistence};
     use std::sync::Arc;

@@ -3,12 +3,12 @@
 //! kernel's other operations.
 
 use super::{require_classification, store_error};
-use crate::api::workspace::{WorkspaceError, WorkspaceResult};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
 use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
+use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};

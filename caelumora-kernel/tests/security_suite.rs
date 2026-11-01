@@ -9,12 +9,12 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
+use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::reader::ViewError;
+use caelumora_api::terminal::{CommandState, TerminalError, WorkspacePath};
+use caelumora_api::workspace::WorkspaceError;
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::agent::AgentError;
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind};
-use caelumora_kernel::api::reader::ViewError;
-use caelumora_kernel::api::terminal::{CommandState, TerminalError, WorkspacePath};
-use caelumora_kernel::api::workspace::WorkspaceError;
 use caelumora_kernel::channel::ChannelError;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
@@ -1166,7 +1166,7 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
-    use caelumora_kernel::api::error::AttachmentError;
+    use caelumora_api::error::AttachmentError;
     use caelumora_model::actor::ActorEvent;
     use caelumora_model::message::{Message, MessageId, MessageRole};
     use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
@@ -1343,7 +1343,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
 #[tokio::test]
 async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     use bytes::Bytes;
-    use caelumora_kernel::api::error::AttachmentError;
+    use caelumora_api::error::AttachmentError;
     use caelumora_model::tool::ToolMedia;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;

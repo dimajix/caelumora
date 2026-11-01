@@ -45,10 +45,10 @@ use caelumora_agents::tool::{
     arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
+use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_api::component::{config_of_params, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
-use caelumora_kernel::api::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_kernel::api::component::{config_of_params, Params};
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::ActorId;
 use caelumora_model::command::{Command, CommandOutput};
 use caelumora_model::confidentiality::Classification;

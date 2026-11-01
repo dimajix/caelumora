@@ -3,11 +3,11 @@
 
 use super::{channel_reading, ReadingBasis};
 use super::{ChannelView, Views};
-use crate::api::reader::PrivateNotesElsewhere;
-use crate::api::reader::{ViewError, ViewResult};
 use crate::channel::ChannelError;
 use crate::session::{ChannelRun, Found, SessionLoop};
 use anyhow::Error;
+use caelumora_api::reader::PrivateNotesElsewhere;
+use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::channel::{Channel, ChannelField, Participant};

@@ -23,11 +23,11 @@ use caelumora_agents::tool::{
     ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_kernel::api::component::{config_of_params, ComponentResult, Params};
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_kernel::api::error::ContentError;
-use caelumora_kernel::api::terminal::WorkspacePath;
-use caelumora_kernel::api::workspace::WorkspaceReader;
+use caelumora_api::component::{config_of_params, ComponentResult, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::error::ContentError;
+use caelumora_api::terminal::WorkspacePath;
+use caelumora_api::workspace::WorkspaceReader;
 use caelumora_model::prompt_catalogue::PromptTexts;
 use caelumora_model::question::Answers;
 use caelumora_model::scope::Scope;

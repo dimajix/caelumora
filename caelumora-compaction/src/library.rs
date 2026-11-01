@@ -5,7 +5,7 @@ use crate::component;
 use crate::summary_compaction::{self, SUMMARY_COMPACTION_KIND};
 use crate::{CompactionStrategy, NAMESPACE, PROMPTS};
 use anyhow::Result;
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::library::{Library, LibraryBuilder};
 
 /// Compaction, as a library.
 #[derive(Debug, Default)]

@@ -10,13 +10,13 @@ use super::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
     CommandKey, TerminalProvider,
 };
-use crate::api::component::{ComponentResult, Params};
-use crate::api::terminal::{
+use crate::backend::Backends;
+use async_trait::async_trait;
+use caelumora_api::component::{ComponentResult, Params};
+use caelumora_api::terminal::{
     ByteStream, FileEntry, Shell, Terminal, TerminalError, TerminalReader, TerminalResult,
     WorkspacePath,
 };
-use crate::backend::Backends;
-use async_trait::async_trait;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::workspace::WorkspaceId;
 use futures::future::join_all;
@@ -416,8 +416,8 @@ fn on_host(dir: &Path, path: &WorkspacePath) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::component::Services;
     use bytes::Bytes;
+    use caelumora_api::component::Services;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::workspace::CommandStatus;
     use futures::stream;

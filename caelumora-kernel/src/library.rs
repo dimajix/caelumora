@@ -1,11 +1,11 @@
-//! How the kernel serves a library's registration (`api::library`, issue 516): the part of the
-//! `KernelBuilder` a library may use.
+//! How the kernel serves a library's registration (`caelumora_api::library`, issue 516): the part
+//! of the `KernelBuilder` a library may use.
 
-use crate::api::actor::AgentFactory;
-use crate::api::component::LibraryComponents;
-use crate::api::library::LibraryBuilder;
 use crate::kernel::KernelBuilder;
 use anyhow::Result;
+use caelumora_api::actor::AgentFactory;
+use caelumora_api::component::LibraryComponents;
+use caelumora_api::library::LibraryBuilder;
 use caelumora_model::agent::PersonalityKind;
 use caelumora_model::prompt_catalogue::PromptError;
 use caelumora_model::type_map::{ErasedArc, TypeKey};

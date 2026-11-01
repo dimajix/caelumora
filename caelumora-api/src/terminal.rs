@@ -1,6 +1,6 @@
 //! What a library is handed of a workspace (issue 251): the handle to its files (`Terminal`), its
 //! reading part (`TerminalReader`), its commands (`Shell`), and the paths inside it
-//! (`WorkspacePath`); how they are served is the kernel's (`terminal`).
+//! (`WorkspacePath`); how they are served is the kernel's (`caelumora_kernel::terminal`).
 
 use async_trait::async_trait;
 use bytes::Bytes;

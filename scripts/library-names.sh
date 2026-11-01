@@ -1,10 +1,11 @@
 #!/bin/sh
-# Finds what a library names that only the kernel may hold, against the rule of
-# docs/ARCHITECTURE.md, "The kernel decides, the agent side asks" (issue 516): a library builds no
-# `SecurityContext`, asks no policy, holds no manager or controller of the kernel or of a plugin,
-# nor the runtime of a participant, registers through its `LibraryBuilder` alone, and reads through
-# the readers, not the views, but asks the kernel through the interface it is given
-# (`ActorRuntime`).
+# Finds what a library names that only the kernel may decide by and the model still offers, against
+# the rule of docs/ARCHITECTURE.md, "The kernel decides, the agent side asks" (issue 516): a library
+# builds no `SecurityContext`, asks no policy and holds no manager or store the model defines, but
+# asks the kernel through the interface it is given (`ActorRuntime`). What is the kernel's - its
+# managers, controllers, views and runtimes, its builder - the compiler refuses, as a library links
+# the API, the model and other libraries, never the kernel (`library-deps.sh` checks that it does);
+# the policies and the context stay in the model until an issue of their own moves them.
 #
 #   library-names.sh [file...]
 #
@@ -18,32 +19,32 @@
 # name found is printed as `file:line: names Name`, and the script fails if there is one.
 set -eu
 
-libraries='caelumora-agents/src caelumora-mcp/src caelumora-a2a/src caelumora-ollama/src
-caelumora-comfyui/src caelumora-workspace-tools/src caelumora-compaction/src
-caelumora-skills/src/extension.rs caelumora-skills/src/component.rs caelumora-skills/src/library.rs
-caelumora-artifacts/src/extension.rs caelumora-artifacts/src/component.rs
-caelumora-artifacts/src/library.rs'
+. "$(dirname "$0")/libraries.sh"
+paths=''
+for library in $libraries; do
+    paths="$paths $library/src"
+done
+for crate in $both_levels; do
+    for file in $library_side; do
+        paths="$paths $crate/src/$file"
+    done
+done
 names='SecurityContext|ActionType|AccessPolicy|AccessQuestions|Enforcement|OwnershipPolicy'
 names="$names|AllowAllPolicy|ConfidentialityPolicy|ConfidentialityQuestions|ConfidentialityRules"
-names="$names|PrivacyPolicy|Policies|SecretManager|Kernel|ControllerManager"
-names="$names|SessionManager|AgentManager|UserManager|GroupManager|ProjectManager|ActorManager"
-names="$names|WorkspaceManager|AttachmentManager|SkillManager|ArtifactManager"
-names="$names|Views|Viewer|SessionView|ChannelView|WorkspaceView|ParticipantView|SkillViews|SkillView"
-names="$names|ParticipantRuntime|AgentRuntime|ChannelRuntime|AgentStateHandle|AgentController"
-names="$names|PersonalityController|SessionController|ChannelController|UserController"
-names="$names|KernelBuilder|Plugin|ComponentRegistry"
+names="$names|PrivacyPolicy|Policies|SecretManager|UserManager"
+names="$names|EntityStore|EntityStores|StateStore|HistoryStore|TranscriptStore|MemoryStore"
 
 if [ $# -eq 0 ]; then
     cd "$(git rev-parse --show-toplevel)"
-    set -- $(git ls-files -- $libraries | grep '\.rs$')
+    set -- $(git ls-files -- $paths | grep '\.rs$')
 fi
 
 found=0
 for file in "$@"; do
     applies=no
-    for library in $libraries; do
+    for path in $paths; do
         case "$file" in
-            "$library" | "$library"/*) applies=yes ;;
+            "$path" | "$path"/*) applies=yes ;;
         esac
     done
     case "$file" in

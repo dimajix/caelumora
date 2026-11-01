@@ -1,19 +1,19 @@
 //! `AgentRuntime`: the kernel's implementation of the interface it gives the actor of an agent
-//! (`api::runtime::ActorRuntime`, issue 516).
+//! (`caelumora_api::runtime::ActorRuntime`, issue 516).
 
 use super::{Kernel, ParticipantRuntime};
 use crate::agent::state::AgentStateHandle;
-use crate::api::component::ComponentContainer;
-use crate::api::component::ComponentResult;
-use crate::api::component::Face;
-use crate::api::error::AttachmentResult;
-use crate::api::reader::{ChannelReader, SessionReader, ViewResult};
-use crate::api::runtime::{ActorRuntime, CallPermit, OwnRecord};
 use crate::component::BuildContext;
 use crate::controller::{AgentController, PersonalityController};
 use crate::view::{Viewer, Views};
 use anyhow::Result;
 use async_trait::async_trait;
+use caelumora_api::component::ComponentContainer;
+use caelumora_api::component::ComponentResult;
+use caelumora_api::component::Face;
+use caelumora_api::error::AttachmentResult;
+use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
+use caelumora_api::runtime::{ActorRuntime, CallPermit, OwnRecord};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::{Agent, AgentChannelState, AgentState, Personality};
 use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};

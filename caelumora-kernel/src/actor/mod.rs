@@ -1,6 +1,6 @@
 //! The kernel's actors, the participants of a channel it runs itself (see CHANNELS.md) - a user's
 //! and an approver's -, the actors of a channel (`ActorManager`), and which actor an agent gets,
-//! its kind's (`AgentKinds`, issue 370). What an actor is, is the API's (`api::actor`).
+//! its kind's (`AgentKinds`, issue 370). What an actor is, is the API's (`caelumora_api::actor`).
 
 pub mod approval;
 mod kinds;
@@ -10,7 +10,7 @@ pub mod user;
 pub use kinds::AgentKinds;
 pub use manager::{ActorManager, Shown};
 
-use crate::api::actor::Answering;
+use caelumora_api::actor::Answering;
 use caelumora_model::actor::EventContext;
 use caelumora_model::security::SecurityContext;
 use caelumora_model::session::{ChannelId, SessionId};

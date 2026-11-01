@@ -3,11 +3,11 @@
 //! and shell in a channel, as a frontend reaches them.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
-use crate::api::terminal::{Shell, Terminal, TerminalReader};
-use crate::api::workspace::{WorkspaceError, WorkspaceResult};
 use crate::kernel::Kernel;
 use crate::session::{SessionLoop, SessionManager};
 use crate::testing::TestKernel;
+use caelumora_api::terminal::{Shell, Terminal, TerminalReader};
+use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::testing::{make_personality, stored_agent};
 use caelumora_model::agent::AgentId;

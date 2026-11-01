@@ -8,8 +8,8 @@
 use super::Turn;
 use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
-use caelumora_kernel::api::actor::Answering;
-use caelumora_kernel::api::transport::EventSender;
+use caelumora_api::actor::Answering;
+use caelumora_api::transport::EventSender;
 use caelumora_model::message::Message;
 use caelumora_model::tool::ToolCallState;
 use caelumora_model::turn::GivenUpReason;

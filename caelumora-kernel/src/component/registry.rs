@@ -5,12 +5,12 @@
 //! singles (issue 445).
 
 use super::container::Planned;
-use crate::api::component::{
+use crate::{command, moderator};
+use caelumora_api::component::{
     async_factory, factory, ComponentContext, ComponentFacets, ComponentFactory, ComponentGraph,
     ComponentKind, ComponentKinds, Face, LibraryComponents, Services,
 };
-use crate::api::component::{ComponentError, ComponentResult};
-use crate::{command, moderator};
+use caelumora_api::component::{ComponentError, ComponentResult};
 use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_model::scope::Scope;
 use caelumora_model::security::SecurityContext;
@@ -788,10 +788,10 @@ impl ComponentRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::component::ComponentContainer;
-    use crate::api::component::Params;
     use crate::component::testing::*;
     use async_trait::async_trait;
+    use caelumora_api::component::ComponentContainer;
+    use caelumora_api::component::Params;
     use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
     use caelumora_model::removal::{Removal, RemovalId};

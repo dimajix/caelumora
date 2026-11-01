@@ -45,9 +45,9 @@ use bytes::Buf;
 use caelumora_agents::llm::control_tokens::ControlTokens;
 use caelumora_agents::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
 use caelumora_agents::prompt::ModelProfileProvider;
-use caelumora_kernel::api::component::{config_of_params, ComponentError, ComponentResult, Params};
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_kernel::api::remote::{describe_chain, describe_request_error};
+use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::remote::{describe_chain, describe_request_error};
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentRef;
 use caelumora_model::context::{
@@ -1068,7 +1068,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use caelumora_kernel::api::component::Services;
+    use caelumora_api::component::Services;
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::component::ComponentRegistry;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};

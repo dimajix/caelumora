@@ -4,9 +4,9 @@
 //! context. A component kind declares the extensions it needs (`ComponentKind::reads`, `writes`),
 //! and the kernel is not built where one is bound by none.
 
-use crate::api::component::Face;
 use crate::view::SessionView;
 use anyhow::{bail, Result};
+use caelumora_api::component::Face;
 use caelumora_model::type_map::{ErasedArc, TypeKey};
 use futures::future::BoxFuture;
 use futures::FutureExt;

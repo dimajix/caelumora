@@ -4,7 +4,7 @@
 
 use crate::client;
 use anyhow::Result;
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::library::{Library, LibraryBuilder};
 
 /// Models served by Ollama, as a library.
 #[derive(Debug, Default)]

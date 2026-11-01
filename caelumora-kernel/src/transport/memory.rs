@@ -1,7 +1,7 @@
-use crate::api::transport::{
+use async_trait::async_trait;
+use caelumora_api::transport::{
     EventPick, EventPredicate, EventReceiver, EventSender, TransportError, TransportResult,
 };
-use async_trait::async_trait;
 use caelumora_model::actor::{ActorId, Envelope, Pick};
 use caelumora_model::history::Heard;
 use std::collections::VecDeque;

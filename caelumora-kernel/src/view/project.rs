@@ -3,7 +3,7 @@
 //! (`ProjectController`).
 
 use super::{SessionView, Views};
-use crate::api::reader::ViewResult;
+use caelumora_api::reader::ViewResult;
 use caelumora_model::actor::ActorId;
 use caelumora_model::project::{Project, ProjectId};
 use caelumora_model::security::AccessQuestions;

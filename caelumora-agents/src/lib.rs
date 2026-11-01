@@ -5,10 +5,10 @@
 //! (`tool`), prompt parts and contexts (`prompt`), the model (`llm`), message stages (`message`),
 //! an agent that runs elsewhere (`external`), an agent's commands (`command`) and what it does of
 //! its own accord (`activity`) - compacting its context, which the library `caelumora-compaction`
-//! provides -, with the built-in kinds (`components`). It runs on the kernel (`caelumora-kernel`),
-//! which knows agents only as a kind of participant, and joins it as a library of the agent side
-//! (`library::AgentsLibrary`, issue 516) - an essential one: without it, the program is a chat
-//! between users.
+//! provides -, with the built-in kinds (`components`). It runs on the kernel, which knows agents
+//! only as a kind of participant, and joins it through its API (`caelumora-api`) as a library of
+//! the agent side (`library::AgentsLibrary`, issue 516) - an essential one: without it, the program
+//! is a chat between users.
 
 pub mod activity;
 pub(crate) mod actor;

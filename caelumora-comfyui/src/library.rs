@@ -4,7 +4,7 @@
 use crate::workflow::Workflows;
 use crate::{tool, NAMESPACE, PROMPTS};
 use anyhow::{Context, Result};
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::library::{Library, LibraryBuilder};
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;

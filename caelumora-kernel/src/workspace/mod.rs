@@ -36,8 +36,8 @@ pub mod testing;
 pub(crate) use extension::{UsableWorkspace, WorkspaceUse};
 pub use manager::WorkspaceManager;
 
-use crate::api::workspace::{WorkspaceError, WorkspaceResult};
 use crate::terminal::TerminalProvider;
+use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_model::confidentiality::{
     Classification, ConfidentialityPolicy, ConfidentialityQuestions,
 };

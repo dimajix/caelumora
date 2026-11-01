@@ -1,15 +1,16 @@
 //! What an agent's commands are made of (issues 28, 269): the commands a component provides
 //! (`ProvidesCommands`), the set they are found in (`CommandSet`), and how one fails
-//! (`CommandError`); how a session's commands are run is the kernel's (`command`).
+//! (`CommandError`); how a session's commands are run is the kernel's
+//! (`caelumora_kernel::command`).
 
-use crate::api::component::{ComponentError, ComponentImpl, ComponentResult};
+use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use caelumora_model::command::Command;
 use caelumora_model::security::Refused;
 use std::fmt::Debug;
 use std::sync::Arc;
 
 /// Why a command did not run. The messages are meant for the user who
-/// issued it (see `crate::api::error::user_message_with`).
+/// issued it (see `crate::error::user_message_with`).
 #[derive(Debug, thiserror::Error)]
 pub enum CommandError {
     #[error("No command given. Type /help for the list of commands, or start with // to send a message that begins with a slash.")]

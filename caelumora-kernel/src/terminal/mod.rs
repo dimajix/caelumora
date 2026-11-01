@@ -21,8 +21,8 @@
 //! storages of `caelumora-open-terminal` (issue 327) -, from its parameters, which that factory
 //! reads and checks. What a provider outside the kernel has to offer is this module's public API: a
 //! `TerminalProvider` with its `Terminal`, `TerminalReader` and `Shell` - the handles it hands out,
-//! which are the API's (`api::terminal`, issue 516) -, the commands of its storage kept in
-//! `Commands`, and its `max_run_secs` and `max_file_bytes` checked as `check_max_run_secs` and
+//! which are the API's (`caelumora_api::terminal`, issue 516) -, the commands of its storage kept
+//! in `Commands`, and its `max_run_secs` and `max_file_bytes` checked as `check_max_run_secs` and
 //! `check_max_file_bytes` check them.
 
 mod commands;
@@ -32,10 +32,10 @@ mod local_shell;
 pub use commands::{CommandKey, Commands, Kept};
 pub use local::{write_whole, WriteFailure};
 
-use crate::api::component::{ComponentError, ComponentResult};
-use crate::api::terminal::{Shell, Terminal, TerminalResult};
 use crate::backend::Backends;
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentError, ComponentResult};
+use caelumora_api::terminal::{Shell, Terminal, TerminalResult};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_model::workspace::WorkspaceId;

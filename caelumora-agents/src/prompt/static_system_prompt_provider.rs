@@ -11,8 +11,8 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_kernel::api::component::{config_of_params, ComponentError, Params};
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::component::{config_of_params, ComponentError, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
 use serde::Deserialize;

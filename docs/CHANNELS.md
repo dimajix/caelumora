@@ -771,7 +771,7 @@ it says what was refused, not which rule refused it.
 
 An **actor** is anything that sends and receives events in a channel.
 
-*   **`Actor`** (`caelumora_kernel::api::actor`) is the trait of all actors: `AgentActor`,
+*   **`Actor`** (`caelumora_api::actor`) is the trait of all actors: `AgentActor`,
     `UserActor`, `ApproverActor` and `ExternalAgentActor`. Its task, `run`, receives envelopes and
     sends its output through the transport it is given. `wakeup`, `cancel`, `stop` and `leave` are
     synchronous, because they come from other tasks and must take effect at once. The trait is

@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
-use caelumora_kernel::api::command::CommandError;
+use caelumora_api::command::CommandError;
 use caelumora_kernel::command::{CommandContext, CommandReply};
 use caelumora_model::chain::Node;
 use caelumora_model::transcript::TranscriptEntry;

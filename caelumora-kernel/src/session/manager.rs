@@ -2038,9 +2038,9 @@ mod tests {
 
     #[tokio::test]
     async fn a_purged_session_takes_the_attachments_of_its_channels_along() {
-        use crate::api::error::AttachmentError;
         use crate::testing::World;
         use bytes::Bytes;
+        use caelumora_api::error::AttachmentError;
         use futures::stream;
 
         let world = World::new().await;

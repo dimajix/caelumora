@@ -4,12 +4,12 @@
 use super::inbox::{Behind, Inbox, InboxReceiver, CAPACITY};
 use super::{stopped, ActorChange, ChannelActor, ChannelLoop};
 use crate::actor::ChannelAnswering;
-use crate::api::actor::Answering;
-use crate::api::logging::envelope_span;
 use crate::moderator::Routing;
 use crate::transport::{InMemoryEventSender, OriginEventSender};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use caelumora_api::actor::Answering;
+use caelumora_api::logging::envelope_span;
 use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
 use caelumora_model::chain::Position;
 use caelumora_model::channel::ChannelState;
@@ -985,9 +985,6 @@ impl Behind for ChannelLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::actor::Actor;
-    use crate::api::component::ComponentImpl;
-    use crate::api::transport::{EventReceiver, EventSender};
     use crate::channel::tests::*;
     use crate::channel::{ActorChange, ChannelError, ResolvedParticipant};
     use crate::moderator::broadcast_policy::BroadcastPolicy;
@@ -997,6 +994,9 @@ mod tests {
     use crate::testing::{file, shown, World};
     use anyhow::Result;
     use bytes::Bytes;
+    use caelumora_api::actor::Actor;
+    use caelumora_api::component::ComponentImpl;
+    use caelumora_api::transport::{EventReceiver, EventSender};
     use caelumora_model::actor::{
         ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RequestReason,
         RetryTarget,

@@ -8,8 +8,8 @@
 
 use super::body::AgentBody;
 use crate::message::apply_stage_processors;
-use caelumora_kernel::api::logging::envelope_span;
-use caelumora_kernel::api::transport::EventReceiver;
+use caelumora_api::logging::envelope_span;
+use caelumora_api::transport::EventReceiver;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::{AgentChannelState, HearsFrom};
 use caelumora_model::message::Message;
@@ -281,9 +281,9 @@ mod tests {
     use super::*;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
-    use caelumora_kernel::api::component::ComponentImpl;
-    use caelumora_kernel::api::runtime::ActorRuntime;
-    use caelumora_kernel::api::transport::EventReceiver;
+    use caelumora_api::component::ComponentImpl;
+    use caelumora_api::runtime::ActorRuntime;
+    use caelumora_api::transport::EventReceiver;
     use caelumora_kernel::transport::InMemoryEventReceiver;
     use caelumora_model::actor::{ActorId, EventContext, RequestReason};
     use caelumora_model::agent::{HearsDuringTurn, OthersWords};

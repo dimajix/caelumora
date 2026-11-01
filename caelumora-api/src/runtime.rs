@@ -2,10 +2,10 @@
 //! 516) - who it is, its channel and its state, what it reads, and what it asks the kernel to
 //! decide -, which the kernel serves (`AgentRuntime`).
 
-use crate::api::component::ComponentContainer;
-use crate::api::component::ComponentResult;
-use crate::api::error::AttachmentResult;
-use crate::api::reader::{ChannelReader, SessionReader, ViewResult};
+use crate::component::ComponentContainer;
+use crate::component::ComponentResult;
+use crate::error::AttachmentResult;
+use crate::reader::{ChannelReader, SessionReader, ViewResult};
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;

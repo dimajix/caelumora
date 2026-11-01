@@ -24,14 +24,14 @@
 //! and tells its policy the conversation: what was said before what it is
 //! to choose for, and that.
 
-use crate::api::actor::Actor;
-use crate::api::component::{
-    config_of_params, ComponentError, ComponentImpl, ComponentResult, Params,
-};
-use crate::api::component::{ComponentFacets, ComponentKind};
 use crate::component::ComponentRegistry;
 use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing, Undecided};
 use async_trait::async_trait;
+use caelumora_api::actor::Actor;
+use caelumora_api::component::{
+    config_of_params, ComponentError, ComponentImpl, ComponentResult, Params,
+};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_model::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason,
 };
@@ -830,7 +830,7 @@ mod tests {
     /// The moderator built from the channel components `config`, as a
     /// channel builds it (issue 174).
     async fn built(config: &[(&str, &str)]) -> Arc<dyn Moderator> {
-        use crate::api::component::Services;
+        use caelumora_api::component::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
@@ -1242,7 +1242,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_limit_of_hops_is_a_parameter_of_the_moderator() {
-        use crate::api::component::Services;
+        use caelumora_api::component::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
@@ -1327,7 +1327,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_bound_on_span_depth_is_a_parameter_of_the_moderator() {
-        use crate::api::component::Services;
+        use caelumora_api::component::Services;
         use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));

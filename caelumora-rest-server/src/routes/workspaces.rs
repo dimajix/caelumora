@@ -18,7 +18,7 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use caelumora_kernel::api::terminal::{
+use caelumora_api::terminal::{
     CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
 };
 use caelumora_kernel::controller::WorkspaceController;

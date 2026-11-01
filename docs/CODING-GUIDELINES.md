@@ -47,11 +47,12 @@ against this list, rule by rule, before it is reported (the self-review of
     traits of its own - its questions on `AccessQuestions`, its views on `Views` - and adds nothing
     about its kind to the kernel (see [PLUGINS.md](PLUGINS.md)).
 *   A library of the agent side - `caelumora-agents`, a crate that brings an agent's components -
-    names no `SecurityContext`, policy, view, manager or controller of the kernel or of a plugin,
-    nor the runtime of a participant, and registers through its `LibraryBuilder` alone, naming no
-    `KernelBuilder`, `Plugin` or `ComponentRegistry`: it asks the kernel through `ActorRuntime`,
-    `Situation` and `Turn`, and reads through the readers
-    ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/library-names.sh` checks it).
+    links `caelumora-api`, the model and other libraries, never the kernel - but as a
+    dev-dependency, for the world of its tests -, and names no `SecurityContext`, policy, manager or
+    store the model offers: it registers through its `LibraryBuilder` alone, asks the kernel through
+    `ActorRuntime`, `Situation` and `Turn`, and reads through the readers
+    ([ARCHITECTURE.md](ARCHITECTURE.md#principles); `scripts/library-deps.sh` checks its
+    dependencies, `scripts/library-names.sh` the names).
 *   A new action that acts in someone's name, or a change to what an action asks, comes with its
     test in the security suite (`caelumora-kernel/tests/security_suite.rs`, an agent's in
     `caelumora-agents/tests/security_suite.rs`, see
@@ -425,20 +426,21 @@ Errors carry what failed, and only what may be shown goes to users.
     kind.
 *   An error caused by a remote system names the endpoint, without credentials, query or fragment
     (`caelumora_model::remote::redact_endpoint`), and the chain of its causes (the kernel's
-    `remote::describe_chain`; for a failed request without the URL `reqwest` writes into it,
-    `describe_request_error`). `LLMError` names the endpoint, the model and the backend's own
-    explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
+    `caelumora_api::remote::describe_chain`; for a failed request without the URL `reqwest` writes
+    into it, `describe_request_error`). `LLMError` names the endpoint, the model and the backend's
+    own explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
 *   Messages never contain secret values or file paths, because they may be shown to users.
 
 ### What users see
 
 What users may see is decided by whoever defines an error type, in one function each: the API's
-types in `caelumora_kernel::api::error::user_message_with`, the kernel's own besides in
+types in `caelumora_api::error::user_message_with`, the kernel's own besides in
 `caelumora_kernel::error::user_message`, the types of the agents' logic - the errors of its facets -
 in `caelumora_agents::error::user_message` (issues 370, 516). Each looks through an error chain for
 a domain error written to be read and returns its message; the kernel's and the agents' ask their
-own judgement first and the API's for the rest, in one walk (`api::error::user_message_with`), so
-that the outermost error that may be shown is shown. Anything else stays in the log.
+own judgement first and the API's for the rest, in one walk
+(`caelumora_api::error::user_message_with`), so that the outermost error that may be shown is shown.
+Anything else stays in the log.
 
 A new error type meant for users must meet the rules above and be added to the function of whoever
 defines it. A plugin's error type is never added there: where the plugin answers the kernel or the
@@ -532,7 +534,7 @@ fields: `span_id`, `event_id`, `correlation_id` and `span_depth`. There are thre
 *   **`request`** - one REST request, with `method`, `uri`, `request_id`, the authenticated
     `user_id`, and the `span_id` of the envelopes the request started.
 *   **`envelope`** - handling one envelope in the `ChannelLoop` or an idle agent
-    (`caelumora_kernel::api::logging::envelope_span`), with session, channel, sender and event kind.
+    (`caelumora_api::logging::envelope_span`), with session, channel, sender and event kind.
 *   **`turn`** - one iteration of an agent's cognitive cycle, with agent and state and the ids of
     the turn's `EventContext`. An idle or sleeping agent runs in an `agent` span instead.
 

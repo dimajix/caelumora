@@ -21,9 +21,13 @@ The project is a Rust workspace, with a web UI next to it:
     process by the `KernelBuilder`; what a channel or an actor runs with is its *runtime*, which the
     kernel gives it - a channel its `ChannelRuntime`, a participant's actor its
     `ParticipantRuntime`, an agent's actor its `ActorRuntime` -, and an actor reaches its channel
-    through its runtime alone. What a library is given and declares - the kernel's API - lies apart
-    in its module `api`, which names nothing else of the kernel, to become a crate of its own (issue
-    516).
+    through its runtime alone. What a library is given and declares - the kernel's API - is a crate
+    of its own, `caelumora-api`.
+*   **`caelumora-api`** - the kernel's API (issue 516): what a library is given and declares - an
+    actor and its `ActorRuntime`, the readers, a workspace's terminal, the components as a library
+    declares and is given them, the `LibraryBuilder` - and the errors they answer in, with how they
+    are told to a person. It depends on the model alone; the kernel implements its traits, and a
+    library links it and the model, never the kernel.
 *   **`caelumora-agents`** - what an agent does in a channel (issue 370): both kinds of agent - a
     model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
     the facets its components serve (tools, prompt parts, the model, message stages, its commands,
@@ -460,10 +464,12 @@ The design repeats a few decisions; new code follows them.
     `LibraryBuilder`, which offers nothing of the kernel, and the kernel is not built where a
     component kind of a library provides a facet the kernel builds in its own name or uses a service
     of the kernel but the texts (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). Today the code keeps the
-    rest as a rule, not by the compiler: that a library names no context, policy, view, manager or
-    controller of the kernel or of a plugin, nor the runtime of a participant, nor the
-    `KernelBuilder`, `scripts/library-names.sh` checks.
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A library links the API,
+    the model and other libraries, never the kernel - `scripts/library-deps.sh` checks its
+    dependencies, run by the pre-commit hook -, so the compiler refuses it what is the kernel's: a
+    view, a manager, a controller, the runtime of a participant, the `KernelBuilder`. What the model
+    still offers - the context, the policies, its managers and stores - the code keeps as a rule,
+    which `scripts/library-names.sh` checks.
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

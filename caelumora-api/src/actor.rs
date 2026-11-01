@@ -1,8 +1,8 @@
 //! What the kernel runs of a library's actor (see CHANNELS.md): the `Actor` trait, and the context
 //! an actor answers in (`Answering`).
 
-use crate::api::runtime::ActorRuntime;
-use crate::api::transport::{EventReceiver, EventSender};
+use crate::runtime::ActorRuntime;
+use crate::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_model::actor::{

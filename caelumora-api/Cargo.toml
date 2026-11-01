@@ -1,0 +1,31 @@
+[package]
+name = "caelumora-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The kernel's API (issue 516): what a library is given and declares, which the
+# kernel implements. It depends on the model and on no other crate of Caelumora.
+[dependencies]
+caelumora-model.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_path_to_error.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+arc-swap.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+# `test-util` for `start_paused`: tests that wait for a value to expire without waiting.
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+[lints]
+workspace = true

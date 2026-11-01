@@ -12,8 +12,8 @@
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_kernel::api::component::ComponentImpl;
-use caelumora_kernel::api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::component::ComponentImpl;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
 use std::sync::Arc;

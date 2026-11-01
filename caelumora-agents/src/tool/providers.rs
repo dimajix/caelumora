@@ -6,7 +6,7 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
-use caelumora_kernel::api::component::{ComponentError, ComponentImpl, ComponentResult};
+use caelumora_api::component::{ComponentError, ComponentImpl, ComponentResult};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::{Answers, Questions};
 use caelumora_model::tool::{ToolCall, ToolSet};

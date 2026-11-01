@@ -14,9 +14,9 @@
 use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
 use crate::extension::{ArtifactError, ArtifactResult};
 use async_trait::async_trait;
-use caelumora_kernel::api::component::{ComponentError, ComponentResult};
-use caelumora_kernel::api::error::ContentError;
-use caelumora_kernel::api::terminal::ByteStream;
+use caelumora_api::component::{ComponentError, ComponentResult};
+use caelumora_api::error::ContentError;
+use caelumora_api::terminal::ByteStream;
 use caelumora_kernel::backend::NamedBackends;
 use caelumora_kernel::content::{keep_digested, ContentStorage};
 use caelumora_kernel::event::EventBus;

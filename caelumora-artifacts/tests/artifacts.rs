@@ -20,6 +20,9 @@ use caelumora_agents::testing::{
     register_scripted, TestAgents, ONCE_MODEL_KIND,
 };
 use caelumora_agents::tool::{ToolError, ToolProvider};
+use caelumora_api::error::ContentError;
+use caelumora_api::error::StorageGone;
+use caelumora_api::terminal::{ByteStream, WorkspacePath};
 use caelumora_artifacts::artifact::{Artifact, ArtifactId, PublicationSnapshot};
 use caelumora_artifacts::component::{
     ArtifactTool, ARTIFACT_PUBLISH_PRESENTATION, ARTIFACT_TOOL_KIND, PUBLISH_ARTIFACT,
@@ -29,9 +32,6 @@ use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::manager::ArtifactManager;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_artifacts::view::{ArtifactChannelViews, ArtifactProjectViews, ArtifactViews};
-use caelumora_kernel::api::error::ContentError;
-use caelumora_kernel::api::error::StorageGone;
-use caelumora_kernel::api::terminal::{ByteStream, WorkspacePath};
 use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::plugin::Plugin;

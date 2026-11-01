@@ -1,8 +1,8 @@
 //! Controlling the actors of a channel: cancelling, waking, interrupting and stopping them.
 
 use super::{stopped, ChannelActor, ChannelError, ChannelLoop};
-use crate::api::actor::Actor;
 use anyhow::Result;
+use caelumora_api::actor::Actor;
 use caelumora_model::actor::{ActorId, ActorState};
 use caelumora_model::security::{ActionType, SecurityContext};
 use caelumora_model::work::TurnId;

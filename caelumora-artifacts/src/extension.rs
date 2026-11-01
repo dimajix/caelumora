@@ -8,9 +8,9 @@
 
 use crate::artifact::{Artifact, ArtifactId};
 use async_trait::async_trait;
-use caelumora_kernel::api::error::ContentError;
-use caelumora_kernel::api::error::StorageGone;
-use caelumora_kernel::api::terminal::ByteStream;
+use caelumora_api::error::ContentError;
+use caelumora_api::error::StorageGone;
+use caelumora_api::terminal::ByteStream;
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::store::{Address, StoreError};

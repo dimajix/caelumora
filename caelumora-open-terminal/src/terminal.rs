@@ -37,8 +37,8 @@
 use crate::client::Client;
 use crate::wire;
 use async_trait::async_trait;
-use caelumora_kernel::api::remote::describe_request_error;
-use caelumora_kernel::api::terminal::{
+use caelumora_api::remote::describe_request_error;
+use caelumora_api::terminal::{
     ByteStream, CommandState, FileEntry, Shell, Terminal, TerminalError, TerminalReader,
     TerminalResult, WorkspacePath,
 };

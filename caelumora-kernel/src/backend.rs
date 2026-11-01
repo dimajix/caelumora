@@ -18,12 +18,14 @@
 //! the ways of registering a component kind (issue 515). A backend's is given nothing but its name
 //! and its parameters, and there is one way to register it.
 
-use crate::api::component::service_of;
-use crate::api::component::Services;
-use crate::api::component::{config_of_params, ComponentError, ComponentResult, NoParams, Params};
-use crate::api::error::StorageGone;
 use crate::plugin::Plugin;
 use crate::{content, terminal};
+use caelumora_api::component::service_of;
+use caelumora_api::component::Services;
+use caelumora_api::component::{
+    config_of_params, ComponentError, ComponentResult, NoParams, Params,
+};
+use caelumora_api::error::StorageGone;
 use caelumora_model::confidentiality::ConfidentialityPolicy;
 use caelumora_model::config::BackendConfig;
 use caelumora_model::secret::env::EnvSecretProvider;
@@ -41,12 +43,6 @@ use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
-
-// The parameters of the kernel's backends whose types the model defines, which knows nothing of
-// `Params`.
-impl Params for FileSecretConfig {}
-impl Params for FileUserConfig {}
-impl Params for AcceptAnyConfig {}
 
 /// The backends a section of the configuration names, by their names - the
 /// storages of workspaces, the storages of content -, which what lies there

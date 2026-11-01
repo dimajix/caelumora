@@ -1,5 +1,5 @@
 #!/bin/sh
-# Eight checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Nine checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -22,17 +22,23 @@
 #   block (docs/CODING-GUIDELINES.md, "Imports"): `scripts/import-blocks.sh` must find none out of
 #   order and no split block in the Rust files a commit adds or changes, read whole from the
 #   working tree.
-# - A library names nothing only the kernel may hold (docs/ARCHITECTURE.md, "The kernel decides,
-#   the agent side asks"): `scripts/library-names.sh` must find no `SecurityContext`, policy or
-#   manager of the kernel in the code of the libraries' Rust files a commit adds or changes, read
-#   whole from the working tree.
+# - A library links no kernel (issue 516): whenever a Cargo manifest is part of a commit,
+#   `scripts/library-deps.sh` must find neither a library nor the library side of a crate that
+#   stands on both levels with `caelumora-kernel` among its normal dependencies, nor `caelumora-api`
+#   with a crate of Caelumora but the model.
+# - A library names nothing only the kernel may decide by that the model still offers
+#   (docs/ARCHITECTURE.md, "The kernel decides, the agent side asks"): `scripts/library-names.sh`
+#   must find no `SecurityContext`, policy, manager or store of the model in the code of the
+#   libraries' Rust files a commit adds or changes, read whole from the working tree.
 # - The crates that stand on both levels stay cut (issue 516): whenever Rust code or a Cargo
-#   manifest is part of a commit, `caelumora-skills` and `caelumora-artifacts` must build without
-#   features - what a client reads -, with the feature `library` alone - the agent side without the
-#   plugin - and with `kernel` alone - the plugin without the agents.
+#   manifest is part of a commit, the crates of `scripts/libraries.sh` that stand on both levels
+#   must build without features - what a client reads -, with the feature `library` alone - the
+#   agent side without the plugin - and with `kernel` alone - the plugin without the agents.
 #
-# `git commit --no-verify` skips all eight.
+# `git commit --no-verify` skips all nine.
 set -eu
+
+. scripts/libraries.sh
 
 if ! git diff --cached --quiet -- issues/; then
     staged=$(mktemp -d)
@@ -50,8 +56,12 @@ if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock clippy.toml; t
     cargo clippy --workspace --all-targets --quiet -- -D warnings
 fi
 
+if ! git diff --cached --quiet -- '*Cargo.toml' Cargo.lock; then
+    scripts/library-deps.sh
+fi
+
 if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock; then
-    for crate in caelumora-skills caelumora-artifacts; do
+    for crate in $both_levels; do
         cargo check --quiet -p "$crate" --no-default-features
         for side in library kernel; do
             cargo check --quiet -p "$crate" --no-default-features --features "$side"

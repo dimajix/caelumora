@@ -1,7 +1,6 @@
 //! The kernel's API (issue 516): what a library is given and declares - the interface of the agent
-//! side -, and nothing that decides. Its parts name nothing else of the kernel, which implements
-//! its traits, so that they can stand in a crate of their own (`caelumora-api`, step 6 of issue
-//! 516).
+//! side -, and nothing that decides. It depends on the model alone; the kernel implements its
+//! traits, and a library links it and the model, never the kernel.
 
 pub mod actor;
 pub mod command;

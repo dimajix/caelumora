@@ -8,13 +8,13 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use crate::api::actor::Actor;
-use crate::api::command::CommandError;
 use crate::channel::ChannelLoop;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
+use caelumora_api::actor::Actor;
+use caelumora_api::command::CommandError;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::agent::testing::stored_agent;
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};

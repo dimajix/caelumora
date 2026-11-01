@@ -5,11 +5,11 @@
 //! through them and knows no actor of an agent by name; the users' and the approvers' actors are
 //! the kernel's own.
 
-use crate::api::actor::{Actor, AgentFactory};
 use crate::channel::ChannelError;
 use crate::controller::{AgentController, PersonalityController};
 use crate::kernel::{AgentRuntime, ParticipantRuntime};
 use anyhow::{anyhow, Result};
+use caelumora_api::actor::{Actor, AgentFactory};
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::PersonalityKind;
 use caelumora_model::type_map::TypeKey;
@@ -98,14 +98,14 @@ impl AgentKinds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::actor::agent_factory;
-    use crate::api::component::ComponentImpl;
-    use crate::api::transport::{EventReceiver, EventSender};
     use crate::command::help_command::{HelpCommandProvider, HELP_COMMAND_NAME};
     use crate::command::{ChannelCommandProvider, CommandExecutor};
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
     use async_trait::async_trait;
+    use caelumora_api::actor::agent_factory;
+    use caelumora_api::component::ComponentImpl;
+    use caelumora_api::transport::{EventReceiver, EventSender};
     use caelumora_model::actor::{ActorState, Envelope};
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, Personality};

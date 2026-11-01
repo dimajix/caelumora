@@ -4,7 +4,7 @@
 use crate::component;
 use crate::{NAMESPACE, PROMPTS, SKILLS};
 use anyhow::Result;
-use caelumora_kernel::api::library::{Library, LibraryBuilder};
+use caelumora_api::library::{Library, LibraryBuilder};
 
 /// Skills, as a library: what of them an agent uses.
 #[derive(Debug, Default)]
