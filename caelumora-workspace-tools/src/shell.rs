@@ -1,5 +1,5 @@
 //! The shell tools of `terminal_tool`: commands in the workspace, through
-//! the `Shell` the turn's channel hands out (`Turn::workspace_shell`),
+//! the `Shell` the workspace's writer hands out (`WorkspaceWriter::shell`),
 //! which sees the commands started in that channel alone.
 //!
 //! A call dropped while it waits for its command - the turn cancelled or
@@ -13,10 +13,10 @@
 
 use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
+use caelumora_api::terminal::{CommandState, Shell};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
 use caelumora_model::workspace::CommandStatus;
-use caelumora_runtime::terminal::{CommandState, Shell};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::mem;
@@ -228,14 +228,14 @@ mod tests {
     use crate::terminal_tool::TerminalTool;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
+    use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::approval::ArgumentMatcher;
     use caelumora_model::prompt_catalogue::PromptCatalogue;
-    use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
     use std::collections::BTreeMap;
 
-    fn the_tool(world: &WithWorkspace) -> TerminalTool {
-        terminal_tool(world, json!({ "max_wait_secs": 10 }))
+    fn the_tool() -> TerminalTool {
+        terminal_tool(json!({ "max_wait_secs": 10 }))
     }
 
     #[tokio::test]
@@ -243,7 +243,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let ran = the_tool(&world)
+        let ran = the_tool()
             .execute(
                 RUN_COMMAND,
                 &json!({ "command": "echo draft > notes.md; cat notes.md; ls" }),
@@ -268,7 +268,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = the_tool(&world);
+        let tool = the_tool();
         let running = tool
             .execute(
                 RUN_COMMAND,
@@ -312,7 +312,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = the_tool(&world);
+        let tool = the_tool();
         let marker = world.dir().join("still-running");
         let command = format!("sleep 1.5 && touch {}", marker.display());
         let interrupted = time::timeout(
@@ -325,10 +325,9 @@ mod tests {
         assert!(!marker.exists(), "the command was killed with the call");
     }
 
-    #[tokio::test]
-    async fn the_approver_reads_the_command_whole_and_a_rule_covers_its_first_words() {
-        let world = session_with_workspace().await;
-        let tool = the_tool(&world);
+    #[test]
+    fn the_approver_reads_the_command_whole_and_a_rule_covers_its_first_words() {
+        let tool = the_tool();
         assert_eq!(
             tool.describe(RUN_COMMAND, &json!({ "command": "rm -rf build && make" })).unwrap(),
             "Run in the workspace:\nrm -rf build && make"

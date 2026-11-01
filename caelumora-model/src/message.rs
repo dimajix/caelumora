@@ -77,14 +77,12 @@ pub struct Message {
     /// participant hears it (`is_heard`), and it is not part of the answer a
     /// `TurnFinished` carries.
     pub internal: bool,
-    /// The turn that produced it (issue 235) - an agent's turn, or the work
-    /// of an external agent (`Work::turn_id`) - so that which messages of an
-    /// agent belong together can be told from the messages alone. `None`
-    /// for a user's message, one of the runtime outside a turn, and one
-    /// stored before it was kept. Set by the turn as it makes the message
-    /// its own, never taken over by a modification (`modify`): a changed
-    /// message stays in the turn it was produced in. Not covered by the
-    /// digest, like `timestamp`.
+    /// The turn that produced it (issue 235) - an agent's turn, or the work of an external agent
+    /// (`Work::turn_id`) - so that which messages of an agent belong together can be told from the
+    /// messages alone. `None` for a user's message, one of the kernel outside a turn, and one
+    /// stored before it was kept. Set by the turn as it makes the message its own, never taken over
+    /// by a modification (`modify`): a changed message stays in the turn it was produced in. Not
+    /// covered by the digest, like `timestamp`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<TurnId>,
     /// Participants addressed by `@`-mentions in `content`, resolved once

@@ -140,3 +140,13 @@ Rejected: the context holds the owner's roles and the personality's limit as the
   then - the one deliberate exception, to be stated there. Stored data: an agent's channel state
   stored while a turn was under way holds the turn's `EventContext`, which now needs
   `initiator_id` - such states are to be deleted.
+- **2026-10-31** — B taken up again by issue
+  [516](516-the-runtime-trusts-the-agents-linked-into-it.md), step 2: under the principle that
+  the core decides and an application asks, the context an envelope is checked in is the core's to
+  build, not the sender's to give. `Envelope` carries no `SecurityContext`; the channel's door
+  builds the sender's as it knows it when it admits the envelope, with the initiator the
+  `EventContext` carries since this issue. The two moments are not kept apart: there is one, the
+  check's. Decision 2 holds - a command is checked with the issuer's roles as they are when it is
+  admitted, and again when it is read back from the history for its agent -, but at the door, not
+  by the agent. `ShownEnvelope` is gone with the field it hid.
+

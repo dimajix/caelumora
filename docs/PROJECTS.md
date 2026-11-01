@@ -20,7 +20,7 @@ the section `artifacts` does.
 
 ## What a project is
 
-A project is a stored entity of the core (`caelumora_model::project::Project`): owned by a user,
+A project is a stored entity of the kernel (`caelumora_model::project::Project`): owned by a user,
 with a name, a description, members and an access list. It lies in a scope, where it is found by
 name, and it **holds a scope of its own** (`Scope::ProjectScope`): what lies there belongs to the
 project - names are unique in it, and it goes with the project as what lies in any scope goes with
@@ -41,16 +41,16 @@ participants. Who leaves reads the project no longer, and is told so.
     a name no other project may have -, owned by the session's owner and read by its participants
     (`Session::new_own_project`; `SessionTemplate::build`, which makes the session, builds it with
     `Project::own_of`). The session keeps it as it keeps the group of its participants: made with
-    it, deleted and restored with its mark, purged with it, in the runtime's name; what lies in it
+    it, deleted and restored with its mark, purged with it, in the kernel's name; what lies in it
     goes with the session in the name of whoever deletes or restores the session. A session is a
     user's, so that its project has an owner.
 *   **A shared one it lies in.** Whoever may change the session (`UpdateSession`) and reads a shared
     project (`GetProject`) puts the session into it (`SessionLoop::update_project`), or takes it out
     into its own again - the one in its scope, or a new one if that was lifted. The project it lies
-    in is shared with the session's participants for reading, in the runtime's name, so that every
+    in is shared with the session's participants for reading, in the kernel's name, so that every
     participant publishes into it; the project it leaves is no longer. A new session can be made in
-    a shared project (`SessionSpec::project`): it is made in its own and put there the same way,
-    as the last step of making it, or not made at all.
+    a shared project (`SessionSpec::project`): it is made in its own and put there the same way, as
+    the last step of making it, or not made at all.
 
 **Nothing moves.** What was published into a project stays there; only what comes next goes to the
 other. The session keeps its workspace and its agents; what it finds by name does not change, since
@@ -75,7 +75,7 @@ with the session in it and every artifact published so far. No artifact is kept 
 ## Lifecycle
 
 The `ProjectManager` makes, deletes, restores and purges shared projects
-(`caelumora-runtime/src/project`). It is made by the program beside the `SessionManager`, which it
+(`caelumora-kernel/src/project`). It is made by the program beside the `SessionManager`, which it
 holds, since deleting a project deletes the sessions in it and only the `SessionManager` deletes a
 session - it stops what runs. Deleting a project deletes its sessions through the `SessionManager`
 and what lies in its scope through `ScopedEntities`, in the deleter's name: a session or anything

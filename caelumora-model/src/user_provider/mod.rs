@@ -26,11 +26,11 @@ use std::fmt::Debug;
 #[non_exhaustive]
 pub enum Credential<'a> {
     Password(&'a str),
-    /// No secret: a frontend that runs in the runtime's own process - the TUI - vouches for whom
-    /// it acts for. It holds the stores itself, so a secret would keep out nobody it does not
-    /// already let in. Every provider takes it for the users it knows, also one that verifies a
-    /// secret otherwise, so that the chain answers it for a user where it answers a password. It
-    /// never reaches the REST server's login, which takes a password.
+    /// No secret: a frontend that runs in the kernel's own process - the TUI - vouches for whom it
+    /// acts for. It holds the stores itself, so a secret would keep out nobody it does not already
+    /// let in. Every provider takes it for the users it knows, also one that verifies a secret
+    /// otherwise, so that the chain answers it for a user where it answers a password. It never
+    /// reaches the REST server's login, which takes a password.
     Trusted,
 }
 

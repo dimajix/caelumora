@@ -270,6 +270,7 @@ fn plan_texts(prompts: &PromptTexts, plan: &Plan) -> Result<Vec<String>, PromptE
 mod tests {
     use super::*;
     use crate::turn::tests::{message, seen};
+    use caelumora_kernel::testing::Discard;
     use caelumora_model::actor::ActorId;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -279,9 +280,7 @@ mod tests {
     use caelumora_model::message::Message;
     use caelumora_model::message::MessageId;
     use caelumora_model::plan::PlanId;
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::work::Work;
-    use caelumora_runtime::transport::Discard;
     use futures::executor;
 
     fn make_plan_state() -> PlanState {
@@ -422,7 +421,6 @@ mod tests {
                 Work::new(
                     EventContext::default(),
                     None,
-                    SecurityContext::default(),
                     Classification::default(),
                     Default::default(),
                 )
@@ -487,14 +485,8 @@ mod tests {
         );
 
         state.begin_turn(
-            Work::new(
-                EventContext::default(),
-                None,
-                SecurityContext::default(),
-                Classification::default(),
-                Default::default(),
-            )
-            .given_as(keeps_system),
+            Work::new(EventContext::default(), None, Classification::default(), Default::default())
+                .given_as(keeps_system),
         );
         let mut turn = Turn::under_way(agent, &mut state);
         turn.set_context(Vec::new(), Vec::new());

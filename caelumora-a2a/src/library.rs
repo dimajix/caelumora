@@ -1,0 +1,21 @@
+//! How external agents reached over A2A are joined to the kernel (issue 326): by their component
+//! kind alone.
+
+use crate::agent;
+use anyhow::Result;
+use caelumora_api::library::{Library, LibraryBuilder};
+
+/// External agents reached over A2A, as a library.
+#[derive(Debug, Default)]
+pub struct A2aLibrary;
+
+impl Library for A2aLibrary {
+    fn name(&self) -> &'static str {
+        "a2a"
+    }
+
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
+        agent::register(&mut library.components());
+        Ok(())
+    }
+}

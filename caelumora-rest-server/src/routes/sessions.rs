@@ -8,6 +8,8 @@ use crate::routes::{change_error, ensure_session, session_response, views};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, http::StatusCode};
+use caelumora_kernel::session::SessionSpec;
+use caelumora_kernel::view::SessionView;
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::session::SessionId;
@@ -19,8 +21,6 @@ use caelumora_rest_api::session::{
     DescriptionRequest, JoinSessionRequest, PrivateNotesResponse, RenameSessionRequest,
     SessionPrivacyRequest, SessionResponse, SessionSnapshot,
 };
-use caelumora_runtime::session::SessionSpec;
-use caelumora_runtime::view::SessionView;
 use std::sync::Arc;
 use uuid::Uuid;
 

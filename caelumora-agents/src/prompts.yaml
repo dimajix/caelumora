@@ -12,7 +12,7 @@
 # - Names of tools are values, never written here: they are identifiers.
 
 # `static_system_prompt_provider` configured with a `title`: its `text`
-# under it, in the form of every part the runtime writes.
+# under it, in the form of every part the agents write.
 titled: |-
   [{{ title }}]
   {{ text }}{{ "\n" if text is not endingwith "\n" }}
@@ -393,7 +393,7 @@ results:
   skipped: >-
     {{ by }} interrupted this tool call before it ran; it was not executed, and your turn goes on.
     Decide whether to call it again.
-  # `cause`: why the turn ended - one of `ended_because`, or of the core's
+  # `cause`: why the turn ended - one of `ended_because`, or of the kernel's
   # `given_up_cause` for a turn given up (issue 148).
   abandoned: >-
     This tool call was not executed: the turn ended before it ran, because {{ cause }}. Decide again

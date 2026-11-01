@@ -6,10 +6,10 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
+use caelumora_api::component::{ComponentError, ComponentImpl, ComponentResult};
 use caelumora_model::approval::ToolMatcher;
 use caelumora_model::question::{Answers, Questions};
 use caelumora_model::tool::{ToolCall, ToolSet};
-use caelumora_runtime::component::{ComponentError, ComponentImpl, ComponentResult};
 use tracing::warn;
 
 /// The tool providers of an agent's components. It keeps the providers,
@@ -128,7 +128,6 @@ mod tests {
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::question::{Addressee, Question};
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::tool::{Tool, ToolParameters};
     use caelumora_model::turn::TurnState;
     use caelumora_model::work::Work;
@@ -188,16 +187,7 @@ mod tests {
 
     fn agent_state() -> AgentChannelState {
         AgentChannelState {
-            turn: Some(TurnState {
-                work: Work {
-                    security_context: SecurityContext {
-                        caller_id: ActorId::Agent(AgentId::new()),
-                        ..SecurityContext::default()
-                    },
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
+            turn: Some(TurnState { work: Work::default(), ..Default::default() }),
             ..Default::default()
         }
     }

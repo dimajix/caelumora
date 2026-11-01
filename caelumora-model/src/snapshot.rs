@@ -1,7 +1,6 @@
-//! Sessions and channels as one viewer sees them at one moment (issue 80):
-//! what a client lists and offers, taken by the runtime's views
-//! (`caelumora_runtime::view`, issue 163) for running and stopped sessions
-//! alike, and only of what the viewer may read.
+//! Sessions and channels as one viewer sees them at one moment (issue 80): what a client lists and
+//! offers, taken by the kernel's views (`caelumora_kernel::view`, issue 163) for running and
+//! stopped sessions alike, and only of what the viewer may read.
 //!
 //! A snapshot answers the access questions that decide what to show or
 //! offer - may the viewer change the channel, read an agent's context - at

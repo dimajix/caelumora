@@ -28,6 +28,10 @@
 use crate::client::{Answer, DecisionClient, DecisionError, Question, MAX_OPTIONS, MAX_QUESTIONS};
 use crate::NAMESPACE;
 use async_trait::async_trait;
+use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::moderator::{ResponderPolicy, Undecided};
 use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_model::confidentiality::{Classification, ConfidentialityPolicy};
 use caelumora_model::context::{ModelProfile, SenderFormat, SenderStyle};
@@ -37,12 +41,8 @@ use caelumora_model::prompt_catalogue::{
 };
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
+use caelumora_model::security::SecurityContext;
 use caelumora_model::value::time_zone::TimeZone;
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
-};
-use caelumora_runtime::moderator::{ResponderPolicy, Undecided};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::Arc;
@@ -175,19 +175,23 @@ impl ResponderPolicy for DecisionPolicy {
     async fn choose(
         &self,
         event: &Envelope,
+        context: &SecurityContext,
         messages: &[Message],
         candidates: Vec<ActorDescription>,
     ) -> Result<Vec<ActorId>, Undecided> {
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
-        self.decide(event, messages, &candidates).await.map_err(|why| Undecided(why.to_string()))
+        self.decide(event, context, messages, &candidates)
+            .await
+            .map_err(|why| Undecided(why.to_string()))
     }
 }
 
 impl DecisionPolicy {
     /// Whom of `candidates` the model chooses to respond to what `event`
-    /// said, the end of the conversation `messages`.
+    /// said, the end of the conversation `messages`, asked in `context`, the one
+    /// the channel admitted the event in.
     ///
     /// # Errors
     /// `NotCleared` if what `event` said may not flow to the destination;
@@ -196,21 +200,22 @@ impl DecisionPolicy {
     async fn decide(
         &self,
         event: &Envelope,
+        context: &SecurityContext,
         messages: &[Message],
         candidates: &[ActorDescription],
     ) -> Result<Vec<ActorId>, NoChoice> {
-        let state = self.state(event, messages)?;
+        let state = self.state(event, context, messages)?;
         let options = options(candidates);
         if candidates.len() < MAX_OPTIONS {
             let answers = self
                 .client
-                .ask(&event.security, &state, &choice(&self.prompts, candidates, &options)?)
+                .ask(context, &state, &choice(&self.prompts, candidates, &options)?)
                 .await?;
             self.chosen_by_choice(answers.get(RESPONDENT), candidates, &options)
         } else if candidates.len() <= MAX_QUESTIONS {
             let answers = self
                 .client
-                .ask(&event.security, &state, &nouls(&self.prompts, candidates, &options)?)
+                .ask(context, &state, &nouls(&self.prompts, candidates, &options)?)
                 .await?;
             let probabilities =
                 options
@@ -230,12 +235,17 @@ impl DecisionPolicy {
     /// What the model judges: the conversation `messages`, each message
     /// heard as a model is given one of another participant, one after
     /// another. What was said before is left out if it may not flow to the
-    /// destination, asked in the context of `event`, and beyond
-    /// `MAX_STATE_TOKENS` the oldest first.
+    /// destination, asked in `context`, and beyond `MAX_STATE_TOKENS` the
+    /// oldest first.
     ///
     /// # Errors
     /// `NotCleared` if what `event` said may not flow to the destination.
-    fn state(&self, event: &Envelope, messages: &[Message]) -> Result<String, NoChoice> {
+    fn state(
+        &self,
+        event: &Envelope,
+        context: &SecurityContext,
+        messages: &[Message],
+    ) -> Result<String, NoChoice> {
         let answered: HashSet<MessageId> =
             event.event.messages().iter().map(|message| message.id).collect();
         // Each text, and whether it is to be answered.
@@ -243,7 +253,7 @@ impl DecisionPolicy {
         for message in messages.iter().filter_map(Message::as_heard) {
             let to_answer = answered.contains(&message.id);
             if !self.confidentiality.may_publish(
-                &event.security,
+                context,
                 &message.classification,
                 &self.destination,
             ) {
@@ -440,6 +450,7 @@ mod tests {
     use axum::http::StatusCode;
     use axum::routing::post;
     use axum::{Json, Router};
+    use caelumora_kernel::channel::ChannelLoop;
     use caelumora_model::actor::{ActorEvent, EventContext};
     use caelumora_model::agent::AgentId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -450,7 +461,6 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::value::text::Introduction;
-    use caelumora_runtime::channel::ChannelLoop;
     use serde_json::{json, Value};
     use std::sync::Mutex;
     use tokio::net::TcpListener;
@@ -562,14 +572,7 @@ mod tests {
             message.sender_id,
             message.sender_name.clone(),
         );
-        (
-            Envelope::new(
-                SecurityContext::default(),
-                context,
-                ActorEvent::CompleteMessageGenerated(message),
-            ),
-            conversation,
-        )
+        (Envelope::new(context, ActorEvent::CompleteMessageGenerated(message)), conversation)
     }
 
     /// A message `content` of Alice, classified `classification`, and the
@@ -600,7 +603,7 @@ mod tests {
         let (event, messages) = said("The test fails.", Classification::PUBLIC);
 
         let chosen = policy(&url, json!({ "keep_alive": "5m" }))
-            .choose(&event, &messages, vec![coder.clone(), reviewer])
+            .choose(&event, &SecurityContext::default(), &messages, vec![coder.clone(), reviewer])
             .await
             .unwrap();
 
@@ -645,13 +648,16 @@ mod tests {
         ]);
         let candidates = vec![agent("Reviewer", None), agent("Coder", None)];
 
-        policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await.unwrap();
+        policy(&url, json!({}))
+            .choose(&event, &SecurityContext::default(), &messages, candidates.clone())
+            .await
+            .unwrap();
         policy(&url, json!({ "sender_format": "xml", "sender_style": "name" }))
-            .choose(&event, &messages, candidates.clone())
+            .choose(&event, &SecurityContext::default(), &messages, candidates.clone())
             .await
             .unwrap();
         policy(&url, json!({ "sender_format": "none" }))
-            .choose(&event, &messages, candidates)
+            .choose(&event, &SecurityContext::default(), &messages, candidates)
             .await
             .unwrap();
 
@@ -684,7 +690,10 @@ mod tests {
             message(alice, "Alice", MessageRole::User, "Now.", Classification::PUBLIC),
         ]);
 
-        policy(&url, json!({})).choose(&event, &messages, vec![agent("A", None)]).await.unwrap();
+        policy(&url, json!({}))
+            .choose(&event, &SecurityContext::default(), &messages, vec![agent("A", None)])
+            .await
+            .unwrap();
 
         assert_eq!(fake.asked()[0]["state"], "@alice: Before.\n\n@alice: Now.");
     }
@@ -698,13 +707,16 @@ mod tests {
         let url = serve(FakeModel::answering(choosing("b", probabilities))).await;
 
         assert_eq!(
-            policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await.unwrap(),
+            policy(&url, json!({}))
+                .choose(&event, &SecurityContext::default(), &messages, candidates.clone())
+                .await
+                .unwrap(),
             [b.id],
             "one by default"
         );
         assert_eq!(
             policy(&url, json!({ "max_responders": 3 }))
-                .choose(&event, &messages, candidates.clone())
+                .choose(&event, &SecurityContext::default(), &messages, candidates.clone())
                 .await
                 .unwrap(),
             [b.id, c.id],
@@ -712,7 +724,7 @@ mod tests {
         );
         assert_eq!(
             policy(&url, json!({ "max_responders": 3, "threshold": 0.5 }))
-                .choose(&event, &messages, candidates.clone())
+                .choose(&event, &SecurityContext::default(), &messages, candidates.clone())
                 .await
                 .unwrap(),
             [b.id],
@@ -726,7 +738,7 @@ mod tests {
         .await;
         assert!(
             policy(&url, json!({ "max_responders": 3 }))
-                .choose(&event, &messages, candidates)
+                .choose(&event, &SecurityContext::default(), &messages, candidates)
                 .await
                 .unwrap()
                 .is_empty(),
@@ -751,7 +763,10 @@ mod tests {
         let (event, messages) = said("Who?", Classification::PUBLIC);
 
         assert_eq!(
-            policy(&url, json!({})).choose(&event, &messages, candidates.clone()).await.unwrap(),
+            policy(&url, json!({}))
+                .choose(&event, &SecurityContext::default(), &messages, candidates.clone())
+                .await
+                .unwrap(),
             [candidates[7].id]
         );
         let questions = fake.asked()[0]["questions"].as_object().unwrap().clone();
@@ -772,7 +787,7 @@ mod tests {
 
         assert!(
             policy(&url, json!({}))
-                .choose(&event, &messages, vec![a.clone(), b.clone()])
+                .choose(&event, &SecurityContext::default(), &messages, vec![a.clone(), b.clone()])
                 .await
                 .is_err(),
             "a model that fails"
@@ -780,7 +795,10 @@ mod tests {
 
         let url = serve(FakeModel::answering(choosing("someone", json!({})))).await;
         assert!(
-            policy(&url, json!({})).choose(&event, &messages, vec![a, b]).await.is_err(),
+            policy(&url, json!({}))
+                .choose(&event, &SecurityContext::default(), &messages, vec![a, b])
+                .await
+                .is_err(),
             "an answer that names no option"
         );
     }
@@ -794,13 +812,16 @@ mod tests {
             said("Internal matters.", Classification::general(Confidentiality::Internal));
 
         assert!(
-            policy(&url, json!({})).choose(&event, &messages, vec![a.clone()]).await.is_err(),
+            policy(&url, json!({}))
+                .choose(&event, &SecurityContext::default(), &messages, vec![a.clone()])
+                .await
+                .is_err(),
             "undecided"
         );
         assert!(fake.asked().is_empty(), "nothing sent to a public endpoint");
         assert_eq!(
             policy(&url, json!({ "destination": { "level": "internal" } }))
-                .choose(&event, &messages, vec![a.clone()])
+                .choose(&event, &SecurityContext::default(), &messages, vec![a.clone()])
                 .await
                 .unwrap(),
             [a.id]

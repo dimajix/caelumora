@@ -9,12 +9,12 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -98,7 +98,7 @@ impl CreatePlanToolProvider {
 #[async_trait]
 impl PromptProvider for CreatePlanToolProvider {
     async fn get_prompt(&self, _situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        // A fixed text of the runtime's: nothing confidential (issue 168).
+        // A fixed text of the agents': nothing confidential (issue 168).
         let text =
             self.prompts.render(PLANNING, context! { create_plan => CREATE_PLAN_TOOL_NAME })?;
         Ok(Prompt::classified(text, Classification::PUBLIC))
@@ -200,7 +200,7 @@ impl ToolProvider for CreatePlanToolProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CREATE_PLAN_TOOL_KIND)

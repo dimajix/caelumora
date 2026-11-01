@@ -66,7 +66,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [516](516-the-runtime-trusts-the-agents-linked-into-it.md) | open | medium | refactoring | The runtime trusts the agents linked into it: an agent builds its own `SecurityContext`, sets the one its envelopes are checked by, reaches the policies and the managers through an open registry of services, and decides itself whether its owner is asked before a tool runs - nothing in the code says which side of the trust boundary a piece of it stands on. |
 | [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md) | open | medium | refactoring | A library links the model, and the model still holds the `SecurityContext`, the policies, the secret manager, the user providers and the traits of the stores, so the compiler lets a library name what only the kernel may decide by, and only a script finds it. |
 
 ## Low priority

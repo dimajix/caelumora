@@ -45,13 +45,14 @@ seed:
 # Caelumora's host, as its user, with no isolation but the directory: only
 # for development. A storage with a shell takes no workspace classified
 # above its `destination` (default then: public). A command runs for
-# `max_run_secs` (default 3600) at most, in any storage.
+# `max_run_secs` (default 3600) at most, and a file is of `max_file_bytes`
+# (default 50 MiB) at most, in any storage.
 workspaces:
-  max_file_bytes: 52428800
   storage:
     files:
       type: local
       root: "local/workspaces/files"
+      max_file_bytes: 52428800
 #    dev:
 #      type: local
 #      root: "local/workspaces/dev"
@@ -103,19 +104,24 @@ attachments:
   unclaimed_expire_secs: 3600
   cache_bytes: 268435456
 
-# Published artifacts (issue 271): how large a version may be, and which
-# storage of content new artifacts go to where there are several
-# (`keep_in`).
-artifacts:
-  max_bytes: 52428800
+# The sections of the plugins (issue 323), each claimed by the plugin of
+# its name.
+plugins:
+  # Published artifacts (issue 271): how large a version may be, and which
+  # storage of content new artifacts go to where there are several
+  # (`keep_in`).
+  artifacts:
+    max_bytes: 52428800
 
-# ComfyUI (issue 512): the directory of the workflows a `comfyui_tool`
-# generates images with - each `<name>.json`, exported from ComfyUI with
-# "Export (API)", with `<name>.yaml` beside it, which says what it is for and
-# where the parameters of a call go. Read and checked when the runtime is
-# built.
-comfyui:
-  workflows: examples/comfyui/workflows
+# The sections of the libraries of the agent side (issue 516), each claimed
+# by the library of its name.
+libraries:
+  # ComfyUI (issue 512): the directory of the workflows a `comfyui_tool` generates images with -
+  # each `<name>.json`, exported from ComfyUI with "Export (API)", with `<name>.yaml` beside it,
+  # which says what it is for and where the parameters of a call go. Read and checked when the
+  # kernel is built.
+  comfyui:
+    workflows: examples/comfyui/workflows
 
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY
@@ -194,7 +200,7 @@ component_defaults:
 
 # Variants of the texts given to models (issue 57, docs/CONFIGURATION.md):
 # each a directory with a file per namespace it changes - agents.yaml,
-# core.yaml, skills.yaml, ... -, of the form of the file compiled in
+# kernel.yaml, skills.yaml, ... -, of the form of the file compiled in
 # (caelumora-agents/src/prompts.yaml, say), whose entries it replaces one by
 # one. `default` overrides the texts for every model. Without this section
 # the texts compiled in are used. Sassy's model is given `gemma4`

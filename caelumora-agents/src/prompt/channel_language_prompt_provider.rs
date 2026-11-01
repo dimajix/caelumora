@@ -1,7 +1,7 @@
 //! The `channel_language_prompt_provider` component (issue 56): tells the
 //! agent which language its channel's conversation is held in, so that it
 //! writes in it - although its instructions, its tools and the parts the
-//! runtime adds are in English, which pulls a model towards English.
+//! agents add are in English, which pulls a model towards English.
 //! Nothing is translated: the conversation is one, in one language. The
 //! language is named in English and in itself, and by its tag.
 //!
@@ -24,12 +24,11 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_api::component::config_of_params;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::language::Language;
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
-};
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND: &str = "channel_language_prompt_provider";
@@ -91,8 +90,8 @@ impl PromptProvider for ChannelLanguagePromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`Situation::channel_view`) has no language to follow.
-        let Some(channel) = situation.channel_view().await? else {
+        // Work that reaches no session (`Situation::channel`) has no language to follow.
+        let Some(channel) = situation.channel().await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
         let text = self.text(channel.effective_language().cloned())?;
@@ -112,7 +111,7 @@ fn render(prompts: &PromptTexts, language: Option<&Language>) -> Result<String, 
     prompts.render(TEXT, context! { tag => language.to_string(), english, native })
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND)
@@ -138,8 +137,11 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, TestAgents};
+    use crate::testing::{self, agent_runtime, TestAgents};
     use crate::turn::Turn;
+    use caelumora_kernel::session::testing::participant_runtime_in;
+    use caelumora_kernel::session::{SessionLoop, SessionManager};
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_model::actor::{ActorId, EventContext};
     use caelumora_model::agent::testing::{make_personality, stored_agent};
     use caelumora_model::agent::{AgentChannelState, AgentId};
@@ -151,10 +153,6 @@ mod tests {
     use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::actor_runtime_in;
-    use caelumora_runtime::session::{SessionLoop, SessionManager};
-    use caelumora_runtime::testing::TestRuntime;
 
     fn language(tag: &str) -> Option<Language> {
         Some(Language::new(tag).unwrap())
@@ -211,18 +209,18 @@ mod tests {
 
     #[tokio::test]
     async fn the_language_is_read_from_the_channel_and_its_session_at_every_turn() {
-        let runtime = TestRuntime { plugins: vec![&TestAgents], ..Default::default() }.build();
+        let kernel = TestKernel { libraries: vec![&TestAgents], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let agent = stored_agent(
-            runtime.entity_stores(),
+            kernel.entity_stores(),
             "Jonathan",
             make_personality("plain"),
             ActorId::User(UserId::new()),
         )
         .await;
         let owner = make_user("owner");
-        record_users(runtime.entity_stores(), &[&owner]).await;
+        record_users(kernel.entity_stores(), &[&owner]).await;
         let as_owner =
             SecurityContext::new(ActorId::User(owner.id), Default::default(), Default::default());
         let session = make_session("s", owner.id);
@@ -240,18 +238,14 @@ mod tests {
             channels: vec![channel.id],
             ..session
         };
-        let session_loop = SessionManager::new(Arc::clone(&runtime))
+        let session_loop = SessionManager::new(Arc::clone(&kernel))
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();
-
-        let context =
-            SecurityContext::default().next(ActorId::Agent(agent.id), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             EventContext::new(session.id, channel.id, ActorId::None, String::new()),
             None,
-            context.clone(),
             channel.classification.clone(),
             Default::default(),
         ));
@@ -286,11 +280,11 @@ mod tests {
         state: &mut AgentChannelState,
     ) -> Prompt {
         let turn = Turn::of(
-            agent,
-            "Jonathan".to_string(),
             state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(agent)),
+            agent_runtime(participant_runtime_in(
+                &session_loop.channels()[0],
+                ActorId::Agent(agent),
+            )),
         )
         .expect("a turn was begun");
         provider.get_prompt(&turn.situation()).await.unwrap()

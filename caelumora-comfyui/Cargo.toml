@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
-caelumora-runtime.workspace = true
+caelumora-api.workspace = true
 caelumora-agents.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
@@ -23,7 +23,7 @@ uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
 caelumora-agents = { workspace = true, features = ["test-support"] }
-caelumora-runtime = { workspace = true, features = ["test-support"] }
+caelumora-kernel = { workspace = true, features = ["test-support"] }
 axum.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }

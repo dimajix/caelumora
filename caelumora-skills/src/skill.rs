@@ -6,11 +6,13 @@
 
 use caelumora_model::actor::ActorId;
 use caelumora_model::confidentiality::Classification;
+use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::define_id;
 use caelumora_model::digest::{Digest, Encoder};
 use caelumora_model::removal::Removal;
 use caelumora_model::scope::{Scope, ScopeField, Scoped};
 use caelumora_model::security::{CustomVerb, Grant, Requirement, Secured, SecurityAttributes};
+use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::snapshot::ScopeSnapshot;
 use caelumora_model::store::{EntityKind, NoEntity, Revision, Stored};
 use caelumora_model::value::name::ScopedName;
@@ -108,6 +110,17 @@ impl Skill {
             deleted: None,
             revision: Default::default(),
             purging: false,
+        }
+    }
+
+    /// That it was loaded in `channel` of `session`, as it is now: knowledge
+    /// of the turn it was loaded into (`KnowledgeSource::Entity`).
+    pub fn knowledge(&self, channel: ChannelId, session: SessionId) -> KnowledgeRef {
+        KnowledgeRef {
+            channel,
+            session,
+            source: KnowledgeSource::entity::<Self>(self.id, Some(digest(self.body.as_str()))),
+            classification: Some(self.classification.clone()),
         }
     }
 }

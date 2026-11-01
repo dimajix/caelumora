@@ -1,8 +1,7 @@
-//! The tests of the agents' logic in a running channel, and what only they
-//! share: the models, tools, commands and prompt parts of a test, and a
-//! channel of alice and an agent run here (`agent_channel`). They move with
-//! the agents' logic into a crate of its own (issue 370); what they share
-//! with the runtime's tests is `channel::testing`.
+//! The tests of the agents' logic in a running channel, and what only they share: the models,
+//! tools, commands and prompt parts of a test, and a channel of alice and an agent run here
+//! (`agent_channel`). They move with the agents' logic into a crate of its own (issue 370); what
+//! they share with the kernel's tests is `channel::testing`.
 
 mod agent;
 mod agent_commands;
@@ -11,10 +10,10 @@ mod questions;
 
 use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommandProvider;
+use crate::library::AgentsLibrary;
 use crate::llm::{LLMClient, LLMResult};
 use crate::message::{MessageProcessor, PerceiveInProcessor, ProcessingError};
 use crate::notes::{AgentNotes, NoteKind};
-use crate::plugin::AgentsPlugin;
 use crate::prompt::ModelProfileProvider;
 use crate::prompt::{ContextError, Prompt, PromptProvider};
 use crate::situation::Situation;
@@ -22,6 +21,18 @@ use crate::testing::Scripted;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use anyhow::Result;
+use caelumora_api::command::CommandError;
+use caelumora_api::command::{CommandResult, ProvidesCommands};
+use caelumora_api::component::ComponentFacets;
+use caelumora_api::component::ComponentKind;
+use caelumora_api::component::{config_of_params, Params};
+use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::testing::*;
+use caelumora_kernel::channel::*;
+use caelumora_kernel::command::help_command::HelpCommandProvider;
+use caelumora_kernel::command::CommandExecutor;
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::testing::TestKernel;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_model::actor::{EventContext, RetryTarget};
 use caelumora_model::agent::testing::make_personality;
@@ -41,15 +52,6 @@ use caelumora_model::store::Persistence;
 use caelumora_model::tool::{Tool, ToolParameters};
 use caelumora_model::user::UserId;
 use caelumora_model::work::TurnId;
-use caelumora_runtime::actor::user::ChannelWatch;
-use caelumora_runtime::channel::testing::*;
-use caelumora_runtime::channel::*;
-use caelumora_runtime::command::help_command::HelpCommandProvider;
-use caelumora_runtime::command::CommandError;
-use caelumora_runtime::command::{CommandExecutor, CommandResult, ProvidesCommands};
-use caelumora_runtime::component::ComponentKind;
-use caelumora_runtime::component::{config_of_params, ComponentFacets, ComponentRegistry, Params};
-use caelumora_runtime::testing::TestRuntime;
 use futures::stream;
 use futures::stream::BoxStream;
 use serde::Deserialize;
@@ -220,16 +222,16 @@ async fn agent_channel_hearing(
         }],
     };
     let config = AppConfig { component_defaults: defaults, ..Default::default() };
-    let runtime = TestRuntime {
+    let kernel = TestKernel {
         store,
         access_policy,
         config,
         components: Box::new(components),
-        plugins: vec![&AgentsPlugin],
+        libraries: vec![&AgentsLibrary],
         ..Default::default()
     }
     .build();
-    (channel_of_alice_and(runtime, alice, agent).await, context, agent, alice)
+    (channel_of_alice_and(kernel, alice, agent).await, context, agent, alice)
 }
 
 /// The states `agent` told the users of through `shown`, up to `until`.
@@ -289,11 +291,7 @@ struct NoSecrets;
 
 #[async_trait::async_trait]
 impl MessageProcessor for NoSecrets {
-    async fn process_messages(
-        &self,
-        input: Vec<Message>,
-        _security: &SecurityContext,
-    ) -> Result<Vec<Message>, ProcessingError> {
+    async fn process_messages(&self, input: Vec<Message>) -> Result<Vec<Message>, ProcessingError> {
         Ok(input
             .into_iter()
             .filter(|m| !m.content.as_deref().unwrap_or_default().contains("secret"))

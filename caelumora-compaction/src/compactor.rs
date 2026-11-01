@@ -170,7 +170,9 @@ mod tests {
     use super::*;
     use crate::testing::{two_calls, Scripted, SUMMARY};
     use async_trait::async_trait;
-    use caelumora_agents::testing::workspace_turn;
+    use caelumora_agents::testing::{agent_runtime, workspace_turn};
+    use caelumora_kernel::testing::participant_runtime_in;
+    use caelumora_kernel::workspace::testing::{session_with_workspace, WithWorkspace};
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -181,9 +183,6 @@ mod tests {
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::work::Work;
     use caelumora_model::workspace::{Workspace, WorkspaceId};
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::testing::actor_runtime_in;
-    use caelumora_runtime::workspace::testing::{session_with_workspace, WithWorkspace};
 
     /// What the agent of a test is given, as a plugin gives it - a skill, say: a workspace, here,
     /// and its text.
@@ -512,7 +511,6 @@ mod tests {
             Work::new(
                 EventContext::new(world.session.id(), channel.id(), ActorId::None, String::new()),
                 None,
-                world.context.clone(),
                 channel.classification(),
                 berlin,
             )
@@ -520,14 +518,8 @@ mod tests {
         );
         let strategy = Arc::new(Scripted::default());
         let compactor = compactor(&strategy, Vec::new());
-        let mut turn = Turn::of(
-            world.agent,
-            "Jonathan".to_string(),
-            &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(channel, ActorId::Agent(world.agent)),
-        )
-        .expect("a turn was begun");
+        let runtime = agent_runtime(participant_runtime_in(channel, ActorId::Agent(world.agent)));
+        let mut turn = Turn::of(&mut state, runtime).expect("a turn was begun");
         two_calls(&mut turn, world.agent);
         compactor.compact(&mut turn).await.expect("compacted");
         drop(turn);

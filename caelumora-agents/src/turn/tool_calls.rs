@@ -80,7 +80,7 @@ impl<'t> ToolCalls<'t> {
         decision: ApprovalStatus,
         decided_by: Vec<ApprovalDecision>,
     ) -> Option<Vec<ActorEvent>> {
-        // A fixed text of the runtime's: as the turn (issue 168).
+        // A fixed text of the agents': as the turn (issue 168).
         let label = self.turn.work.label();
         let call = self.turn.tool_calls.iter_mut().find(|c| c.approval_id() == Some(id))?;
         let ToolCallStatus::WaitingApproval { questions, .. } = &mut call.status else {
@@ -172,7 +172,7 @@ impl<'t> ToolCalls<'t> {
         by: ActorId,
         by_name: String,
     ) -> Result<ActorEvent, QuestionError> {
-        // A fixed text of the runtime's: as the turn (issue 168).
+        // A fixed text of the agents': as the turn (issue 168).
         let label = self.turn.work.label();
         let declined = declined_result(&self.prompts);
         let call = self.asking(id, by)?;
@@ -195,7 +195,7 @@ impl<'t> ToolCalls<'t> {
     /// the events that withdraw what those calls waited for: the questions
     /// closed, the approval request withdrawn.
     pub(crate) fn left(&mut self, participant: ActorId) -> Vec<ActorEvent> {
-        // A fixed text of the runtime's: as the turn (issue 168).
+        // A fixed text of the agents': as the turn (issue 168).
         let label = self.turn.work.label();
         let mut events = Vec::new();
         for call in &mut self.turn.tool_calls {
@@ -262,7 +262,7 @@ impl<'t> ToolCalls<'t> {
     /// interrupted before it ran (issue 276), as not executed, without
     /// running it: the turn goes on.
     pub(crate) fn skip(&mut self, index: usize, by: &str) {
-        // A fixed text of the runtime's: as the turn (issue 168).
+        // A fixed text of the agents': as the turn (issue 168).
         let label = self.turn.work.label();
         if let Some(call) = self.turn.tool_calls.get_mut(index) {
             let result = ToolCallResult::of(
@@ -286,7 +286,7 @@ impl<'t> ToolCalls<'t> {
         end: TurnEnd<'_>,
         internal: bool,
     ) -> (Vec<ToolCallState>, Option<Message>) {
-        // A fixed text of the runtime's: as the turn (issue 168).
+        // A fixed text of the agents': as the turn (issue 168).
         let label = self.turn.work.label();
         let mut abandoned = Vec::new();
         for call in self.turn.tool_calls.iter_mut().filter(|c| !c.is_finished()) {

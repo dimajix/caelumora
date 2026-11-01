@@ -7,26 +7,21 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use caelumora_api::component::ComponentImpl;
+use caelumora_api::reader::ViewError;
 use caelumora_model::component::ComponentFailPolicy;
 use caelumora_model::message::Message;
-use caelumora_model::security::SecurityContext;
 use caelumora_model::store::StoreError;
-use caelumora_runtime::component::ComponentImpl;
-use caelumora_runtime::view::ViewError;
 use std::fmt::Debug;
 
 #[async_trait]
 pub trait MessageProcessor: Send + Sync + Debug {
     /// What is made of `input` - filtered, changed, added to - for the actor
-    /// whose context is `security`: who perceives or emits it, and where.
+    /// it is a component of.
     ///
     /// # Errors
     /// `ProcessingError` if the messages cannot be processed.
-    async fn process_messages(
-        &self,
-        input: Vec<Message>,
-        security: &SecurityContext,
-    ) -> Result<Vec<Message>, ProcessingError>;
+    async fn process_messages(&self, input: Vec<Message>) -> Result<Vec<Message>, ProcessingError>;
 }
 
 /// Why a `MessageProcessor` cannot process what it was given (issue 336).
@@ -49,13 +44,12 @@ pub trait PerceiveInProcessor: MessageProcessor {}
 pub trait EmitOutProcessor: MessageProcessor {}
 
 /// Passes `input` through `processors` in turn, each given what the one
-/// before returned, for the actor whose context is `security`. A failing
-/// processor is skipped if it fails open - the next one is given what it
-/// was given - and fails the whole stage if it fails closed.
+/// before returned. A failing processor is skipped if it fails open - the
+/// next one is given what it was given - and fails the whole stage if it
+/// fails closed.
 pub(crate) async fn apply_stage_processors<T>(
     processors: &[ComponentImpl<T>],
     mut input: Vec<Message>,
-    security: &SecurityContext,
 ) -> Result<Vec<Message>>
 where
     T: MessageProcessor + ?Sized + Send + Sync,
@@ -64,7 +58,7 @@ where
         // What it was given, should it be left out.
         let kept = matches!(stage_processor.fail_policy, ComponentFailPolicy::FailOpen)
             .then(|| input.clone());
-        let output = stage_processor.process_messages(input, security).await;
+        let output = stage_processor.process_messages(input).await;
         let output = stage_processor
             .apply_fail_policy(output)
             .with_context(|| format!("component '{}' failed", stage_processor.id))?;
@@ -117,7 +111,6 @@ pub(crate) mod testing {
         async fn process_messages(
             &self,
             input: Vec<Message>,
-            _security: &SecurityContext,
         ) -> Result<Vec<Message>, ProcessingError> {
             let Some(word) = self.0 else {
                 return Err(ProcessingError::Failed("broken".to_string()));
@@ -159,14 +152,13 @@ mod tests {
     #[tokio::test]
     async fn each_processor_filters_what_the_one_before_left_and_a_broken_one_that_fails_open_is_skipped(
     ) {
-        let security = SecurityContext::default();
         let input = vec![said("hello"), said("secret plan"), said("spam offer")];
         let stages = [
             stage("no-secrets", Without(Some("secret")), ComponentFailPolicy::FailClosed),
             stage("broken", Without(None), ComponentFailPolicy::FailOpen),
             stage("no-spam", Without(Some("spam")), ComponentFailPolicy::FailClosed),
         ];
-        let output = apply_stage_processors(&stages, input.clone(), &security)
+        let output = apply_stage_processors(&stages, input.clone())
             .await
             .expect("the broken one fails open");
         assert_eq!(
@@ -177,7 +169,7 @@ mod tests {
 
         let stages = [stage("broken", Without(None), ComponentFailPolicy::FailClosed)];
         assert!(
-            apply_stage_processors(&stages, input, &security).await.is_err(),
+            apply_stage_processors(&stages, input).await.is_err(),
             "failing closed fails the stage"
         );
     }

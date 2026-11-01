@@ -201,7 +201,7 @@ Both come with the `SecurityContext`: its roles - those of its owner (`owner_id`
 the caller acts for -, and the roles its caller is limited to, which have to clear as well. A user
 whose roles grant nothing sees only what is public. Without a `roles` section, clearances are not
 checked. The system itself is cleared for everything, as it may do everything
-(`ConfidentialityQuestions::cleared_for`, issue 312): what the runtime does in its own name -
+(`ConfidentialityQuestions::cleared_for`, issue 312): what the kernel does in its own name -
 cleaning up, deleting with a scope - reaches what it acts on.
 
 ### Personalities limit their agents
@@ -521,4 +521,4 @@ the binary, such as Open Policy Agent, would state both.
     where it came from; a search index must not become a way around the flow rule.
 *   **One enforcement for component state.** Every component that reads across channels asks
     `may_copy_information` itself; when notes become generic component state
-    ([65](../issues/65-generic-component-state.md)), the core is to apply the rules.
+    ([65](../issues/65-generic-component-state.md)), the kernel is to apply the rules.

@@ -7,10 +7,10 @@
 //! of 2 to 26 options, and `noul`, yes or no. Its error format is not
 //! documented, so an error is told by its status alone.
 
+use caelumora_api::remote::describe_request_error;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::{SecretError, SecretManager};
 use caelumora_model::security::SecurityContext;
-use caelumora_runtime::remote::describe_request_error;
 use reqwest::{Client, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -150,7 +150,7 @@ impl DecisionClient {
         let mut request = self.http.post(url).json(&body);
         let token = self
             .endpoint
-            .bearer_token(&self.secret_manager, context)
+            .bearer_token(&self.secret_manager.for_context(context.clone()))
             .await
             .map_err(|source| DecisionError::Credential { endpoint: self.shown(), source })?;
         if let Some(token) = token {

@@ -1,14 +1,12 @@
-//! The texts the runtime gives models (issue 57): prompt parts, and
-//! whatever else a model is told in prose, kept as templates apart from the
-//! code that fills them in, so that a text can be tuned without a change of
-//! code.
+//! The texts given to models (issue 57): prompt parts, and whatever else a model is told in prose,
+//! kept as templates apart from the code that fills them in, so that a text can be tuned without a
+//! change of code.
 //!
-//! Every crate and plugin brings the texts it writes, a file of its own
-//! compiled in (`include_str!`) and added under its namespace when it
-//! registers its components: `agents.channel_mentions` is the text
-//! `channel_mentions` of the agents. The catalogue is a service of the
-//! runtime (`RuntimeBuilder::prompts`); whoever writes for a model gets it
-//! when it is made and keeps it.
+//! Every crate and plugin brings the texts it writes, a file of its own compiled in
+//! (`include_str!`) and added under its namespace when it registers its components:
+//! `agents.channel_mentions` is the text `channel_mentions` of the agents. The catalogue is a
+//! service of the kernel (`KernelBuilder::prompts`); whoever writes for a model gets it when it is
+//! made and keeps it.
 //!
 //! A text is a whole part - the roster with its participants, the notes with
 //! their sections -, a template of `minijinja` (Jinja2) that may branch and
@@ -40,14 +38,13 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::OnceLock;
 
-/// The namespace of the core's texts: what `caelumora-model` writes for a
-/// model - the notices of a context as it is resolved, the explanation of
-/// how messages are marked.
-pub const CORE: &str = "core";
+/// The namespace of the kernel's texts: what `caelumora-model` writes for a model - the notices of
+/// a context as it is resolved, the explanation of how messages are marked.
+pub const KERNEL: &str = "kernel";
 
-/// The core's texts, added to the catalogue under `CORE` when the runtime
-/// is built (`RuntimeBuilder::new`).
-pub const CORE_PROMPTS: &str = include_str!("prompts.yaml");
+/// The kernel's texts, added to the catalogue under `KERNEL` when the kernel is built
+/// (`KernelBuilder::new`).
+pub const KERNEL_PROMPTS: &str = include_str!("prompts.yaml");
 
 /// The variant that overrides the defaults for every model (issue 57), as
 /// the configuration names it among the others.
@@ -397,16 +394,15 @@ pub enum PromptError {
     UnknownValue { variant: String, key: String, name: String },
 }
 
-/// A catalogue with the core's texts alone, for the tests of what renders
-/// them.
+/// A catalogue with the kernel's texts alone, for the tests of what renders them.
 #[cfg(test)]
-pub(crate) fn core() -> &'static Arc<PromptCatalogue> {
+pub(crate) fn kernel_catalogue() -> &'static Arc<PromptCatalogue> {
     static CATALOGUE: OnceLock<Arc<PromptCatalogue>> = OnceLock::new();
     CATALOGUE.get_or_init(|| {
         let mut catalogue = PromptCatalogue::new();
         catalogue
-            .add(CORE, CORE_PROMPTS)
-            .unwrap_or_else(|e| panic!("the core's texts cannot be read: {e}"));
+            .add(KERNEL, KERNEL_PROMPTS)
+            .unwrap_or_else(|e| panic!("the kernel's texts cannot be read: {e}"));
         Arc::new(catalogue)
     })
 }

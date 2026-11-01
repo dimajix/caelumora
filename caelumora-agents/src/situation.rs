@@ -1,6 +1,6 @@
 //! The situation of a piece of work of an agent, to read (issues 204,
-//! 399): where it stands and what it sees from there - who works, in which
-//! contexts and bound by what, what it has seen so far, the agent's states,
+//! 399): where it stands and what it sees from there - who works, for whom
+//! and bound by what, what it has seen so far, the agent's states,
 //! and its session to navigate. A piece of work is a turn of an agent run
 //! here or an external agent's exchange with its remote agent - both a
 //! `Work` in the model; a [`Situation`] is what both kinds have. What only a
@@ -12,23 +12,18 @@
 //! what it offers - are given a `Situation` rather than a `Turn`, so that
 //! they serve both kinds of agent.
 
+use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
+use caelumora_api::runtime::ActorRuntime;
 use caelumora_model::actor::{ActorId, RequestReason};
-use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::Classification;
+use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_model::confidentiality::{Classification, Place};
 use caelumora_model::context::{ContextResolver, ModelProfile};
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_model::security::{Grant, SecurityAttributes, SecurityContext};
+use caelumora_model::secret::Secrets;
 use caelumora_model::session::{ChannelId, SessionId};
 use caelumora_model::tool::ToolSet;
 use caelumora_model::value::time_zone::TimeZone;
 use caelumora_model::work::Work;
-use caelumora_model::workspace::Workspace;
-use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::terminal::Terminal;
-use caelumora_runtime::view::{ChannelView, SessionView, ViewResult, WorkspaceView};
-use caelumora_runtime::workspace::WorkspaceResult;
 use std::sync::Arc;
 
 /// The situation of the work under way of an agent in its channel, to
@@ -38,23 +33,20 @@ pub struct Situation<'a> {
     agent_id: AgentId,
     work: &'a Work,
     agent_channel_state: &'a AgentChannelState,
-    agent_state: &'a Arc<AgentStateHandle>,
-    /// The runtime of the agent's actor: what it asks of its channel, and
-    /// what it navigates.
-    runtime: &'a ActorRuntime,
+    /// The runtime of the agent's actor: what it asks of its channel, what
+    /// it navigates, and the agent's own state.
+    runtime: &'a dyn ActorRuntime,
 }
 
 impl<'a> Situation<'a> {
-    /// `work` of the agent `agent_id`, with its state in the channel and its
-    /// own state, read through the actor's `runtime`.
+    /// `work` of the agent of `runtime`, with its state in the channel, read
+    /// through the actor's `runtime`.
     pub(crate) fn new(
-        agent_id: AgentId,
         work: &'a Work,
         agent_channel_state: &'a AgentChannelState,
-        agent_state: &'a Arc<AgentStateHandle>,
-        runtime: &'a ActorRuntime,
+        runtime: &'a dyn ActorRuntime,
     ) -> Self {
-        Self { agent_id, work, agent_channel_state, agent_state, runtime }
+        Self { agent_id: runtime.agent().id, work, agent_channel_state, runtime }
     }
 
     /// The agent whose work this is.
@@ -78,28 +70,17 @@ impl<'a> Situation<'a> {
         self.work.asked
     }
 
-    /// Whose authority the work acts with.
-    pub fn security_context(&self) -> &'a SecurityContext {
-        &self.work.security_context
+    /// Who began the chain the work answers (`EventContext::initiator_id`, issue 432): what the
+    /// kernel is told with every call it is asked in the work's name, for the record - never for
+    /// rights, which the kernel builds itself (issue 516).
+    pub fn initiator(&self) -> ActorId {
+        self.work.initiator()
     }
 
     /// The classification of the agent's channel as it was when the work
     /// began: the most it may read, and the most it writes as.
     pub fn classification(&self) -> Classification {
         self.work.classification.clone()
-    }
-
-    /// The attributes of the agent's channel as it stands, by which an act
-    /// on what the agent keeps there is asked (issue 312).
-    pub fn channel_attributes(&self) -> SecurityAttributes {
-        self.runtime.channel_attributes()
-    }
-
-    /// The agent's channel as it stands (`ActorRuntime::channel`): what an operation in the
-    /// channel is given as the channel's properties (`AttachmentManager::copy`); `channel_view` is
-    /// how the work reads it.
-    pub fn channel(&self) -> Arc<Channel> {
-        self.runtime.channel()
     }
 
     /// The classification of what the work writes (issue 168): the join of
@@ -115,47 +96,36 @@ impl<'a> Situation<'a> {
     /// attached to its channel, or once the session is gone.
     ///
     /// # Errors
-    /// As `ActorRuntime::session_view`: the agent may not read it, or reading
+    /// As `ActorRuntime::session`: the agent may not read it, or reading
     /// it failed.
-    pub async fn session_view(&self) -> ViewResult<Option<SessionView>> {
-        self.runtime
-            .session_view(&self.work.security_context, self.work.classification.clone())
-            .await
+    pub async fn session(&self) -> ViewResult<Option<Box<dyn SessionReader>>> {
+        self.runtime.session(self.initiator(), self.work.classification.clone()).await
     }
 
-    /// The agent's channel as the work reads it from there (`session`,
-    /// `SessionView::channel`, issue 399): its participants, its notes, its
-    /// workspace. `None` where the work reaches no session.
+    /// The reader `T` a plugin or the kernel binds to the work (`ActorRuntime::reader`, issue 516):
+    /// what of the plugin's service the work reads by - the skills' `SkillReader`, say -, in its
+    /// context. Asked for where it is used and not kept: it acts in the context of the call. `None`
+    /// if none is bound, if it is not offered here, or where the work reaches no session or may not
+    /// read it. What acts is the turn's (`Turn::writer`).
+    pub async fn reader<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.runtime.reader(self.initiator(), self.work.classification.clone()).await
+    }
+
+    /// Whether a turn of this work would be given the writer `T` bound to it (`Turn::writer`):
+    /// what a tool provider asks before it offers what acts by it (issue 516), handed nothing.
+    pub async fn has_writer<T: ?Sized + Send + Sync + 'static>(&self) -> bool {
+        let classification = self.work.classification.clone();
+        self.runtime.writer::<T>(self.initiator(), classification).await.is_some()
+    }
+
+    /// The agent's channel as the work reads it from there (`ActorRuntime::channel`, issue 399):
+    /// its participants, its notes, at the classification the work began with. `None` where the
+    /// work reaches no session.
     ///
     /// # Errors
     /// What following the views to it reports.
-    pub async fn channel_view(&self) -> ViewResult<Option<ChannelView>> {
-        let Some(session) = self.session_view().await? else { return Ok(None) };
-        session.channel(self.channel_id()).await.map(Some)
-    }
-
-    /// The workspace of the agent's session the work may use in its channel,
-    /// as its views see it (`ChannelView::workspace`, issue 290): what a
-    /// component tells of it, or offers to do on it. `None` where there is
-    /// none it may use - also where the work reaches no session.
-    ///
-    /// # Errors
-    /// What following the views to it reports.
-    pub async fn workspace_view(&self) -> ViewResult<Option<WorkspaceView>> {
-        let Some(channel) = self.channel_view().await? else { return Ok(None) };
-        channel.workspace().await
-    }
-
-    /// The workspace of the agent's session and its terminal, to read its
-    /// files, if the work may use it in its channel
-    /// (`ActorRuntime::workspace_terminal`, issue 344) - what a component
-    /// that only reads looks at. Changing the files, and running commands,
-    /// is a turn's (`Turn::workspace_terminal`, `Turn::workspace_shell`).
-    ///
-    /// # Errors
-    /// As `ActorRuntime::workspace_terminal`.
-    pub async fn workspace_terminal(&self) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        self.runtime.workspace_terminal(&self.work.security_context, Grant::Read).await
+    pub async fn channel(&self) -> ViewResult<Option<Box<dyn ChannelReader>>> {
+        self.runtime.channel(self.initiator(), self.work.classification.clone()).await
     }
 
     /// The agent's state in this channel as it stands: what components read
@@ -214,8 +184,22 @@ impl<'a> Situation<'a> {
             .unwrap_or_default()
     }
 
-    /// The agent's own state (issue 62), shared by all its actors.
-    pub fn agent_state(&self) -> &'a Arc<AgentStateHandle> {
-        self.agent_state
+    /// The agent's own state as it is now (issue 62), shared by all its actors
+    /// (`ActorRuntime::agent_state`): a snapshot, which changes applied after do not change.
+    pub fn agent_state(&self) -> Arc<AgentState> {
+        self.runtime.agent_state()
+    }
+
+    /// The secrets that may be read in the work's name (`ActorRuntime::secrets`, issue 516): what
+    /// a component that talks to a remote system resolves its credentials by.
+    pub fn secrets(&self) -> Arc<dyn Secrets> {
+        self.runtime.secrets(self.initiator())
+    }
+
+    /// Whether what lies at `from` may be copied, in the work's name, to `into`
+    /// (`ActorRuntime::may_copy_information`, issue 516): what the agent may recall of what it
+    /// keeps of its own.
+    pub fn may_copy_information(&self, from: &Place, into: &Place) -> bool {
+        self.runtime.may_copy_information(self.initiator(), from, into)
     }
 }

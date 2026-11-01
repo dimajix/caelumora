@@ -309,10 +309,10 @@ impl SecuredMut for Session {
 pub mod testing {
     use super::*;
 
-    /// A session of `owner` named `name`, as a template builds one (`SessionTemplate::build`):
-    /// read by its members (`Session::attributes_of`), the group of its participants (issue 23),
-    /// whom the test sets. It lists one channel, `channel::testing::main_channel`. Its project is a
-    /// stand-in: the runtime makes it one of its own when it stores it (issue 467).
+    /// A session of `owner` named `name`, as a template builds one (`SessionTemplate::build`): read
+    /// by its members (`Session::attributes_of`), the group of its participants (issue 23), whom
+    /// the test sets. It lists one channel, `channel::testing::main_channel`. Its project is a
+    /// stand-in: the kernel makes it one of its own when it stores it (issue 467).
     #[expect(
         clippy::expect_used,
         reason = "test code: a name that is none fails the test that gives it"
@@ -327,10 +327,10 @@ pub mod testing {
         }
     }
 
-    /// A session of the system's that holds nothing but its id `session_id`: what `make_session`
-    /// is made from, a test starts from whose session is nobody's, and a channel outside a running
-    /// session belongs to (the runtime's `ChannelRuntime::outside_a_session`). It lists no
-    /// channels and no participants, and its project is a stand-in.
+    /// A session of the system's that holds nothing but its id `session_id`: what `make_session` is
+    /// made from, a test starts from whose session is nobody's, and a channel outside a running
+    /// session belongs to (the kernel's `ChannelRuntime::outside_a_session`). It lists no channels
+    /// and no participants, and its project is a stand-in.
     #[expect(clippy::expect_used, reason = "test code: the name is one")]
     pub fn bare_session(session_id: SessionId) -> Session {
         let now = Utc::now();

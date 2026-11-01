@@ -12,10 +12,9 @@ use std::sync::Arc;
 
 /// **Development only.** Accepts every username with any credential.
 ///
-/// A stand-in until a real backend exists (issue 25), so that login and
-/// sessions (issue 10) can be built against the `UserProvider` trait. It must
-/// be enabled explicitly in the configuration and is never part of a default
-/// chain; the runtime warns loudly when it is made.
+/// A stand-in until a real backend exists (issue 25), so that login and sessions (issue 10) can be
+/// built against the `UserProvider` trait. It must be enabled explicitly in the configuration and
+/// is never part of a default chain; the kernel warns loudly when it is made.
 ///
 /// Its source is the `EntityStore` itself and the configured roles: a name it finds there is that
 /// user, any other a new one with a random id, which the `UserManager` stores (issue 306) - later

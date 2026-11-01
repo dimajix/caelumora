@@ -6,12 +6,13 @@
 //!
 //! - `create` makes the volume `caelumora-ws-<id>`; `remove` takes the
 //!   container and the volume away.
-//! - `terminal_for` starts the container on first use - the image pulled if
-//!   it is missing, the volume at `/workspace`, made writable for the
-//!   image's user, labelled with the storage and the workspace, with a key
-//!   made for it - and waits until it answers. The key lives in the
-//!   container's configuration, where only who holds the daemon reads it,
-//!   so a container outlives Caelumora and is found again after a restart.
+//! - `terminal_for` and `shell_for` start the container on first use - the
+//!   image pulled if it is missing, the volume at `/workspace`, made
+//!   writable for the image's user, labelled with the storage and the
+//!   workspace, with a key made for it - and wait until it answers. The key
+//!   lives in the container's configuration, where only who holds the
+//!   daemon reads it, so a container outlives Caelumora and is found again
+//!   after a restart.
 //! - Every container is reached directly, without a proxy, at its address
 //!   in `network`.
 //! - A task stops a container unused for `idle_stop`, and any running
@@ -21,7 +22,7 @@
 //!   start a container that is not running.
 
 use crate::client::{Client, Key};
-use crate::terminal::{OpenCommands, OpenTerminal};
+use crate::terminal::{OpenCommands, OpenFiles, OpenPlace};
 use async_trait::async_trait;
 use bollard::errors::Error as DockerError;
 use bollard::exec::{CreateExecOptions, StartExecOptions};
@@ -33,15 +34,16 @@ use bollard::query_parameters::{
     RemoveVolumeOptions, StopContainerOptions,
 };
 use bollard::Docker;
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
+use caelumora_api::terminal::{Shell, Terminal, TerminalError, TerminalResult};
+use caelumora_kernel::backend::Backends;
+use caelumora_kernel::terminal::{
+    check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
+    CommandKey, TerminalProvider,
+};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::workspace::WorkspaceId;
-use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::{ComponentError, ComponentResult, Params};
-use caelumora_runtime::terminal::{
-    check_max_run_secs, default_max_run_secs, CommandKey, Terminal, TerminalError,
-    TerminalProvider, TerminalResult,
-};
 use futures::StreamExt;
 use reqwest::Method;
 use serde::Deserialize;
@@ -91,6 +93,9 @@ struct DockerStorageConfig {
     /// itself.
     #[serde(default = "default_max_run_secs")]
     max_run_secs: u64,
+    /// The largest file a person may put into a workspace of it.
+    #[serde(default = "default_max_file_bytes")]
+    max_file_bytes: u64,
 }
 
 fn default_network() -> String {
@@ -105,7 +110,7 @@ impl Params for DockerStorageConfig {
     /// # Errors
     /// `ComponentError::InvalidConfig` naming what does not fit: no image is named, the network
     /// gives a container no address of its own, a container may not stay unused a while, or a
-    /// command may not run at all.
+    /// command may not run at all, or no file may be put into it.
     fn check(&self) -> ComponentResult<()> {
         let invalid = |why: String| Err(ComponentError::InvalidConfig(why));
         if self.image.trim().is_empty() {
@@ -120,7 +125,8 @@ impl Params for DockerStorageConfig {
         if self.idle_stop_secs == 0 {
             return invalid("idle_stop_secs must be more than 0".to_string());
         }
-        check_max_run_secs(self.max_run_secs)
+        check_max_run_secs(self.max_run_secs)?;
+        check_max_file_bytes(self.max_file_bytes)
     }
 }
 
@@ -136,6 +142,7 @@ pub(crate) fn register_backend(backends: &mut Backends) {
                 &config.network,
                 Duration::from_secs(config.idle_stop_secs),
                 Duration::from_secs(config.max_run_secs),
+                config.max_file_bytes,
                 config.destination,
             )
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
@@ -163,6 +170,8 @@ struct Inner {
     /// most.
     commands: Arc<OpenCommands>,
     max_run: Duration,
+    /// The largest file a workspace of it takes.
+    max_file_bytes: u64,
     destination: Classification,
     /// The workspaces used here, each with its instance while it runs.
     slots: StdMutex<HashMap<WorkspaceId, Slot>>,
@@ -190,7 +199,8 @@ fn failed(what: &str, error: DockerError) -> TerminalError {
 impl DockerProvider {
     /// The provider of the storage `storage`, whose containers run `image`
     /// in `network` and stop after `idle_stop` unused, and whose commands
-    /// run for `max_run` at most; what may be put into it at most
+    /// run for `max_run` at most, and whose files are of `max_file_bytes` at most; what may be put
+    /// into it at most
     /// `destination`, `public` unless given. Starts the task that stops
     /// what is not used - also what an earlier run left running.
     ///
@@ -203,6 +213,7 @@ impl DockerProvider {
         network: &str,
         idle_stop: Duration,
         max_run: Duration,
+        max_file_bytes: u64,
         destination: Option<Classification>,
     ) -> TerminalResult<Self> {
         let runtime = Handle::try_current().map_err(|_| {
@@ -218,6 +229,7 @@ impl DockerProvider {
             idle_stop,
             commands: Arc::default(),
             max_run,
+            max_file_bytes,
             destination: destination.unwrap_or(Classification::PUBLIC),
             slots: StdMutex::default(),
             reaper: OnceLock::new(),
@@ -248,9 +260,10 @@ impl Inner {
         ])
     }
 
-    /// The terminal of workspace `id` in the instance behind `client`.
-    fn terminal(&self, id: WorkspaceId, client: Arc<Client>) -> OpenTerminal {
-        OpenTerminal {
+    /// The place of workspace `id` in the instance behind `client`, which its files and its shell
+    /// are made of.
+    fn place_of(&self, id: WorkspaceId, client: Arc<Client>) -> OpenPlace {
+        OpenPlace {
             client,
             base: BASE.to_string(),
             workspace: id,
@@ -563,7 +576,17 @@ impl TerminalProvider for DockerProvider {
 
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>> {
         let client = self.inner.instance(id).await?;
-        Ok(Arc::new(self.inner.terminal(id, client)))
+        let place = self.inner.place_of(id, client);
+        Ok(Arc::new(OpenFiles { place, max_file_bytes: self.inner.max_file_bytes }))
+    }
+
+    async fn shell_for(
+        &self,
+        id: WorkspaceId,
+        scope: &str,
+    ) -> TerminalResult<Option<Arc<dyn Shell>>> {
+        let client = self.inner.instance(id).await?;
+        Ok(Some(self.inner.place_of(id, client).shell(scope)))
     }
 
     fn has_shell(&self) -> bool {
@@ -591,10 +614,7 @@ impl TerminalProvider for DockerProvider {
             self.inner.commands.forget(*workspace);
             return Ok(());
         };
-        match self.inner.terminal(*workspace, client).shell(scope) {
-            Some(shell) => shell.end(id).await,
-            None => Ok(()),
-        }
+        self.inner.place_of(*workspace, client).shell(scope).end(id).await
     }
 
     fn destination(&self) -> Option<&Classification> {
@@ -607,11 +627,12 @@ mod tests {
     use super::*;
     use crate::plugin::OpenTerminalPlugin;
     use bytes::Bytes;
+    use caelumora_api::component::config_of_params;
+    use caelumora_api::component::Services;
+    use caelumora_api::terminal::{ByteStream, WorkspacePath};
+    use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
     use caelumora_model::config::BackendConfig;
     use caelumora_model::workspace::CommandStatus;
-    use caelumora_runtime::component::config_of_params;
-    use caelumora_runtime::runtime::Services;
-    use caelumora_runtime::terminal::{ByteStream, WorkspacePath, DEFAULT_MAX_RUN_SECS};
     use futures::stream;
     use serde_json::json;
     use std::env;
@@ -655,6 +676,7 @@ mod tests {
             "bridge",
             Duration::from_secs(3),
             Duration::from_secs(3600),
+            100,
             None,
         )
         .unwrap();
@@ -665,10 +687,10 @@ mod tests {
         let terminal = provider.terminal_for(id).await.expect("started");
         assert!(running(&docker, id).await);
         terminal
-            .write(&path("docs/a.md"), content("hello"), 100)
+            .write(&path("docs/a.md"), content("hello"))
             .await
             .expect("the workspace is the image user's to write");
-        let shell = terminal.shell("c").unwrap();
+        let shell = provider.shell_for(id, "c").await.unwrap().unwrap();
         let started = shell
             .start("cat docs/a.md; echo; pwd; echo \"[$OPEN_TERMINAL_API_KEY]\"; touch made")
             .await
@@ -701,6 +723,7 @@ mod tests {
             "bridge",
             Duration::from_secs(600),
             Duration::from_secs(3600),
+            100,
             None,
         )
         .unwrap();
@@ -744,6 +767,7 @@ mod tests {
             "bridge",
             Duration::from_secs(600),
             Duration::from_secs(3600),
+            100,
             None,
         )
         .unwrap();
@@ -760,6 +784,7 @@ mod tests {
             "bridge",
             Duration::from_secs(600),
             Duration::from_secs(3600),
+            100,
             None,
         )
         .unwrap();
@@ -790,12 +815,13 @@ mod tests {
             "bridge",
             Duration::from_secs(600),
             Duration::from_secs(2),
+            100,
             None,
         )
         .unwrap();
         let id = WorkspaceId::new();
         provider.create(id).await.unwrap();
-        let shell = provider.terminal_for(id).await.unwrap().shell("c").unwrap();
+        let shell = provider.shell_for(id, "c").await.unwrap().unwrap();
 
         let long = shell.start("echo \"begun 'quoted'\"; sleep 41 & sleep 41").await.unwrap();
         let ended = shell.output(&long, 0, Duration::from_secs(20)).await.unwrap();

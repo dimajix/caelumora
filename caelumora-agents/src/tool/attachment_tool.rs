@@ -8,23 +8,21 @@
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::situation::Situation;
 use crate::tool::{
-    arguments, described, page_of, tool_text, usable_workspace, ToolError, ToolOutput,
-    ToolProvider, ToolResult,
+    arguments, described, page_of, tool_text, workspace_reader, workspace_writer, ToolError,
+    ToolOutput, ToolProvider, ToolResult,
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::error::ContentError;
+use caelumora_api::reader::ChannelReader;
+use caelumora_api::terminal::{ByteStream, WorkspacePath};
+use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::content::{ContentId, ContentRef};
 use caelumora_model::message::MessageId;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::Answers;
-use caelumora_model::security::Grant;
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::attachment::AttachmentManager;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::content::ContentError;
-use caelumora_runtime::terminal::{ByteStream, WorkspacePath};
-use caelumora_runtime::view::ChannelView;
-use caelumora_runtime::workspace::WorkspaceManager;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -79,23 +77,16 @@ pub struct AttachmentTool {
     tools: Vec<Tool>,
     /// The texts its results give.
     prompts: PromptTexts,
-    /// Where an attachment is copied for the turn's next message.
-    attachments: Arc<AttachmentManager>,
-    /// Where the largest file a workspace takes is said.
-    workspaces: Arc<WorkspaceManager>,
 }
 
 impl AttachmentTool {
-    /// The provider, its texts from `prompts`, copying what it attaches through `attachments`,
-    /// writing no larger file into a workspace than `workspaces` take.
+    /// The provider, its texts from `prompts`. What it attaches it has its turn copy
+    /// (`Turn::copy_attachment`); the workspace's terminal writes no larger file into a workspace
+    /// than a workspace takes (issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(
-        prompts: PromptTexts,
-        attachments: Arc<AttachmentManager>,
-        workspaces: Arc<WorkspaceManager>,
-    ) -> Result<Self, PromptError> {
+    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
         let reference = || ("ref".to_string(), ToolParameters::string());
         let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
             described(
@@ -145,7 +136,7 @@ impl AttachmentTool {
             },
         ];
         let description = tool_text(&prompts, NAMESPACE, ATTACHMENT_TOOL_KIND, "description", ())?;
-        Ok(Self { description, tools, prompts, attachments, workspaces })
+        Ok(Self { description, tools, prompts })
     }
 
     /// The text `key` of its results, rendered with `values`; `None`, logged, if it cannot be had -
@@ -169,7 +160,7 @@ impl AttachmentTool {
 async fn place_of(
     turn: &Turn<'_>,
     reference: &str,
-) -> ToolResult<((MessageId, ContentId), ChannelView)> {
+) -> ToolResult<((MessageId, ContentId), Box<dyn ChannelReader>)> {
     let place =
         turn.situation().agent_channel_state().attachments.named(reference).ok_or_else(|| {
             ToolError::InvalidParameter(format!(
@@ -178,7 +169,7 @@ async fn place_of(
         })?;
     let channel = turn
         .situation()
-        .channel_view()
+        .channel()
         .await?
         .ok_or_else(|| ToolError::ExecutionFailed("the turn is in no channel".to_string()))?;
     Ok((place, channel))
@@ -226,7 +217,7 @@ impl ToolProvider for AttachmentTool {
             return Ok(Vec::new());
         }
         let sees = situation.profile().images;
-        let writable = match usable_workspace(situation).await {
+        let writable = match workspace_reader(situation).await {
             Ok(workspace) => workspace.may_write().await,
             Err(_) => false,
         };
@@ -287,13 +278,13 @@ impl ToolProvider for AttachmentTool {
                 let CopyTo { reference, path } = arguments(params)?;
                 // A workspace used in the channel takes what the channel holds: the attachment's
                 // label flows into it as the channel's does.
-                let (workspace, terminal) = turn.workspace_terminal(Grant::Write).await?;
+                let writer = workspace_writer(turn).await?;
+                let (workspace, terminal) = writer.terminal().await?;
                 let (attachment, content) = attachment_content(turn, &reference).await?;
                 let at = WorkspacePath::parse(
                     &path.unwrap_or_else(|| format!("{COPIED_TO}/{}", attachment.name.as_str())),
                 )?;
-                let written =
-                    terminal.write(&at, content, self.workspaces.max_file_bytes()).await?;
+                let written = terminal.write(&at, content).await?;
                 Ok(ToolOutput::classified(
                     json!({ "ref": reference, "path": at.to_string(), "bytes": written }),
                     workspace.classification,
@@ -302,11 +293,7 @@ impl ToolProvider for AttachmentTool {
             ATTACH => {
                 let Named { reference } = arguments(params)?;
                 let attachment = attachment(turn, &reference).await?;
-                let situation = turn.situation();
-                let copy = self
-                    .attachments
-                    .copy(situation.security_context(), &situation.channel(), &attachment)
-                    .await?;
+                let copy = turn.copy_attachment(&attachment).await?;
                 let classification = copy.classification.clone();
                 turn.put_aside(copy);
                 let value = json!({ "ref": reference, "name": attachment.name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
@@ -339,24 +326,18 @@ impl ToolProvider for AttachmentTool {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(ATTACHMENT_TOOL_KIND)
                 .provides::<dyn ToolProvider>()
-                .uses::<AttachmentManager>()
-                .uses::<WorkspaceManager>(),
+                .reads::<dyn WorkspaceReader>()
+                .writes::<dyn WorkspaceWriter>(),
         ),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let attachments = Arc::clone(context.service::<AttachmentManager>()?);
-            let workspaces = Arc::clone(context.service::<WorkspaceManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentTool::new(
-                texts,
-                attachments,
-                workspaces,
-            )?));
+            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentTool::new(texts)?));
             Ok(facets)
         },
     );
@@ -365,7 +346,12 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing;
+    use crate::testing::{self, agent_runtime};
+    use caelumora_api::terminal::ByteStream;
+    use caelumora_kernel::session::SessionLoop;
+    use caelumora_kernel::testing::participant_runtime_in;
+    use caelumora_kernel::testing::World;
+    use caelumora_kernel::view::Viewer;
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::{Classification, Confidentiality};
@@ -374,13 +360,8 @@ mod tests {
     use caelumora_model::history::HistoryEntry;
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::scope::Scope;
+    use caelumora_model::security::Grant;
     use caelumora_model::workspace::Workspace;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::SessionLoop;
-    use caelumora_runtime::terminal::ByteStream;
-    use caelumora_runtime::testing::actor_runtime_in;
-    use caelumora_runtime::testing::World;
-    use caelumora_runtime::view::Viewer;
     use futures::stream;
     use std::fs;
     use std::time::Duration;
@@ -399,7 +380,7 @@ mod tests {
         let helper = world.agent("helper", world.alice, &personality).await;
         let alice = World::as_user(world.alice);
         let docs = world
-            .runtime
+            .kernel
             .workspace_manager()
             .create(
                 &alice,
@@ -422,7 +403,7 @@ mod tests {
         let main = &session.channels()[0];
         let channel = main.channel();
         let hers = World::as_user(world.alice);
-        let attachments = world.runtime.attachment_manager();
+        let attachments = world.kernel.attachment_manager();
         let notes = attachments
             .create(&hers, &channel, "notes.txt", None, bytes(b"line one\nline two\n"))
             .await
@@ -460,13 +441,8 @@ mod tests {
         .expect("said")
     }
 
-    fn tool(world: &World) -> AttachmentTool {
-        AttachmentTool::new(
-            testing::prompts(),
-            Arc::clone(world.runtime.attachment_manager()),
-            Arc::clone(world.runtime.workspace_manager()),
-        )
-        .unwrap()
+    fn tool() -> AttachmentTool {
+        AttachmentTool::new(testing::prompts()).unwrap()
     }
 
     #[tokio::test]
@@ -474,7 +450,7 @@ mod tests {
     async fn an_attachment_heard_is_reached_by_its_number_as_its_message_stands() {
         let world = testing::world().await;
         let (session, helper, docs) = session_with_helper(&world).await;
-        let tool = tool(&world);
+        let tool = tool();
         let mut state = AgentChannelState::default();
         assert_eq!(
             tool.offered(&testing::turn(&session, helper, world.alice, &mut state).situation())
@@ -603,11 +579,8 @@ mod tests {
                 ModelProfile { images: true, ..ModelProfile::default() };
         }
         let seeing = Turn::of(
-            helper,
-            "helper".to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(&session.channels()[0], ActorId::Agent(helper)),
+            agent_runtime(participant_runtime_in(&session.channels()[0], ActorId::Agent(helper))),
         )
         .unwrap();
         let offered: Vec<String> =

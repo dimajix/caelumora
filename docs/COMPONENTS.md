@@ -18,16 +18,23 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
     never `null`. A parameter its kind does not take is refused, naming the component and the
     parameter, whether the kind takes parameters or not ([Parameters](#parameters)).
 *   **`ComponentRegistry`** holds a factory per kind, together with the parameters that kind takes,
-    the facets it provides and those of others it needs.
-    The `RuntimeBuilder` makes the built-in registry of its own stores and applies
-    `component_defaults`; a plugin registers its kinds in it (`RuntimeBuilder::components`), and a
-    test its own before the plugins (`TestRuntime::components`). A test that builds components
-    without a runtime starts from `caelumora_runtime::testing::test_registry`, or the agents'
-    `caelumora_agents::testing::test_registry`, with a model that is not to be asked as the
-    default.
-*   **`ComponentContainer`** builds the components of a `ComponentConfig` for an owner - an agent,
-    an external agent, a channel, a session's commands - and hands out the facets that owner
-    declared it asks for, and no other ([What a container accepts](#what-a-container-accepts)).
+    the facets it provides and those of others it needs. The `KernelBuilder` makes the built-in
+    registry of its own stores and applies `component_defaults`; a plugin registers its kinds in it
+    (`KernelBuilder::components`), a library through a `LibraryComponents`, which marks them as a
+    library's (issue 516), and a test its own before the plugins (`TestKernel::components`). A test
+    that builds components without a kernel starts from `caelumora_kernel::testing::test_registry`,
+    or the agents' `caelumora_agents::testing::test_registry`, with a model that is not to be asked
+    as the default.
+*   **`ComponentContainer`** holds the components of a `ComponentConfig` the registry built for an
+    owner (`ComponentRegistry::build`) - an agent, an external agent, a channel, a session's
+    commands - and hands out the facets that owner declared it asks for, and no other
+    ([What a container accepts](#what-a-container-accepts)).
+
+What a library declares and is given of components - a kind (`ComponentKind`) and its factory, the
+context a component is built with (`ComponentContext`), the container its owner holds, a component
+as one of its facets (`ComponentImpl`) - is the kernel's API (`caelumora_api::component`,
+issue 516), typed over the graph the kernel builds (`ComponentGraph`); the registry, the planning of
+a configuration and the graph are the kernel's.
 
 A descriptor of the reserved kind `ref` builds no component of its own: its `params` name a
 component bundle (`ComponentBundle`) - an entity like a personality, with an owner, an
@@ -125,11 +132,17 @@ Components are wired the way Spring Boot wires beans.
     facet are thus known before any of them is built, and the container checks that each factory
     kept to what its kind declared.
 *   **A kind declares the services it uses** (`ComponentKind::uses`). Its factory is given those
-    services of the runtime and no other, and keeps them as fields; one it does not declare is
+    services of the kernel and no other, and keeps them as fields; one it does not declare is
     refused, naming it.
 *   **A kind declares the facets of others it needs** (`ComponentKind::needs`), as the
     `policy_moderator` needs a `ResponderPolicy`. Its factory may ask for those and no other; one
     it does not declare is refused, naming it (`ComponentError::Undeclared`).
+*   **A kind declares the extensions it reads and writes by** (`ComponentKind::reads`, `writes`):
+    the faces of a system service a plugin binds to the work a component serves, which it is handed
+    while it works, not while it is built (issue 516, see
+    [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). A kernel in which a
+    declared one is bound by no plugin is not built; unlike `uses` and `needs`, it refuses nothing
+    to a component that did not declare it.
 *   **A component asks for what it needs, by type** (`context.all::<dyn PromptProvider>()`, or
     `one`). This builds the components that provide the facet on demand, recursively, and returns
     every *other* one in the order of the configuration.
@@ -145,7 +158,7 @@ Components are wired the way Spring Boot wires beans.
 *   **The order of the configuration counts.** The components no other one asks for are built in
     that order, and handed out in it.
 
-`uses` and `needs` are two declarations, built alike: a service comes from the runtime, is the same
+`uses` and `needs` are two declarations, built alike: a service comes from the kernel, is the same
 for every graph and is always there; a facet comes from the container's own graph, is built on
 demand and may be missing. Only `needs` decides what a container accepts.
 
@@ -156,7 +169,7 @@ secret, a connection opened. What a configuration can set off follows from what 
 it (issue 337):
 
 *   **The owner declares the facets it asks for**, as a constant it keeps, and builds its container
-    with them (`ComponentContainer::from_config`). The container refuses `one` and `get_all` of any
+    with them (`ComponentRegistry::build`). The container refuses `one` and `get_all` of any
     other facet, so that the declaration stays true.
 *   **The container accepts their closure**: the components that provide one of those facets - and,
     for a facet of which there is one that no component provides, its default -, then those that
@@ -182,7 +195,7 @@ it (issue 337):
 | agent | `ContextProvider`, `LLMClient`, `ModelProfileProvider`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider`, `ActivityProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
-| a session's commands | `ChannelCommandProvider` | `RuntimeManager::new_command_executor` |
+| a session's commands | `ChannelCommandProvider` | `Kernel::new_command_executor` |
 
 An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and,
 if it lists `compaction`, the `CompactionStrategy` and the `KnowledgeRestorer`s that component
@@ -194,10 +207,10 @@ Of some facets an agent has exactly one: the `ContextProvider`, the `LLMClient`,
 `ModelProfileProvider` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`
 and one `ModelProfileProvider`; a channel exactly one `Moderator` and one `ResponderPolicy`. They
 are registered with `ComponentRegistry::single` by the module that holds the default kind - or,
-where the core holds no kind, by the module of the facet, without one: the `LLMClient` and the
-`ModelProfileProvider`, whose kinds are plugins (issue 329). The program names
-their default among the kinds its plugins brought (`ComponentRegistry::set_default_kind`, refused
-for a kind that is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name
+where the kernel holds no kind, by the module of the facet, without one: the `LLMClient` and the
+`ModelProfileProvider`, whose kinds are libraries' (issue 329). The program names their default
+among the kinds its libraries brought (`ComponentRegistry::set_default_kind`, refused for a kind
+that is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name
 `ollama_client` of `caelumora-ollama` for both.
 
 The `ModelProfileProvider` says how the agent's model is given its context (issue 57): the
@@ -212,16 +225,16 @@ and keeps it with every turn.
     asks - a session's commands, say - never builds one.
 *   A single may have no default where none makes sense: the remote agent of an `ExternalAgent` is
     always named. A container asked for it that provides none fails then; nothing is checked
-    beforehand. The `LLMClient` has no default in the core, only the one the program names.
+    beforehand. The `LLMClient` has no default in the kernel, only the one the program names.
 *   What a container's single is, is known without building it (`ComponentRegistry::kind_of`) -
     unless the container refers to a component bundle, which might provide it.
-*   The default comes from, in this order: the container's own component; the defaults the
-    container was built with (an external agent's actor gives its `ContextProvider` so,
+*   The default comes from, in this order: the container's own component; the defaults the container
+    was built with (an external agent's actor gives its `ContextProvider` so,
     `external_context_provider`); the configuration (`AppConfig::component_defaults`, see
     [CONFIGURATION.md](CONFIGURATION.md)); and finally the default kind - the program's
-    (`set_default_kind`), or else the one it was registered with. The program's choice is kept
-    apart from the declaration: a plugin that declares the single after the program named its
-    default - the agents' plugin in a test's registry (issue 370) - does not undo it.
+    (`set_default_kind`), or else the one it was registered with. The program's choice is kept apart
+    from the declaration: a library that declares the single after the program named its default -
+    the agents' library in a test's registry (issue 370) - does not undo it.
 *   A default may provide several singles - a model, its client and its profile (issue 57) - as
     long as no other default provides one of them too. It is built once for all of them: a
     container keeps its defaults by the component, not by the facet asked for.
@@ -292,20 +305,24 @@ checks.
 
 ## What a component may reach
 
-A container is built with a `ComponentContext`, which holds:
+A container is built in a `BuildContext`, and each of its components with a `ComponentContext`;
+between them they hold:
 
-*   the `SecurityContext` the graph is built in, the name of its owner - for an agent's components
-    the agent's own, with its owner's rights; for a channel's components and a session's commands,
-    the owner's, with their roles as they are when it is built (`ControllerManager::owner_context`).
-    What a component reads while building - a `ref` resolved, an MCP server's tools, with its
-    credential - it reads in it. It does not keep it: what it asks later it asks in the context of
-    the act it serves - a tool in its turn's, a moderator in the event's it routes -, one context
-    per piece of work;
-*   the services of the runtime its kind declares it uses - the `AccessPolicy` for the questions
-    a component asks (`AccessQuestions`), the `SecretManager`, the `WorkspaceManager`, the
-    manager a plugin provides (the `ArtifactManager`, say) - by type, not as fields of the context,
-    so that a new service needs no new field and no component is given one it does not declare. They
-    are the runtime's `Services`, which the views and a plugin's routes reach as well;
+*   the `SecurityContext` the graph is built in, the name of its owner, which the `BuildContext`
+    holds and the graph keeps - never a `ComponentContext`, so that no component is given it (issue
+    516) - for an agent's components the agent's own, with its owner's rights
+    (`ActorRuntime::build_components`); for a channel's components and a session's commands the
+    owner's, with their roles as they are when it is built (`ControllerManager::owner_context`). The
+    graph resolves every `ref` in it; a component is not given it: what it asks it asks in the
+    context of the act it serves - a tool in its turn's, a moderator in the event's it routes -, one
+    context per piece of work;
+*   the services of the kernel its kind declares it uses - for a component of the kernel the
+    policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
+    that a new service needs no new field and no component is given one it does not declare. They
+    are the kernel's `Services`, which the views and a plugin's routes reach as well. A component of
+    a library declares no policy and no manager of the kernel: what it needs decided, or a secret,
+    it asks of the kernel through the `Turn` and the `Situation` it is called with (issue 516, see
+    [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-kernel-may-use));
 *   nothing of the session: what a component reads of it - other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with (see
     [MEMORY.md](MEMORY.md#reading-other-channels));
@@ -315,16 +332,17 @@ A container is built with a `ComponentContext`, which holds:
 Components are not given their actor's `ActorRuntime`: through it they could store the actor's state
 or act as the actor past the `Turn` they are called with. What a component may use is exactly what
 its context holds, and a service it needs is declared by its kind, which is where it shows who may
-use what. A service that acts in someone's name takes the security context with each call; while a
-turn runs, a component calls it with the turn's, never with the context it was built in.
+use what. A service of the kernel that acts in someone's name takes the security context with each
+call; a component of a library asks the kernel through its `Turn` and its `Situation`, which name
+only the initiator of the work, and the kernel builds the context of the call (issue 516).
 
 ## Writing a component
 
 The built-in components live **one file per component kind**, named after the kind
 (`calculator_tool.rs`, `notes.rs`, ...), in the module of the facet that is their purpose. Those of
-`command/` and `moderator/` are the runtime's own, in `caelumora-runtime/src/`
+`command/` and `moderator/` are the kernel's own, in `caelumora-kernel/src/`
 (`ComponentRegistry::built_in`); the others are an agent's, in `caelumora-agents/src/`, registered
-by the agents' plugin (`caelumora_agents::plugin::register_components`, issue 370). That module's
+by the agents' library (`caelumora_agents::library::register_components`, issue 370). That module's
 `mod.rs` holds the facet trait - with what consumes it, such as the `ToolExecutor` - and
 `register_all`; its other files are the components:
 
@@ -333,9 +351,9 @@ by the agents' plugin (`caelumora_agents::plugin::register_components`, issue 37
 | `tool/` | tool providers (`calculator_tool`, `ask_user_tool`, ...) |
 | `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
 | `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_participants_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
-| `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a plugin (`ollama_client` in `caelumora-ollama`) |
+| `llm/` | the facet through which an agent asks its model, the defusing of control tokens any kind may use, and no kind: each model provider is a library (`ollama_client` in `caelumora-ollama`) |
 | `moderator/` | the moderator and its responder policies |
-| `external/` | the facet through which an external agent is reached, and no kind: each protocol is a plugin (`a2a_agent` in `caelumora-a2a`) |
+| `external/` | the facet through which an external agent is reached, and no kind: each protocol is a library (`a2a_agent` in `caelumora-a2a`) |
 | `components/` | everything else, and every component that offers several facets |
 
 A component that offers several facets - `create_plan_tool`, `notes` and the other memory components
@@ -371,10 +389,11 @@ What components share lives beside the facet: `tool::text_argument` and `id_argu
 parameters, `tool::described` and `tool::tool_text` for the texts of tools, and `view::ViewError`,
 which a tool passes on with `?`.
 
-## Plugins
+## Plugins and libraries
 
-A component kind can come from a plugin, a crate of its own that brings a subject the core does not
-know. How a plugin registers its kinds, and what of the runtime such a kind may use, is in
+A component kind can come from a plugin, a crate of its own that brings a subject the kernel does
+not know, or from a library of the agent side, which runs an agent or serves its facets (issue 516).
+How each registers its kinds, and what of the kernel such a kind may use, is in
 [PLUGINS.md](PLUGINS.md).
 
 ## Built-in components
@@ -416,15 +435,15 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn: asleep after `stop` and `bye`, idle and without an answer after `silence` ([TOOLS.md](TOOLS.md#built-in-tools)). |
 | `ask_user_tool` | `ToolProvider` | - | The tool `ask_user`, with which the agent asks users of its channel and waits for their answers. |
 | `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
-| `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery; the tools kept for 300 s), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | Of the plugin `caelumora-mcp`, registered where it is joined. The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
-| `comfyui_tool` | `ToolProvider` | `endpoint` (no `auth`; timeout 300 s, the whole call), `workflows` (required, those of the section `comfyui`; the first the default), `requires_approval` (`false`), `destination` (`public`), `description` (the catalogue's) | Of the plugin `caelumora-comfyui` (issue 512). The tool `generate_image`, which generates an image on a ComfyUI server with one of the workflows and gives it the model to see; a call given up ends its prompt there ([TOOLS.md](TOOLS.md#comfyui)). |
+| `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery; the tools kept for 300 s), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | Of the library `caelumora-mcp`, registered where it is joined. The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
+| `comfyui_tool` | `ToolProvider` | `endpoint` (no `auth`; timeout 300 s, the whole call), `workflows` (required, those of the section `libraries.comfyui`; the first the default), `requires_approval` (`false`), `destination` (`public`), `description` (the catalogue's) | Of the library `caelumora-comfyui` (issue 512). The tool `generate_image`, which generates an image on a ComfyUI server with one of the workflows and gives it the model to see; a call given up ends its prompt there ([TOOLS.md](TOOLS.md#comfyui)). |
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
-| `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Of the plugin `caelumora-skills`, registered where it is joined. Skills: the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
+| `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Of the library of `caelumora-skills` (`SkillsLibrary`), registered where it is joined. Skills: the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
-| `terminal_tool` | `ToolProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in) | Of the plugin `caelumora-workspace-tools`, registered where it is joined. The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS.md](TOOLS.md#the-workspace)). What it can do is what the workspace's terminal can; a turn is offered what its access list lets the agent call there. |
-| `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | Of the plugin `caelumora-artifacts`, registered where it is joined. `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Offered where the turn may use a workspace in its channel and a storage of content is configured. |
+| `terminal_tool` | `ToolProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in) | Of the library `caelumora-workspace-tools`, registered where it is joined. The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS.md](TOOLS.md#the-workspace)). What it can do is what the workspace's terminal can; a turn is offered what its access list lets the agent call there. |
+| `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | Of the library of `caelumora-artifacts` (`ArtifactsLibrary`), registered where it is joined. `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Offered where the turn may use a workspace in its channel and a storage of content is configured. |
 | `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `title` (none), `position` (`start`), `classification` (public) | A fixed prompt part, under `[title]` if one is named. |
 | `channel_briefing_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent what its session and channel are for, as their owners wrote it ([AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)). |
 | `channel_language_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent the language its channel's conversation is held in ([AGENT-TURN.md](AGENT-TURN.md#the-channels-language)). |
@@ -432,11 +451,11 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `request_reason_prompt_provider` | `PromptProvider` | `position` (`before_turn_input`) | Tells an agent only the responder policy chose that nobody mentioned it, and that with nothing to add it stays silent - by `silence` where it is offered; nothing to an agent asked for another reason ([AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)). |
 | `channel_participants_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent its own name and handle and who else is in its channel, with their introductions, and when to write an @handle and when a name ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
 | `channel_mentions_prompt_provider` | `PromptProvider` | `position` (`before_turn_input`) | Reminds the agent, where another agent is in its channel, to write an @handle only for an answer or an action needed now, and a name everywhere else ([AGENT-TURN.md](AGENT-TURN.md#when-to-mention)). |
-| `workspace_prompt_provider` | `PromptProvider` | `position` (`start`), `instruction_files` (`["AGENTS.md", "CLAUDE.md"]`) | Of the plugin `caelumora-workspace-tools`, registered where it is joined. Tells the agent the workspace it may use in its channel, and which instruction files lie at its root, to be read first - or that there is none ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). |
+| `workspace_prompt_provider` | `PromptProvider` | `position` (`start`), `instruction_files` (`["AGENTS.md", "CLAUDE.md"]`) | Of the library `caelumora-workspace-tools`, registered where it is joined. Tells the agent the workspace it may use in its channel, and which instruction files lie at its root, to be read first - or that there is none ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). |
 | `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
-| `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
+| `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the library `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
 | `ollama_client` | `LLMClient`, `ModelProfileProvider` | `endpoint` (`http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `tokenizer` (`model` itself), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default), `context_size` (Ollama's default), `vision` (asked of `/api/show`) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends. |
 | `policy_moderator` | `Moderator` | `mentions_replace_policy` (`anyone`; `agents`), `on_undecided` (`none`; `all`), `max_agent_hops` (`3`), `max_span_depth` (`100`), `context_messages` (`10`) | The default moderator of a channel: routes as every channel does, asks the agents a message mentions - nobody for a message to people alone, unless `agents` - and else asks its `ResponderPolicy` whom to ask, told the last `context_messages` messages heard before - if it could not choose, whom `on_undecided` says, and tells the users when that is nobody ([CHANNELS.md](CHANNELS.md#moderators)); ends a chain between agents after `max_agent_hops` hops, and asks nobody to respond to an event `max_span_depth` deep ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
@@ -445,8 +464,8 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `user_driven_policy` | `ResponderPolicy` | - | Asks every agent if a user wrote, nobody if an agent did. |
 | `decision_policy` | `ResponderPolicy` | `endpoint`, `model` (`nimble`), `keep_alive`, `threshold` (`0.3`), `max_responders` (`1`), `destination` (`public`) | Of the plugin `caelumora-decision`, registered where it is joined; configured by an operator alone. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
-| `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the plugin `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it had been given there; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
-| `summary_compaction` | `CompactionStrategy` | - | Of the plugin `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
+| `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the library `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it had been given there; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
+| `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LLMClient`. |
 | `help_command` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |

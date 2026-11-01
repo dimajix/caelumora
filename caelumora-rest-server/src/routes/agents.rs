@@ -50,7 +50,7 @@ pub(super) async fn create_agent(
     let scope = request.scope.place(user.id, request.session_id, request.channel_id)
         .ok_or_else(|| ApiError::new(StatusCode::BAD_REQUEST, "invalid_scope", "An agent of a session's scope names its session, and only it names a session or a channel"))?;
     let made = state
-        .runtime_manager
+        .kernel
         .agent_manager()
         .create(&user.security_context(), &request.name, scope, request.personality_id)
         .await?;
@@ -87,7 +87,7 @@ pub(super) async fn rename_agent(
     Json(request): Json<RenameAgentRequest>,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let id = AgentId(id);
-    let agent = state.runtime_manager.controller_manager().agent_controller(id).await?;
+    let agent = state.kernel.controller_manager().agent_controller(id).await?;
     agent.update_name(&user.security_context(), &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
@@ -100,8 +100,7 @@ pub(super) async fn delete_agent(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
-    let deleted =
-        state.runtime_manager.agent_manager().delete(&user.security_context(), agent_id).await?;
+    let deleted = state.kernel.agent_manager().delete(&user.security_context(), agent_id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
         false => {
@@ -118,7 +117,7 @@ pub(super) async fn restore_agent(
     user: AuthenticatedUser,
 ) -> Result<Json<AgentResponse>, ApiError> {
     let agent_id = AgentId(id);
-    state.runtime_manager.agent_manager().restore(&user.security_context(), agent_id).await?;
+    state.kernel.agent_manager().restore(&user.security_context(), agent_id).await?;
     Ok(Json(readable(&state, &user, agent_id).await?))
 }
 
@@ -130,8 +129,7 @@ pub(super) async fn purge_agent(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let agent_id = AgentId(id);
-    let purged =
-        state.runtime_manager.agent_manager().purge(&user.security_context(), agent_id).await?;
+    let purged = state.kernel.agent_manager().purge(&user.security_context(), agent_id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -207,7 +205,7 @@ mod tests {
         let state = state();
         let mut plain = make_personality("plain");
         state
-            .runtime_manager
+            .kernel
             .entity_stores()
             .personalities
             .create(&SecurityContext::system(), &mut plain)

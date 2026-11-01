@@ -11,16 +11,14 @@ use caelumora_agents::tool::{
     arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
+use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_model::value::identifier::Identifier;
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
-};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -243,7 +241,7 @@ impl ToolProvider for ComfyUiTool {
 
 /// Registers the component kind `comfyui_tool`, which takes the workflows of the section
 /// `comfyui` as a service and writes for the agent's model.
-pub(crate) fn register(registry: &mut ComponentRegistry) {
+pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(COMFYUI_TOOL_KIND)
@@ -277,7 +275,6 @@ mod tests {
     use caelumora_agents::tool::ToolOutput;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use std::collections::HashMap;
     use std::path::Path as FilePath;
     use std::sync::Mutex;
@@ -430,16 +427,9 @@ mod tests {
             None,
             Default::default(),
             Default::default(),
-            Default::default(),
         ));
-        let mut turn = Turn::of(
-            AgentId::default(),
-            "test-agent".to_string(),
-            &mut state,
-            AgentStateHandle::detached(),
-            detached_actor_runtime(),
-        )
-        .expect("a turn was begun");
+        let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::default()))
+            .expect("a turn was begun");
         tool.execute(GENERATE_IMAGE, &params, None, &mut turn).await
     }
 

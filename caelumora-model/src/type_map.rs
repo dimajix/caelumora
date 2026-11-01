@@ -1,6 +1,6 @@
-//! Values by their type (issues 99, 296, 323): the facets a component
-//! provides, the services of the runtime, the stores a backend opened -
-//! each an `Arc<T>` of a trait object or a type, found by `T`.
+//! Values by their type (issues 99, 296, 323): the facets a component provides, the services of the
+//! kernel, the stores a backend opened - each an `Arc<T>` of a trait object or a type, found by `T`
+//! (`ErasedArc`).
 
 use std::any::{type_name, Any, TypeId};
 use std::collections::HashMap;
@@ -41,10 +41,34 @@ fn short_name<T: ?Sized + 'static>() -> &'static str {
     full.rfind("::").map_or(full, |at| &full[at + 2..])
 }
 
+/// An `Arc<T>` of a trait object or a type, with `T` forgotten until it is asked for again
+/// (`get`): what is kept of a value found by its type, here and wherever else one is
+/// (issue 516).
+#[derive(Clone)]
+pub struct ErasedArc(Arc<dyn Any + Send + Sync>);
+
+impl ErasedArc {
+    /// `value`, its type forgotten.
+    pub fn of<T: ?Sized + Send + Sync + 'static>(value: Arc<T>) -> Self {
+        Self(Arc::new(value))
+    }
+
+    /// The value, if it is an `Arc<T>`.
+    pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
+        self.0.downcast_ref::<Arc<T>>()
+    }
+}
+
+impl Debug for ErasedArc {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str("ErasedArc")
+    }
+}
+
 /// Values by their type, each an `Arc<T>` of a trait object or a type.
 #[derive(Default, Debug, Clone)]
 pub struct TypeMap {
-    map: HashMap<TypeId, (&'static str, Arc<dyn Any + Send + Sync>)>,
+    map: HashMap<TypeId, (&'static str, ErasedArc)>,
 }
 
 impl TypeMap {
@@ -53,8 +77,17 @@ impl TypeMap {
     }
 
     pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
-        let key = TypeKey::of::<T>();
-        self.map.insert(key.id, (key.name(), Arc::new(value) as Arc<dyn Any + Send + Sync>));
+        self.insert_of(TypeKey::of::<T>(), ErasedArc::of(value));
+    }
+
+    /// Inserts `value`, an `Arc` of the type `key` names, its type forgotten (issue 516).
+    pub fn insert_of(&mut self, key: TypeKey, value: ErasedArc) {
+        self.map.insert(key.id, (key.name(), value));
+    }
+
+    /// Whether it holds a value of the type `key` names.
+    pub fn contains(&self, key: TypeKey) -> bool {
+        self.map.contains_key(&key.id)
     }
 
     /// It with `value` besides.
@@ -64,7 +97,7 @@ impl TypeMap {
     }
 
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
-        self.map.get(&TypeId::of::<T>()).and_then(|(_, boxed)| boxed.downcast_ref::<Arc<T>>())
+        self.map.get(&TypeId::of::<T>()).and_then(|(_, erased)| erased.get::<T>())
     }
 
     /// It with the values of `keys` alone.

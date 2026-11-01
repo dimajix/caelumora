@@ -3,12 +3,11 @@
 //! classified, what it holds as its owner describes it, and whether it can
 //! run commands there - or that it has none here, so that it does not try.
 //!
-//! It says what is there, whatever tools a personality has to work on it,
-//! so a personality with several gets it once. Read afresh at the start of
-//! every turn through the agent's views: the workspace the channel may use
-//! now (`Situation::workspace_view`). In the system prompt by default
-//! (parameter `position`): it changes rarely. The part is classified as the
-//! workspace, which flows into the channel where it may be used there.
+//! It says what is there, whatever tools a personality has to work on it, so a personality with
+//! several gets it once. Read afresh at the start of every turn through the kernel's reader of it:
+//! the workspace the channel may use now (`WorkspaceReader`, issue 516). In the system prompt by
+//! default (parameter `position`): it changes rarely. The part is classified as the workspace,
+//! which flows into the channel where it may be used there.
 //!
 //! It names the files at the workspace's root that say how to work on it
 //! (issue 279) - those of the parameter `instruction_files` that are there,
@@ -25,14 +24,12 @@ use caelumora_agents::prompt::{
     texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
 };
 use caelumora_agents::situation::Situation;
+use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::terminal::{TerminalError, WorkspacePath};
+use caelumora_api::workspace::WorkspaceReader;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
-};
-use caelumora_runtime::terminal::{TerminalError, WorkspacePath};
-use caelumora_runtime::view::WorkspaceView;
 use futures::future;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -91,18 +88,13 @@ fn default_instruction_files() -> Vec<String> {
 }
 
 impl WorkspacePromptProvider {
-    /// Those of the instruction files that lie at the root of `workspace`,
-    /// the one `situation` may use in its channel; none if its storage cannot be
-    /// reached, which must not cost the turn.
-    async fn instruction_files_in(
-        &self,
-        workspace: &WorkspaceView,
-        situation: &Situation<'_>,
-    ) -> Vec<&WorkspacePath> {
+    /// Those of the instruction files that lie at the root of `workspace`, the one the work may use
+    /// in its channel; none if its storage cannot be reached, which must not cost the turn.
+    async fn instruction_files_in(&self, workspace: &dyn WorkspaceReader) -> Vec<&WorkspacePath> {
         if self.instruction_files.is_empty() {
             return Vec::new();
         }
-        let terminal = match situation.workspace_terminal().await {
+        let terminal = match workspace.terminal().await {
             Ok((_, terminal)) => terminal,
             Err(error) => {
                 warn!(workspace = %workspace.id(), "Looking for the instruction files of a workspace failed: {error}");
@@ -132,7 +124,7 @@ impl WorkspacePromptProvider {
 /// 23), worded by `prompts`.
 fn told(
     prompts: &PromptTexts,
-    workspace: &WorkspaceView,
+    workspace: &dyn WorkspaceReader,
     writable: bool,
     names: &[WorkspacePath],
     found: &[&WorkspacePath],
@@ -162,12 +154,18 @@ impl PromptProvider for WorkspacePromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        Ok(match situation.workspace_view().await? {
+        Ok(match situation.reader::<dyn WorkspaceReader>().await {
             Some(workspace) => {
-                let found = self.instruction_files_in(&workspace, situation).await;
+                let found = self.instruction_files_in(workspace.as_ref()).await;
                 let writable = workspace.may_write().await;
                 Prompt::classified(
-                    told(&self.prompts, &workspace, writable, &self.instruction_files, &found)?,
+                    told(
+                        &self.prompts,
+                        workspace.as_ref(),
+                        writable,
+                        &self.instruction_files,
+                        &found,
+                    )?,
                     workspace.classification().clone(),
                 )
             }
@@ -179,12 +177,13 @@ impl PromptProvider for WorkspacePromptProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(WORKSPACE_PROMPT_PROVIDER_KIND)
                 .params::<WorkspacePromptConfig>()
-                .provides::<dyn PromptProvider>(),
+                .provides::<dyn PromptProvider>()
+                .reads::<dyn WorkspaceReader>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
@@ -205,9 +204,9 @@ mod tests {
     use super::*;
     use crate::prompts;
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::security::SecurityContext;
-    use caelumora_runtime::workspace::testing::session_with_workspace;
     use serde_json::{json, Value};
     use std::fs;
 

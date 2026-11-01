@@ -35,7 +35,7 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
     (issue 482, `WaitingForUser` below).
 *   **Begin.** The last request to respond among what was taken in begins one turn; the earlier
     ones are dropped. The one turn answers the conversation as it stands, having heard every
-    message, and acts in the contexts of the last request - with the authority of the last who
+    message, and acts in the context of the last request - with the authority of the last who
     asked, never of someone who did not -, for the strongest reason among them (issue 439): a
     mention among them is a reason to answer, though the last request was only a choice of the
     policy. An agent that falls behind thus answers once when it is
@@ -163,7 +163,7 @@ a plan may cost is bounded by its steps: `create_plan` refuses a plan of more th
 `Plan::MAX_STEPS`, those it is extended by included, and the plan in play stays as it was.
 
 The agent announces its state to the users as it changes (`StateChanged`), each state once, in its
-own contexts rather than a turn's: its state is the agent's, not part of an answer. One move is not
+own context rather than a turn's: its state is the agent's, not part of an answer. One move is not
 the run loop's: the channel wakes a sleeping agent itself, synchronously, because the moderator,
 deciding right after whom to ask, leaves the sleeping out; the run loop is notified and announces
 `Idle`.
@@ -193,7 +193,7 @@ with its remote agent (`caelumora_model::work`):
     resolver](#the-turns-context-and-the-resolver)), with the session's time zone as the work
     began and how its model is given what was said.
 
-Whoever answers begins the work (`AgentBody::work_for`): the contexts of the request continued in
+Whoever answers begins the work (`AgentBody::work_for`): the context of the request continued in
 the agent's name, its reason, the channel's classification and the session's time zone, as they
 are now - the same for a turn, a command turn and an external agent's exchange. It adds how its
 model is given its context (`Work::given_as`) and hands the work to the state, which adds only what
@@ -215,19 +215,25 @@ is the same turn. Every message the turn produces carries it (`Message::turn_id`
 belong to one turn can be told from the messages alone. It is not covered by the digest, and a
 modification does not take it over: a changed message stays in the turn it was produced in.
 
-Beside its state, a turn reaches its session through its views (`Situation::session_view`), from
-which components read other channels as the confidentiality rules allow - at the classification the
-turn began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The views only read: its
-session, its channel and the workspace it may use there (`Situation::session_view`, `channel_view`,
-`workspace_view`) are views, named `…_view` after what they show, and answer alike - nothing where
-the work reaches no session, an error where it may not read what it reaches. The channel as it
-stands - its document, what an operation in the channel is given as its properties
-(`AttachmentManager::copy`) - is `Situation::channel`. What is done with the workspace's files goes
-through a handle instead, named after the handle: its terminal, to read them
-(`Situation::workspace_terminal`), and to change them or run commands, the turn's
-(`Turn::workspace_terminal`, `Turn::workspace_shell`). Both are reached through the actor's
-`ActorRuntime`, which the situation and the turn hold and which their components never see: they
-are given their methods (issue 370).
+Beside its state, a turn reaches its session through its readers (`Situation::session`), from which
+components read other channels as the confidentiality rules allow - at the classification the turn
+began with (see [MEMORY.md](MEMORY.md#reading-other-channels)). The readers only read: its session
+and its own channel (`Situation::session`, `channel`) are the readers of views (`SessionReader`,
+`ChannelReader`, issue 516), named after what they read, and answer alike - nothing where the work
+reaches no session, an error where it may not read what it reaches. What is done with the
+workspace's files goes through a handle instead, named after the handle: its terminal, to read them,
+through the reader of the workspace the situation hands out (`WorkspaceReader::terminal`), and to
+change them or run commands, through its writer the turn hands out (`WorkspaceWriter::terminal`,
+`shell`). A system service's extensions are cut the same way (issue 516, see
+[PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)): what the work reads by is the
+situation's to hand out (`Situation::reader`, the skills' `SkillReader`), what it acts by the turn's
+(`Turn::writer`, the `SkillWriter`, the `ArtifactPublisher`) - each bound to the views of the work,
+asking `GetSession` as `session` does, `None` where the work reaches no session or may not read it,
+and asked for where it is used. All are reached through the actor's `ActorRuntime`, which the
+situation and the turn hold and which their components never see: they are given their methods
+(issue 370). The agent's own state is read through it as well (`Situation::agent_state`, a
+snapshot), and changed by the turn alone (`Turn::reserve_memory_id`, and what the turn staged as it
+is committed).
 
 ### Beginning and ending a turn
 
@@ -254,7 +260,7 @@ given up as `Lowered` and the users are told (see [CONFIDENTIALITY.md](CONFIDENT
 asked for again while under way is given up as `Retried` after the step it cut short, and the
 request on its way begins the next turn.
 
-Either way the turn hands back the contexts it had as an `Answering`, which sends its last event
+Either way the turn hands back the context it had as an `Answering`, which sends its last event
 with the publication the turn had and withdraws the approval requests of the calls it abandoned. An
 external agent publishes its answers through the same `Answering`.
 
@@ -458,8 +464,8 @@ whose authority it acts with - which of its tools may be called there
 (`AgentChannelState::offer_tools`, see [TOOLS.md](TOOLS.md#tool-sets)). They are fixed in the turn
 like its classification - a resumed turn keeps them. The model is told of a tool only its name,
 description and parameters; whether its calls need approval, who sees them and how results are
-classified stay with the runtime. A tool that changes during a turn is offered as it is from the
-next turn on; a call of one that is gone fails as unknown. The tool sets offered are kept once per
+classified stay with the kernel. A tool that changes during a turn is offered as it is from the next
+turn on; a call of one that is gone fails as unknown. The tool sets offered are kept once per
 digest, each tool whole with how its calls were treated: the same tools treated otherwise are
 another offer. The model gets the tools from the resolved context, as it gets the messages, so what
 it was offered and what is recorded as offered are the same.
@@ -602,20 +608,19 @@ old one but does not continue it:
 *   **Counted once.** The tokens used count a message kept where it was first recorded.
 
 The mechanism takes the replacement and the first entry kept, and whose the replacement is;
-components decide the rest - those of the plugin `caelumora-compaction`. When the agent compacts,
-where its context is cut and what is given again is its `compaction` component's; what stands in
-the place of the part cut off, its one `CompactionStrategy`'s (issue 413), so that the rules every
-compaction keeps cannot be exchanged with the strategy. The component is asked by two triggers
-with the same code: the agent itself before a model call, as an activity of the component (issues
-284, 464), and `/compact`, which the component carries out as a command. An agent whose
-personality does not list `compaction` does not compact at all. Before every call of a turn - the
-first of the next turn as well, with what was heard since - the activity is due once the context
-fills `threshold` of the model's context size, as soon as a call made on the active branch
-measured it; a model that reports no context size gives nothing to measure against, which the
-component says once. The agent then compacts in the state `Busy` (see [In a turn](#in-a-turn));
-the strategy's calls do not count against `MAX_MODEL_CALLS`. A compaction that fails gives the
-turn up: the call it was to make room for would not fit. `/compact` tells of itself as a command
-does.
+components decide the rest - those of the library `caelumora-compaction`. When the agent compacts,
+where its context is cut and what is given again is its `compaction` component's; what stands in the
+place of the part cut off, its one `CompactionStrategy`'s (issue 413), so that the rules every
+compaction keeps cannot be exchanged with the strategy. The component is asked by two triggers with
+the same code: the agent itself before a model call, as an activity of the component (issues 284,
+464), and `/compact`, which the component carries out as a command. An agent whose personality does
+not list `compaction` does not compact at all. Before every call of a turn - the first of the next
+turn as well, with what was heard since - the activity is due once the context fills `threshold` of
+the model's context size, as soon as a call made on the active branch measured it; a model that
+reports no context size gives nothing to measure against, which the component says once. The agent
+then compacts in the state `Busy` (see [In a turn](#in-a-turn)); the strategy's calls do not count
+against `MAX_MODEL_CALLS`. A compaction that fails gives the turn up: the call it was to make room
+for would not fit. `/compact` tells of itself as a command does.
 
 A compaction keeps `keep` of the model's context size as it stands, less than `threshold`, or it
 would free too little. It cuts only before a message, by the positions the resolver measured
@@ -651,22 +656,22 @@ What the model is given besides the conversation - the system prompt, notes, wha
 remembers - is a *prompt part*. The `ContextProvider` decides where the parts go; the turn records
 what it was handed. A part is never stored in the transcript, which stays a stable prefix.
 
-Every part the runtime writes has one form: a short title in brackets on a line of its own -
-`[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content;
-a part configured with a title (`static_system_prompt_provider`) is given the same form
-(`agents.titled`). A part that says nothing is no part.
-The personality's own system prompt stays as written.
+Every part the agents write has one form: a short title in brackets on a line of its own -
+`[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content; a
+part configured with a title (`static_system_prompt_provider`) is given the same form
+(`agents.titled`). A part that says nothing is no part. The personality's own system prompt stays as
+written.
 
 ### The prompt catalogue
 
-What the runtime's parts say is kept apart from the code that fills them in, in the prompt
-catalogue (`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a
-change of code. Every crate brings its texts in a YAML file it compiles in - the agents'
-`caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin registers
-(`RuntimeBuilder::prompts`): `agents.channel_participants` is the roster. The catalogue is a
-service of the runtime. The core's texts are the namespace `core`
-(`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it resolves a
-context - a turn given up, who joined or left - and how the messages of others are marked
+What the prompt parts say is kept apart from the code that fills them in, in the prompt catalogue
+(`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a change of
+code. Every crate brings its texts in a YAML file it compiles in - the agents'
+`caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin or library
+registers (`KernelBuilder::prompts`, `LibraryBuilder::add_prompts`): `agents.channel_participants`
+is the roster. The catalogue is a service of the kernel. The kernel's texts are the namespace
+`kernel` (`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it
+resolves a context - a turn given up, who joined or left - and how the messages of others are marked
 (`ModelProfile::framing_explanation`).
 
 **Variants.** The configuration may name variants of the texts (`prompts`, see
@@ -687,12 +692,12 @@ which falls back to the default for what it leaves out:
     each time it resolves it - also when what an agent saw is asked for afterwards, with the texts
     of that variant as they are then.
 
-A text is a whole part, title and all: a template of `minijinja` (Jinja2), given its values by
-name, that may branch and loop over them - the roster over the participants, the notes over their
+A text is a whole part, title and all: a template of `minijinja` (Jinja2), given its values by name,
+that may branch and loop over them - the roster over the participants, the notes over their
 sections. The code decides whether a part is given at all and with which values - whether an agent
 is among the others, which name serves as the example, an introduction on one line -, the template
 only how it reads. Names of tools are values, never text: they are identifiers. A template that does
-not parse keeps the runtime from starting; a value it names and is not given fails the part
+not parse keeps the kernel from starting; a value it names and is not given fails the part
 (`ContextError::Prompt`), as a provider's error does. The conventions of the templates - block tags
 on lines of their own, `+%}` where one ends a line of text - are at the top of each file.
 
@@ -723,7 +728,7 @@ A `PromptProvider` is given a `Situation` (`Turn::situation`), what every piece 
 has, so the same providers serve an external agent as well. What only reads takes a `Situation`;
 what stages changes takes the `Turn`.
 
-The runtime brings four parts of its own, which a personality wires in as components. They go into
+The agents bring four parts of their own, which a personality wires in as components. They go into
 the system prompt by default, since they change rarely. For an external agent, whose remote agent
 keeps its conversation, the first three take `changes_only`: told once, then only when they changed.
 
@@ -785,16 +790,15 @@ do: permissions and approvals are untouched by it.
 
 `workspace_prompt_provider` describes the workspace the agent may use in its channel and names the
 instruction files at its root (`AGENTS.md`, `CLAUDE.md`) for the agent to read - by name only, so
-that the prompt does not change with their content. It lives with the tools it names, in the plugin
+that the prompt does not change with their content. It lives with the tools it names, in the library
 `caelumora-workspace-tools` ([TOOLS.md](TOOLS.md#the-workspace)).
 
 ### Instructions within a turn
 
-While a plan is executed, the runtime tells the model which step to work on next and, after the
-last, to write the final answer (`Turn::advance_plan`). Such an instruction is a prompt part placed
-after the messages the turn has produced so far - never between a tool call and its result. It is
-given again within its turn, never to later turns, which see the plan through the `create_plan`
-call.
+While a plan is executed, the turn tells the model which step to work on next and, after the last,
+to write the final answer (`Turn::advance_plan`). Such an instruction is a prompt part placed after
+the messages the turn has produced so far - never between a tool call and its result. It is given
+again within its turn, never to later turns, which see the plan through the `create_plan` call.
 
 ### Why the agent was asked
 
@@ -849,7 +853,7 @@ implementation, and therefore cannot diverge.
 
 ## Asking what an agent saw
 
-What an agent saw is read through the views (`caelumora_runtime::view`), from the participant of the
+What an agent saw is read through the views (`caelumora_kernel::view`), from the participant of the
 channel that produced the message: the channel's history holds it once, and only its sender is
 given what it was produced from.
 

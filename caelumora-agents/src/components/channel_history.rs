@@ -3,7 +3,7 @@
 //! contain a text -, each with what it says and the attachments it carries
 //! (issue 282). Only channels the agent's channel may read by their
 //! classifications can be read - as the turn's views answer
-//! (`Situation::session_view`, issues 133, 163); every read is recorded as a
+//! (`Situation::session`, issues 133, 163); every read is recorded as a
 //! `KnowledgeRef` with the turn's messages. When a message was said is
 //! written as the model is given the times of its own channel's (issue
 //! 424): in the turn's time zone, in the same form.
@@ -15,6 +15,7 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::chain::Position;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
@@ -25,7 +26,6 @@ use caelumora_model::question::Answers;
 use caelumora_model::store::history::HistoryField;
 use caelumora_model::store::query::Filter;
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -127,7 +127,7 @@ impl ToolProvider for ChannelHistoryComponent {
         let last = last.map(|n| n.clamp(1, MAX_LAST)).unwrap_or(DEFAULT_LAST);
         let query = query.as_deref().map(str::trim).filter(|q| !q.is_empty());
 
-        let Some(session) = turn.situation().session_view().await? else {
+        let Some(session) = turn.situation().session().await? else {
             return Err(ToolError::ExecutionFailed(
                 "the turn is in no session to read from".to_string(),
             ));
@@ -181,7 +181,7 @@ fn wanted(query: Option<&str>) -> Filter<HistoryField> {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_HISTORY_KIND).provides::<dyn ToolProvider>(),

@@ -8,12 +8,12 @@
 use super::Turn;
 use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
+use caelumora_api::actor::Answering;
+use caelumora_api::transport::EventSender;
 use caelumora_model::message::Message;
 use caelumora_model::tool::ToolCallState;
 use caelumora_model::turn::GivenUpReason;
 use caelumora_model::turn::TurnState;
-use caelumora_runtime::actor::Answering;
-use caelumora_runtime::transport::EventSender;
 use tracing::warn;
 
 /// What is still needed of a turn once it is taken over (`commit`).
@@ -25,7 +25,7 @@ pub(crate) struct CommittedTurn {
     /// Whether the agent's state in the channel changed, to be announced
     /// once stored.
     pub(crate) channel_state_changed: bool,
-    /// What its answer is sent with: the contexts the turn had (issue 85).
+    /// What its answer is sent with: the context the turn had (issue 85).
     pub(crate) answering: Answering,
     /// The tool calls that had no result when it ended, answered as not
     /// executed (`Turn::abandon_tool_calls`, issue 148): their approval
@@ -69,11 +69,8 @@ impl Turn<'_> {
         let TurnState { memory, notes, private_notes, answer: final_messages, .. } = turn;
         let channel_state_changed =
             self.agent_channel_state.finish_turn(turn_id, notes, private_notes);
-        if let Err(e) = self
-            .agent_state
-            .apply(memory, self.agent_channel_state.last_message.unwrap_or_default())
-            .await
-        {
+        let after = self.agent_channel_state.last_message.unwrap_or_default();
+        if let Err(e) = self.runtime.apply_agent_state(memory, after).await {
             warn!(
                 "Agent {}: the changes of its turn to its own state are lost: {:#}",
                 self.agent_id, e
@@ -146,14 +143,14 @@ mod tests {
     use crate::message::testing::given_up_turns;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
+    use caelumora_kernel::testing::Discard;
+    use caelumora_kernel::transport::memory::InMemoryEventSender;
     use caelumora_model::actor::ActorEvent;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::confidentiality::{Classification, Confidentiality};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
     use caelumora_model::tool::{ToolCall, ToolCallResult};
-    use caelumora_runtime::transport::memory::InMemoryEventSender;
-    use caelumora_runtime::transport::Discard;
     use chrono::Utc;
     use futures::executor;
     use serde_json::Value;

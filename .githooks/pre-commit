@@ -1,5 +1,5 @@
 #!/bin/sh
-# Six checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
+# Ten checks before a commit, enabled per clone with `git config core.hooksPath .githooks`:
 #
 # - issues/INDEX.md and issues/OPEN.md are kept in step with the issue files: whenever something in
 #   issues/ is part of a commit, both are generated from the issue files as they are staged and
@@ -22,9 +22,29 @@
 #   block (docs/CODING-GUIDELINES.md, "Imports"): `scripts/import-blocks.sh` must find none out of
 #   order and no split block in the Rust files a commit adds or changes, read whole from the
 #   working tree.
+# - A library links no kernel (issue 516): whenever a Cargo manifest or `scripts/crates.sh` is part
+#   of a commit, `scripts/library-deps.sh` must find neither a library nor the library side of a
+#   crate that stands on both levels with `caelumora-kernel` among its normal dependencies, nor
+#   `caelumora-api` with a crate of Caelumora but the model.
+# - A library names nothing only the kernel may decide by that the model still offers
+#   (docs/ARCHITECTURE.md, "The kernel decides, the agent side asks"): `scripts/library-names.sh`
+#   must find no `SecurityContext`, policy, manager or store of the model in the code of the
+#   libraries' Rust files a commit adds or changes, read whole from the working tree.
+# - The crates that stand on both levels stay cut (issue 516): whenever Rust code, a Cargo manifest
+#   or `scripts/crates.sh` is part of a commit, the crates of `scripts/crates.sh` that stand on
+#   both levels must build without features - what a client reads -, with the feature `library`
+#   alone - the agent side without the plugin - and with `kernel` alone - the plugin without the
+#   agents.
+# - The graph of the crates is kept in step with the manifests (docs/CRATES.md): whenever a Cargo
+#   manifest, the binary of a crate, docs/CRATES.md or a script it is written by is part of a
+#   commit, `scripts/crate-graph.sh --check` must find the document as it is staged as it would
+#   write it, or the commit is refused. It reads the manifests of the working tree, as clippy
+#   does.
 #
-# `git commit --no-verify` skips all six.
+# `git commit --no-verify` skips all ten.
 set -eu
+
+. scripts/crates.sh
 
 if ! git diff --cached --quiet -- issues/; then
     staged=$(mktemp -d)
@@ -42,6 +62,30 @@ if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock clippy.toml; t
     cargo clippy --workspace --all-targets --quiet -- -D warnings
 fi
 
+if ! git diff --cached --quiet -- '*Cargo.toml' Cargo.lock scripts/crates.sh; then
+    scripts/library-deps.sh
+fi
+
+if ! git diff --cached --quiet -- '*Cargo.toml' '*/src/main.rs' '*/src/bin/*' docs/CRATES.md \
+    scripts/crates.sh scripts/crate-graph.sh; then
+    document=$(mktemp)
+    git show :docs/CRATES.md > "$document"
+    if ! scripts/crate-graph.sh --check "$document"; then
+        rm -f "$document"
+        exit 1
+    fi
+    rm -f "$document"
+fi
+
+if ! git diff --cached --quiet -- '*.rs' '*Cargo.toml' Cargo.lock scripts/crates.sh; then
+    for crate in $both_levels; do
+        cargo check --quiet -p "$crate" --no-default-features
+        for side in library kernel; do
+            cargo check --quiet -p "$crate" --no-default-features --features "$side"
+        done
+    done
+fi
+
 committed=$(git diff --cached --name-only --diff-filter=ACMR -- '*.md' '*.rs' '*.ts' '*.tsx')
 if [ -n "$committed" ]; then
     scripts/wrapping.sh $committed
@@ -51,4 +95,5 @@ rust=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
 if [ -n "$rust" ]; then
     scripts/tuple-bindings.sh $rust
     scripts/import-blocks.sh $rust
+    scripts/library-names.sh $rust
 fi

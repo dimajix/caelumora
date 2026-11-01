@@ -1,10 +1,9 @@
 //! Log setup shared by the binaries (issues 01, 330).
 //!
-//! The whole workspace logs through `tracing`; the libraries only emit
-//! records, and an application installs the subscriber that writes them with
-//! [`init`]. Records from dependencies that still use `log` are forwarded into
-//! it. Which records are written is controlled by `RUST_LOG`; the format and
-//! the destination come from `AppConfig::logging`.
+//! The whole workspace logs through `tracing`; the other crates only emit records, and a program
+//! installs the subscriber that writes them with [`init`]. Records from dependencies that still use
+//! `log` are forwarded into it. Which records are written is controlled by `RUST_LOG`; the format
+//! and the destination come from `AppConfig::logging`.
 
 use anyhow::{Context, Result};
 use caelumora_model::config::{LogFormat, LoggingConfig};
@@ -63,8 +62,8 @@ pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_api::logging::envelope_span;
     use caelumora_model::actor::{ActorId, EventContext};
-    use caelumora_runtime::logging::envelope_span;
     use serde_json::Value;
     use std::env;
     use tracing::info;

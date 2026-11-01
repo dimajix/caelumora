@@ -15,7 +15,7 @@ use crate::memory::{MemoryChange, MemoryOrigin};
 use crate::message::Message;
 use crate::note::NoteChange;
 use crate::plan::PlanState;
-use crate::prompt_catalogue::CORE;
+use crate::prompt_catalogue::KERNEL;
 use crate::question::QuestionRequest;
 use crate::tool::{ToolCallState, ToolCallStatus};
 use crate::transcript::TranscriptEntry;
@@ -76,7 +76,7 @@ impl GivenUpReason {
     }
 
     /// The key of the text of the prompt catalogue that tells its agent's
-    /// model why (issue 57): `core.given_up_cause.<kind>`, its kind as it is
+    /// model why (issue 57): `kernel.given_up_cause.<kind>`, its kind as it is
     /// stored.
     pub fn cause_key(&self) -> String {
         let kind = match self {
@@ -86,13 +86,13 @@ impl GivenUpReason {
             GivenUpReason::Retried => "retried",
             GivenUpReason::CallLimit { .. } => "call_limit",
         };
-        format!("{CORE}.given_up_cause.{kind}")
+        format!("{KERNEL}.given_up_cause.{kind}")
     }
 
     /// Why the turn was given up, as logs and frontends tell it: "… because
     /// it failed". A fixed text, which says nothing of the conversation.
     /// What its agent's model is told is the prompt catalogue's
-    /// (`core.given_up_cause`).
+    /// (`kernel.given_up_cause`).
     pub fn cause(&self) -> &'static str {
         match self {
             GivenUpReason::Failed { .. } => "it failed",

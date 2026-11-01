@@ -1,6 +1,6 @@
 // An agent's tools by the tool set they come from (issue 194): each set
 // with its name, what it is for and, if it is unavailable, why; each tool
-// with its description, marked where the runtime treats its calls
+// with its description, marked where the kernel treats its calls
 // specially, and, unfolded, its parameters. Shown for the tools a message
 // was offered (ContextPanel) and for those an agent has now (ToolsPanel).
 
@@ -8,7 +8,7 @@ import type {Tool, ToolSet} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {ownerOnly} from '../messages';
 
-/** What the runtime acts on of `tool`, as marks after its name. */
+/** What the kernel acts on of `tool`, as marks after its name. */
 function marksOf(tool: Tool): string[] {
   const marks: string[] = [];
   if (tool.requires_approval) marks.push('needs approval');

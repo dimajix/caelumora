@@ -23,15 +23,13 @@ pub mod turn_context_provider;
 
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_api::component::{config_of_params, ComponentImpl, ComponentResult, Params};
+use caelumora_api::component::{ComponentContext, ComponentKind, LibraryComponents};
+use caelumora_api::reader::ViewError;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
 use caelumora_model::store::StoreError;
-use caelumora_runtime::component::{
-    config_of_params, ComponentContext, ComponentImpl, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
-};
-use caelumora_runtime::view::ViewError;
 use serde::Deserialize;
 use serde_json::Value;
 use std::fmt::Debug;
@@ -40,7 +38,7 @@ use std::fmt::Debug;
 pub const NAMESPACE: &str = "agents";
 
 /// The agents' texts (issue 57), added to the catalogue under `NAMESPACE`
-/// by `AgentsPlugin`.
+/// by `AgentsLibrary`.
 pub const PROMPTS: &str = include_str!("../prompts.yaml");
 
 /// Where a prompt part goes in the context (issue 47).
@@ -193,16 +191,14 @@ pub trait ContextProvider: Send + Sync + Debug {
     ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
 }
 
-/// How an agent's model is to be given its context (issue 57): the profile
-/// of the model - which reasoning of earlier messages it is given back, how
-/// the senders of others' messages are marked, say (issues 63, 135). A
-/// property of the model, fixed for as long as its component lives, kept in
-/// the context of every turn and applied where the model's input is
-/// resolved (`ContextResolver`). An agent has exactly one: its model's
-/// component provides it beside its `LLMClient`, an external agent's beside
-/// its `ExternalAgent` - so what writes for a model learns how without
-/// asking the model itself. Without a default in the core, as the
-/// `LLMClient`: the program names the kind of its model for both.
+/// How an agent's model is to be given its context (issue 57): the profile of the model - which
+/// reasoning of earlier messages it is given back, how the senders of others' messages are marked,
+/// say (issues 63, 135). A property of the model, fixed for as long as its component lives, kept in
+/// the context of every turn and applied where the model's input is resolved (`ContextResolver`).
+/// An agent has exactly one: its model's component provides it beside its `LLMClient`, an external
+/// agent's beside its `ExternalAgent` - so what writes for a model learns how without asking the
+/// model itself. Without a default in the kernel, as the `LLMClient`: the program names the kind of
+/// its model for both.
 pub trait ModelProfileProvider: Send + Sync + Debug {
     fn profile(&self) -> ModelProfile;
 }
@@ -259,7 +255,7 @@ pub enum ContextError {
 /// Registers the component kinds of this directory with `registry`, and the
 /// `ContextProvider` as a facet of which an agent has exactly one, with its
 /// default kind (issue 99).
-pub fn register_all(registry: &mut ComponentRegistry) {
+pub fn register_all(registry: &mut LibraryComponents<'_>) {
     registry.single::<dyn ContextProvider>(Some(turn_context_provider::TURN_CONTEXT_PROVIDER_KIND));
     registry.single::<dyn ModelProfileProvider>(None);
 
@@ -280,9 +276,15 @@ mod tests {
     use super::*;
     use crate::llm::{LLMClient, LLMResult};
     use crate::prompt::current_time_prompt_provider::CURRENT_TIME_PROMPT_PROVIDER_KIND;
-    use crate::testing::TestAgents;
+    use crate::testing::{agent_runtime, TestAgents};
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
+    use caelumora_api::component::ComponentFacets;
+    use caelumora_kernel::component::BuildContext;
+    use caelumora_kernel::component::ComponentRegistry;
+    use caelumora_kernel::session::testing::detached_participant_in;
+    use caelumora_kernel::testing::TestKernel;
+    use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -296,10 +298,6 @@ mod tests {
     use caelumora_model::tool::Tool;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext, ComponentFacets};
-    use caelumora_runtime::session::testing::detached_actor_runtime_in;
-    use caelumora_runtime::testing::TestRuntime;
     use futures::stream;
     use futures::stream::BoxStream;
     use futures::StreamExt;
@@ -357,11 +355,11 @@ mod tests {
             prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(),
             ..AppConfig::default()
         };
-        let runtime = TestRuntime {
+        let kernel = TestKernel {
             store,
             config,
             components: Box::new(components),
-            plugins: vec![&TestAgents],
+            libraries: vec![&TestAgents],
             ..Default::default()
         }
         .build();
@@ -373,15 +371,16 @@ mod tests {
                 ComponentDescriptor::new("calculator", CALCULATOR_TOOL_KIND),
             ],
         };
-        let context = ComponentContext::new(SecurityContext::system(), runtime.services().clone());
-        let built = ComponentContainer::from_config(
-            &components,
-            &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()],
-            runtime.component_registry(),
-            &context,
-        )
-        .await
-        .unwrap();
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
+        let built = kernel
+            .component_registry()
+            .build(
+                &components,
+                &[TypeKey::of::<dyn PromptProvider>(), TypeKey::of::<dyn ToolProvider>()],
+                &context,
+            )
+            .await
+            .unwrap();
         let calculator = built.get_all::<dyn ToolProvider>(None).unwrap().remove(0);
         assert_eq!(
             calculator.tools()[0].description,
@@ -396,10 +395,15 @@ mod tests {
 
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
-        let actor_runtime = detached_actor_runtime_in(Arc::clone(&runtime), session, channel);
+        let actor_runtime = agent_runtime(detached_participant_in(
+            Arc::clone(&kernel),
+            session,
+            channel,
+            ActorId::Agent(AgentId::new()),
+        ));
         let work = Work::default().given_as(Gemma.profile());
-        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
-        let situation = Situation::new(AgentId::new(), &work, &state, &agent_state, &actor_runtime);
+        let state = AgentChannelState::default();
+        let situation = Situation::new(&work, &state, &*actor_runtime);
         let time = built.get_all::<dyn PromptProvider>(None).unwrap().remove(0);
         assert!(
             time.get_prompt(&situation).await.unwrap().text.starts_with("[Now]\n"),
@@ -411,11 +415,8 @@ mod tests {
         );
         let elsewhere = Work::default();
         assert!(
-            denied_result(
-                &Situation::new(AgentId::new(), &elsewhere, &state, &agent_state, &actor_runtime)
-                    .texts()
-            )
-            .contains("The user declined"),
+            denied_result(&Situation::new(&elsewhere, &state, &*actor_runtime).texts())
+                .contains("The user declined"),
             "work of another profile, as it"
         );
     }

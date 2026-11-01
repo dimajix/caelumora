@@ -4,7 +4,7 @@ use super::AccessPolicy;
 use crate::confidentiality::ConfidentialityPolicy;
 use std::sync::Arc;
 
-/// The `AccessPolicy` and the `ConfidentialityPolicy` of the process (issue 449): what the runtime
+/// The `AccessPolicy` and the `ConfidentialityPolicy` of the process (issue 449): what the kernel
 /// is given, opens its stores by and hands to whatever asks both - the event bus, the loops, the
 /// views, the managers and controllers that check.
 #[derive(Debug, Clone)]

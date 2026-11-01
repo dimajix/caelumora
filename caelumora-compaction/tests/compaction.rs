@@ -1,6 +1,6 @@
-//! Compaction through the whole runtime (issues 16, 284, 464): the plugin joined to the world of
+//! Compaction through the whole kernel (issues 16, 284, 464): the library joined to the world of
 //! the security suite - the ownership policy, recording what it is asked, and alice, bob and carol
-//! (`caelumora_runtime::testing`) - with the agents' plugin. An agent compacts on its own as an
+//! (`caelumora_kernel::testing`) - with the agents' library. An agent compacts on its own as an
 //! activity before a model call, and when its owner asks with `/compact`.
 #![expect(
     clippy::unwrap_used,
@@ -12,8 +12,12 @@ use caelumora_agents::testing::{
     about_agent_commands, activities_until_the_turn_ends, register_scripted, saying, TestAgents,
 };
 use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
+use caelumora_api::command::CommandError;
 use caelumora_compaction::component::COMPACTION_KIND;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_compaction::library::CompactionLibrary;
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::session::SessionLoop;
+use caelumora_kernel::testing::{shown, World};
 use caelumora_model::actor::ActorEvent;
 use caelumora_model::agent::{AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -21,10 +25,6 @@ use caelumora_model::confidentiality::Classification;
 use caelumora_model::history::HistoryEntry;
 use caelumora_model::message::Message;
 use caelumora_model::tool::{ToolCall, ToolVisibility};
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::command::CommandError;
-use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::testing::{shown, World};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ fn measured(prompt: u64, message: Message) -> Message {
 
 /// A world whose model, of the kind `scripted`, gives `answers`, one per call.
 async fn world(answers: Vec<Message>) -> World {
-    World::with(&[&TestAgents, &CompactionPlugin], |registry| {
+    World::with(&[], &[&TestAgents, &CompactionLibrary], |registry| {
         register_scripted(registry, "scripted", answers)
     })
     .await
@@ -65,7 +65,7 @@ async fn helper_with(
         ..world.personality("helping", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut personality)

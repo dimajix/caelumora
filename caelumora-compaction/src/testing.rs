@@ -13,8 +13,8 @@ use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::prompt_catalogue::PromptTexts;
 use std::sync::Mutex;
 
-/// The texts of the core, of the agents and of compaction, as the runtime and the plugins add them,
-/// as a model of the default variant is given them - for what a test makes itself.
+/// The texts of the kernel, of the agents and of compaction, as the kernel and the plugins add
+/// them, as a model of the default variant is given them - for what a test makes itself.
 pub(crate) fn prompts() -> PromptTexts {
     testing::prompts_with(NAMESPACE, PROMPTS)
 }

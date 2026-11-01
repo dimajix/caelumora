@@ -8,12 +8,12 @@
 
 use super::body::AgentBody;
 use crate::message::apply_stage_processors;
+use caelumora_api::logging::envelope_span;
+use caelumora_api::transport::EventReceiver;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::{AgentChannelState, HearsFrom};
 use caelumora_model::message::Message;
 use caelumora_model::transcript::TranscriptEntry;
-use caelumora_runtime::logging::envelope_span;
-use caelumora_runtime::transport::EventReceiver;
 use tracing::{debug, trace, warn, Instrument};
 
 impl AgentBody {
@@ -34,13 +34,7 @@ impl AgentBody {
         };
         state.last_message = Some(last.id);
         let offered = heard.iter().filter_map(Message::as_heard).collect();
-        let perceived = match apply_stage_processors(
-            &self.perceive_in_processors,
-            offered,
-            &self.security_context(),
-        )
-        .await
-        {
+        let perceived = match apply_stage_processors(&self.perceive_in_processors, offered).await {
             Ok(perceived) => perceived,
             Err(e) => {
                 warn!("The perceive stage failed: {:#}", e);
@@ -68,19 +62,15 @@ impl AgentBody {
         let (id, at) = (modified.id, modified.timestamp);
         let perceived = match modified.as_heard() {
             None => None,
-            Some(heard) => match apply_stage_processors(
-                &self.perceive_in_processors,
-                vec![heard],
-                &self.security_context(),
-            )
-            .await
-            {
-                Ok(perceived) => perceived.into_iter().find(|m| m.id == modified.id),
-                Err(e) => {
-                    warn!("The perceive stage failed on a modified message: {:#}", e);
-                    None
+            Some(heard) => {
+                match apply_stage_processors(&self.perceive_in_processors, vec![heard]).await {
+                    Ok(perceived) => perceived.into_iter().find(|m| m.id == modified.id),
+                    Err(e) => {
+                        warn!("The perceive stage failed on a modified message: {:#}", e);
+                        None
+                    }
                 }
-            },
+            }
         };
         let taken = match &perceived {
             Some(perceived) => state.modify(perceived.clone()),
@@ -222,13 +212,13 @@ impl AgentBody {
             }
             ActorEvent::MessageModified(modified) => {
                 if let Some(change) = self.take_in_modified(state, modified).await {
-                    (self.hand_over)(&self.runtime, state, change).await;
+                    (self.hand_over)(&*self.runtime, state, change).await;
                 }
             }
             ActorEvent::MessageRevoked { message, at } => {
                 if !state.transcript.revoke(message, at) {
                     (self.hand_over)(
-                        &self.runtime,
+                        &*self.runtime,
                         state,
                         TranscriptEntry::Revoked { message, at },
                     )
@@ -272,7 +262,7 @@ impl TakenIn {
 }
 
 /// Which of two requests to respond, `earlier` and `later`, both taken in
-/// for one turn, the turn answers: the later, in whose contexts it acts -
+/// for one turn, the turn answers: the later, in whose context it acts -
 /// for the stronger reason of the two (issue 439), since a mention among
 /// them is a reason to answer though the last request was only a choice.
 fn answered(earlier: Option<Envelope>, later: Option<Envelope>) -> Option<Envelope> {
@@ -291,19 +281,19 @@ mod tests {
     use super::*;
     use crate::message::testing::Without;
     use crate::message::PerceiveInProcessor;
+    use caelumora_api::component::ComponentImpl;
+    use caelumora_api::runtime::ActorRuntime;
+    use caelumora_api::transport::EventReceiver;
+    use caelumora_kernel::transport::InMemoryEventReceiver;
     use caelumora_model::actor::{ActorId, EventContext, RequestReason};
     use caelumora_model::agent::{HearsDuringTurn, OthersWords};
     use caelumora_model::chain::Position;
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::security::SecurityContext;
     use caelumora_model::user::UserId;
     use caelumora_model::work::TurnId;
     use caelumora_model::work::Work;
-    use caelumora_runtime::component::ComponentImpl;
-    use caelumora_runtime::runtime::ActorRuntime;
-    use caelumora_runtime::transport::{EventReceiver, InMemoryEventReceiver};
     use chrono::Utc;
     use futures::future::BoxFuture;
     use std::future::ready;
@@ -323,7 +313,7 @@ mod tests {
     }
 
     fn envelope(event: ActorEvent) -> Envelope {
-        Envelope::new(SecurityContext::default(), EventContext::default(), event)
+        Envelope::new(EventContext::default(), event)
     }
 
     #[tokio::test]
@@ -368,7 +358,7 @@ mod tests {
 
         let heard = |text: &str| envelope(ActorEvent::CompleteMessageGenerated(said(text)));
         let mut last = envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned });
-        last.security.caller_id = ActorId::System;
+        last.context.initiator_id = ActorId::System;
         for event in [
             envelope(ActorEvent::ResponseRequested { reason: RequestReason::Mentioned }),
             heard("two"),
@@ -386,7 +376,7 @@ mod tests {
             "all of it, in order, also what came after the last request"
         );
         assert_eq!(
-            request.map(|r| r.security.caller_id),
+            request.map(|r| r.context.initiator_id),
             Some(ActorId::System),
             "the last request"
         );
@@ -398,7 +388,7 @@ mod tests {
     }
 
     /// Issue 439: of the requests a turn takes in, it answers the last - in
-    /// whose contexts it acts - for the strongest reason among them, also
+    /// whose context it acts - for the strongest reason among them, also
     /// across a command that ended a batch.
     #[tokio::test]
     async fn the_request_answered_keeps_the_strongest_reason() {
@@ -413,11 +403,11 @@ mod tests {
         };
 
         let mut last = asked(RequestReason::Chosen);
-        last.security.caller_id = ActorId::System;
+        last.context.initiator_id = ActorId::System;
         tx.try_send(last).expect("room");
         let taken = body.take_in(&mut state, asked(RequestReason::Mentioned), &mut rx).await;
         assert_eq!(
-            taken.request.as_ref().map(|r| r.security.caller_id),
+            taken.request.as_ref().map(|r| r.context.initiator_id),
             Some(ActorId::System),
             "the last request"
         );
@@ -449,7 +439,6 @@ mod tests {
         state.begin_turn(Work::new(
             context,
             None,
-            SecurityContext::default(),
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));
@@ -465,11 +454,7 @@ mod tests {
         let body = AgentBody::detached(Vec::new())
             .hearing(HearsDuringTurn { from: HearsFrom::Users, ..Default::default() });
         let in_her_authority = |event: ActorEvent| {
-            Envelope::new(
-                SecurityContext::default(),
-                EventContext { initiator_id: alice, ..EventContext::default() },
-                event,
-            )
+            Envelope::new(EventContext { initiator_id: alice, ..EventContext::default() }, event)
         };
         let of_alice = |text: &str| {
             in_her_authority(ActorEvent::CompleteMessageGenerated(Message {
@@ -521,7 +506,6 @@ mod tests {
     fn bob_then_alice_then_bob(alice: ActorId, bob: ActorId) -> Vec<Envelope> {
         let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
             Envelope::new(
-                SecurityContext::default(),
                 EventContext {
                     initiator_id: initiator,
                     position: Some(Position::new(seq)),
@@ -643,11 +627,7 @@ mod tests {
         };
         said.insert(
             2,
-            Envelope::new(
-                SecurityContext::default(),
-                EventContext { initiator_id: alice, ..EventContext::default() },
-                command,
-            ),
+            Envelope::new(EventContext { initiator_id: alice, ..EventContext::default() }, command),
         );
         for event in said {
             tx.try_send(event).expect("room");
@@ -747,7 +727,7 @@ mod tests {
         };
         // Writes down what it is handed, where it is handed it.
         fn noted<'a>(
-            _: &'a ActorRuntime,
+            _: &'a dyn ActorRuntime,
             state: &'a mut AgentChannelState,
             change: TranscriptEntry,
         ) -> BoxFuture<'a, ()> {

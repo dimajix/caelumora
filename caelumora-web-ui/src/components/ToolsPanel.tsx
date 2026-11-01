@@ -2,7 +2,7 @@
 // tool set they come from, as it would offer them at the start of its next
 // turn - read from the running agent, since an agent's tools are built for
 // each of its channels. A set that is unavailable says why. Each tool shows
-// what only the runtime acts on: whether a call needs approval, who sees
+// what only the kernel acts on: whether a call needs approval, who sees
 // it, how its results are classified.
 
 import React, {useEffect, useState} from 'react';

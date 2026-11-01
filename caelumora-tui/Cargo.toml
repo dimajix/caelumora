@@ -6,11 +6,12 @@ license.workspace = true
 
 [dependencies]
 caelumora-model.workspace = true
-caelumora-runtime.workspace = true
+caelumora-api.workspace = true
+caelumora-kernel.workspace = true
 caelumora-agents.workspace = true
 caelumora-logging.workspace = true
-caelumora-skills = { workspace = true, features = ["runtime"] }
-caelumora-artifacts = { workspace = true, features = ["runtime"] }
+caelumora-skills = { workspace = true, features = ["kernel", "library"] }
+caelumora-artifacts = { workspace = true, features = ["kernel", "library"] }
 caelumora-mcp.workspace = true
 caelumora-a2a.workspace = true
 caelumora-open-terminal.workspace = true

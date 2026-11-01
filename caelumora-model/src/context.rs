@@ -30,7 +30,7 @@ use crate::kept::Kept;
 use crate::mention::handle_of;
 use crate::message::{estimated_tokens, Message, MessageId, MessageRole};
 use crate::prompt_catalogue::{
-    context, PromptCatalogue, PromptError, PromptTexts, PromptVariant, CORE,
+    context, PromptCatalogue, PromptError, PromptTexts, PromptVariant, KERNEL,
 };
 use crate::session::SessionId;
 use crate::store::{EntityKind, Stored};
@@ -377,7 +377,7 @@ impl ModelProfile {
 
     /// What the model is to be told of how the messages of others are framed
     /// (`frame`) - their senders, and when they were written -, worded by
-    /// `texts` (`core.framing`); `None` if they are not (issues 135, 424).
+    /// `texts` (`kernel.framing`); `None` if they are not (issues 135, 424).
     ///
     /// # Errors
     /// `PromptError` if the text cannot be had.
@@ -393,7 +393,7 @@ impl ModelProfile {
         };
         texts
             .render(
-                &format!("{CORE}.framing"),
+                &format!("{KERNEL}.framing"),
                 context! { format, style, times => self.message_times, time => TIME_EXAMPLE },
             )
             .map(Some)
@@ -864,11 +864,10 @@ fn attribute(text: &str) -> String {
     text.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
 }
 
-/// What the model is told of the turn `turn`, given up at `at` for `reason`
-/// (issue 258), where its end stands: why, and that what its tools did stays
-/// done, worded by `texts` (`core.given_up`). A fixed text of the
-/// runtime's, which says nothing of the conversation; its id is the turn's,
-/// so that it is the same each time it is resolved.
+/// What the model is told of the turn `turn`, given up at `at` for `reason` (issue 258), where its
+/// end stands: why, and that what its tools did stays done, worded by `texts` (`kernel.given_up`).
+/// A fixed text of the kernel's, which says nothing of the conversation; its id is the turn's, so
+/// that it is the same each time it is resolved.
 fn given_up_notice(
     texts: &PromptTexts,
     turn: TurnId,
@@ -881,22 +880,20 @@ fn given_up_notice(
         id: MessageId(turn.0),
         timestamp: at,
         role: MessageRole::System,
-        content: Some(texts.render(&format!("{CORE}.given_up"), context! { cause, lowered })?),
+        content: Some(texts.render(&format!("{KERNEL}.given_up"), context! { cause, lowered })?),
         internal: true,
         turn_id: Some(turn),
         ..Message::new(Classification::PUBLIC)
     })
 }
 
-/// What the model of `agent` is told of `entry`, whose digest is `digest`,
-/// if someone joined or left the channel (issue 408): who, and who made
-/// them, named in `style` as the senders of messages are - the agent itself
-/// as "you" -, worded by `texts` (`core.participant_joined`, `…_left`). A
-/// fixed text of the runtime's, marked as the channel's notice, so that it
-/// reads as no participant's, given as a system message where the model
-/// keeps one (`ModelProfile::place_system_messages`); its id is the
-/// entry's, so that it is the same each time it is resolved. `None` for any
-/// other entry.
+/// What the model of `agent` is told of `entry`, whose digest is `digest`, if someone joined or
+/// left the channel (issue 408): who, and who made them, named in `style` as the senders of
+/// messages are - the agent itself as "you" -, worded by `texts` (`kernel.participant_joined`,
+/// `…_left`). A fixed text of the kernel's, marked as the channel's notice, so that it reads as no
+/// participant's, given as a system message where the model keeps one
+/// (`ModelProfile::place_system_messages`); its id is the entry's, so that it is the same each time
+/// it is resolved. `None` for any other entry.
 fn participant_notice(
     texts: &PromptTexts,
     entry: &TranscriptEntry,
@@ -914,7 +911,7 @@ fn participant_notice(
         _ => return Ok(None),
     };
     let text = texts.render(
-        &format!("{CORE}.{key}"),
+        &format!("{KERNEL}.{key}"),
         context! {
             participant => style.of(name),
             you => *participant == agent,
@@ -941,7 +938,7 @@ mod tests {
     use crate::digest;
     use crate::digest::prompt;
     use crate::message::{MessageId, TokenUsage};
-    use crate::prompt_catalogue::{core, CORE_PROMPTS};
+    use crate::prompt_catalogue::{kernel_catalogue, KERNEL_PROMPTS};
     use crate::tool::{Tool, ToolCall, ToolCallResult};
     use crate::turn::TurnState;
     use crate::user::UserId;
@@ -1187,13 +1184,13 @@ mod tests {
         );
         assert_eq!(
             ModelProfile::default()
-                .framing_explanation(&ModelProfile::default().texts(core()))
+                .framing_explanation(&ModelProfile::default().texts(kernel_catalogue()))
                 .unwrap(),
             None,
             "nothing to explain where nothing is marked"
         );
         assert!(profile
-            .framing_explanation(&ModelProfile::default().texts(core()))
+            .framing_explanation(&ModelProfile::default().texts(kernel_catalogue()))
             .unwrap()
             .is_some_and(|text| text.contains("\"@handle: ...\"")
                 && text.contains("Your own messages carry no such marker")));
@@ -1203,7 +1200,7 @@ mod tests {
             ..ModelProfile::default()
         };
         assert!(xml
-            .framing_explanation(&ModelProfile::default().texts(core()))
+            .framing_explanation(&ModelProfile::default().texts(kernel_catalogue()))
             .unwrap()
             .is_some_and(|text| text.contains("<message from=\"Name\">...</message>")));
         let recorded: ModelProfile = serde_json::from_value(serde_json::json!({ "reasoning_history": "never", "system_messages": "anywhere", "message_times": false })).unwrap();
@@ -1262,7 +1259,7 @@ mod tests {
 
         let explained = |sender_format| {
             ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }
-                .framing_explanation(&ModelProfile::default().texts(core()))
+                .framing_explanation(&ModelProfile::default().texts(kernel_catalogue()))
                 .unwrap()
                 .unwrap_or_default()
         };
@@ -1307,7 +1304,7 @@ mod tests {
             },
         };
 
-        let resolver = ContextResolver::of(&state, core());
+        let resolver = ContextResolver::of(&state, kernel_catalogue());
         let seen = resolver
             .resolve(&reference(SenderFormat::Prefix), TurnId::new(), agent)
             .unwrap()
@@ -1377,7 +1374,7 @@ mod tests {
             },
         };
 
-        let resolver = ContextResolver::of(&state, core());
+        let resolver = ContextResolver::of(&state, kernel_catalogue());
         let seen = resolver.resolve(&reference, TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(
             contents(&seen.items),
@@ -1403,7 +1400,7 @@ mod tests {
             .frame
             .profile
             .given_messages(
-                &ModelProfile::default().texts(core()),
+                &ModelProfile::default().texts(kernel_catalogue()),
                 &state.transcript,
                 agent,
                 Default::default(),
@@ -1461,7 +1458,7 @@ mod tests {
             },
         };
 
-        let resolver = ContextResolver::of(&state, core());
+        let resolver = ContextResolver::of(&state, kernel_catalogue());
         let turn = TurnId::new();
         let seen = resolver
             .resolve(&reference, turn, ActorId::None)
@@ -1488,7 +1485,7 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let measure = |state: &AgentChannelState| {
             let turn = state.turn.as_ref().unwrap();
-            ContextResolver::of(state, core())
+            ContextResolver::of(state, kernel_catalogue())
                 .token_positions(&turn.work.context, turn.work.turn_id, agent)
                 .unwrap()
                 .unwrap()
@@ -1530,7 +1527,9 @@ mod tests {
             completion_tokens: Some(8),
             ..text("summary")
         };
-        state.compact(agent, vec![(summary, None)], kept_from, core()).expect("compacted");
+        state
+            .compact(agent, vec![(summary, None)], kept_from, kernel_catalogue())
+            .expect("compacted");
         assert_eq!(measure(&state), (vec![0, 2, 103, 113, 113], false), "neither the summary's call nor the copy measure the new branch, and where the compaction's part ends gives nothing");
 
         state.said(call(60, "done"));
@@ -1591,8 +1590,8 @@ mod tests {
         state.transcript.push(text("question"));
 
         begin(&mut state, ModelProfile::default());
-        // Instructions of the runtime among the turn's messages: one before
-        // them, one after the first.
+        // Instructions of the kernel among the turn's messages: one before them, one after the
+        // first.
         place(&mut state, MessageRole::User, "step 1");
         let first = state.said(own("first"));
         place(&mut state, MessageRole::User, "step 2");
@@ -1600,7 +1599,7 @@ mod tests {
 
         let (next, turn_id) =
             state.turn.as_ref().map(|t| (t.work.context.clone(), t.work.turn_id)).unwrap();
-        let current = ContextResolver::of(&state, core())
+        let current = ContextResolver::of(&state, kernel_catalogue())
             .resolve(&next, turn_id, agent)
             .unwrap()
             .expect("the transcript holds the turn's messages");
@@ -1621,7 +1620,7 @@ mod tests {
         let seen = |state: &AgentChannelState, message: &Message| {
             let context = state.context_of(message).expect("sent with what it was produced from");
             contents(
-                &ContextResolver::of(state, core())
+                &ContextResolver::of(state, kernel_catalogue())
                     .resolve(&context, turn_id, agent)
                     .unwrap()
                     .expect("everything it names is here")
@@ -1692,10 +1691,10 @@ mod tests {
     #[test]
     fn a_context_is_worded_in_the_variant_it_was_recorded_with() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("core.yaml"), "given_up_cause:\n  left: you walked out\n")
+        fs::write(dir.path().join("kernel.yaml"), "given_up_cause:\n  left: you walked out\n")
             .unwrap();
         let mut catalogue = PromptCatalogue::new();
-        catalogue.add(CORE, CORE_PROMPTS).unwrap();
+        catalogue.add(KERNEL, KERNEL_PROMPTS).unwrap();
         catalogue.add_variant("gemma4", dir.path()).unwrap();
         let catalogue = Arc::new(catalogue);
         let mut state = AgentChannelState::default();
@@ -1748,7 +1747,7 @@ mod tests {
         let digest = digest::tool_sets(&offered);
         state.offered_tools.keep(digest, || offered.clone());
 
-        let resolver = ContextResolver::of(&state, core());
+        let resolver = ContextResolver::of(&state, kernel_catalogue());
         let with = |tools| ContextRef {
             frame: FrameRef { tools, ..FrameRef::default() },
             ..ContextRef::default()
@@ -1794,7 +1793,7 @@ mod tests {
             });
             place(&mut state, MessageRole::System, "instruction");
             let next = state.turn.as_ref().unwrap().work.context.clone();
-            ContextResolver::of(&state, core())
+            ContextResolver::of(&state, kernel_catalogue())
                 .resolve(&next, TurnId::new(), ActorId::None)
                 .unwrap()
                 .expect("everything it names is here")
@@ -1844,7 +1843,7 @@ mod tests {
             frame: FrameRef { prompts: vec![notes], ..FrameRef::default() },
         };
 
-        let resolver = ContextResolver::of(&state, core());
+        let resolver = ContextResolver::of(&state, kernel_catalogue());
         assert_eq!(
             contents(
                 &resolver

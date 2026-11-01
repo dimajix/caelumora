@@ -23,13 +23,12 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_api::component::config_of_params;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::{ActorDescription, ActorId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::value::text::Introduction;
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry,
-};
 use std::sync::{Arc, Mutex};
 
 pub const CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND: &str = "channel_participants_prompt_provider";
@@ -79,7 +78,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        // Work that reaches no session (`Situation::channel_view`) has nobody to name.
+        // Work that reaches no session (`Situation::channel`) has nobody to name.
         let Some((me, others)) = participants(situation).await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
@@ -97,7 +96,7 @@ impl PromptProvider for ChannelParticipantsPromptProvider {
 pub(crate) async fn participants(
     situation: &Situation<'_>,
 ) -> Result<Option<(Option<ActorDescription>, Vec<ActorDescription>)>, ContextError> {
-    let Some(channel) = situation.channel_view().await? else { return Ok(None) };
+    let Some(channel) = situation.channel().await? else { return Ok(None) };
     let own = ActorId::Agent(situation.agent_id());
     let mut me = None;
     let mut others = Vec::new();
@@ -144,7 +143,7 @@ fn one_line(introduction: &Introduction) -> String {
     introduction.as_str().split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND)
@@ -170,8 +169,12 @@ pub fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, TestAgents};
+    use crate::testing::{self, agent_runtime, TestAgents};
     use crate::turn::Turn;
+    use caelumora_api::reader::ViewError;
+    use caelumora_kernel::session::testing::participant_runtime_in;
+    use caelumora_kernel::session::SessionManager;
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_model::actor::EventContext;
     use caelumora_model::agent::testing::make_personality;
     use caelumora_model::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
@@ -186,11 +189,6 @@ mod tests {
     use caelumora_model::user::{UserId, UserProfile};
     use caelumora_model::value::name::{Name, ScopedName};
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::actor_runtime_in;
-    use caelumora_runtime::session::SessionManager;
-    use caelumora_runtime::testing::TestRuntime;
-    use caelumora_runtime::view::ViewError;
     use std::slice;
 
     fn participant(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
@@ -313,15 +311,15 @@ mod tests {
     #[tokio::test]
     async fn the_participants_of_the_channel_are_read_with_their_introductions() {
         let store = Persistence::in_memory();
-        let runtime =
-            TestRuntime { store: store.clone(), plugins: vec![&TestAgents], ..Default::default() }
+        let kernel =
+            TestKernel { store: store.clone(), libraries: vec![&TestAgents], ..Default::default() }
                 .build();
         let system = SecurityContext::system();
 
         let kaya = make_user("Kaya");
         let bob = make_user("Bob");
-        record_users(runtime.entity_stores(), &[&kaya, &bob]).await;
-        runtime
+        record_users(kernel.entity_stores(), &[&kaya, &bob]).await;
+        kernel
             .entity_stores()
             .user_profiles
             .create(
@@ -360,32 +358,25 @@ mod tests {
         let session = Session { participants, channels: vec![channel.id], ..session };
         let as_owner =
             SecurityContext::new(ActorId::User(kaya.id), Default::default(), Default::default());
-        let session_loop = SessionManager::new(Arc::clone(&runtime))
+        let session_loop = SessionManager::new(Arc::clone(&kernel))
             .create(&as_owner, session.clone(), vec![channel.clone()])
             .await
             .unwrap();
         // One who no longer exists: deleted once it founded the channel with the others.
-        runtime.agent_manager().delete(&system, gone.id).await.unwrap();
-
-        let context = SecurityContext::default().next(
-            ActorId::Agent(jonathan.id),
-            ActorId::None,
-            ActorId::None,
-        );
+        kernel.agent_manager().delete(&system, gone.id).await.unwrap();
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             EventContext::new(session.id, channel.id, ActorId::None, String::new()),
             None,
-            context.clone(),
             channel.classification.clone(),
             Default::default(),
         ));
         let turn = Turn::of(
-            jonathan.id,
-            "Jonathan".to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(&session_loop.channels()[0], ActorId::Agent(jonathan.id)),
+            agent_runtime(participant_runtime_in(
+                &session_loop.channels()[0],
+                ActorId::Agent(jonathan.id),
+            )),
         )
         .expect("a turn was begun");
 
@@ -416,26 +407,20 @@ mod tests {
         let session = world.shared_session(&[], &[]).await;
         let channel = &session.channels()[0];
         // In its own name alone: nobody it acts for may read the session.
-        let context =
-            SecurityContext::default().next(ActorId::Agent(outsider), ActorId::None, ActorId::None);
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             EventContext::new(session.id(), channel.id(), ActorId::None, String::new()),
             None,
-            context,
             channel.classification(),
             Default::default(),
         ));
         let turn = Turn::of(
-            outsider,
-            "outsider".to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(channel, ActorId::Agent(outsider)),
+            agent_runtime(participant_runtime_in(channel, ActorId::Agent(outsider))),
         )
         .expect("a turn was begun");
         assert!(
-            matches!(turn.situation().session_view().await, Err(ViewError::SessionNotFound(_))),
+            matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))),
             "reached, but not to be read (issue 399)"
         );
         let failed =

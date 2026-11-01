@@ -43,12 +43,12 @@ impl PersonalityKind {
     }
 }
 
-/// How the agents of a personality hear between the steps of a turn (issue 431), rather than
-/// once the turn has ended: whose messages (`from`), and whether also what is said in another's
-/// authority (`others`). Written by hand too: what is left out is the default, `from: none`
-/// and `others: wait`. A personality can only narrow what the core allows, never widen it: a
-/// request to respond in another's authority, and what is above the turn's classification, wait
-/// for the turn's end whatever this says (`takes`).
+/// How the agents of a personality hear between the steps of a turn (issue 431), rather than once
+/// the turn has ended: whose messages (`from`), and whether also what is said in another's
+/// authority (`others`). Written by hand too: what is left out is the default, `from: none` and
+/// `others: wait`. A personality can only narrow what the kernel allows, never widen it: a request
+/// to respond in another's authority, and what is above the turn's classification, wait for the
+/// turn's end whatever this says (`takes`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HearsDuringTurn {
@@ -327,7 +327,6 @@ mod tests {
     use crate::actor::{EventContext, RequestReason};
     use crate::agent::AgentId;
     use crate::confidentiality::Classification;
-    use crate::security::SecurityContext;
     use crate::user::UserId;
 
     #[test]
@@ -390,13 +389,11 @@ mod tests {
         let work = Work::new(
             EventContext { initiator_id: alice, ..EventContext::default() },
             None,
-            SecurityContext::default(),
             internal.clone(),
             Default::default(),
         );
         let in_authority_of = |initiator: ActorId, event: ActorEvent| {
             Envelope::new(
-                SecurityContext::default(),
                 EventContext { initiator_id: initiator, ..EventContext::default() },
                 event,
             )
@@ -518,13 +515,11 @@ mod tests {
         let work = Work::new(
             EventContext { initiator_id: alice, ..EventContext::default() },
             None,
-            SecurityContext::default(),
             internal.clone(),
             Default::default(),
         );
         let at = |seq: u64, initiator: ActorId, event: ActorEvent| {
             Envelope::new(
-                SecurityContext::default(),
                 EventContext {
                     initiator_id: initiator,
                     position: Some(Position::new(seq)),
@@ -562,7 +557,6 @@ mod tests {
                 "her request, unrecorded",
                 asked,
                 Envelope::new(
-                    SecurityContext::default(),
                     EventContext { initiator_id: alice, ..EventContext::default() },
                     ActorEvent::ResponseRequested { reason: RequestReason::Mentioned },
                 ),

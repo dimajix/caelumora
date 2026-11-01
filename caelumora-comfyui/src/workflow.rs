@@ -1,6 +1,6 @@
 //! The workflows of ComfyUI the operator configured (issue 512): read from the directory the
-//! section `comfyui` names, each a graph in ComfyUI's API format with what it says of itself
-//! beside it, checked whole when the runtime is built and found by name.
+//! section `comfyui` names, each a graph in ComfyUI's API format with what it says of itself beside
+//! it, checked whole when the kernel is built and found by name.
 //!
 //! A workflow is a pair of files of one name: `<name>.json`, the graph as ComfyUI exports it
 //! ("Export (API)") - what `POST /prompt` takes, unchanged -, and `<name>.yaml`, which describes it

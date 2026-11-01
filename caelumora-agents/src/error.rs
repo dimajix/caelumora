@@ -1,11 +1,9 @@
-//! What a person is told of an error of the agents' logic (issue 370): the
-//! error types of its facets - the model's (`LLMError`), an external
-//! agent's (`ExternalAgentError`), a tool's (`ToolError`), a context's
-//! (`ContextError`), a message stage's (`ProcessingError`) and an
-//! activity's (`ActivityError`) - which the
-//! plugins that serve those facets answer in (PLUGINS.md), judged here, by
-//! whoever defines them; everything else as the runtime judges it
-//! (`caelumora_runtime::error::user_message_with`).
+//! What a person is told of an error of the agents' logic (issue 370): the error types of its
+//! facets - the model's (`LLMError`), an external agent's (`ExternalAgentError`), a tool's
+//! (`ToolError`), a context's (`ContextError`), a message stage's (`ProcessingError`) and an
+//! activity's (`ActivityError`) - which the plugins that serve those facets answer in (PLUGINS.md),
+//! judged here, by whoever defines them; everything else as the kernel judges it
+//! (`caelumora_api::error::user_message_with`).
 
 use crate::activity::ActivityError;
 use crate::external::ExternalAgentError;
@@ -13,12 +11,11 @@ use crate::llm::LLMError;
 use crate::message::ProcessingError;
 use crate::prompt::ContextError;
 use crate::tool::ToolError;
-use caelumora_runtime::error::{store_message, user_message_with, view_message};
+use caelumora_api::error::{store_message, user_message_with, view_message};
 use std::error::Error;
 
-/// The message to show a user for `error`: the outermost error in its chain
-/// whose type - the agents' logic's or the runtime's - is known to be safe
-/// to disclose, or `None` if there is none.
+/// The message to show a user for `error`: the outermost error in its chain whose type - the
+/// agents' logic's or the kernel's - is known to be safe to disclose, or `None` if there is none.
 pub fn user_message(error: &anyhow::Error) -> Option<String> {
     user_message_with(error, judged)
 }
@@ -76,8 +73,8 @@ fn context_message(error: &ContextError) -> Option<String> {
 mod tests {
     use super::*;
     use anyhow::Error;
+    use caelumora_api::component::ComponentError;
     use caelumora_model::store::StoreError;
-    use caelumora_runtime::component::ComponentError;
 
     #[test]
     fn finds_the_disclosable_error_inside_a_context_chain() {
@@ -115,16 +112,16 @@ mod tests {
         assert_eq!(user_message(&error), None);
     }
 
-    /// The runtime's types are judged as the runtime judges them.
+    /// The kernel's types are judged as the kernel judges them.
     #[test]
-    fn the_runtime_s_errors_are_judged_as_the_runtime_judges_them() {
+    fn the_kernel_s_errors_are_judged_as_the_kernel_judges_them() {
         let component = ComponentError::InvalidConfig("missing field `url`".to_string());
         let shown = component.to_string();
         assert_eq!(user_message(&Error::new(component).context("building the agent")), Some(shown));
         let backend = Error::new(StoreError::Backend(
             "/home/someone/local/entity_store: permission denied".to_string(),
         ));
-        assert_eq!(user_message(&backend), None, "not what the runtime does not show");
+        assert_eq!(user_message(&backend), None, "not what the kernel does not show");
         assert_eq!(
             failure_message(&anyhow::anyhow!("something internal")),
             "internal error - the details are in the server log"

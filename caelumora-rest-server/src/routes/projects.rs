@@ -12,6 +12,7 @@ use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use caelumora_kernel::controller::ProjectController;
 use caelumora_model::project::ProjectId;
 use caelumora_model::session::SessionId;
 use caelumora_model::user::UserId;
@@ -23,7 +24,6 @@ use caelumora_rest_api::project::{
 };
 use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_api::session::{SessionResponse, SessionSnapshot};
-use caelumora_runtime::controller::ProjectController;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -242,7 +242,7 @@ async fn controller(
     state: &Arc<AppState>,
     id: ProjectId,
 ) -> Result<Arc<ProjectController>, ApiError> {
-    Ok(state.runtime_manager.controller_manager().project_controller(id).await?)
+    Ok(state.kernel.controller_manager().project_controller(id).await?)
 }
 
 /// Project `id` as the user sees it.

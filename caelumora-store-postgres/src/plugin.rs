@@ -1,21 +1,19 @@
-//! How the Postgres store is joined to the runtime (issue 03): as a backend
-//! of the stores alone.
+//! How the Postgres store is joined to the kernel (issue 03): as a backend of the stores alone.
 
 use crate::connection::Connections;
 use crate::{PostgresStore, PostgresStoreConfig};
 use anyhow::Result;
+use caelumora_api::component::service_of;
+use caelumora_api::component::Params;
+use caelumora_kernel::backend::Backends;
+use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::plugin::Plugin;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::store::PersistenceBackend;
-use caelumora_runtime::backend::Backends;
-use caelumora_runtime::component::service_of;
-use caelumora_runtime::component::Params;
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
 use std::sync::Arc;
 
-/// The backend `postgres` of the stores (`PostgresStore`), as a plugin. Its
-/// backends share a pool per secret and schema, among the backends of one
-/// runtime.
+/// The backend `postgres` of the stores (`PostgresStore`), as a plugin. Its backends share a pool
+/// per secret and schema, among the backends of one kernel.
 #[derive(Debug, Default)]
 pub struct PostgresStorePlugin;
 
@@ -37,7 +35,7 @@ impl Plugin for PostgresStorePlugin {
         );
     }
 
-    fn register(&self, _runtime: &mut RuntimeBuilder) -> Result<()> {
+    fn register(&self, _kernel: &mut KernelBuilder) -> Result<()> {
         Ok(())
     }
 }

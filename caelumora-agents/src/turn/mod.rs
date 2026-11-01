@@ -42,29 +42,25 @@ use crate::situation::Situation;
 #[cfg(test)]
 use crate::testing::detached_actor_runtime;
 use anyhow::Result;
+use caelumora_api::actor::Answering;
+use caelumora_api::error::AttachmentResult;
+use caelumora_api::runtime::{ActorRuntime, OwnRecord};
+use caelumora_api::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_model::agent::{AgentChannelState, AgentId};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::content::ContentRef;
 use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_model::digest::Digest;
-use caelumora_model::memory::{MemoryChange, MemoryOrigin};
+use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_model::message::{Message, MessageRole};
 use caelumora_model::note::NoteChange;
 use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::security::Grant;
 use caelumora_model::tool::Tool;
 use caelumora_model::turn::TurnState;
 use caelumora_model::work::TurnId;
 #[cfg(test)]
 use caelumora_model::work::Work;
-use caelumora_model::workspace::Workspace;
-use caelumora_runtime::actor::Answering;
-use caelumora_runtime::agent::state::AgentStateHandle;
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::terminal::{Shell, Terminal};
-use caelumora_runtime::transport::EventSender;
-use caelumora_runtime::workspace::WorkspaceResult;
 use std::sync::{Arc, LazyLock};
 use tool_calls::ToolCalls;
 
@@ -80,34 +76,31 @@ pub struct Turn<'a> {
     agent_id: AgentId,
     agent_name: String,
     agent_channel_state: &'a mut AgentChannelState,
-    /// The agent's own state, shared by all its actors (issue 62). The turn
-    /// reads it and stages changes, never holds it.
-    agent_state: Arc<AgentStateHandle>,
     /// The runtime of the agent's actor, in whose name the turn acts: what
-    /// it asks of its channel - its workspace among it (issue 370) - and
-    /// what it navigates (issue 163). Its own: the components the turn is
+    /// it asks of its channel and what it navigates (issue 163), and the
+    /// agent's own state, shared by all its actors (issue 62), which the
+    /// turn reads and stages changes of. Its own: the components the turn is
     /// given to see the turn's methods, never the runtime (issue 128).
-    runtime: ActorRuntime,
+    runtime: Arc<dyn ActorRuntime>,
 }
 
 impl<'a> Turn<'a> {
-    /// The turn under way in the agent `agent_id`'s `agent_channel_state`,
+    /// The turn under way in `agent_channel_state` of the agent of `runtime`,
     /// as a step of its run loop works with it; `None` between turns. A
     /// turn is begun on the state (`AgentChannelState::begin_turn`), and
     /// ended through its handle (`commit`, `give_up`). It acts through the
-    /// actor's `runtime`.
+    /// actor's `runtime`, by the agent's name as it is when it is had.
     pub fn of(
-        agent_id: AgentId,
-        agent_name: String,
         agent_channel_state: &'a mut AgentChannelState,
-        agent_state: Arc<AgentStateHandle>,
-        runtime: ActorRuntime,
+        runtime: Arc<dyn ActorRuntime>,
     ) -> Option<Self> {
         agent_channel_state.turn.as_ref()?;
-        Some(Self { agent_id, agent_name, agent_channel_state, agent_state, runtime })
+        let agent = runtime.agent();
+        let (agent_id, agent_name) = (agent.id, agent.name.to_string());
+        Some(Self { agent_id, agent_name, agent_channel_state, runtime })
     }
 
-    /// A turn begun on `agent_channel_state` with default contexts, no
+    /// A turn begun on `agent_channel_state` with a default context, no
     /// tools and the default profile, as `under_way` - what a test needs to
     /// work in one.
     #[cfg(test)]
@@ -117,15 +110,12 @@ impl<'a> Turn<'a> {
             None,
             Default::default(),
             Default::default(),
-            Default::default(),
         ));
         Self::under_way(agent_id, agent_channel_state)
     }
 
-    /// The turn a test began on `agent_channel_state`, of the agent
-    /// `agent_id` called "agent", with a state of its own
-    /// (`AgentStateHandle::detached`), in a channel of no running session
-    /// (`detached_actor_runtime`).
+    /// The turn a test began on `agent_channel_state`, of the agent `agent_id` called "agent",
+    /// with a state of its own, in a channel of no running session (`detached_actor_runtime`).
     ///
     /// # Panics
     /// If no turn is under way.
@@ -134,14 +124,8 @@ impl<'a> Turn<'a> {
         agent_id: AgentId,
         agent_channel_state: &'a mut AgentChannelState,
     ) -> Self {
-        Self::of(
-            agent_id,
-            "agent".to_string(),
-            agent_channel_state,
-            AgentStateHandle::detached(),
-            detached_actor_runtime(),
-        )
-        .expect("a turn is under way")
+        Self::of(agent_channel_state, detached_actor_runtime(agent_id))
+            .expect("a turn is under way")
     }
 
     /// The situation of the turn, to read (issues 204, 399): what the turn
@@ -149,37 +133,41 @@ impl<'a> Turn<'a> {
     /// what components that only read are given, as an external agent's
     /// work gives it too.
     pub fn situation(&self) -> Situation<'_> {
-        Situation::new(
-            self.agent_id,
-            &self.current().work,
-            self.agent_channel_state,
-            &self.agent_state,
-            &self.runtime,
-        )
+        Situation::new(&self.current().work, self.agent_channel_state, &*self.runtime)
     }
 
-    /// The workspace of the agent's session and its terminal, for what
-    /// `need` asks - reading its files, or changing them too -, if the turn
-    /// may use it in its channel (`ActorRuntime::workspace_terminal`, issue
-    /// 344): what a tool acts on.
-    ///
-    /// # Errors
-    /// As `ActorRuntime::workspace_terminal`.
-    pub async fn workspace_terminal(
-        &self,
-        need: Grant,
-    ) -> WorkspaceResult<(Workspace, Arc<dyn Terminal>)> {
-        self.runtime.workspace_terminal(self.situation().security_context(), need).await
+    /// The writer `T` a plugin or the kernel binds to the turn's work (`ActorRuntime::writer`,
+    /// issue 516): what of the plugin's service a tool acts by - the skills' `SkillWriter`, say -,
+    /// in the work's context. Asked for where it is used and not kept, as `Situation::reader` is.
+    /// `None` if none is bound, if it is not offered here, or where the work reaches no session or
+    /// may not read it.
+    pub async fn writer<T: ?Sized + Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        let situation = self.situation();
+        self.runtime.writer(situation.initiator(), situation.classification()).await
     }
 
-    /// The workspace of the agent's session and its shell as its channel
-    /// sees it (`ActorRuntime::workspace_shell`, issue 344): where a tool
-    /// runs commands.
+    /// `attachment`, one of the agent's channel, copied in the turn's name for what the agent
+    /// says there (`ActorRuntime::copy_attachment`, issue 282).
     ///
     /// # Errors
-    /// As [`Self::workspace_terminal`].
-    pub async fn workspace_shell(&self) -> WorkspaceResult<(Workspace, Option<Arc<dyn Shell>>)> {
-        self.runtime.workspace_shell(self.situation().security_context()).await
+    /// As `ActorRuntime::copy_attachment`.
+    pub async fn copy_attachment(&self, attachment: &ContentRef) -> AttachmentResult<ContentRef> {
+        self.runtime.copy_attachment(self.situation().initiator(), attachment).await
+    }
+
+    /// Whether `record` - a note of the agent or an entry of its memory, in its channel - may be
+    /// reclassified, in the turn's name, as `classification`, never above the turn's channel as it
+    /// began (`ActorRuntime::may_reclassify`, issue 516): what the turn stages then.
+    pub async fn may_reclassify(&self, record: OwnRecord, classification: &Classification) -> bool {
+        let (initiator, within) = (self.situation().initiator(), self.situation().classification());
+        self.runtime.may_reclassify(initiator, record, classification, &within).await
+    }
+
+    /// A number for a new entry of the agent's memory, never handed out before
+    /// (`ActorRuntime::reserve_memory_id`): reserved at once, not as the turn completes, since
+    /// the agent's actors in other channels remember at the same time.
+    pub fn reserve_memory_id(&self) -> MemoryId {
+        self.runtime.reserve_memory_id()
     }
 
     /// Which turn this is (issue 235).
@@ -386,13 +374,13 @@ impl<'a> Turn<'a> {
         self.current().requested_state
     }
 
-    /// The contexts the turn publishes in: those it began with.
+    /// The context the turn publishes in: the one it began with.
     pub(crate) fn answering(&self) -> Answering {
         Answering::continuing(&self.current().work)
     }
 
     /// Sends `event` to the channel as the agent publishes it, in the
-    /// turn's contexts (`Answering::send`): messages without what only the
+    /// turn's context (`Answering::send`): messages without what only the
     /// agent's owner sees (issues 54, 133). The agent keeps the full
     /// messages in its context; an event with nothing left to show is not
     /// sent. Only the actor holds `output`: what the turn says reaches the
@@ -457,13 +445,12 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 mod tests {
     use super::*;
     use crate::testing;
+    use caelumora_kernel::transport::memory::InMemoryEventSender;
     use caelumora_model::actor::EventContext;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
     use caelumora_model::message::MessageId;
     use caelumora_model::message::MessageRole;
-    use caelumora_model::security::SecurityContext;
-    use caelumora_runtime::transport::memory::InMemoryEventSender;
     use tokio::sync::mpsc;
 
     pub(super) fn message(content: &str) -> Message {
@@ -531,14 +518,13 @@ mod tests {
     /// not with a step of a plan, one without words or a tool message.
     #[tokio::test]
     async fn what_is_put_aside_goes_with_the_next_answer() {
+        use caelumora_kernel::testing::Discard;
         use caelumora_model::content::testing::make_content_ref;
         use caelumora_model::tool::{ToolCall, ToolVisibility};
-        use caelumora_runtime::transport::Discard;
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             Default::default(),
             None,
-            Default::default(),
             Default::default(),
             Default::default(),
         ));
@@ -588,7 +574,6 @@ mod tests {
         state.begin_turn(Work::new(
             Default::default(),
             None,
-            Default::default(),
             Default::default(),
             Default::default(),
         ));
@@ -658,7 +643,6 @@ mod tests {
         state.begin_turn(Work::new(
             EventContext::default(),
             None,
-            SecurityContext::default(),
             confidential.clone(),
             Default::default(),
         ));

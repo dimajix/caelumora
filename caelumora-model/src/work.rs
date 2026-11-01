@@ -4,19 +4,19 @@
 //! begin (`OpenTask`). Both are bound by the channel as it was when they
 //! began, and write as what they have seen.
 
-use crate::actor::{EventContext, RequestReason};
+use crate::actor::{ActorId, EventContext, RequestReason};
 use crate::confidentiality::Classification;
 use crate::context::{ContextRef, FrameRef, KnowledgeRef, ModelProfile, PromptPart};
 use crate::message::Message;
-use crate::security::SecurityContext;
 use crate::value::time_zone::TimeZone;
 use serde::{Deserialize, Serialize};
 
 define_id!(TurnId);
 
-/// A piece of work of an agent: the contexts it is done in, the most it may
-/// write as, what it has seen so far, and what what comes of it is produced
-/// from.
+/// A piece of work of an agent: the event context it is done in - the request it answers, and who
+/// began its chain -, the most it may write as, what it has seen so far, and what what comes of it
+/// is produced from. In whose name and with whose rights it acts the kernel decides at each call
+/// (issue 516).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Work {
     /// Which piece of work it is (issue 235): given when it begins and kept
@@ -33,8 +33,6 @@ pub struct Work {
     /// respond it answers - the strongest of those it took in. `None` for
     /// work not begun by one, such as an answer given again.
     pub asked: Option<RequestReason>,
-    /// Whose authority it acts with.
-    pub security_context: SecurityContext,
     /// The channel's classification as it was when it began (issues 61,
     /// 133): it is consistent in itself should the channel be reclassified
     /// (issue 67), and what it writes is classified so at most.
@@ -59,7 +57,14 @@ pub struct Work {
 }
 
 impl Work {
-    /// Work begun in the contexts given, asked for as `asked` says, in a
+    /// Who began the chain the work answers (`EventContext::initiator_id`, issue 432): what the
+    /// kernel is told with every call made in the work's name, for the record - never for rights
+    /// (issue 516).
+    pub fn initiator(&self) -> ActorId {
+        self.event_context.initiator_id
+    }
+
+    /// Work begun in the event context given, asked for as `asked` says, in a
     /// channel classified `classification`, which has seen nothing yet; the
     /// times of messages are given to its model in `time_zone`, its
     /// session's as it began (issue 424). How its model is given its
@@ -68,7 +73,6 @@ impl Work {
     pub fn new(
         event_context: EventContext,
         asked: Option<RequestReason>,
-        security_context: SecurityContext,
         classification: Classification,
         time_zone: TimeZone,
     ) -> Self {
@@ -78,7 +82,6 @@ impl Work {
             turn_id: TurnId::new(),
             event_context,
             asked,
-            security_context,
             classification,
             seen: Some(Classification::PUBLIC),
             context,
@@ -167,13 +170,8 @@ mod tests {
     fn work_takes_in_the_knowledge_and_every_part_of_its_context() {
         let internal = Classification::general(Confidentiality::Internal);
         let confidential = Classification::general(Confidentiality::Confidential);
-        let mut work = Work::new(
-            EventContext::default(),
-            None,
-            SecurityContext::default(),
-            confidential.clone(),
-            Default::default(),
-        );
+        let mut work =
+            Work::new(EventContext::default(), None, confidential.clone(), Default::default());
         let part = |classification: Option<Classification>| PromptPart {
             role: MessageRole::System,
             text: "Be brief.".to_string(),
@@ -198,13 +196,7 @@ mod tests {
     #[test]
     fn work_may_see_what_flows_into_its_classification() {
         let internal = Classification::general(Confidentiality::Internal);
-        let work = Work::new(
-            EventContext::default(),
-            None,
-            SecurityContext::default(),
-            internal.clone(),
-            Default::default(),
-        );
+        let work = Work::new(EventContext::default(), None, internal.clone(), Default::default());
         assert!(work.may_see(&Classification::PUBLIC), "below its classification");
         assert!(work.may_see(&internal), "at it");
         assert!(!work.may_see(&Classification::general(Confidentiality::Confidential)), "above it");
@@ -216,13 +208,8 @@ mod tests {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
         };
         let channel = classified(Confidentiality::Confidential, &["hr"]);
-        let mut work = Work::new(
-            EventContext::default(),
-            None,
-            SecurityContext::default(),
-            channel.clone(),
-            Default::default(),
-        );
+        let mut work =
+            Work::new(EventContext::default(), None, channel.clone(), Default::default());
         assert_eq!(work.label(), Classification::PUBLIC, "nothing seen");
 
         work.see(&Classification::general(Confidentiality::Internal));
@@ -238,13 +225,8 @@ mod tests {
         work.see(&Classification::PUBLIC);
         assert_eq!(work.label(), channel, "it never falls");
 
-        let mut unknown = Work::new(
-            EventContext::default(),
-            None,
-            SecurityContext::default(),
-            channel.clone(),
-            Default::default(),
-        );
+        let mut unknown =
+            Work::new(EventContext::default(), None, channel.clone(), Default::default());
         unknown.see_classified(None);
         assert_eq!(unknown.label(), channel, "what is not known counts as the channel");
         let stored_before = Work { classification: channel.clone(), ..Work::default() };
@@ -262,7 +244,6 @@ mod tests {
         let stored = serde_json::json!({
             "turn_id": TurnId::new(),
             "event_context": EventContext::default(),
-            "security_context": SecurityContext::default(),
             "classification": Classification::CHANNEL_DEFAULT,
             "seen": Classification::PUBLIC,
         });
@@ -276,7 +257,6 @@ mod tests {
         let work = Work::new(
             EventContext::default(),
             None,
-            SecurityContext::default(),
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         );
@@ -285,7 +265,6 @@ mod tests {
             Work::new(
                 EventContext::default(),
                 None,
-                SecurityContext::default(),
                 Classification::CHANNEL_DEFAULT,
                 Default::default()
             )

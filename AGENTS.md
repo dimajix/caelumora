@@ -21,8 +21,9 @@ change something, read the document on its subject:
 | When you work on ... | read |
 |---|---|
 | any code | [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md) |
+| a dependency between crates, a new crate | [CRATES.md](docs/CRATES.md) |
 | components, facets, `ComponentRegistry` | [COMPONENTS.md](docs/COMPONENTS.md) |
-| plugins, what they register, how they answer the core | [PLUGINS.md](docs/PLUGINS.md) |
+| plugins, what they register, how they answer the kernel | [PLUGINS.md](docs/PLUGINS.md) |
 | tools, tool execution | [TOOLS.md](docs/TOOLS.md) |
 | approvals, questions a tool asks a person | [APPROVALS.md](docs/APPROVALS.md) |
 | user commands, commands of an agent | [COMMANDS.md](docs/COMMANDS.md) |
@@ -69,12 +70,12 @@ under `## History`), and numbers are never reused.
 *   **Follow the pattern, or change it.** Before designing, find the closest thing the codebase
     already has, name it in the plan, and build the new thing the same way: construction, naming,
     configuration, errors, where it lives (commands like tools: a `…Provider` component facet, and
-    something that receives the ready providers and checks permissions - for tools the runtime's
-    `ToolExecutor`, issues 127 and 280). If the pattern does not fit, question the pattern and
-    propose changing it for all its uses; never add a variant beside it. Where two implementations
-    of one thing differ without a reason - in naming, construction, error handling -, propose
-    aligning them, in whichever direction is the better one. A deliberate difference is named with
-    its reason.
+    something that receives the ready providers and has the permissions checked - for tools the
+    agent's `ToolExecutor`, which asks the kernel, issues 127, 280 and 516). If the pattern does not
+    fit, question the pattern and propose changing it for all its uses; never add a variant beside
+    it. Where two implementations of one thing differ without a reason - in naming, construction,
+    error handling -, propose aligning them, in whichever direction is the better one. A deliberate
+    difference is named with its reason.
 *   **Existing cuts are not fixed.** Which type owns what, which crate holds what, what a concept
     is called - each may be questioned whenever a simpler design shows. If a change only fits by
     bending the existing code, propose the restructuring that makes room for it, as an architecture
@@ -87,15 +88,15 @@ under `## History`), and numbers are never reused.
     and the word for it in the documents. A concept that exists only as a convention or a sequence
     of calls gets a name of its own. When what a concept means changes, it is renamed everywhere,
     in the same change.
-*   **One owner per concern.** Every crate, module and type can be described in one sentence - for
-    a module, the first sentence of its module docs; if the description of a change needs an "and
-    also", something is on the wrong object. Logic that belongs together by subject lives
-    together - its data, rules and checks in one place - and is not spread over crates because its
-    callers happen to be there: `caelumora-model` holds data and rules, `caelumora-runtime` where
-    everything runs, `caelumora-agents` what an agent does there, `caelumora-rest-server` only
-    maps HTTP to the runtime (see
-    [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an owner does not
-    offer, extend the owner rather than computing it at the caller.
+*   **One owner per concern.** Every crate, module and type can be described in one sentence - for a
+    module, the first sentence of its module docs; if the description of a change needs an "and
+    also", something is on the wrong object. Logic that belongs together by subject lives together -
+    its data, rules and checks in one place - and is not spread over crates because its callers
+    happen to be there: `caelumora-model` holds data and rules, `caelumora-kernel` where everything
+    runs, `caelumora-api` what the agent side is given of it, `caelumora-agents` what an agent does
+    there, `caelumora-rest-server` only maps HTTP to the kernel (see
+    [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an owner does not offer,
+    extend the owner rather than computing it at the caller.
 *   **Few generic types, not many helpers.** A new type or trait needs a responsibility of its own.
     One that only bundles parameters, wraps a single call, or serves a single call site is a sign
     that the responsibility belongs to an existing type. Before adding a trait, check whether an

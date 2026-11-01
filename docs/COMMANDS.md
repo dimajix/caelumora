@@ -41,14 +41,14 @@ tools; the issuer is given as their actor. Commands come from two places:
 Both are built once per session, in the name of its owner
 ([COMPONENTS.md](COMPONENTS.md#what-a-component-may-reach)), into a `CommandExecutor` shared by the
 session's channels - the counterpart of an agent's `ToolExecutor`, which likewise receives ready
-providers and is no component. Two commands of one name keep the session from starting. The
-executor is generic over the facet: finding a command, refusing two of one name and asking the
-policy are the same whoever runs the commands (`visible_by`, `admit`); only what a command is given
-to run with - the session, or an agent's turn - and which actions are asked of it are the facet's,
-said by the facet's owner: the channel's commands by the runtime (`ShowCommand`, `ExecuteCommand`),
-an agent's by the agents' logic (`caelumora_agents::command::AgentCommandAccess`,
-`ShowAgentCommand`, `ExecuteAgentCommand`, issue 370). It checks permissions itself: how a command
-runs is the command's business, and there is nothing about running commands to try out.
+providers and is no component. Two commands of one name keep the session from starting. What the
+executor finds its commands in is a `CommandSet`, generic over the facet: finding a command and
+refusing two of one name are the same whoever runs the commands, and an agent's actor keeps its
+commands in one too. What a command is given to run with - the session, or an agent's turn - and
+who asks whether it may be seen and run are the facet's: the channel's commands the executor
+itself (`ShowCommand`, `ExecuteCommand`), an agent's the channel's door as it admits the request
+(`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). How a command runs is the command's
+business, and there is nothing about running commands to try out.
 
 ### Seeing and running
 
@@ -99,23 +99,27 @@ external agent alike.
     whoever answers for the agent, as approving its calls (see
     [SECURITY.md](SECURITY.md#the-ownership-policy)). Who may not see a command finds it unknown.
 *   **Sent, then carried out.** The issuer's actor asks the session's commands first, then the
-    agents of the channel. Offering asks the policy through the agent's executor directly, so it
-    answers at once while the agent is busy; whether the issuer may ask for the command is the
-    agent's to decide as it takes the request in. The channel admits a command request only from a
-    user to an agent taking part, and the moderator routes it to that agent alone. A quiet channel
-    delivers it as well.
+    agents of the channel. Which of an agent's commands the issuer sees, the channel answers from
+    the agent's list (`ChannelLoop::commands_of`), so it answers at once while the agent is busy.
+    Whether the issuer may ask for the command is decided at the channel's door, as it admits the
+    request (issue 516): only from a user, to an agent taking part that carries the command out,
+    and only if the issuer may see it and ask for it; what is refused is answered to the issuer
+    alone (`MessageRejected`). The moderator routes an admitted request to that agent alone. A
+    quiet channel delivers it as well; one read back from the history for the agent is admitted
+    again, with the issuer's rights as they are then, and left out if it is not - the issuer is
+    not told, having been answered when it entered.
 *   **Where it came.** The agent takes in what it was told up to the command, carries it out, and
     takes in the rest, so that what was said before and after stands around it in its transcript as
     in the history. A command wakes nobody and is carried out asleep as well; the agent does not
     respond to it. One that comes during a turn waits for it.
 *   **In a turn of its own** (see [AGENT-TURN.md](AGENT-TURN.md#a-command-turn)), in the request's
     contexts continued in the agent's name - its owner's rights, the issuer as initiator
-    ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). The executor asks there, in the
-    context the request came with, whether the issuer may ask for it: the one place it is asked.
-    Refused, the agent answers `CommandFailed` to the issuer. Carried out, the turn is taken over
-    and stored; not carried out, it is dropped as if it had never begun.
-*   **Begun.** Admitted, the agent tells the issuer alone that it began, whatever its answer's
-    visibility: for `/compact`, the issuer sees it begin and everybody sees it done.
+    ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). The agent asks nothing: what reached
+    it was admitted. Carried out, the turn is taken over and stored; not carried out - the command
+    failed, or the agent has none of that name -, it is dropped as if it had never begun, and the
+    agent answers `CommandFailed` to the issuer.
+*   **Begun.** The agent tells the issuer alone that it began, whatever its answer's visibility:
+    for `/compact`, the issuer sees it begin and everybody sees it done.
 *   **Answered.** Carried out, the agent answers `CommandExecuted` - to the issuer alone if the
     answer is private, to every user otherwise; not carried out, `CommandFailed` to the issuer
     alone, with why. A command answers what it did, not what it read: nothing withholds its answer

@@ -45,6 +45,9 @@ use bytes::Buf;
 use caelumora_agents::llm::control_tokens::ControlTokens;
 use caelumora_agents::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
 use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::remote::{describe_chain, describe_request_error};
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentRef;
 use caelumora_model::context::{
@@ -55,11 +58,6 @@ use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry,
-    ComponentResult, Params,
-};
-use caelumora_runtime::remote::{describe_chain, describe_request_error};
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::{BoxStream, StreamExt};
@@ -1030,7 +1028,7 @@ impl ModelProfileProvider for OllamaClient {
 }
 
 /// Registers the kind `ollama_client` with `registry`.
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     let control_tokens = Arc::new(ControlTokenCache::default());
     let running_context_sizes = Arc::new(RunningContextSizes::default());
     let vision = Arc::new(ModelVision::default());
@@ -1070,6 +1068,9 @@ pub fn register(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use caelumora_api::component::Services;
+    use caelumora_kernel::component::BuildContext;
+    use caelumora_kernel::component::ComponentRegistry;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageRole};
@@ -1077,8 +1078,6 @@ mod tests {
     use caelumora_model::store::{EntityStores, Persistence};
     use caelumora_model::tool::ToolCall;
     use caelumora_model::type_map::TypeKey;
-    use caelumora_runtime::component::{ComponentContainer, ComponentContext};
-    use caelumora_runtime::runtime::Services;
     use futures::stream as futures_stream;
     use serde_json::json;
     use std::io::Error;
@@ -1402,11 +1401,11 @@ mod tests {
                 .unwrap()
                 .component_bundles,
         );
-        // As the agents' plugin declares it.
+        // As the agents' library declares it.
         registry.single::<dyn ModelProfileProvider>(None);
-        register(&mut registry);
+        register(&mut registry.library_components());
         let registry = Arc::new(registry);
-        let context = ComponentContext::new(
+        let context = BuildContext::new(
             SecurityContext::default(),
             Services::empty().with(Arc::new(prompts)),
         );
@@ -1419,13 +1418,9 @@ mod tests {
                         ..ComponentDescriptor::new("model", OLLAMA_CLIENT_KIND)
                     }],
                 };
-                let container = ComponentContainer::from_config(
-                    &config,
-                    &[TypeKey::of::<dyn ModelProfileProvider>()],
-                    &registry,
-                    &context,
-                )
-                .await?;
+                let container = registry
+                    .build(&config, &[TypeKey::of::<dyn ModelProfileProvider>()], &context)
+                    .await?;
                 Ok::<_, ComponentError>(
                     container.one::<dyn ModelProfileProvider>().await?.profile(),
                 )
@@ -1467,9 +1462,9 @@ mod tests {
                 .component_bundles,
         );
         registry.single::<dyn ModelProfileProvider>(None);
-        register(&mut registry);
+        register(&mut registry.library_components());
         let registry = Arc::new(registry);
-        let context = ComponentContext::new(
+        let context = BuildContext::new(
             SecurityContext::default(),
             Services::empty().with(Arc::new(PromptCatalogue::new())),
         );
@@ -1482,14 +1477,10 @@ mod tests {
                         ..ComponentDescriptor::new("model", OLLAMA_CLIENT_KIND)
                     }],
                 };
-                let container = ComponentContainer::from_config(
-                    &config,
-                    &[TypeKey::of::<dyn ModelProfileProvider>()],
-                    &registry,
-                    &context,
-                )
-                .await
-                .unwrap();
+                let container = registry
+                    .build(&config, &[TypeKey::of::<dyn ModelProfileProvider>()], &context)
+                    .await
+                    .unwrap();
                 container.one::<dyn ModelProfileProvider>().await.unwrap().profile().images
             }
         };

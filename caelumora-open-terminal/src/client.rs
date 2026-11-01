@@ -4,11 +4,11 @@
 //! paths inside it - and logged with the endpoint, shown without
 //! credentials.
 
+use caelumora_api::remote::describe_request_error;
+use caelumora_api::terminal::{TerminalError, TerminalResult};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::secret::SecretManager;
 use caelumora_model::security::SecurityContext;
-use caelumora_runtime::remote::describe_request_error;
-use caelumora_runtime::terminal::{TerminalError, TerminalResult};
 use reqwest::{Client as HttpClient, Method, RequestBuilder, Response, StatusCode, Url};
 use serde::de::DeserializeOwned;
 use std::fmt;
@@ -117,7 +117,7 @@ impl Client {
         let key = match &self.key {
             // The storage is the operator's, configured as the server's
             // own keys are: its key is read in the system's name.
-            Key::Endpoint(secrets) => self.endpoint.bearer_token(secrets, &SecurityContext::system()).await.map_err(|e| {
+            Key::Endpoint(secrets) => self.endpoint.bearer_token(&secrets.for_context(SecurityContext::system())).await.map_err(|e| {
                 warn!(endpoint = %self.endpoint.shown(), "The key of an Open Terminal storage could not be read: {e}");
                 TerminalError::Unavailable("the storage's key could not be read".to_string())
             })?,

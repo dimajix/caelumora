@@ -1,11 +1,12 @@
 # Tools
 
-Agents act through tools. A tool is contributed by a component and run by the runtime's
-`ToolExecutor`, which receives the ready providers and checks permissions. This document describes
-what a tool is, how its calls are run and what they answer, and the tools that come with Caelumora.
-Which calls need a person's approval, and how a tool asks a person, is in
-[APPROVALS.md](APPROVALS.md); how components are built in [COMPONENTS.md](COMPONENTS.md); how far a
-tool call may travel in [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
+Agents act through tools. A tool is contributed by a component and run by the agent's
+`ToolExecutor`, which receives the ready providers and has the kernel decide what is the kernel's
+(issue 516). This document describes what a tool is, how its calls are run and what they answer, and
+the tools that come with Caelumora. Which calls need a person's approval, and how a tool asks a
+person, is in [APPROVALS.md](APPROVALS.md); how components are built in
+[COMPONENTS.md](COMPONENTS.md); how far a tool call may travel in
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 A component offers tools by implementing `ToolProvider`; one component may expose several `Tool`s.
 Besides running a call, a provider says what its tools are for, which of them it offers in a turn
@@ -28,12 +29,12 @@ What a tool, its parameters and its tool set say to the model are texts of the p
 schema. The code builds the schema - the parameters, their types, which are required
 (`ToolParameters::string()`, `object(…)`) -, and `tool::described` gives the tool and each of its
 parameters the text of its path among the tools of its component kind, in the namespace of the
-agents or of the plugin that brings it (`<namespace>.tools.<kind>`): `notes.write_note` is the
+agents or of the library that brings it (`<namespace>.tools.<kind>`): `notes.write_note` is the
 tool's, `notes.write_note.text` its parameter's, `.item` an entry's of a list, and the entries of a
 list of objects are described by their fields under the list's path. A parameter described already
 keeps its text, as the parameters every reclassifying tool shares (`tool::reclassify_parameters`).
-The texts are rendered once, when the component is made; a text missing keeps it from being built.
-A tool of a generic provider, an MCP server's, is described as it describes itself
+The texts are rendered once, when the component is made; a text missing keeps it from being built. A
+tool of a generic provider, an MCP server's, is described as it describes itself
 (`ToolParameters::described`).
 
 ## Tool sets
@@ -84,22 +85,25 @@ Every result is classified: as the tool classified it, else as the tool is confi
 channel. A result that may not flow into the channel (`may_publish`, in the agent's name) never
 reaches the model: it is replaced by the status `withheld` and a message that names the
 classification and asks the model not to obtain it another way. The value is kept nowhere. Results
-that did not come from the tool - refused, denied, timed out - are the runtime's fixed texts,
+that did not come from the tool - refused, denied, timed out - are the agents' fixed texts,
 classified as the turn's label; a failed one, whose error may come from the tool, is the channel's.
-Built-in tools whose answer is derived from the arguments alone classify it as the turn's label
-too. See [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
+Built-in tools whose answer is derived from the arguments alone classify it as the turn's label too.
+See [CONFIDENTIALITY.md](CONFIDENTIALITY.md#tool-results).
 
 ## Running tool calls
 
-An agent's tool calls are run by the runtime's `ToolExecutor`, built with the `ToolProvider`s of its
+An agent's tool calls are run by its `ToolExecutor`, built with the `ToolProvider`s of its
 components. The executor is no component: how a call runs is its tool's business, but whether it
-runs and what the model is told is never the choice of whoever may write a personality. Before it
-hands a call to its tool, it checks that the caller is an agent - only agents call tools - that the
-call was offered to it, and that the place's rules still let it run. Whether the policy permits the
-call (`CallTool`) is asked once, as the call is admitted (see [Checked before anyone is
-asked](APPROVALS.md#checked-before-anyone-is-asked)), not again as it runs. Afterwards the executor
-times the call, turns an error into a status and a next step, classifies the result, withholds what
-may not flow into the channel and marks what only the owner sees.
+runs and what the model is told is never the choice of whoever may write a personality. What of a
+call is the kernel's to decide it asks of the kernel, through the agent's runtime (issue 516):
+whether the policy permits the call (`CallTool`) and what the rules of its places say, once, as the
+call is admitted (`ActorRuntime::admit_tool_call`, see
+[Checked before anyone is asked](APPROVALS.md#checked-before-anyone-is-asked)); whether a rule
+denies it now, again as it runs (`rule_denying`); and what may flow where (`may_publish`). Before it
+hands a call to its tool, it checks besides that the call was offered to it. Only agents call tools:
+the kernel makes an `ActorRuntime` for an agent alone, so that the executor need not ask. Afterwards
+the executor times the call, turns an error into a status and a next step, classifies the result,
+withholds what may not flow into the channel and marks what only the owner sees.
 
 **Two tools of the same name** are a configuration error that keeps the agent from starting, naming
 both components: resolved by order, one of them would be silently unreachable. User commands follow
@@ -192,10 +196,10 @@ transport:
 { "id": "github-mcp", "kind": "mcp_tool", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
 ```
 
-The kind lives in the plugin `caelumora-mcp` (issue 325), with `rmcp`, so that the runtime does not
-depend on it; `caelumora-app` and `caelumora-tui` list the plugin, and a personality names the kind
-as before. What such a component kind may use of the runtime is said in
-[PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-core-may-use).
+The kind lives in the library `caelumora-mcp` (issue 325), with `rmcp`, so that the kernel does not
+depend on it; `caelumora-app` and `caelumora-tui` list the library, and a personality names the kind
+as before. What such a component kind may use of the kernel is said in
+[PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-kernel-may-use).
 
 *   **Several servers.** Each server is an instance of its own; its tools are named
     `{component_id}__{remote_tool_name}`, so that servers cannot collide.
@@ -222,9 +226,9 @@ as before. What such a component kind may use of the runtime is said in
 
 ## ComfyUI
 
-A `comfyui_tool` component (issue 512, plugin `caelumora-comfyui`) generates images on one ComfyUI
-server with the workflows it names, of those the section `comfyui` of the configuration holds (see
-[CONFIGURATION.md](CONFIGURATION.md#comfyui)):
+A `comfyui_tool` component (issue 512, library `caelumora-comfyui`) generates images on one ComfyUI
+server with the workflows it names, of those the section `libraries.comfyui` of the configuration
+holds (see [CONFIGURATION.md](CONFIGURATION.md#comfyui)):
 
 ```yaml
 - id: comfyui-tool
@@ -294,22 +298,23 @@ views on every call all the same, before anything is sent: a call where there is
 list does not grant, fails and says so. Which calls need approval is configured as for `mcp_tool`:
 all - the default -, none, or all but those that only read files.
 
-The kind lives in the plugin `caelumora-workspace-tools` (issue 428), with the prompt part that
-names its `read_file`, `workspace_prompt_provider`: the workspaces are the core's, what an agent is
-given to work on them is built on the terminal's public API and the agents' tools, as the tools of
-any other subject are. `caelumora-app` and `caelumora-tui` list the plugin, and a personality names
-the kinds as before.
+The kind lives in the library `caelumora-workspace-tools` (issue 428), with the prompt part that
+names its `read_file`, `workspace_prompt_provider`: the workspaces are the kernel's, what an agent
+is given to work on them is built on the terminal's public API and the agents' tools, as the tools
+of any other subject are. `caelumora-app` and `caelumora-tui` list the library, and a personality
+names the kinds as before.
 
-**Files.** The file tools work over the workspace's `Terminal`, whatever its storage, without a
-shell. A path is relative to the workspace's top; one that leaves the workspace is the model's to
-correct, as is a file that is not there or not text. Reading is bounded, and says where to read on.
-A replacement must find its text exactly once, unless every occurrence is to be replaced; it reads,
-replaces and writes, so what changed the file in between is overwritten. Nothing is moved over,
-which would be a deletion, and the workspace's top is neither moved nor moved over. What was read
-is recorded as the turn's knowledge, a file's content by its digest (see
-[MEMORY.md](MEMORY.md#recording-what-was-read)). The approver reads a change whole, and a rule
-derived from an approved change covers the file, whatever is written into it - for a move, both
-places.
+**Files.** The file tools work over the workspace's terminal, whatever its storage, without a shell:
+those that only read over the `TerminalReader` the workspace's reader hands out, those that change
+over the `Terminal` of its writer (issue 516). A path is relative to the workspace's top; one that
+leaves the workspace is the model's to correct, as is a file that is not there or not text. Reading
+is bounded, and says where to read on. A replacement must find its text exactly once, unless every
+occurrence is to be replaced; it reads, replaces and writes, so what changed the file in between is
+overwritten. Nothing is moved over, which would be a deletion, and the workspace's top is neither
+moved nor moved over. What was read is recorded as the turn's knowledge, a file's content by its
+digest (see [MEMORY.md](MEMORY.md#recording-what-was-read)). The approver reads a change whole, and
+a rule derived from an approved change covers the file, whatever is written into it - for a move,
+both places.
 
 `publish_file` offers a file for download at the message that calls it: a link to the file as it is
 now, with its digest, downloaded through the channel's workspace by whoever may use it there. It
@@ -333,7 +338,7 @@ dropped call would go on writing into the workspace after the turn that started 
 
 A command handed back as running is ended by the model, or by a user who may change the workspace's
 files in the channel; the agent sees `killed` the next time it follows the command. How long a
-command lives and when the runtime ends it is in [WORKSPACE.md](WORKSPACE.md#commands).
+command lives and when the kernel ends it is in [WORKSPACE.md](WORKSPACE.md#commands).
 
 ### Attachments
 
@@ -362,7 +367,7 @@ recorded as knowledge besides - the result in the transcript is what was read.
 
 ### Artifacts
 
-`publish_artifact` (component `artifact_tool`, of the plugin `caelumora-artifacts`, issue 328)
+`publish_artifact` (component `artifact_tool`, of the library of `caelumora-artifacts`, issue 328)
 publishes a file of the session's workspace as a version of an artifact: a fixed copy, kept in a
 storage of content beyond the workspace, downloaded at the message that published it. `publish_file`
 offers a link to a file as it is now; a model is told the difference in their descriptions - a link
@@ -370,17 +375,18 @@ for a look now, an artifact for a result to be kept.
 
 It is offered where a file can be published: where the turn may use a workspace in its channel and a
 storage of content is configured. The file is read from the workspace as the file tools read it and
-handed to the `ArtifactManager`. It publishes in the name of whoever the agent acts for: its owner,
-who makes the artifact (`CreateArtifact`) or adds a version where the artifact's list lets them
-(`WriteArtifact`), asked before anything is kept - and who reads the project it goes into
-(`GetProject`), which the session's participants do. The participants of the channel it is published
-in read the version, and the artifact, which reading a version needs as well (issue 316); the
-members of the project read the artifact alone. An artifact is published into the scope of the
-project the session's results go to (issue 467) under its name, made with its first version and
-given one more by every later publication under that name. It is classified as the workspace, fixed
-with its first version; a later version from a workspace classified otherwise is refused. A storage
-takes nothing above its `destination`. Publishing changes what is kept, so it is approved where
-changes are; the approver reads which file is published as which artifact.
+handed to the `ArtifactPublisher` the plugin binds to the views of the turn's work (issue 516). It
+publishes in the name of whoever the agent acts for: its owner, who makes the artifact
+(`CreateArtifact`) or adds a version where the artifact's list lets them (`WriteArtifact`), asked
+before anything is kept - and who reads the project it goes into (`GetProject`), which the session's
+participants do. The participants of the channel it is published in read the version, and the
+artifact, which reading a version needs as well (issue 316); the members of the project read the
+artifact alone. An artifact is published into the scope of the project the session's results go to
+(issue 467) under its name, made with its first version and given one more by every later
+publication under that name. It is classified as the workspace, fixed with its first version; a
+later version from a workspace classified otherwise is refused. A storage takes nothing above its
+`destination`. Publishing changes what is kept, so it is approved where changes are; the approver
+reads which file is published as which artifact.
 
 The participants of the channel download the version published there, wherever they act; whom the
 owner shares the artifact with read the versions there are as they share it; its owner reads every

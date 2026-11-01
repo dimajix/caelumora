@@ -2,8 +2,8 @@
 
 Changes in Caelumora are announced on an event bus: the creation, change or deletion of a session,
 channel, agent or user. This document describes the form of an event and the `EventBus` in the
-runtime: how it is subscribed to and how a subscriber receives only what it may read. The
-server-sent event streams through which clients follow these events are part of
+kernel: how it is subscribed to and how a subscriber receives only what it may read. The server-sent
+event streams through which clients follow these events are part of
 [REST-SERVER.md](REST-SERVER.md); what happens inside a channel is in [CHANNELS.md](CHANNELS.md).
 
 ## The form of an event
@@ -29,7 +29,7 @@ hear of it, and it carries the participant in its data.
 its events name the session, by which the web UI finds the channel and the event bus picks whom an
 event reaches. Each kind says which kind of entity it lies in, `Stored::Within`, or `NoEntity` for
 none (see [STORAGE.md](STORAGE.md#the-entity-store)); `within` is absent for such a kind. Like `id`
-it is text, since the core does not know the id types of a plugin's kinds; who reads it knows the
+it is text, since the kernel does not know the id types of a plugin's kinds; who reads it knows the
 kind, and with it what `within` is the id of.
 
 An event is made by the kind it is about, at its address - its id, or for a kind that lies in an
@@ -65,7 +65,7 @@ here defines is one nothing waits for.
 
 ## The event bus
 
-The `EventBus` (`caelumora_runtime::event`) carries `GlobalEvent`s: every significant change in the
+The `EventBus` (`caelumora_kernel::event`) carries `GlobalEvent`s: every significant change in the
 system, such as the creation, update or deletion of a session, channel, agent or user. It lets the
 REST server, the TUI and the controllers react to changes without being coupled to whoever made
 them.
@@ -77,7 +77,7 @@ the `SubscriptionTopic`s it follows - everything, or a session, channel, agent o
 receives the matching events that context may read through an `EventSubscription`; `follow` adds a
 topic later. An event about a session, an agent or a user goes to its topic; one about a channel -
 and so about its participants - to the channel's and to the session's it lies in, which the bus
-reads from the event's address. Other kinds have no topic of their own. The runtime's own
+reads from the event's address. Other kinds have no topic of their own. The kernel's own
 subscribers - the controllers, a running session, an approver, the `CommandReaper` - subscribe as
 the system (`subscribe_all`, `subscribe_session`, …), which the bus does not ask about: they receive
 everything on their topics.

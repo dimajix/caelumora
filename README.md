@@ -16,11 +16,13 @@ Caelumora is a flexible and extensible multi-agent system framework designed for
 The project is organized as a Rust workspace with the following crates:
 
 - **`caelumora-model`**: Core domain entities and data structures.
-- **`caelumora-runtime`**: The execution engine: sessions, channels, event routing and the views.
+- **`caelumora-kernel`**: The execution engine: sessions, channels, event routing and the views.
+- **`caelumora-api`**: The kernel's API: what a library of the agent side is given and declares.
 - **`caelumora-agents`**: What an agent does in a channel: its cognitive cycle, tools, prompts and
   model.
 - **`caelumora-rest-api`**: The request and response types of the REST interface.
-- **`caelumora-rest-server`**: REST interface for interacting with the system, as a library.
+- **`caelumora-rest-server`**: REST interface for interacting with the system, as a crate the
+  program links.
 - **`caelumora-app`**: The program: the REST interface under `/api` and the web UI.
 - **`caelumora-tui`**: Terminal User Interface for Caelumora.
 - **`caelumora-logging`**: The setup of the log, shared by `caelumora-app` and `caelumora-tui`.
@@ -90,7 +92,7 @@ is one to try it with, each user's password their name. Session tokens are signe
 logs everybody out.
 
 Logging goes to stderr. Use `RUST_LOG` to select what is logged, e.g.
-`RUST_LOG=info,caelumora_runtime=debug`; the `logging` section of the config
+`RUST_LOG=info,caelumora_kernel=debug`; the `logging` section of the config
 switches to JSON or to a file. At `debug`, every line concerning one message
 carries the same `span_id`.
 

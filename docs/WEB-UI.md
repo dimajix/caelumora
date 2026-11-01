@@ -29,7 +29,7 @@ The UI shows what the server says and repeats no rule of its own:
 
 *   **Permissions come from the server.** Whether the user may change a channel (`can_change`), see
     what an agent saw (`can_read_context`), approve, retry, cancel or delete is part of the
-    responses, decided by the runtime's views (see [SECURITY.md](SECURITY.md#views)). The UI offers
+    responses, decided by the kernel's views (see [SECURITY.md](SECURITY.md#views)). The UI offers
     an action only where it is set, and never works it out itself.
 *   **Only lexical rules are mirrored.** Whether a line is a command (`command.ts`, mirroring
     `caelumora_model::command::parse_input`) and how a participant's handle is derived

@@ -1,63 +1,31 @@
 //! The commands an agent carries out itself (issue 269), the same for both
 //! kinds of agent - the `AgentActor` and the `ExternalAgentActor`: which it
-//! has, who may ask for them, and carrying one out in a turn of its own. Its
-//! body's (`AgentBody`).
+//! has, and carrying one out in a turn of its own once its channel admitted
+//! the request (issue 516). Its body's (`AgentBody`).
 
 use super::body::AgentBody;
-use crate::command::{AgentCommandAccess, AgentCommandProvider};
+use caelumora_api::command::CommandError;
+use caelumora_api::transport::EventSender;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::AgentChannelState;
 use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::security::SecurityContext;
 use caelumora_model::turn::CommandRequest;
-use caelumora_runtime::command::{CommandError, CommandExecutor};
-use caelumora_runtime::component::{ComponentContainer, ComponentError, ComponentResult};
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::transport::EventSender;
-use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 impl AgentBody {
-    /// The commands the components of `components` provide (issue 269),
-    /// behind the executor that checks who may see and ask for them.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` if two components provide the same
-    /// name, or one provides a name the session's commands have: the
-    /// session's would hide it (issue 37).
-    pub(super) fn command_executor(
-        components: &ComponentContainer,
-        runtime: &ActorRuntime,
-    ) -> ComponentResult<CommandExecutor<dyn AgentCommandProvider>> {
-        let providers = components.get_all::<dyn AgentCommandProvider>(None)?;
-        for provider in &providers {
-            if let Some(command) =
-                provider.commands().into_iter().find(|c| runtime.command_executor().has(&c.name))
-            {
-                return Err(ComponentError::InvalidConfig(format!(
-                    "command /{} of component '{}' is a command of the session too, which would hide it",
-                    command.name, provider.id
-                )));
-            }
-        }
-        CommandExecutor::new(Arc::clone(runtime.access_policy()), providers)
-    }
-
-    /// The commands `issuer` may see of the agent in its channel, sorted by
-    /// name.
-    pub(super) async fn visible_commands(&self, issuer: &SecurityContext) -> Vec<Command> {
-        let channel = self.runtime.channel_attributes();
-        let agent = self.agent.load().security_attributes.clone();
-        self.commands.visible(issuer, &agent, &channel).await
+    /// The commands the agent carries out in its channel, sorted by name;
+    /// who may see which is the channel's to decide (issue 516).
+    pub(super) fn commands(&self) -> Vec<Command> {
+        self.commands.commands()
     }
 
     /// Carries out the `CommandRequested` in `request` in a turn of its own,
-    /// begun on `state` in the request's contexts continued in the agent's
+    /// begun on `state` in the request's context continued in the agent's
     /// name (`Answering::to`): its owner's rights, whoever asked its
-    /// initiator. The executor asks, in the context the request came with,
-    /// whether the issuer may ask for it - the one place that is asked
-    /// (issue 304); admitted, the agent tells the issuer alone that it began
-    /// (`CommandStarted`, issue 299), refused it answers `CommandFailed`.
+    /// initiator. Whether the issuer may ask for it was decided as the
+    /// channel admitted the request (issue 516): the agent asks nothing and
+    /// tells the issuer alone that it began (`CommandStarted`, issue 299);
+    /// a command it does not carry out it answers `CommandFailed`.
     ///
     /// Carried out, the turn is taken over - what the command staged applied,
     /// the command recorded before the turn's end - and stored, and the
@@ -76,10 +44,8 @@ impl AgentBody {
     ) {
         let ActorEvent::CommandRequested { command, args, .. } = &request.event else { return };
         let issuer = request.context.sender_id;
-        let (agent_id, name) = (self.agent_id(), self.agent.name());
+        let (agent_id, name) = (self.agent_id(), self.scoped_name());
         let (answering, work) = self.work_for(request);
-        let channel_attributes = self.runtime.channel_attributes();
-        let attributes = self.agent.load().security_attributes.clone();
         let kept = CommandRequest { command: command.clone(), args: args.clone(), issuer };
         let turn_id = state.begin_command_turn(work.given_as(self.profile), kept);
         let Some(mut turn) = self.turn(state) else {
@@ -87,12 +53,8 @@ impl AgentBody {
             return;
         };
         let mut started = false;
-        let carried_out = match self
-            .commands
-            .admitted(command, &request.security, &attributes, &channel_attributes)
-            .await
-        {
-            Ok(admitted) => {
+        let carried_out = match self.commands.entry(command) {
+            Some(entry) => {
                 let start = ActorEvent::CommandStarted {
                     command: command.clone(),
                     args: args.clone(),
@@ -103,9 +65,9 @@ impl AgentBody {
                     warn!("{:#}", e);
                 }
                 started = true;
-                admitted.execute(args, &mut turn).await
+                entry.provider().execute(command, args, &mut turn).await
             }
-            Err(e) => Err(e),
+            None => Err(CommandError::Unknown(command.clone())),
         };
         let event = match carried_out {
             Ok(answer) => {

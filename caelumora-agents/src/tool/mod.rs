@@ -1,5 +1,5 @@
 //! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that runs an agent's tool calls
-//! with the tools of its providers and with the checks the runtime keeps to itself (issues 127,
+//! with the tools of its providers and with the checks the kernel keeps to itself (issues 127,
 //! 280), what tools share - a text given a page at a time (`page_of`, issue 282) -, and the
 //! built-in tool components, one file per component kind. A component that offers tools along with
 //! another facet - a prompt part, say - stays in `components`.
@@ -19,26 +19,25 @@ use crate::prompt::NAMESPACE;
 use crate::situation::Situation;
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision, ToolMatcher};
+use caelumora_api::component::LibraryComponents;
+use caelumora_api::component::{ComponentImpl, ComponentResult};
+use caelumora_api::error::AttachmentError;
+use caelumora_api::error::ContentError;
+use caelumora_api::error::StorageGone;
+use caelumora_api::reader::ViewError;
+use caelumora_api::runtime::{ActorRuntime, CallPermit};
+use caelumora_api::terminal::TerminalError;
+use caelumora_api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter};
+use caelumora_model::approval::ToolMatcher;
 use caelumora_model::confidentiality::{Classification, Compartment, Confidentiality};
 use caelumora_model::content::ContentRef;
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::{Answers, Questions};
-use caelumora_model::security::{ActionType, Enforcement, Policies};
 use caelumora_model::tool::{
     Tool, ToolCall, ToolCallResult, ToolCallState, ToolMedia, ToolParameters, ToolResultStatus,
     ToolSet, ToolVisibility,
 };
 use caelumora_model::turn::GivenUpReason;
-use caelumora_runtime::attachment::AttachmentError;
-use caelumora_runtime::backend::StorageGone;
-use caelumora_runtime::component::{ComponentImpl, ComponentRegistry, ComponentResult};
-use caelumora_runtime::content::ContentError;
-use caelumora_runtime::controller::{ChannelController, SessionController};
-use caelumora_runtime::runtime::ActorRuntime;
-use caelumora_runtime::terminal::TerminalError;
-use caelumora_runtime::view::{ViewError, WorkspaceView};
-use caelumora_runtime::workspace::WorkspaceError;
 use chrono::Utc;
 use providers::ToolProviders;
 use serde::de::DeserializeOwned;
@@ -396,7 +395,7 @@ pub(crate) fn unanswered_result(prompts: &PromptTexts) -> String {
 /// The result for a call that was approved but has no result when its
 /// agent is loaded again (issue 75): the server or the session stopped
 /// before the call ran (issue 377), or before its result was stored. The
-/// runtime cannot tell which, so it never runs the call again - the model
+/// executor cannot tell which, so it never runs the call again - the model
 /// decides.
 pub(crate) fn not_executed_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::NotExecuted, result_text(prompts, "not_executed", ()))
@@ -404,7 +403,7 @@ pub(crate) fn not_executed_result(prompts: &PromptTexts) -> String {
 
 /// The result for a call that was running when its turn was cancelled or
 /// given up (issue 161): it was interrupted, and what it did before stays
-/// done. The runtime cannot tell how far it got - the model checks before
+/// done. The executor cannot tell how far it got - the model checks before
 /// it calls it again.
 pub(crate) fn interrupted_result(prompts: &PromptTexts) -> String {
     unsuccessful_result(ToolResultStatus::Interrupted, result_text(prompts, "interrupted", ()))
@@ -472,8 +471,8 @@ pub(crate) enum TurnEnd<'a> {
 }
 
 impl TurnEnd<'_> {
-    /// The key of the text that says why: the core's for a turn given up
-    /// (`core.given_up_cause`), the agents' otherwise.
+    /// The key of the text that says why: the kernel's for a turn given up
+    /// (`kernel.given_up_cause`), the agents' otherwise.
     fn key(&self) -> String {
         match self {
             TurnEnd::Committed { cancelled: true } => {
@@ -597,20 +596,26 @@ pub trait ToolProvider: Send + Sync + Debug {
     }
 }
 
-/// The workspace the tools of a set on it may be offered on in `situation`
-/// (issue 290): the one of the agent's session the work may use in its
-/// channel (`Situation::workspace_view`). `Err` with why the set is unavailable,
-/// in general terms: there is none, or it cannot be read now - which is
-/// logged.
-pub async fn usable_workspace(situation: &Situation<'_>) -> Result<WorkspaceView, String> {
-    match situation.workspace_view().await {
-        Ok(Some(workspace)) => Ok(workspace),
-        Ok(None) => Err(WorkspaceError::NotUsableInChannel.to_string()),
-        Err(error) => {
-            warn!("Reading the workspace an agent may use in its channel failed: {error}");
-            Err("its workspace cannot be read now".to_string())
-        }
-    }
+/// The reader of the workspace of its session `situation` may use in its channel
+/// (`Situation::reader`, issue 516): what only reads its files goes this way, a tool too, and what
+/// the tools of a set on it are offered by (issue 290) - none where there is none it may use, also
+/// where reading it failed.
+///
+/// # Errors
+/// `NotUsableInChannel` where the work may use none.
+pub async fn workspace_reader(
+    situation: &Situation<'_>,
+) -> WorkspaceResult<Arc<dyn WorkspaceReader>> {
+    situation.reader::<dyn WorkspaceReader>().await.ok_or(WorkspaceError::NotUsableInChannel)
+}
+
+/// The writer of the workspace a tool of `turn` changes the files of and runs commands in
+/// (`Turn::writer`, issue 516).
+///
+/// # Errors
+/// `NotUsableInChannel` where the work may use none.
+pub async fn workspace_writer(turn: &Turn<'_>) -> WorkspaceResult<Arc<dyn WorkspaceWriter>> {
+    turn.writer::<dyn WorkspaceWriter>().await.ok_or(WorkspaceError::NotUsableInChannel)
 }
 
 /// What a rule derived from a call of the tool `name` with `params` is
@@ -713,62 +718,46 @@ fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
     turn.tools().any(|tool| tool.name == call.function_name)
 }
 
-/// Runs an agent's tool calls with the tools of its components' providers
-/// (`ToolProviders`), and with what the runtime keeps to itself (issues
-/// 127, 133, 280): only an agent calls tools, and only what the policy
-/// permits (`CallTool`) - asked before a call is put up for approval
-/// (`admit`, which also decides whether a user is asked) and again when
-/// it is run. And the result the model is
-/// given is made here, the one place: what the tool gave, or what went
-/// wrong and what to do next (issue 15), classified - as the tool
-/// classified it, else as the tool is configured, else as the channel -
-/// and withheld if that may not flow into the channel, before the model
-/// sees it. A tool only ever sees permitted calls, and never decides what
-/// the model is told. It is no component: how a call runs is its tool's
-/// business (issue 280), and what is checked is never the choice of whoever
-/// may write a personality.
-///
-/// The rules of the places the agent works in (issue 13) - the system's,
-/// its session's, its channel's - are applied here too, as they stand at
-/// each call: a rule that denies refuses a call as the policy does, before
-/// anyone is asked and again when it is run, and a rule that asks puts the
-/// call to a person for a decision of their own, whatever its tool says.
+/// Runs an agent's tool calls with the tools of its components' providers (`ToolProviders`), and
+/// has the kernel decide what is the kernel's (issues 127, 133, 280, 516): only an agent calls
+/// tools, and only what the kernel admits (`ActorRuntime::admit_tool_call`) - the policy
+/// (`CallTool`), asked once before a call is put up for approval (`admit`, which also decides
+/// whether a user is asked), and the rules of the places the agent works in (issue 13), the
+/// system's, its session's and its channel's, as they stand: a rule that denies refuses a call as
+/// the policy does, before anyone is asked and again when it is run (`ActorRuntime::rule_denying`),
+/// and a rule that asks puts the call to a person for a decision of their own, whatever its tool
+/// says. And the result the model is given is made here, the one place: what the tool gave, or what
+/// went wrong and what to do next (issue 15), classified - as the tool classified it, else as the
+/// tool is configured, else as the channel - and withheld if that may not flow into the channel
+/// (`ActorRuntime::may_publish`), before the model sees it. A tool only ever sees permitted calls,
+/// and never decides what the model is told. It is no component: how a call runs is its tool's
+/// business (issue 280), and what is checked is never the choice of whoever may write a
+/// personality.
 #[derive(Debug)]
 pub struct ToolExecutor {
-    /// Who may call a tool (`CallTool`), and what may flow where (issue 304): a result into the
-    /// agent's context, the channel's content to a tool set's remote side.
-    policies: Policies,
     providers: ToolProviders,
-    system_rules: Arc<[ApprovalRule]>,
-    session: Arc<SessionController>,
-    channel: Arc<ChannelController>,
-    /// The agent's runtime, through which a call's questions are put to the users of its channel as
-    /// it runs, and what its tool gave its model is kept for the channel (issue 512).
-    runtime: ActorRuntime,
+    /// The agent's runtime, which decides what is the kernel's to decide of its calls (issue 516) -
+    /// whether one may be called, the rules of its places, what may flow where -, through which a
+    /// call's questions are put to the users of its channel, and what its tool gave its model is
+    /// kept for the channel (issue 512).
+    runtime: Arc<dyn ActorRuntime>,
 }
 
 impl ToolExecutor {
     /// An executor for the tools of `providers`, in the order of the configuration, for the agent
-    /// of `runtime`: guarded by the runtime's policies and by the rules of the system
-    /// (`AppConfig::approvals`), of the agent's session and of its channel, whose users the
-    /// questions of its calls are put to through `runtime` (issues 371, 374), as what its tools
-    /// give their model is kept (issue 512).
+    /// of `runtime`: guarded by what `runtime` decides - the policy and the rules of the system
+    /// (`AppConfig::approvals`), of the agent's session and of its channel (issues 13, 516) -,
+    /// the questions of its calls put to the users of its channel through it (issues 371, 374),
+    /// as what its tools give their model is kept (issue 512).
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if two providers have a tool of the
     /// same name (`ToolProviders::new`).
     pub(crate) fn new(
         providers: Vec<ComponentImpl<dyn ToolProvider>>,
-        runtime: ActorRuntime,
+        runtime: Arc<dyn ActorRuntime>,
     ) -> ComponentResult<Self> {
-        Ok(Self {
-            policies: runtime.policies().clone(),
-            providers: ToolProviders::new(providers)?,
-            system_rules: Arc::clone(runtime.approval_rules()),
-            session: Arc::clone(runtime.session_controller()),
-            channel: Arc::clone(runtime.channel_controller()),
-            runtime,
-        })
+        Ok(Self { providers: ToolProviders::new(providers)?, runtime })
     }
 
     /// What `call` asks before it runs, as its tool says, checked and put to
@@ -780,20 +769,9 @@ impl ToolExecutor {
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
         let addressed = self
             .runtime
-            .address_questions(questions, turn.situation().security_context())
+            .address_questions(turn.situation().initiator(), questions)
             .ok_or_else(|| ToolError::ExecutionFailed("the channel does not run".to_string()))?;
         addressed.map(Some).map_err(|e| ToolError::InvalidParameter(e.to_string()))
-    }
-
-    /// The rule of a place that decides `call` now, if one does, with what
-    /// it decides of it: the strongest of the system's, the session's and the
-    /// channel's (`ApprovalRule::decide`).
-    fn place_rule(&self, call: &ToolCall) -> Option<(ApprovalRuleId, RuleDecision)> {
-        let (session, channel) = (self.session.load(), self.channel.load());
-        let rules =
-            self.system_rules.iter().chain(&session.approval_rules).chain(&channel.approval_rules);
-        ApprovalRule::decide(rules, call, session.id, channel.id, Utc::now())
-            .map(|(rule, decision)| (rule.id, decision))
     }
 
     /// Runs `call` if it may be run now, with the `answers` to the questions
@@ -827,7 +805,7 @@ impl ToolExecutor {
             Err(interruption) => {
                 let after = (finished_at - started_at).to_std().unwrap_or_default();
                 info!(tool = %call.function_name, duration_ms = after.as_millis(), by_user = matches!(interruption, Interruption::ByUser(_)), "Tool interrupted");
-                // A fixed text of the runtime's: as the turn (issue 168).
+                // A fixed text of the agents': as the turn (issue 168).
                 let mut result = ToolCallResult::of(
                     call,
                     ToolResultStatus::Interrupted,
@@ -868,7 +846,7 @@ impl ToolExecutor {
     /// The result for `call`, whose tool gave `output`: classified as the tool classified it, else
     /// as the tool is configured - as the turn began with its tools - else as the channel, and
     /// withheld - with what it showed (issue 282) - if that, or what it showed, may not flow into
-    /// the channel (`ConfidentialityPolicy::may_publish`, in the agent's name: the result enters
+    /// the channel (`ActorRuntime::may_publish`, in the agent's name: the result enters
     /// its context in the channel). The media it gave are kept as the result's (`keep`, issue 512)
     /// only where it is not withheld; what cannot be kept fails the call.
     async fn admitted(
@@ -884,12 +862,11 @@ impl ToolExecutor {
             .and_then(|t| t.classification.clone());
         let classification =
             output.classification.or(configured).unwrap_or_else(|| channel.clone());
-        let context = turn.situation().security_context();
+        let initiator = turn.situation().initiator();
         let parts = iter::once(&classification)
             .chain(output.shown.iter().map(|shown| &shown.classification));
-        if let Some(refused) = parts
-            .into_iter()
-            .find(|part| !self.policies.confidentiality().may_publish(context, part, &channel))
+        if let Some(refused) =
+            parts.into_iter().find(|part| !self.runtime.may_publish(initiator, part, &channel))
         {
             debug!(tool = %call.function_name, classification = %refused, "Withheld a result the channel does not admit");
             return ToolCallResult::of(
@@ -940,20 +917,19 @@ impl ToolExecutor {
         if media.is_empty() {
             return Ok(Vec::new());
         }
-        let context = turn.situation().security_context();
-        self.runtime.create_media(context, classification.clone(), media).await.map_err(not_kept)
+        let initiator = turn.situation().initiator();
+        self.runtime.create_media(initiator, classification.clone(), media).await.map_err(not_kept)
     }
 
-    /// How `call`, made by the model in `turn`, is admitted: a call that
-    /// cannot succeed is answered at once rather than put to a user who
-    /// could only approve it in vain - in the order `execute` would find
-    /// out: first the policy (`CallTool`) and a rule of a place that denies
-    /// it (issue 13; `execute` checks both again), then the call itself
-    /// (issue 118) and the questions it asks (issue 165). Otherwise a user is
-    /// asked if a rule of a place asks for it - explicitly, for a decision
-    /// of their own - or if its tool, as the turn began with it (issue 137),
-    /// requires approval, and shown what the tool says of the call; the
-    /// questions are asked once it is approved, or at once.
+    /// How `call`, made by the model in `turn`, is admitted: a call that cannot succeed is answered
+    /// at once rather than put to a user who could only approve it in vain - in the order `execute`
+    /// would find out: first what the kernel decides of it (`ActorRuntime::admit_tool_call`, issue
+    /// 516) - the policy (`CallTool`) and a rule of a place that denies it (issue 13; `execute`
+    /// asks the rules again) -, then the call itself (issue 118) and the questions it asks (issue
+    /// 165). Otherwise a user is asked if a rule of a place asks for it - explicitly, for a
+    /// decision of their own - or if its tool, as the turn began with it (issue 137), requires
+    /// approval, and shown what the tool says of the call; the questions are asked once it is
+    /// approved, or at once.
     pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
         let agent = turn.situation().agent_id();
         if !offered(call, turn) {
@@ -967,35 +943,30 @@ impl ToolExecutor {
                 turn,
             )));
         }
-        // The one question of the call's permission (issue 304, rule 4):
-        // asked as it is admitted, not again when it runs.
-        if self
-            .policies
-            .access_policy()
-            .require(turn.situation().security_context(), ActionType::CallTool(call), |_| ())
-            .await
-            .is_err()
-        {
-            info!(
-                "Tool call '{}' by agent {} forbidden by the access policy",
-                call.function_name, agent
-            );
-            return Admission::Answered(Box::new(ToolCallResult::of(
+        // The one question of the call's permission (issue 304, rule 4) is asked as it is admitted,
+        // not again when it runs: the kernel's.
+        let permit = self.runtime.admit_tool_call(turn.situation().initiator(), call).await;
+        let forbidden = || {
+            Admission::Answered(Box::new(ToolCallResult::of(
                 call,
                 ToolResultStatus::Forbidden,
                 forbidden_result(&turn.situation().texts()),
                 turn.situation().label(),
-            )));
-        }
-        let rule = self.place_rule(call);
-        if let Some((rule_id, RuleDecision::Deny)) = rule {
-            info!(rule = %rule_id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
-            return Admission::Answered(Box::new(ToolCallResult::of(
-                call,
-                ToolResultStatus::Forbidden,
-                forbidden_result(&turn.situation().texts()),
-                turn.situation().label(),
-            )));
+            )))
+        };
+        match permit {
+            CallPermit::Forbidden => {
+                info!(
+                    "Tool call '{}' by agent {} forbidden by the access policy",
+                    call.function_name, agent
+                );
+                return forbidden();
+            }
+            CallPermit::Denied(rule_id) => {
+                info!(rule = %rule_id, "Tool call '{}' by agent {} denied by a rule", call.function_name, agent);
+                return forbidden();
+            }
+            CallPermit::Ask | CallPermit::Open => {}
         }
         let description = match self.providers.describe(call) {
             Ok(description) => description,
@@ -1018,7 +989,7 @@ impl ToolExecutor {
                 return Admission::Answered(Box::new(self.failed(call, e, turn)));
             }
         };
-        let explicit = rule.is_some_and(|(_, decision)| decision == RuleDecision::Ask);
+        let explicit = permit == CallPermit::Ask;
         let asks =
             explicit || turn.tools().any(|t| t.name == call.function_name && t.requires_approval);
         match questions {
@@ -1035,17 +1006,17 @@ impl ToolExecutor {
 
     /// The tool sets the agent is offered in `situation` (issues 180, 290): what
     /// each provider offers there, and a set whose destination the work's
-    /// channel may not flow into (`ConfidentialityPolicy::may_publish`, in
-    /// the name the work acts in) offered as unavailable, without its tools -
+    /// channel may not flow into (`ActorRuntime::may_publish`, in the name
+    /// the work acts in) offered as unavailable, without its tools -
     /// its arguments would carry what the channel holds out of the system.
     pub async fn tool_sets(&self, situation: &Situation<'_>) -> Vec<ToolSet> {
-        let context = situation.security_context();
+        let initiator = situation.initiator();
         let channel = &situation.classification();
         let mut offered = Vec::new();
         for set in self.providers.tool_sets(situation).await {
             let withheld = match (&set.destination, &set.unavailable) {
                 (Some(destination), None) => {
-                    !self.policies.confidentiality().may_publish(context, channel, destination)
+                    !self.runtime.may_publish(initiator, channel, destination)
                 }
                 _ => false,
             };
@@ -1057,33 +1028,24 @@ impl ToolExecutor {
         offered
     }
 
-    /// Nothing if `call` may be run now: it was offered, the caller is an
-    /// agent and no rule of a place denies it - one may have been set while
-    /// the call waited. Whether the policy permits it was asked as it was
-    /// admitted (`admit`), once (issue 304).
+    /// Nothing if `call` may be run now: it was offered and no rule of a place denies it - one may
+    /// have been set while the call waited. Whether the policy permits it was asked as it was
+    /// admitted (`admit`), once (issue 304); that its caller is an agent, the runtime it acts
+    /// through says, which the kernel makes for an agent alone (issue 516).
     async fn check(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<()> {
         if !offered(call, turn) {
             return Err(ToolError::UnknownTool(call.function_name.clone()));
         }
-        let security = turn.situation().security_context();
-        if security.caller_id.as_agent_id().is_none() {
-            return Err(ToolError::PermissionDenied(format!(
-                "tools can only be called by agents, not by {}",
-                security.caller_id
-            )));
-        }
         // A rule that denies may have been set while the call waited.
-        match self.place_rule(call) {
-            Some((rule_id, RuleDecision::Deny)) => {
-                Err(ToolError::PermissionDenied(format!("rule {rule_id}")))
-            }
-            _ => Ok(()),
+        match self.runtime.rule_denying(call) {
+            Some(rule_id) => Err(ToolError::PermissionDenied(format!("rule {rule_id}"))),
+            None => Ok(()),
         }
     }
 }
 
 /// Registers the tool kinds with `registry`.
-pub fn register_all(registry: &mut ComponentRegistry) {
+pub fn register_all(registry: &mut LibraryComponents<'_>) {
     ask_user_tool::register(registry);
     attachment_tool::register(registry);
     calculator_tool::register(registry);
@@ -1095,9 +1057,13 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, TestAgents};
+    use crate::testing::{self, agent_runtime, TestAgents};
+    use caelumora_kernel::controller::SessionController;
+    use caelumora_kernel::kernel::ChannelRuntime;
+    use caelumora_kernel::testing::{participant_runtime_in, TestKernel, World};
     use caelumora_model::actor::ActorId;
     use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_model::approval::{ApprovalRule, RuleDecision};
     use caelumora_model::channel::Channel;
     use caelumora_model::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_model::config::{AppConfig, ApprovalsConfig};
@@ -1107,21 +1073,18 @@ mod tests {
     use caelumora_model::event::GlobalEvent;
     use caelumora_model::note::NoteId;
     use caelumora_model::security::{
-        AccessPolicy, AllowAllPolicy, OwnershipPolicy, SecurityContext,
+        AccessPolicy, ActionType, AllowAllPolicy, OwnershipPolicy, SecurityContext,
     };
     use caelumora_model::session::testing::bare_session;
     use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
     use caelumora_model::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_model::turn::TurnState;
-    use caelumora_model::user::UserId;
     use caelumora_model::value::name::Name;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
-    use caelumora_runtime::session::testing::detached_actor_runtime_in;
-    use caelumora_runtime::testing::{actor_runtime_in, TestRuntime, World};
     use serde_json::json;
     use std::fs;
     use std::future;
+    use std::sync::Arc;
     use tokio::time;
     use tokio_util::bytes::Bytes;
 
@@ -1359,14 +1322,13 @@ mod tests {
     }
 
     /// The mock tools - each requiring approval if `requires_approval` -
-    /// guarded by `access_policy` and the rules of `places`; the controllers of
-    /// the session and the channel are returned, for their rules to be
-    /// changed.
+    /// guarded by `access_policy` and the rules of `places`; the controller of
+    /// the session is returned, for its rules to be changed.
     fn guarded_in(
         access_policy: Arc<dyn AccessPolicy>,
         requires_approval: bool,
         places: Places,
-    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+    ) -> (ToolExecutor, Arc<SessionController>) {
         guarding(
             access_policy,
             vec![("tools", Arc::new(MockToolProvider { requires_approval }))],
@@ -1380,19 +1342,28 @@ mod tests {
         access_policy: Arc<dyn AccessPolicy>,
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
         places: Places,
-    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
-        guarding_under(access_policy, Arc::new(ConfidentialityRules::default()), providers, places)
+    ) -> (ToolExecutor, Arc<SessionController>) {
+        let agent = ActorId::Agent(AgentId::new());
+        guarding_under(
+            access_policy,
+            Arc::new(ConfidentialityRules::default()),
+            providers,
+            places,
+            agent,
+        )
     }
 
     /// As `guarding`, the flow decided by `confidentiality` (issue 304): for
-    /// an agent whose runtime holds the policies, the system's rules and the
-    /// session of the test (issue 371).
+    /// the actor `actor` - an agent, as tools are called -, whose runtime
+    /// holds the policies, the system's rules and the session of the test
+    /// (issue 371).
     fn guarding_under(
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
         places: Places,
-    ) -> (ToolExecutor, Arc<SessionController>, Arc<ChannelController>) {
+        actor: ActorId,
+    ) -> (ToolExecutor, Arc<SessionController>) {
         let providers = providers
             .into_iter()
             .map(|(id, facet)| ComponentImpl {
@@ -1413,22 +1384,19 @@ mod tests {
             None,
         );
         channel.approval_rules = places.channel;
-        let runtime = detached_actor_runtime_in(
-            TestRuntime {
-                access_policy,
-                confidentiality,
-                config,
-                plugins: vec![&TestAgents],
-                ..Default::default()
-            }
-            .build(),
-            session,
-            channel,
-        );
-        let session = Arc::clone(runtime.session_controller());
-        let channel = Arc::clone(runtime.channel_controller());
-        let executor = ToolExecutor::new(providers, runtime).unwrap();
-        (executor, session, channel)
+        let kernel = TestKernel {
+            access_policy,
+            confidentiality,
+            config,
+            libraries: vec![&TestAgents],
+            ..Default::default()
+        }
+        .build();
+        let channel = ChannelRuntime::outside_a_session(kernel, session, channel);
+        let session = channel.session_controller_of();
+        let executor =
+            ToolExecutor::new(providers, agent_runtime(channel.new_participant_runtime(actor)));
+        (executor.unwrap(), session)
     }
 
     fn guarded(
@@ -1508,7 +1476,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
-        let (executor, session, _channel) =
+        let (executor, session) =
             guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
@@ -1531,17 +1499,7 @@ mod tests {
         let executor = executor(Arc::new(DenyAllPolicy));
 
         let agent_id = AgentId::new();
-        let mut agent_channel_state = offered(
-            &executor,
-            Work {
-                security_context: SecurityContext {
-                    caller_id: ActorId::Agent(agent_id),
-                    ..SecurityContext::default()
-                },
-                ..Default::default()
-            },
-        )
-        .await;
+        let mut agent_channel_state = offered(&executor, Work { ..Default::default() }).await;
         let mut context = Turn::under_way(agent_id, &mut agent_channel_state);
 
         let admitted = executor.admit(&call("test_tool"), &context).await;
@@ -1657,20 +1615,15 @@ mod tests {
         let outward: Arc<dyn ToolProvider> =
             Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
         let local: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: false });
-        let (executor, _, _) = guarding(
+        let (executor, _) = guarding(
             access_policy,
             vec![("outward", outward), ("local", local)],
             Places::default(),
         );
-        let agent = SecurityContext {
-            caller_id: ActorId::Agent(AgentId::new()),
-            ..SecurityContext::default()
-        };
 
         let internal = sets_offered(
             &executor,
             Work {
-                security_context: agent.clone(),
                 classification: Classification::general(Confidentiality::Internal),
                 ..Default::default()
             },
@@ -1689,7 +1642,6 @@ mod tests {
         let confidential = sets_offered(
             &executor,
             Work {
-                security_context: agent.clone(),
                 classification: Classification::general(Confidentiality::Confidential),
                 ..Default::default()
             },
@@ -1711,7 +1663,6 @@ mod tests {
 
         let mut agent_channel_state = offering(
             Work {
-                security_context: agent,
                 classification: Classification::general(Confidentiality::Confidential),
                 ..Default::default()
             },
@@ -1748,41 +1699,10 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn only_an_agent_calls_tools() {
-        let executor = executor(Arc::new(AllowAllPolicy::new()));
-        let mut agent_channel_state = offered(
-            &executor,
-            Work {
-                security_context: SecurityContext {
-                    caller_id: ActorId::User(UserId::new()),
-                    ..SecurityContext::default()
-                },
-                ..Default::default()
-            },
-        )
-        .await;
-        let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-
-        let result =
-            executor.execute(&call("test_tool"), None, &mut context, future::pending()).await;
-        assert_eq!(result.status, ToolResultStatus::Forbidden, "whatever the policy says");
-    }
-
     /// A turn of an agent in a general internal channel, with the tools of
     /// `executor` as it began with them.
     async fn agent_turn(executor: &ToolExecutor) -> AgentChannelState {
-        offered(
-            executor,
-            Work {
-                security_context: SecurityContext {
-                    caller_id: ActorId::Agent(AgentId::new()),
-                    ..SecurityContext::default()
-                },
-                ..Default::default()
-            },
-        )
-        .await
+        offered(executor, Work { ..Default::default() }).await
     }
 
     /// The tool sets `executor` offers in a turn done as `work` says.
@@ -1828,6 +1748,7 @@ mod tests {
             Arc::new(ConfidentialityRules::new(compartments)),
             vec![("tools", tools)],
             Places::default(),
+            ActorId::Agent(AgentId::new()),
         )
         .0
     }
@@ -2011,7 +1932,7 @@ mod tests {
             fail_policy: Default::default(),
             facet: Arc::new(Drawing) as Arc<dyn ToolProvider>,
         };
-        let runtime = actor_runtime_in(main, ActorId::Agent(helper));
+        let runtime = agent_runtime(participant_runtime_in(main, ActorId::Agent(helper)));
         let executor = ToolExecutor::new(vec![drawing], runtime).unwrap();
         let mut state = AgentChannelState::default();
         let tool_sets = {
@@ -2021,11 +1942,8 @@ mod tests {
         let tools = state.keep_offer(tool_sets);
         state.turn.as_mut().unwrap().work.context.frame.tools = tools;
         let mut turn = Turn::of(
-            helper,
-            helper.to_string(),
             &mut state,
-            AgentStateHandle::detached(),
-            actor_runtime_in(main, ActorId::Agent(helper)),
+            agent_runtime(participant_runtime_in(main, ActorId::Agent(helper))),
         )
         .unwrap();
 

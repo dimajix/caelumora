@@ -20,10 +20,10 @@ use crate::prompt::{
 use crate::situation::Situation;
 use crate::tool::stop_tool::SILENCE_TOOL_NAME;
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::actor::RequestReason;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use std::sync::Arc;
 
 pub const REQUEST_REASON_PROMPT_PROVIDER_KIND: &str = "request_reason_prompt_provider";
@@ -62,7 +62,7 @@ impl PromptProvider for RequestReasonPromptProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(REQUEST_REASON_PROMPT_PROVIDER_KIND)
@@ -91,7 +91,6 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
 
     /// What the provider tells in work asked for as `asked`, offered the
     /// tools named `tools`.
@@ -100,7 +99,6 @@ mod tests {
         state.begin_turn(Work::new(
             Default::default(),
             asked,
-            Default::default(),
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));
@@ -126,13 +124,7 @@ mod tests {
             prompts: testing::prompts(),
         };
         let prompt = provider
-            .get_prompt(&Situation::new(
-                AgentId::new(),
-                &work,
-                &state,
-                &AgentStateHandle::detached(),
-                &detached_actor_runtime(),
-            ))
+            .get_prompt(&Situation::new(&work, &state, &*detached_actor_runtime(AgentId::new())))
             .await
             .unwrap();
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));

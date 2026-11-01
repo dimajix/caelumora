@@ -2,12 +2,20 @@
 //! tasks it keeps open.
 
 use super::*;
-use crate::external::testing::ScriptedExternalAgent;
+use crate::external::testing::{CallsRead, ScriptedExternalAgent};
 use crate::external::ExternalAgent;
 use crate::prompt::ModelProfileProvider;
 use crate::prompt::PromptProvider;
 use crate::testing::TestAgents;
 use anyhow::Result;
+use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::kernel::ChannelRuntime;
+use caelumora_kernel::session::testing::*;
+use caelumora_kernel::session::SessionManager;
+use caelumora_kernel::testing::TestKernel;
 use caelumora_model::actor::ActorId;
 use caelumora_model::actor::{ActorEvent, Envelope};
 use caelumora_model::agent::testing::{make_personality, stored_agent};
@@ -29,13 +37,6 @@ use caelumora_model::session::{ChannelId, Participant, SessionId};
 use caelumora_model::store::Persistence;
 use caelumora_model::user::testing::{make_user, record_users};
 use caelumora_model::work::Work;
-use caelumora_runtime::actor::user::ChannelWatch;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
-use caelumora_runtime::runtime::ChannelRuntime;
-use caelumora_runtime::session::testing::*;
-use caelumora_runtime::session::SessionManager;
-use caelumora_runtime::testing::TestRuntime;
 use chrono::Utc;
 use std::iter;
 use std::sync::Arc;
@@ -85,6 +86,7 @@ async fn external_channel(
         Personality { kind: PersonalityKind::External, components, ..make_personality("remote") };
     let (context, agent_id, alice) = alice_and_an_agent(&store, "hermes", personality).await;
 
+    let read = Arc::clone(&remote.read);
     let components = move |registry: &mut ComponentRegistry| {
         registry.register(
             ComponentKind::new("test_remote")
@@ -103,10 +105,13 @@ async fn external_channel(
         register_heard(registry);
         register_marking_command(registry);
     };
-    let runtime = TestRuntime {
+    // In whose name the remote agent is called, its policy sees (`called_as`).
+    let access_policy: Arc<dyn AccessPolicy> = Arc::<CallsRead>::clone(&read);
+    let kernel = TestKernel {
         store,
+        access_policy,
         components: Box::new(components),
-        plugins: vec![&TestAgents],
+        libraries: vec![&TestAgents],
         ..Default::default()
     }
     .build();
@@ -115,16 +120,11 @@ async fn external_channel(
         security_attributes: SecurityAttributes::owned_by(ActorId::User(alice)),
         ..make_channel(SessionId::new(), "main")
     };
-    runtime
-        .entity_stores()
-        .channels
-        .create(&SecurityContext::system(), &mut channel)
-        .await
-        .unwrap();
+    kernel.entity_stores().channels.create(&SecurityContext::system(), &mut channel).await.unwrap();
     // Its participants' joins recorded, as if they had founded it (issue 420).
-    runtime.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
+    kernel.state_store().put_channel_state(channel.id, &mut founded(&channel)).await.unwrap();
     if let Some(mut stored) = stored(agent_id) {
-        runtime
+        kernel
             .state_store()
             .put_agent_channel_state(agent_id, channel.id, &mut stored)
             .await
@@ -134,14 +134,9 @@ async fn external_channel(
     // that does not run - the channel runs outside one (`ChannelRuntime::outside_a_session`), and
     // what its tests read of the session is its time zone (issue 486).
     let mut session = bare_session(channel.session_id);
-    runtime
-        .entity_stores()
-        .sessions
-        .create(&SecurityContext::system(), &mut session)
-        .await
-        .unwrap();
+    kernel.entity_stores().sessions.create(&SecurityContext::system(), &mut session).await.unwrap();
     let channel =
-        ChannelLoop::new(ChannelRuntime::outside_a_session(runtime, session, channel)).await?;
+        ChannelLoop::new(ChannelRuntime::outside_a_session(kernel, session, channel)).await?;
     Ok((channel, context, agent_id, alice))
 }
 
@@ -1496,7 +1491,9 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![Ok(
         ExternalEvent::Started(task("t-1")),
     )]]));
-    let Stuck { channel, agent, running, .. } = with_an_external_agent(Arc::clone(&remote)).await;
+    let Stuck { channel, context, agent, running, .. } =
+        with_an_external_agent(Arc::clone(&remote)).await;
+    let alice = alice_of(&context);
 
     let state = time::timeout(Duration::from_secs(5), async {
         loop {
@@ -1526,8 +1523,12 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
         given.iter().filter_map(|e| e.entry.message()?.content.clone()).collect::<Vec<_>>(),
         ["hello"]
     );
-    let sent_as = remote.called_as.lock().unwrap()[0].1.clone();
-    assert_eq!(work.security_context, sent_as, "the authority of the request it was sent with");
+    let sent_as = remote.called_as()[0].1.clone();
+    assert_eq!(
+        (sent_as.caller_id, sent_as.principal_id, sent_as.initiator_id),
+        (ActorId::Agent(agent), ActorId::User(alice), work.initiator()),
+        "in the agent's name, with its owner's rights, for whoever began the request"
+    );
     assert_eq!(
         work.event_context.sender_id,
         ActorId::Agent(agent),
@@ -1609,9 +1610,7 @@ async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_
     );
     assert!(remote.sent.lock().unwrap().is_empty(), "nothing was sent to it");
     let called_as: Vec<_> = remote
-        .called_as
-        .lock()
-        .unwrap()
+        .called_as()
         .iter()
         .map(|(call, security)| {
             (*call, security.initiator_id, security.owner_id, security.principal_id)
@@ -1631,30 +1630,27 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     let request =
         EventContext::new(SessionId::default(), ChannelId::default(), bob, "bob".to_string());
     let begun = request.clone();
-    let stored =
-        move |agent| {
-            let hermes = ActorId::Agent(agent);
-            Some(AgentChannelState {
-                remote: RemoteState {
-                    open_tasks: vec![OpenTask {
-                        task: task("t-1"),
-                        since: Utc::now(),
-                        state: OpenTaskState::Working,
-                        unsaid: None,
-                        work: Some(Work::new(
-                            begun.next(hermes, "hermes".to_string()),
-                            None,
-                            SecurityContext::new(bob, SessionId::default(), ChannelId::default())
-                                .next(hermes, ActorId::None, ActorId::None),
-                            Classification::CHANNEL_DEFAULT,
-                            Default::default(),
-                        )),
-                    }],
-                    ..RemoteState::default()
-                },
-                ..AgentChannelState::default()
-            })
-        };
+    let stored = move |agent| {
+        let hermes = ActorId::Agent(agent);
+        Some(AgentChannelState {
+            remote: RemoteState {
+                open_tasks: vec![OpenTask {
+                    task: task("t-1"),
+                    since: Utc::now(),
+                    state: OpenTaskState::Working,
+                    unsaid: None,
+                    work: Some(Work::new(
+                        begun.next(hermes, "hermes".to_string()),
+                        None,
+                        Classification::CHANNEL_DEFAULT,
+                        Default::default(),
+                    )),
+                }],
+                ..RemoteState::default()
+            },
+            ..AgentChannelState::default()
+        })
+    };
     let remote = Arc::new(ScriptedExternalAgent::default().resuming(vec![vec![
         Ok(ExternalEvent::Message("Done for bob.".to_string())),
         Ok(ExternalEvent::Completed),
@@ -1679,15 +1675,10 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
     })
     .await
     .expect("what came of the task is said");
-    assert_eq!(told.security.initiator_id, bob, "said with the authority of bob's request");
+    assert_eq!(told.context.initiator_id, bob, "said on bob's request");
     assert_eq!(told.context.span_id, request.span_id, "in its span");
-    let called_as: Vec<_> = remote
-        .called_as
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(call, security)| (*call, security.initiator_id))
-        .collect();
+    let called_as: Vec<_> =
+        remote.called_as().iter().map(|(call, security)| (*call, security.initiator_id)).collect();
     assert_eq!(called_as, [("resume", bob)], "followed in bob's name, as it was begun");
     running.abort();
 }
@@ -1702,7 +1693,6 @@ fn begun_above(agent: AgentId, open: &str, standing: OpenTaskState) -> AgentChan
     let work = Work::new(
         EventContext::default().next(own, "hermes".to_string()),
         None,
-        SecurityContext::default().next(own, ActorId::None, ActorId::None),
         Classification::general(Confidentiality::Confidential),
         Default::default(),
     );
@@ -1777,7 +1767,7 @@ async fn a_task_begun_before_its_channel_was_lowered_is_given_up_instead_of_foll
 
     let told = turn_given_up(&mut events, agent).await;
     assert!(told.contains("lowered"), "{told}");
-    let calls: Vec<&str> = remote.called_as.lock().unwrap().iter().map(|(call, _)| *call).collect();
+    let calls: Vec<&str> = remote.called_as().iter().map(|(call, _)| *call).collect();
     assert_eq!(calls, ["cancel"], "cancelled, not followed");
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
     assert!(state.remote.open_tasks.is_empty(), "and forgotten");
@@ -1942,22 +1932,22 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
             );
         }
     };
-    let runtime = TestRuntime {
+    let kernel = TestKernel {
         store: store.clone(),
         components: Box::new(components),
-        plugins: vec![&TestAgents],
+        libraries: vec![&TestAgents],
         ..Default::default()
     }
     .build();
-    let manager = SessionManager::new(Arc::clone(&runtime));
+    let manager = SessionManager::new(Arc::clone(&kernel));
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
-    let participants = record_users(runtime.entity_stores(), &[&alice, &bob]).await;
+    let participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
     let mut roster =
         ComponentDescriptor::new("participants", "channel_participants_prompt_provider");
     roster.params = serde_json::json!({ "changes_only": true });
     let hermes = stored_agent(
-        runtime.entity_stores(),
+        kernel.entity_stores(),
         "hermes",
         Personality {
             kind: PersonalityKind::External,

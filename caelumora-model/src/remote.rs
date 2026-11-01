@@ -7,8 +7,7 @@
 //! `https` URL is refused as it is read (issue 515), before anything is built of it and before a
 //! request writes it, and without being named, since it may carry a credential.
 
-use crate::secret::{SecretManager, SecretResult};
-use crate::security::SecurityContext;
+use crate::secret::{SecretResult, Secrets};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use std::cmp::Reverse;
@@ -58,9 +57,9 @@ impl RemoteEndpoint {
         Some(url)
     }
 
-    /// `text` - a message of a library that writes the URL into its own -
-    /// with the URL shown instead: as written, as a parser normalizes it,
-    /// and as a client sends it, its credentials moved into a header.
+    /// `text` - a message of a client crate that writes the URL into its own - with the URL shown
+    /// instead: as written, as a parser normalizes it, and as a client sends it, its credentials
+    /// moved into a header.
     pub fn redact_in(&self, text: &str) -> String {
         let mut forms = vec![self.url.clone()];
         if let Ok(mut parsed) = Url::parse(&self.url) {
@@ -86,21 +85,15 @@ impl RemoteEndpoint {
         self.refresh_secs.map_or(default, Duration::from_secs)
     }
 
-    /// The bearer token `auth` names, resolved in `context`; `None` without
-    /// authentication. A secret is resolved on every use, never kept.
+    /// The bearer token `auth` names, resolved of `secrets`, in the name they are bound to; `None`
+    /// without authentication. A secret is resolved on every use, never kept.
     ///
     /// # Errors
     /// Whatever resolving the secret reports.
-    pub async fn bearer_token(
-        &self,
-        secrets: &SecretManager,
-        context: &SecurityContext,
-    ) -> SecretResult<Option<String>> {
+    pub async fn bearer_token(&self, secrets: &dyn Secrets) -> SecretResult<Option<String>> {
         match &self.auth {
             None => Ok(None),
-            Some(RemoteAuthConfig::Bearer { secret }) => {
-                Ok(Some(secrets.resolve(context, secret).await?))
-            }
+            Some(RemoteAuthConfig::Bearer { secret }) => Ok(Some(secrets.resolve(secret).await?)),
         }
     }
 }

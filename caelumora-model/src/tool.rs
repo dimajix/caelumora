@@ -277,11 +277,10 @@ impl<'de> Deserialize<'de> for ToolPresentation {
     }
 }
 
-/// A tool of an agent: what its model is told of it - its name, what it
-/// does, its parameters - and what only the runtime acts on, whether its
-/// calls need approval, who sees them, how its results are classified. A
-/// backend sends the model the first three alone; the record of what a
-/// model was offered keeps all of it, as it was then (issues 137, 194).
+/// A tool of an agent: what its model is told of it - its name, what it does, its parameters - and
+/// what only the kernel acts on, whether its calls need approval, who sees them, how its results
+/// are classified. A backend sends the model the first three alone; the record of what a model was
+/// offered keeps all of it, as it was then (issues 137, 194).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tool {
     pub name: String,

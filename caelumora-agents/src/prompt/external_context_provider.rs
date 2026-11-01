@@ -12,11 +12,10 @@
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptProvider};
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_api::component::ComponentImpl;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::message::MessageRole;
-use caelumora_runtime::component::{
-    ComponentFacets, ComponentImpl, ComponentKind, ComponentRegistry,
-};
 use std::sync::Arc;
 
 pub const EXTERNAL_CONTEXT_PROVIDER_KIND: &str = "external_context_provider";
@@ -55,7 +54,7 @@ impl ContextProvider for ExternalContextProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         ComponentKind::new(EXTERNAL_CONTEXT_PROVIDER_KIND)
             .provides::<dyn ContextProvider>()
@@ -83,7 +82,6 @@ mod tests {
     use caelumora_model::component::ComponentFailPolicy;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
 
     fn fixed(
         id: &str,
@@ -111,15 +109,13 @@ mod tests {
                 fixed("rules", "Answer in German.", PromptPosition::Start),
             ],
         };
-        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
+        let state = AgentChannelState::default();
         let work = Work::default();
         let (parts, knowledge) = provider
             .current_context(&Situation::new(
-                AgentId::new(),
                 &work,
                 &state,
-                &agent_state,
-                &detached_actor_runtime(),
+                &*detached_actor_runtime(AgentId::new()),
             ))
             .await
             .unwrap();

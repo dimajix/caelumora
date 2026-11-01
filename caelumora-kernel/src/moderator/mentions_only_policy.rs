@@ -1,0 +1,42 @@
+//! The `mentions_only_policy` component: asks nobody, so that agents respond
+//! only when a user mentions them (issue 44).
+
+use crate::component::ComponentRegistry;
+use crate::moderator::{ResponderPolicy, Undecided};
+use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_model::actor::{ActorDescription, ActorId, Envelope};
+use caelumora_model::message::Message;
+use caelumora_model::security::SecurityContext;
+use std::sync::Arc;
+
+pub const MENTIONS_ONLY_POLICY_KIND: &str = "mentions_only_policy";
+
+/// Asks nobody: agents respond only when a user mentions them, and a message
+/// that mentions no agent gets no answer (issue 44).
+#[derive(Debug, Default)]
+pub struct MentionsOnlyPolicy;
+
+#[async_trait]
+impl ResponderPolicy for MentionsOnlyPolicy {
+    async fn choose(
+        &self,
+        _event: &Envelope,
+        _context: &SecurityContext,
+        _messages: &[Message],
+        _candidates: Vec<ActorDescription>,
+    ) -> Result<Vec<ActorId>, Undecided> {
+        Ok(Vec::new())
+    }
+}
+
+pub fn register(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new(MENTIONS_ONLY_POLICY_KIND).provides::<dyn ResponderPolicy>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn ResponderPolicy>(Arc::new(MentionsOnlyPolicy));
+            Ok(facets)
+        },
+    );
+}

@@ -62,3 +62,8 @@ with a message, which rustfmt lays out over five lines each.
 - **2026-10-29** — Issue 491 made `owners_do_everything_whom_the_list_grants_read_strangers_nothing`
   (`caelumora-model/src/security/ownership.rs`) shorter than 100 lines, and took its `expect` away:
   62 are left.
+- **2026-10-31** — Issue 516 made two shorter than 100 lines and took their `expect`s away:
+  `the_model_is_given_along_what_its_profile_says_and_the_turn_sees_it`
+  (`caelumora-agents/src/turn/context.rs`, step 4) and `SkillsComponent::execute`
+  (`caelumora-skills/src/component.rs`, step 5a, as writing a skill went through the
+  `SkillCatalogue`). Counted in the code, 59 are left: one more went unrecorded before.

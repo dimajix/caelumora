@@ -24,7 +24,6 @@ use crate::digest;
 use crate::digest::Digest;
 use crate::message::{Message, MessageId};
 use crate::question::{QuestionId, QuestionRequest};
-use crate::security::SecurityContext;
 use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
@@ -113,11 +112,10 @@ pub enum HistoryEntry {
         output: String,
         at: DateTime<Utc>,
     },
-    /// `participant`, called `name` then, joined the channel at `at`, by
-    /// the act of `by`, called `by_name` then - the participant itself if
-    /// it joined by itself, `ActorId::System` if the runtime added it
-    /// (issue 408): recorded where it happened among what was said, with
-    /// the names as they were, so that it reads the same after a renaming.
+    /// `participant`, called `name` then, joined the channel at `at`, by the act of `by`, called
+    /// `by_name` then - the participant itself if it joined by itself, `ActorId::System` if the
+    /// kernel added it (issue 408): recorded where it happened among what was said, with the names
+    /// as they were, so that it reads the same after a renaming.
     ParticipantJoined {
         participant: ActorId,
         name: String,
@@ -495,15 +493,13 @@ impl Recorded {
 
     /// The envelope it came in, delivered again from the history at the
     /// position `seq` (issue 223): its event (`HistoryEntry::event`), its
-    /// context with the position, its time, and `security`, the sender's
-    /// security context as the channel knows it now - the history does not
-    /// record it. `None` for an entry of no event. What is delivered of it
-    /// is the channel's to stamp, as it stamps what it delivers live.
-    pub fn envelope(&self, seq: Position, security: SecurityContext) -> Option<Envelope> {
+    /// context with the position, and its time. `None` for an entry of no
+    /// event. What is delivered of it is the channel's to stamp, as it stamps
+    /// what it delivers live.
+    pub fn envelope(&self, seq: Position) -> Option<Envelope> {
         let event = self.entry.event()?;
         Some(Envelope {
             timestamp: self.timestamp,
-            security,
             context: EventContext { position: Some(seq), ..self.context.clone() },
             event,
         })
@@ -1305,7 +1301,6 @@ mod tests {
     use crate::digest::message_chain;
     use crate::message::testing::{id, make_message};
     use crate::message::MessageRole;
-    use crate::security::SecurityContext;
     use crate::user::UserId;
     use uuid::Uuid;
 
@@ -1613,11 +1608,8 @@ mod tests {
         let (agent, user) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
         for (sender, event) in recorded_events(agent, user) {
             let kind = event.kind();
-            let envelope = Envelope::new(
-                SecurityContext::default(),
-                EventContext { sender_id: sender, ..EventContext::default() },
-                event,
-            );
+            let envelope =
+                Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event);
             let recorded = Recorded::of(&envelope, ActorId::System, Audience::Everybody)
                 .unwrap_or_else(|| panic!("{kind} is recorded"));
             assert!(
@@ -1668,16 +1660,11 @@ mod tests {
                 position: Some(Position::new(4)),
                 ..context.clone()
             };
-            let envelope = Envelope::new(
-                SecurityContext::default().next(sender, ActorId::None, ActorId::None),
-                context,
-                event,
-            );
+            let envelope = Envelope::new(context, event);
             let recorded = Recorded::of(&envelope, ActorId::System, Audience::Everybody)
                 .unwrap_or_else(|| panic!("{kind} is recorded"));
-            let again = recorded
-                .envelope(Position::new(7), SecurityContext::default())
-                .unwrap_or_else(|| panic!("{kind} comes back"));
+            let again =
+                recorded.envelope(Position::new(7)).unwrap_or_else(|| panic!("{kind} comes back"));
             assert_eq!(
                 serde_json::to_value(&again.event).unwrap(),
                 serde_json::to_value(&envelope.event).unwrap(),
@@ -1693,17 +1680,15 @@ mod tests {
                 EventContext { position: None, ..envelope.context.clone() },
                 "{kind}: the context it came in"
             );
-            assert_eq!(again.security, SecurityContext::default(), "{kind}: the context given");
         }
         let answer =
             Message { sender_id: agent, turn_id: Some(TurnId::new()), ..make_message(id(1)) };
         let ended = Envelope::new(
-            SecurityContext::default(),
             context,
             ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: vec![answer] },
         );
         let again = Recorded::of(&ended, agent, Audience::Everybody)
-            .and_then(|recorded| recorded.envelope(Position::START, SecurityContext::default()));
+            .and_then(|recorded| recorded.envelope(Position::START));
         assert!(
             matches!(again.map(|e| e.event), Some(ActorEvent::TurnFinished { messages, .. }) if messages.is_empty()),
             "without its answer"
@@ -1714,7 +1699,7 @@ mod tests {
                 ActorId::None,
                 Audience::Everybody
             )
-            .envelope(Position::START, SecurityContext::default())
+            .envelope(Position::START)
             .is_none(),
             "a fitting is no event"
         );
@@ -1768,9 +1753,7 @@ mod tests {
         ] {
             let kind = event.kind();
             assert!(
-                Envelope::new(SecurityContext::default(), EventContext::default(), event.clone())
-                    .entry()
-                    .is_none(),
+                Envelope::new(EventContext::default(), event.clone()).entry().is_none(),
                 "{kind} is not recorded"
             );
             assert_eq!(event.is_transient(), transient, "{kind}");
@@ -1795,7 +1778,6 @@ mod tests {
             .into_iter()
             .filter(|(sender, event)| {
                 Envelope::new(
-                    SecurityContext::default(),
                     EventContext { sender_id: *sender, ..EventContext::default() },
                     event.clone(),
                 )
@@ -1812,11 +1794,8 @@ mod tests {
             delivered_alone.iter().map(|(_, event)| event.kind()).collect::<Vec<_>>()
         );
         for (sender, event) in delivered_alone {
-            let envelope = Envelope::new(
-                SecurityContext::default(),
-                EventContext { sender_id: sender, ..EventContext::default() },
-                event,
-            );
+            let envelope =
+                Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event);
             assert!(history
                 .enter(Recorded::of(&envelope, sender, Audience::Everybody).expect("recorded")));
         }

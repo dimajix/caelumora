@@ -2,16 +2,26 @@
 //! template.
 
 use anyhow::Result;
-use caelumora_a2a::plugin::A2aPlugin;
+use caelumora_a2a::library::A2aLibrary;
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::llm::LLMClient;
-use caelumora_agents::plugin::AgentsPlugin;
 use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_api::component::ComponentError;
+use caelumora_api::library::Library;
+use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
-use caelumora_comfyui::plugin::ComfyUiPlugin;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_comfyui::library::ComfyUiLibrary;
+use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::error::user_message;
+use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::session::{SessionManager, SessionSpec};
+use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
-use caelumora_mcp::plugin::McpPlugin;
+use caelumora_mcp::library::McpLibrary;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::AgentId;
 use caelumora_model::approval::{ApprovalId, ApprovalResponse};
@@ -28,19 +38,13 @@ use caelumora_model::user_provider::Credential;
 use caelumora_model::value::language::Language;
 use caelumora_model::work::TurnId;
 use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
-use caelumora_ollama::plugin::OllamaPlugin;
+use caelumora_ollama::library::OllamaLibrary;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::component::{ComponentError, ComponentRegistry};
-use caelumora_runtime::error::user_message;
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
-use caelumora_runtime::session::{SessionManager, SessionSpec};
-use caelumora_runtime::view::Viewer;
+use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
-use caelumora_workspace_tools::plugin::WorkspaceToolsPlugin;
+use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
 use clap::Parser;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
@@ -524,37 +528,44 @@ struct Args {
     #[arg(short, long, default_value = "sassy-session")]
     template: String,
 
-    /// Whom the terminal acts for, by name: the user the configured user
-    /// providers know under it, with their roles - without a password, as
-    /// the terminal runs in the runtime's own process (`Credential::Trusted`).
+    /// Whom the terminal acts for, by name: the user the configured user providers know under it,
+    /// with their roles - without a password, as the terminal runs in the kernel's own process
+    /// (`Credential::Trusted`).
     #[arg(short, long, default_value = "user")]
     user: String,
 }
 
-/// The plugins the terminal builds its runtime with (issue 323) - first the
-/// essential one, the agents' (issue 370).
+/// The plugins the terminal builds its kernel with (issue 323).
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
-        Box::new(AgentsPlugin),
-        Box::new(CompactionPlugin),
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
-        Box::new(OllamaPlugin),
-        Box::new(McpPlugin),
-        Box::new(A2aPlugin),
         Box::new(OpenTerminalPlugin),
-        Box::new(WorkspaceToolsPlugin),
         Box::new(DecisionPlugin),
-        Box::new(ComfyUiPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
     ]
 }
 
-/// Names the defaults of the facets of which an agent has one that the core
-/// leaves to the program (issue 329) among the kinds of `components`: the
-/// model is served by Ollama. `component_defaults` of the configuration
-/// still replaces them.
+/// The libraries the terminal builds its kernel with, of the agent side (issue 516) - first the
+/// essential one, the agents' (issue 370).
+fn libraries() -> Vec<Box<dyn Library>> {
+    vec![
+        Box::new(AgentsLibrary),
+        Box::new(CompactionLibrary),
+        Box::new(OllamaLibrary),
+        Box::new(McpLibrary),
+        Box::new(A2aLibrary),
+        Box::new(WorkspaceToolsLibrary),
+        Box::new(ComfyUiLibrary),
+        Box::new(SkillsLibrary),
+        Box::new(ArtifactsLibrary),
+    ]
+}
+
+/// Names the defaults of the facets of which an agent has one that the kernel leaves to the program
+/// (issue 329) among the kinds of `components`: the model is served by Ollama. `component_defaults`
+/// of the configuration still replaces them.
 ///
 /// # Errors
 /// If a plugin that brings a default kind is not among `plugins`.
@@ -579,15 +590,18 @@ async fn main() -> Result<()> {
 
     let plugins = plugins();
     let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
-    let mut builder = RuntimeBuilder::from_config(&config, &plugins).await?;
+    let mut builder = KernelBuilder::from_config(&config, &plugins).await?;
+    for library in libraries() {
+        builder.library(library.as_ref())?;
+    }
     default_kinds(builder.components())?;
-    let runtime = Arc::new(builder.build()?);
-    runtime.seed(&config.seed).await?;
-    let entity_stores = runtime.entity_stores();
+    let kernel = Arc::new(builder.build()?);
+    kernel.seed(&config.seed).await?;
+    let entity_stores = kernel.entity_stores();
 
     // Whom the terminal acts for: the user the providers know by that name,
     // recorded with their roles as a login records them (issue 306).
-    let users = runtime.user_manager();
+    let users = kernel.user_manager();
     if users.is_empty() {
         anyhow::bail!("No user providers are configured (`users` section), so the terminal can act for nobody. See examples/config.yaml.");
     }
@@ -598,7 +612,7 @@ async fn main() -> Result<()> {
         .id;
     // The session is this terminal user's own; their context, with their
     // roles, is their controller's (issue 304).
-    let security = runtime
+    let security = kernel
         .controller_manager()
         .user_controller(owner)
         .await?
@@ -619,7 +633,7 @@ async fn main() -> Result<()> {
         .and_then(|profile| profile.preferred_language);
     let language = preferred.filter(|_| template.language.is_none());
 
-    let session_manager = Arc::new(SessionManager::new(Arc::clone(&runtime)));
+    let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
     let session_loop = session_manager
         .create_from_template(
             &security,

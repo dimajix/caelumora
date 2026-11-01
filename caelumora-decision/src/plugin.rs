@@ -1,11 +1,11 @@
-//! How decision models are joined to the runtime (issue 403): by the
-//! component kind `decision_policy`.
+//! How decision models are joined to the kernel (issue 403): by the component kind
+//! `decision_policy`.
 
 use crate::policy;
 use crate::{NAMESPACE, PROMPTS};
 use anyhow::Result;
-use caelumora_runtime::plugin::Plugin;
-use caelumora_runtime::runtime::RuntimeBuilder;
+use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::plugin::Plugin;
 
 /// Decision models, as a plugin.
 #[derive(Debug, Default)]
@@ -16,9 +16,9 @@ impl Plugin for DecisionPlugin {
         "decision"
     }
 
-    fn register(&self, runtime: &mut RuntimeBuilder) -> Result<()> {
-        runtime.prompts().add(NAMESPACE, PROMPTS)?;
-        policy::register(runtime.components());
+    fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
+        kernel.prompts().add(NAMESPACE, PROMPTS)?;
+        policy::register(kernel.components());
         Ok(())
     }
 }

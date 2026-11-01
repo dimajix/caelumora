@@ -29,16 +29,14 @@ use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage,
 };
 use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_api::component::{config_of_params, ComponentError, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{message_times_by_default, ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::external_agent::{ConversationId, TaskId};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::SecretManager;
-use caelumora_model::security::SecurityContext;
-use caelumora_runtime::component::{
-    config_of_params, ComponentError, ComponentFacets, ComponentKind, ComponentRegistry, Params,
-};
+use caelumora_model::secret::Secrets;
 use futures::stream::once;
 use futures::StreamExt;
 use serde::de::IgnoredAny;
@@ -118,13 +116,9 @@ impl A2aAgentComponent {
     /// is first asked, in the name of whoever asks (issue 126): an agent
     /// that cannot be reached yet does not keep its personality from being
     /// built, nor delays it.
-    fn new(
-        id: String,
-        config: A2aAgentConfig,
-        secret_manager: Arc<SecretManager>,
-    ) -> Result<Self, ComponentError> {
+    fn new(id: String, config: A2aAgentConfig) -> Result<Self, ComponentError> {
         let (timeout, refresh) = (config.timeout(), config.refresh());
-        let client = A2aClient::new(id, config.endpoint, timeout, refresh, secret_manager)?;
+        let client = A2aClient::new(id, config.endpoint, timeout, refresh)?;
         let profile = ModelProfile {
             sender_format: config.sender_format,
             sender_style: config.sender_style,
@@ -142,12 +136,11 @@ impl A2aAgentComponent {
     /// translation: every answer repeats what the task produced so far.
     fn polled(
         &self,
-        security: &SecurityContext,
+        secrets: Arc<dyn Secrets>,
         mut first: Option<WireTask>,
         task: TaskId,
     ) -> ExternalStream {
         let client = Arc::clone(&self.client);
-        let security = security.clone();
         Box::pin(async_stream::stream! {
             let mut translation = Translation::default();
             let mut wait = POLL_FIRST;
@@ -155,7 +148,7 @@ impl A2aAgentComponent {
             loop {
                 let found = match first.take() {
                     Some(found) => found,
-                    None => match client.call::<WireTask>(&security, method::GET_TASK, TaskParams { id: task.0.clone() }).await {
+                    None => match client.call::<WireTask>(&*secrets, method::GET_TASK, TaskParams { id: task.0.clone() }).await {
                         Ok(Ok(found)) => found,
                         Ok(Err(error)) => {
                             yield Err(client.rejected(error));
@@ -211,11 +204,11 @@ fn translated(mut responses: Responses) -> ExternalStream {
 impl ExternalAgent for A2aAgentComponent {
     async fn send(
         &self,
-        security: &SecurityContext,
+        secrets: Arc<dyn Secrets>,
         conversation: Option<&ConversationId>,
         message: OutboundMessage,
     ) -> ExternalAgentResult<ExternalStream> {
-        let streaming = self.client.streaming(security).await?;
+        let streaming = self.client.streaming(&*secrets).await?;
         let params = SendMessageParams {
             message: wire_message(&message, conversation),
             configuration: SendConfiguration {
@@ -228,18 +221,18 @@ impl ExternalAgent for A2aAgentComponent {
         };
         if streaming {
             return Ok(translated(
-                self.client.stream(security, method::SEND_STREAMING_MESSAGE, params).await?,
+                self.client.stream(&*secrets, method::SEND_STREAMING_MESSAGE, params).await?,
             ));
         }
         let mut response: StreamResponse = self
             .client
-            .call(security, method::SEND_MESSAGE, params)
+            .call(&*secrets, method::SEND_MESSAGE, params)
             .await?
             .map_err(|error| self.client.rejected(error))?;
         match response.task.take_if(|task| task.status.state.works()) {
             Some(task) => {
                 let id = TaskId(task.id.clone());
-                Ok(self.polled(security, Some(task), id))
+                Ok(self.polled(secrets, Some(task), id))
             }
             None => Ok(translated(Box::pin(once(async move { Ok(response) })))),
         }
@@ -247,24 +240,24 @@ impl ExternalAgent for A2aAgentComponent {
 
     async fn resume(
         &self,
-        security: &SecurityContext,
+        secrets: Arc<dyn Secrets>,
         task: &TaskId,
     ) -> ExternalAgentResult<ExternalStream> {
-        if self.client.streaming(security).await? {
+        if self.client.streaming(&*secrets).await? {
             Ok(translated(
                 self.client
-                    .stream(security, method::SUBSCRIBE_TO_TASK, TaskParams { id: task.0.clone() })
+                    .stream(&*secrets, method::SUBSCRIBE_TO_TASK, TaskParams { id: task.0.clone() })
                     .await?,
             ))
         } else {
-            Ok(self.polled(security, None, task.clone()))
+            Ok(self.polled(secrets, None, task.clone()))
         }
     }
 
-    async fn cancel(&self, security: &SecurityContext, task: &TaskId) -> ExternalAgentResult<()> {
+    async fn cancel(&self, secrets: Arc<dyn Secrets>, task: &TaskId) -> ExternalAgentResult<()> {
         let answer = self
             .client
-            .call::<IgnoredAny>(security, method::CANCEL_TASK, TaskParams { id: task.0.clone() })
+            .call::<IgnoredAny>(&*secrets, method::CANCEL_TASK, TaskParams { id: task.0.clone() })
             .await?;
         match answer {
             Err(error) if error.code == TASK_NOT_CANCELABLE => Ok(()),
@@ -287,22 +280,17 @@ impl ModelProfileProvider for A2aAgentComponent {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register(
         ComponentKind::new(A2A_AGENT_KIND)
             .params::<A2aAgentConfig>()
             .provides::<dyn ExternalAgent>()
             .provides::<dyn ModelProfileProvider>()
-            .uses::<SecretManager>()
             .uses::<PromptCatalogue>(),
         |descriptor, context| {
             let config: A2aAgentConfig = config_of_params(&descriptor.params)?;
             context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
-            let component = Arc::new(A2aAgentComponent::new(
-                descriptor.id.clone(),
-                config,
-                Arc::clone(context.service::<SecretManager>()?),
-            )?);
+            let component = Arc::new(A2aAgentComponent::new(descriptor.id.clone(), config)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ExternalAgent>(Arc::<A2aAgentComponent>::clone(&component));
             facets.insert::<dyn ModelProfileProvider>(component);
@@ -321,8 +309,10 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use caelumora_agents::external::{ExternalEvent, Said};
+    use caelumora_model::secret::SecretManager;
     use caelumora_model::secret::{SecretProvider, SecretResult};
     use caelumora_model::security::AllowAllPolicy;
+    use caelumora_model::security::SecurityContext;
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::future;
@@ -422,9 +412,14 @@ mod tests {
     /// `refresh_secs` - by default if `None`.
     fn component(url: &str, refresh_secs: Option<u64>) -> A2aAgentComponent {
         let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2, "refresh_secs": refresh_secs } })).unwrap();
-        let secrets =
+        A2aAgentComponent::new("hermes".to_string(), config).unwrap()
+    }
+
+    /// The secrets a call is made with: `HERMES_TOKEN` among them, readable by anyone.
+    fn secrets() -> Arc<dyn Secrets> {
+        let manager =
             Arc::new(SecretManager::new(vec![Arc::new(Token)], Arc::new(AllowAllPolicy::new())));
-        A2aAgentComponent::new("hermes".to_string(), config, secrets).unwrap()
+        Arc::new(manager.for_context(SecurityContext::default()))
     }
 
     fn hello() -> OutboundMessage {
@@ -488,8 +483,7 @@ mod tests {
             { "statusUpdate": { "taskId": "t-1", "contextId": "c-1", "status": { "state": "TASK_STATE_COMPLETED" } } },
         ]))]).await;
 
-        let events =
-            all(agent.send(&SecurityContext::default(), None, hello()).await.unwrap()).await;
+        let events = all(agent.send(secrets(), None, hello()).await.unwrap()).await;
         assert_eq!(
             events,
             vec![
@@ -523,9 +517,7 @@ mod tests {
         let conversation = ConversationId("c-1".to_string());
         let reply = OutboundMessage { answers: Some(task("t-1")), ..hello() };
 
-        let events =
-            all(agent.send(&SecurityContext::default(), Some(&conversation), reply).await.unwrap())
-                .await;
+        let events = all(agent.send(secrets(), Some(&conversation), reply).await.unwrap()).await;
         assert_eq!(
             events,
             vec![
@@ -546,12 +538,8 @@ mod tests {
         let (agent, _) =
             agent("1.0", true, vec![("SendStreamingMessage", true, Value::Null)]).await;
         let started = Instant::now();
-        let error = agent
-            .send(&SecurityContext::default(), None, hello())
-            .await
-            .err()
-            .expect("no answer")
-            .to_string();
+        let error =
+            agent.send(secrets(), None, hello()).await.err().expect("no answer").to_string();
         assert!(error.contains("no answer within 2 s"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(10));
     }
@@ -569,12 +557,12 @@ mod tests {
             .unwrap()
             .to_string();
         let refreshed = component(interface.trim_end_matches("/a2a"), Some(0));
-        let _ = kept.send(&SecurityContext::default(), None, hello()).await;
-        let _ = refreshed.send(&SecurityContext::default(), None, hello()).await;
+        let _ = kept.send(secrets(), None, hello()).await;
+        let _ = refreshed.send(secrets(), None, hello()).await;
 
         stub.lock().unwrap().card["capabilities"]["streaming"] = json!(true);
-        let _ = kept.send(&SecurityContext::default(), None, hello()).await;
-        let _ = refreshed.send(&SecurityContext::default(), None, hello()).await;
+        let _ = kept.send(secrets(), None, hello()).await;
+        let _ = refreshed.send(secrets(), None, hello()).await;
         assert_eq!(
             methods(&stub),
             ["SendMessage", "SendMessage", "SendMessage", "SendStreamingMessage"],
@@ -588,16 +576,12 @@ mod tests {
         let interface = stub.lock().unwrap().card["supportedInterfaces"][0]["url"].clone();
         stub.lock().unwrap().card["supportedInterfaces"][0]["url"] =
             json!("http://127.0.0.1:1/a2a");
-        let error = agent
-            .send(&SecurityContext::default(), None, hello())
-            .await
-            .err()
-            .expect("nobody there")
-            .to_string();
+        let error =
+            agent.send(secrets(), None, hello()).await.err().expect("nobody there").to_string();
         assert!(error.contains("cannot reach the external agent"), "{error}");
 
         stub.lock().unwrap().card["supportedInterfaces"][0]["url"] = interface;
-        let _ = agent.send(&SecurityContext::default(), None, hello()).await;
+        let _ = agent.send(secrets(), None, hello()).await;
         assert_eq!(methods(&stub), ["SendMessage"], "reached where the card says now");
     }
 
@@ -607,12 +591,11 @@ mod tests {
             ("SubscribeToTask", true, json!([{ "statusUpdate": { "taskId": "t-1", "status": { "state": "TASK_STATE_COMPLETED", "message": { "parts": [{ "text": "Done." }] } } } }])),
             ("CancelTask", false, json!({ "jsonrpc": "2.0", "id": "1", "error": { "code": TASK_NOT_CANCELABLE, "message": "it has ended" } })),
         ]).await;
-        let security = SecurityContext::default();
         assert_eq!(
-            all(agent.resume(&security, &task("t-1")).await.unwrap()).await,
+            all(agent.resume(secrets(), &task("t-1")).await.unwrap()).await,
             vec![ExternalEvent::Message("Done.".to_string()), ExternalEvent::Completed]
         );
-        agent.cancel(&security, &task("t-1")).await.expect("past cancelling is no error");
+        agent.cancel(secrets(), &task("t-1")).await.expect("past cancelling is no error");
     }
 
     #[tokio::test]
@@ -629,8 +612,7 @@ mod tests {
         )
         .await;
 
-        let events =
-            all(agent.send(&SecurityContext::default(), None, hello()).await.unwrap()).await;
+        let events = all(agent.send(secrets(), None, hello()).await.unwrap()).await;
         assert_eq!(
             events,
             vec![
@@ -669,8 +651,7 @@ mod tests {
         )
         .await;
 
-        let events =
-            all(agent.resume(&SecurityContext::default(), &task("t-1")).await.unwrap()).await;
+        let events = all(agent.resume(secrets(), &task("t-1")).await.unwrap()).await;
         assert_eq!(
             events,
             vec![
@@ -691,23 +672,15 @@ mod tests {
     async fn an_agent_that_cannot_be_reached_or_speaks_no_a2a_1_is_refused_when_asked() {
         // Nobody listens there: built all the same.
         let gone = component("http://127.0.0.1:9", None);
-        let unreachable = gone
-            .send(&SecurityContext::default(), None, hello())
-            .await
-            .err()
-            .expect("nobody there")
-            .to_string();
+        let unreachable =
+            gone.send(secrets(), None, hello()).await.err().expect("nobody there").to_string();
         assert!(
             unreachable.contains("cannot reach the external agent at http://127.0.0.1:9"),
             "{unreachable}"
         );
         let secret = component("http://user:secret@127.0.0.1:9/a2a.json?key=secret", None);
-        let unreachable = secret
-            .send(&SecurityContext::default(), None, hello())
-            .await
-            .err()
-            .expect("nobody there")
-            .to_string();
+        let unreachable =
+            secret.send(secrets(), None, hello()).await.err().expect("nobody there").to_string();
         assert!(
             unreachable.contains("at http://127.0.0.1:9/a2a.json")
                 && !unreachable.contains("secret"),
@@ -715,12 +688,7 @@ mod tests {
         );
 
         let (old, _) = agent("0.3", true, vec![]).await;
-        let refused = old
-            .send(&SecurityContext::default(), None, hello())
-            .await
-            .err()
-            .expect("not 1.x")
-            .to_string();
+        let refused = old.send(secrets(), None, hello()).await.err().expect("not 1.x").to_string();
         assert!(
             refused.contains("no JSON-RPC interface of A2A 1.x, only JSONRPC 0.3"),
             "{refused}"
@@ -730,12 +698,8 @@ mod tests {
     #[tokio::test]
     async fn a_refused_request_says_why() {
         let (agent, _) = agent("1.0", false, vec![("SendMessage", false, json!({ "jsonrpc": "2.0", "id": "1", "error": { "code": -32603, "message": "boom" } }))]).await;
-        let refused = agent
-            .send(&SecurityContext::default(), None, hello())
-            .await
-            .err()
-            .expect("refused")
-            .to_string();
+        let refused =
+            agent.send(secrets(), None, hello()).await.err().expect("refused").to_string();
         assert!(refused.contains("rejected the request: boom (-32603)"), "{refused}");
     }
 }

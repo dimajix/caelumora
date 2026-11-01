@@ -19,9 +19,9 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::prompt_catalogue::{context, PromptTexts};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -63,7 +63,7 @@ impl PromptProvider for CurrentTimePromptProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND)
@@ -91,7 +91,6 @@ mod tests {
     use caelumora_model::agent::{AgentChannelState, AgentId};
     use caelumora_model::value::time_zone::TimeZone;
     use caelumora_model::work::Work;
-    use caelumora_runtime::agent::state::AgentStateHandle;
     use chrono::TimeZone as _;
 
     fn sunday() -> DateTime<Utc> {
@@ -102,15 +101,9 @@ mod tests {
     async fn told(provider: &CurrentTimePromptProvider, zone: TimeZone) -> Prompt {
         let mut work = Work::default();
         work.context.frame.time_zone = zone;
-        let (state, agent_state) = (AgentChannelState::default(), AgentStateHandle::detached());
+        let state = AgentChannelState::default();
         provider
-            .get_prompt(&Situation::new(
-                AgentId::new(),
-                &work,
-                &state,
-                &agent_state,
-                &detached_actor_runtime(),
-            ))
+            .get_prompt(&Situation::new(&work, &state, &*detached_actor_runtime(AgentId::new())))
             .await
             .unwrap()
     }

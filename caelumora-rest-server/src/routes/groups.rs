@@ -52,11 +52,8 @@ pub(super) async fn create_group(
             "A group of a session's scope is its participants, made with it",
         )
     })?;
-    let made = state
-        .runtime_manager
-        .group_manager()
-        .create(&user.security_context(), &request.name, scope)
-        .await?;
+    let made =
+        state.kernel.group_manager().create(&user.security_context(), &request.name, scope).await?;
     Ok((StatusCode::CREATED, Json(readable(&state, &user, made.id).await?)))
 }
 
@@ -76,11 +73,7 @@ pub(super) async fn rename_group(
     Json(request): Json<RenameGroupRequest>,
 ) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
-    state
-        .runtime_manager
-        .group_manager()
-        .rename(&user.security_context(), id, &request.name)
-        .await?;
+    state.kernel.group_manager().rename(&user.security_context(), id, &request.name).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
 
@@ -94,11 +87,7 @@ pub(super) async fn set_members(
 ) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
     let members = members.into_iter().map(UserId).collect();
-    state
-        .runtime_manager
-        .group_manager()
-        .set_members(&user.security_context(), id, members)
-        .await?;
+    state.kernel.group_manager().set_members(&user.security_context(), id, members).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
 
@@ -110,8 +99,7 @@ pub(super) async fn delete_group(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let id = GroupId(id);
-    let deleted =
-        state.runtime_manager.group_manager().delete(&user.security_context(), id).await?;
+    let deleted = state.kernel.group_manager().delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found("group_not_found", format!("There is no group {id}"))),
@@ -125,7 +113,7 @@ pub(super) async fn restore_group(
     user: AuthenticatedUser,
 ) -> Result<Json<GroupResponse>, ApiError> {
     let id = GroupId(id);
-    state.runtime_manager.group_manager().restore(&user.security_context(), id).await?;
+    state.kernel.group_manager().restore(&user.security_context(), id).await?;
     Ok(Json(readable(&state, &user, id).await?))
 }
 
@@ -137,7 +125,7 @@ pub(super) async fn purge_group(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let id = GroupId(id);
-    let purged = state.runtime_manager.group_manager().purge(&user.security_context(), id).await?;
+    let purged = state.kernel.group_manager().purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
         false => {

@@ -217,10 +217,9 @@ pub struct UserProfile {
     /// they create to be held in (issue 56); `None` if they did not say.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_language: Option<Language>,
-    /// The user's answers to tool calls given in advance (issue 13): rules
-    /// that allow or deny, each within a reach. Read by nobody but the user
-    /// and the runtime, unlike the introduction. Changed only through
-    /// `add_approval_rule` and `remove_approval_rule`.
+    /// The user's answers to tool calls given in advance (issue 13): rules that allow or deny, each
+    /// within a reach. Read by nobody but the user and the kernel, unlike the introduction. Changed
+    /// only through `add_approval_rule` and `remove_approval_rule`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     approval_rules: Vec<ApprovalRule>,
     /// Set when it was deleted (issue 164): it stays stored, hidden from

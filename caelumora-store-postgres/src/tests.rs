@@ -7,6 +7,9 @@ use super::*;
 use crate::connection::{quoted, sql};
 use crate::filter::Condition;
 use crate::plugin::PostgresStorePlugin;
+use caelumora_api::component::Services;
+use caelumora_kernel::backend::Backends;
+use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_model::actor::{ActorId, ActorState, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
 use caelumora_model::approval::ApproverId;
@@ -36,8 +39,6 @@ use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_model::user::UserId;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::work::Work;
-use caelumora_runtime::backend::Backends;
-use caelumora_runtime::runtime::{RuntimeBuilder, Services};
 use chrono::Utc;
 use serde_json::json;
 use std::env;
@@ -78,7 +79,7 @@ impl Database {
     }
 
     /// The stores of the entities in the schema, of a backend of their own - the states in
-    /// memory -, with the core's kinds opened and the backends opened after them, as at start.
+    /// memory -, with the kernel's kinds opened and the backends opened after them, as at start.
     async fn stores(&self) -> Persistence {
         let stores = Persistence::new(self.backend(), Arc::new(MemoryStore::new())).unwrap();
         EntityStores::open(&stores, &Policies::permitting_all()).unwrap();
@@ -330,13 +331,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
         channel_id: channel,
         ..EventContext::default()
     };
-    state.begin_turn(Work::new(
-        context,
-        None,
-        SecurityContext::default(),
-        Classification::CHANNEL_DEFAULT,
-        Default::default(),
-    ));
+    state.begin_turn(Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()));
     let sets = vec![ToolSet::new("search", "searches", Vec::new())];
     state.offer_tools(sets.clone());
     let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
@@ -822,19 +817,18 @@ async fn a_scan_hands_out_what_a_filter_meets() {
     database.drop().await;
 }
 
-/// A runtime built from its configuration keeps its entities and its states
-/// in Postgres: the backends are made with the secrets at hand - over one
-/// pool - and opened once the plugins registered, so that the tables of the
-/// core's kinds are there before anything runs (issue 447).
+/// A kernel built from its configuration keeps its entities and its states in Postgres: the
+/// backends are made with the secrets at hand - over one pool - and opened once the plugins
+/// registered, so that the tables of the kernel's kinds are there before anything runs (issue 447).
 #[tokio::test]
-async fn a_runtime_keeps_its_entities_and_its_states_in_postgres() {
+async fn a_kernel_keeps_its_entities_and_its_states_in_postgres() {
     let Some(database) = Database::new() else { return };
     let yaml = format!(
         "secrets:\n  providers:\n    - type: env\npersistence:\n  entity_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n  state_store:\n    type: postgres\n    url_secret: {URL_SECRET}\n    schema: {}\n",
         database.connection.schema(), database.connection.schema(),
     );
     let config = AppConfig::from_yaml(&yaml).unwrap();
-    let runtime = RuntimeBuilder::from_config(&config, &[&PostgresStorePlugin])
+    let kernel = KernelBuilder::from_config(&config, &[&PostgresStorePlugin])
         .await
         .expect("opened against the test database")
         .build()
@@ -844,17 +838,17 @@ async fn a_runtime_keeps_its_entities_and_its_states_in_postgres() {
         sqlx::query_scalar("SELECT name FROM kinds ORDER BY name").fetch_all(pool).await.unwrap();
     assert!(
         kinds.iter().any(|kind| kind == "group") && kinds.iter().any(|kind| kind == "session"),
-        "the core's kinds, made at start: {kinds:?}"
+        "the kernel's kinds, made at start: {kinds:?}"
     );
     let owner = UserId::new();
     let mut team =
         Group::team(ScopedName::new("Ours", Scope::UserScope { user_id: owner }).unwrap(), owner);
-    runtime.entity_stores().groups.create(&SecurityContext::system(), &mut team).await.unwrap();
+    kernel.entity_stores().groups.create(&SecurityContext::system(), &mut team).await.unwrap();
     let kept: i64 =
         sqlx::query_scalar("SELECT count(*) FROM entity_group").fetch_one(pool).await.unwrap();
     assert_eq!(kept, 1, "in its table");
     let agent = AgentId::new();
-    runtime.state_store().put_agent_state(agent, &mut AgentState::default()).await.unwrap();
+    kernel.state_store().put_agent_state(agent, &mut AgentState::default()).await.unwrap();
     let states: i64 =
         sqlx::query_scalar("SELECT count(*) FROM agent_state").fetch_one(pool).await.unwrap();
     assert_eq!(states, 1, "the states in theirs");

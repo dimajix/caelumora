@@ -12,7 +12,17 @@
 //! otherwise is refused.
 
 use crate::artifact::{Artifact, ArtifactId, ArtifactUpdateEvent, ArtifactVersion};
+use crate::extension::{ArtifactError, ArtifactResult};
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentError, ComponentResult};
+use caelumora_api::error::ContentError;
+use caelumora_api::terminal::ByteStream;
+use caelumora_kernel::backend::NamedBackends;
+use caelumora_kernel::content::{keep_digested, ContentStorage};
+use caelumora_kernel::event::EventBus;
+use caelumora_kernel::group::{prune_gone_groups, require_nameable};
+use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
 use caelumora_model::actor::ActorId;
 use caelumora_model::channel::Channel;
 use caelumora_model::confidentiality::{Classification, ConfidentialityQuestions};
@@ -31,60 +41,12 @@ use caelumora_model::store::{
 };
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
-use caelumora_model::value::ValueError;
-use caelumora_runtime::backend::{NamedBackends, StorageGone};
-use caelumora_runtime::component::{ComponentError, ComponentResult};
-use caelumora_runtime::content::{keep_digested, ContentError, ContentStorage};
-use caelumora_runtime::event::EventBus;
-use caelumora_runtime::group::{prune_gone_groups, require_nameable};
-use caelumora_runtime::runtime::RuntimeBuilder;
-use caelumora_runtime::scoped::{ScopeHolders, ScopeMember};
-use caelumora_runtime::terminal::ByteStream;
 use chrono::Utc;
 use serde::Deserialize;
 use std::fmt;
 use std::slice;
 use std::sync::Arc;
 use tracing::{info, warn};
-
-#[derive(Debug, thiserror::Error)]
-pub enum ArtifactError {
-    #[error("no artifact {0}")]
-    NotFound(ArtifactId),
-    #[error("no version {version} of artifact {artifact}")]
-    VersionNotFound { artifact: ArtifactId, version: u32 },
-    #[error("no storage of content is configured for artifacts")]
-    NotConfigured,
-    #[error("an artifact is published by a user, or for one")]
-    OwnerNotAUser,
-    /// What is so classified may not be put into the storage.
-    #[error("the storage of content '{0}' may not hold what is so classified")]
-    StorageNotCleared(String),
-    /// A later version from a workspace classified otherwise than the first.
-    #[error("the artifact '{0}' is classified otherwise than the workspace; publish it under another name")]
-    ClassifiedOtherwise(String),
-    /// Published under a name in a scope an artifact does not lie in: the caller vouches for a
-    /// project's (issue 467).
-    #[error("an artifact lies in a project's scope")]
-    InvalidScope,
-    #[error(transparent)]
-    Invalid(#[from] ValueError),
-    /// What the storage of content reported: a version too large, other than it was said to be,
-    /// or a storage that failed.
-    #[error(transparent)]
-    Content(#[from] ContentError),
-    /// The storage a version lies in, since removed from the configuration.
-    #[error(transparent)]
-    StorageGone(#[from] StorageGone),
-    #[error(transparent)]
-    Store(#[from] StoreError),
-    /// The runtime was built without the plugin, so there is no manager to
-    /// ask.
-    #[error("artifacts are not joined to this runtime")]
-    NotJoined,
-}
-
-pub type ArtifactResult<T> = Result<T, ArtifactError>;
 
 /// The section `artifacts` of the configuration (issue 271): which of the
 /// storages of content (`content.storage`, issue 282) new artifacts are
@@ -147,31 +109,33 @@ impl fmt::Debug for ArtifactManager {
 }
 
 impl ArtifactManager {
-    /// The manager of the artifacts of `artifacts`, with the services of `runtime` - the holders
-    /// of the projects they are published into, the groups named in their lists, the storages of
-    /// content their versions lie in, by their names -, new ones in the storage `config` says.
-    /// The store and the section are the plugin's to open and to claim (`Plugin::register`),
-    /// which answers for what fails there; the services are the runtime's.
+    /// The manager of the artifacts of `artifacts`, with the services of `kernel` - the holders of
+    /// the projects they are published into, the groups named in their lists, the storages of
+    /// content their versions lie in, by their names -, new ones in the storage `config` says. The
+    /// store and the section are the plugin's to open and to claim (`Plugin::register`), which
+    /// answers for what fails there; the services are the kernel's.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` where `config` names no storage of the runtime's, or none
+    /// `ComponentError::InvalidConfig` where `config` names no storage of the kernel's, or none
     /// among several.
     pub fn new(
-        runtime: &RuntimeBuilder,
+        kernel: &KernelBuilder,
         artifacts: Arc<dyn EntityStore<Artifact>>,
         config: &ArtifactsConfig,
     ) -> ComponentResult<Self> {
-        let storages = Arc::clone(runtime.content_storages());
+        let storages = Arc::clone(kernel.content_storages());
         let keep_in = storages
             .chosen(config.keep_in.as_deref())
-            .map_err(|why| ComponentError::InvalidConfig(format!("artifacts.keep_in {why}")))?
+            .map_err(|why| {
+                ComponentError::InvalidConfig(format!("plugins.artifacts.keep_in {why}"))
+            })?
             .map(|(name, storage)| (name.to_string(), Arc::clone(storage)));
         Ok(Self {
             artifacts,
-            holders: Arc::clone(runtime.scope_holders()),
-            groups: Arc::clone(&runtime.entity_stores().groups),
-            events: Arc::clone(runtime.event_bus()),
-            policies: runtime.policies().clone(),
+            holders: Arc::clone(kernel.scope_holders()),
+            groups: Arc::clone(&kernel.entity_stores().groups),
+            events: Arc::clone(kernel.event_bus()),
+            policies: kernel.policies().clone(),
             storages,
             keep_in,
             max_bytes: config.max_bytes,
@@ -355,11 +319,11 @@ impl ArtifactManager {
         Ok((artifact, number))
     }
 
-    /// Adds `version` to `artifact`, read by `participants`, in the runtime's name: whoever may
-    /// add a version need not own the artifact (`WriteArtifact`, asked before), and lets the
-    /// channel they publish it in read it. Written meanwhile elsewhere, the artifact is read
-    /// again and the version added once more, numbered after what was published meanwhile
-    /// (issue 492). Answers the artifact as written, and the version's number.
+    /// Adds `version` to `artifact`, read by `participants`, in the kernel's name: whoever may add
+    /// a version need not own the artifact (`WriteArtifact`, asked before), and lets the channel
+    /// they publish it in read it. Written meanwhile elsewhere, the artifact is read again and the
+    /// version added once more, numbered after what was published meanwhile (issue 492). Answers
+    /// the artifact as written, and the version's number.
     ///
     /// # Errors
     /// Whatever the store reports.

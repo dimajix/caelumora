@@ -3,8 +3,8 @@
 //!
 //! The tool is the simplest one that asks: its arguments are its questions
 //! and whom they are put to, and its result is the answers, which it gives
-//! the model as they are. Asking, waiting and checking the answers are the
-//! runtime's (see `ToolProvider::questions`). Its questions are never
+//! the model as they are. Asking, waiting and checking the answers are not
+//! the tool's (see `ToolProvider::questions`). Its questions are never
 //! sensitive: their answers go to the model.
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
@@ -13,12 +13,12 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_model::question::{
     Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS,
 };
 use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_runtime::component::{ComponentFacets, ComponentKind, ComponentRegistry};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -120,7 +120,7 @@ impl ToolProvider for AskUserToolProvider {
         if name != ASK_USER_TOOL_NAME {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
-        // The runtime runs it only with its answers.
+        // The executor runs it only with its answers.
         let answers = answers.ok_or_else(|| {
             ToolError::ExecutionFailed("it ran without the answers to its questions".to_string())
         })?;
@@ -141,7 +141,7 @@ impl ToolProvider for AskUserToolProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>(),

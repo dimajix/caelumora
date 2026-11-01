@@ -177,12 +177,11 @@ fn workspace_named(name: ScopedName) -> Workspace {
 
 define_id!(FolderId);
 
-/// A kind with parts that have access lists of their own (issue 328): a
-/// folder of documents, each published in a channel and read by whom its
-/// own list names, as an artifact of the plugin `caelumora-artifacts` has
-/// versions. None of the core's kinds has such parts, so the suite brings
-/// one, to ask for what lies within an element of a collection in an
-/// element of a collection.
+/// A kind with parts that have access lists of their own (issue 328): a folder of documents, each
+/// published in a channel and read by whom its own list names, as an artifact of the plugin
+/// `caelumora-artifacts` has versions. None of the kernel's kinds has such parts, so the suite
+/// brings one, to ask for what lies within an element of a collection in an element of a
+/// collection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
     id: FolderId,
@@ -389,8 +388,8 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
     assert_eq!(paged, sorted, "the pages, one after the other, are the whole list");
 }
 
-/// A store answers a query by the fields of the core's kinds: by scope, by
-/// the session of a channel, by a participant, by a member.
+/// A store answers a query by the fields of the kernel's kinds: by scope, by the session of a
+/// channel, by a participant, by a member.
 pub async fn queries_behave(stores: &EntityStores) {
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
@@ -1564,7 +1563,6 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     };
     let sent = |event: ActorEvent| {
         Envelope::new(
-            SecurityContext::default(),
             EventContext {
                 sender_id: speaker,
                 initiator_id: user,
@@ -1781,7 +1779,6 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     state.begin_turn(Work::new(
         EventContext::default(),
         None,
-        SecurityContext::default(),
         Classification::CHANNEL_DEFAULT,
         Default::default(),
     ));

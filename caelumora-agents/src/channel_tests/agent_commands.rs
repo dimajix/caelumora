@@ -3,9 +3,10 @@
 
 use super::*;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
+use caelumora_api::command::CommandError;
+use caelumora_kernel::command::{CommandContext, CommandReply};
 use caelumora_model::chain::Node;
 use caelumora_model::transcript::TranscriptEntry;
-use caelumora_runtime::command::{CommandContext, CommandError, CommandReply};
 use std::sync::Mutex;
 
 /// A running channel with alice and an agent, `helper`, that carries
@@ -83,7 +84,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     assert_eq!(answer.context.sender_id, ActorId::Agent(agent));
     assert_eq!(answer.context.span_id, reply.span_id.unwrap(), "in the span of the request");
     assert_eq!(
-        (answer.security.caller_id, answer.security.initiator_id),
+        (answer.context.sender_id, answer.context.initiator_id),
         (ActorId::Agent(agent), ActorId::User(alice)),
         "carried out by the agent, on her word"
     );
@@ -111,8 +112,13 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     running.abort();
 }
 
+/// A command its issuer may see but not ask for is refused at the channel's
+/// door (issue 516): her actor finds the agent by what she sees and asks
+/// nothing more; the channel asks once, as it admits the request, and tells
+/// her alone that it was not let in. The agent hears nothing of it.
 #[tokio::test]
-async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_by_the_agent_alone() {
+async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
+    use caelumora_model::actor::Rejection;
     let seen_not_asked = Policy(|action| !matches!(action, ActionType::ExecuteAgentCommand { .. }));
     let Stuck { channel, context, agent, running, .. } =
         with_a_marking_agent_under(Arc::new(seen_not_asked), false).await;
@@ -121,30 +127,33 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_by_the_agent_al
     let mut watch = actor.watch();
     let before = channel.history_entries().await.len();
 
-    // Her actor finds the agent by what she sees and asks nothing more:
-    // the agent decides, once, as it carries it out (issue 304).
     let reply =
-        actor.execute_command("mark", "@helper twice").await.expect("sent: the agent decides");
+        actor.execute_command("mark", "@helper twice").await.expect("sent: the channel decides");
     assert!(reply.output.is_none() && reply.span_id.is_some(), "{reply:?}");
-    let (started, _, answer) = command_events(&mut watch).await;
-    assert!(started.is_none(), "never begun");
-    let ActorEvent::CommandFailed { command, to, turn_id, .. } = answer.event else {
-        panic!("refused, not {:?}", answer.event)
+    let refused = time::timeout(Duration::from_secs(5), async {
+        loop {
+            let envelope = watch.recv().await.expect("the channel is running");
+            if matches!(envelope.event, ActorEvent::MessageRejected { .. }) {
+                break envelope;
+            }
+        }
+    })
+    .await
+    .expect("told that it was not let in");
+    let ActorEvent::MessageRejected { rejected, reason, .. } = refused.event else {
+        unreachable!()
     };
     assert_eq!(
-        (command.as_str(), to, turn_id),
-        ("mark", ActorId::User(alice), None),
-        "to her alone"
+        (rejected.as_str(), reason),
+        ("CommandRequested", Rejection::Forbidden),
+        "not hers to ask for"
     );
     let state = channel.stored_agent_channel_state(agent).await.unwrap();
-    assert!(
-        state.notes.current().is_empty() && state.turn.is_none(),
-        "nothing staged, no turn left"
-    );
+    assert!(state.notes.current().is_empty() && state.turn.is_none(), "nothing reached the agent");
     let recorded = channel.history_entries().await.split_off(before);
     assert!(
-        matches!(recorded.as_slice(), [HistoryEntry::CommandFailed { to, .. }] if *to == ActorId::User(alice)),
-        "in the channel's history only that it was refused, to her (issue 417): {recorded:?}"
+        matches!(recorded.as_slice(), [HistoryEntry::MessageRejected { .. }]),
+        "in the channel's history only that it was not let in, to her (issue 417): {recorded:?}"
     );
     running.abort();
 }
@@ -256,7 +265,7 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
 
 #[tokio::test]
 async fn help_lists_the_commands_of_the_agents_with_their_handles() {
-    use caelumora_runtime::command::ChannelCommandProvider;
+    use caelumora_kernel::command::ChannelCommandProvider;
     let Stuck { channel, context, running, .. } = with_a_marking_agent(false).await;
     // This channel's session has no commands of its own: `/help` is run
     // as it would be among them.

@@ -13,22 +13,22 @@ A **session** is the container of one interaction. Its `SessionLoop` runs its ch
 
 Every channel is a document of its own; the session lists its channels by id, in order. Creating a
 session stores its channels with it, deleting it keeps them - hidden with it, since a channel is
-reached only through its session -, purging it removes them. A session is loaded in the runtime's
+reached only through its session -, purging it removes them. A session is loaded in the kernel's
 name, since starting a session the caller may read must not fail on a channel the caller is not in.
 
 What lies in a session's scope - its personalities, session templates and agents, those of its
 channels' scopes, its workspace if made for it - goes with it (`ScopedEntities`,
-`caelumora-runtime/src/scoped.rs`): deleting the session deletes them, restoring it restores those
+`caelumora-kernel/src/scoped.rs`): deleting the session deletes them, restoring it restores those
 deleted with it - not one deleted by hand before, nor one whose name was taken meanwhile -, purging
-it purges them. They are found in the runtime's name, but deleted and restored in the name of
-whoever deletes or restores the session (issue 320): if something is left they may not delete, the
-session is kept and the deletion fails with `ScopeNotEmpty` (`scoped`, raised by the session as
+it purges them. They are found in the kernel's name, but deleted and restored in the name of whoever
+deletes or restores the session (issue 320): if something is left they may not delete, the session
+is kept and the deletion fails with `ScopeNotEmpty` (`scoped`, raised by the session as
 `SessionError::ScopeNotEmpty`), saying how much of which kind is left; what they may not restore
 stays deleted, and the session comes back all the same. The session is marked before its scope is
 deleted, so that nothing of it goes unless the session's deletion was granted; all of it carries the
 session's mark - one for all of it - and comes back with it (issue 469). If something is left, the
-mark is taken away again in the runtime's name, and what was deleted stays deleted - restored by
-hand, not with the session. Purging is done in the runtime's name.
+mark is taken away again in the kernel's name, and what was deleted stays deleted - restored by
+hand, not with the session. Purging is done in the kernel's name.
 
 A session or a channel runs on while it is deleted, and runs on if its deletion fails; nothing is
 put into its scope meanwhile (issue 458). Whoever puts something into a scope - makes it, restores
@@ -51,7 +51,7 @@ Personalities, session templates and component bundles, which have none, are mem
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
 not among what lies there: they belong to the session or channel itself, and its participants reach
-it by them (issue 348). They go and come back with its mark, in the runtime's name, whoever deletes
+it by them (issue 348). They go and come back with its mark, in the kernel's name, whoever deletes
 or restores it - all of them or none (`GroupManager::delete_participants`, `restore_participants`),
 announced as a team. Deleting deletes them last, once nothing else of the scope is left, so that a
 session kept keeps its members; if they cannot go, the mark is taken away again, and they stay.
@@ -69,12 +69,12 @@ sessions it can never lie in, and is not stored.
 
 Every session has a **project** its results go to (`Session::project`, issue 467): one of its own,
 made with it in its scope, or a shared one it lies in, which it goes with. The session keeps its own
-project as it keeps the group of its participants (`SessionManager`): made with it, in the runtime's
+project as it keeps the group of its participants (`SessionManager`): made with it, in the kernel's
 name; deleted and restored with its mark, the project after the groups, all of them or none; and
-purged with it. What lies in the project's scope goes with the session as what lies in the
-session's does, and what is left of it keeps the session as well (`ScopeNotEmpty`). A session is a
-user's, so that its project has an owner. How a session is put into a project, and how its own is
-kept, is in [PROJECTS.md](PROJECTS.md).
+purged with it. What lies in the project's scope goes with the session as what lies in the session's
+does, and what is left of it keeps the session as well (`ScopeNotEmpty`). A session is a user's, so
+that its project has an owner. How a session is put into a project, and how its own is kept, is in
+[PROJECTS.md](PROJECTS.md).
 
 Every session has a privacy policy: whom it lets read what was said in it from other sessions. It is
 taken over from its template (private unless the template says otherwise), changed only by the
@@ -150,10 +150,10 @@ What a shutdown or a crash interrupted goes on by itself when the server starts 
 `SessionManager::resume_interrupted` start every session in which an agent's stored state has work
 under way: a turn stored at a step it goes on from, or a remote task the remote agent works on. The
 state store keeps an index of them (see [STORAGE.md](STORAGE.md#work-under-way)), so nothing else is
-loaded. Nobody asked for these sessions, so the runtime opens them in its own name; what the agents
+loaded. Nobody asked for these sessions, so the kernel opens them in its own name; what the agents
 then do is done in their own names, as at every start. They are started one after another, beside
-the first requests, and not bounded otherwise: what they resume is the work that ran when the
-server stopped, no more (issue [436](../issues/436-work-resumed-after-a-restart-is-not-bounded.md)).
+the first requests, and not bounded otherwise: what they resume is the work that ran when the server
+stopped, no more (issue [436](../issues/436-work-resumed-after-a-restart-is-not-bounded.md)).
 
 Not started is a session whose agents only wait for a person - an approval, a question, a remote
 task that asked back -, since the person's answer starts it; nor one deleted. A message delivered to
@@ -297,10 +297,10 @@ joins. What waits when `run` begins is started before anything is routed.
 ### Who may see a channel
 
 A channel its viewer may not read (`GetChannel`: owner and participants) is answered as absent and
-left out of lists and snapshots - the same as one that does not exist. The runtime decides that, not
+left out of lists and snapshots - the same as one that does not exist. The kernel decides that, not
 the REST server: `SessionLoop::channel_for` returns a channel only to whoever may read it, and the
-views answer the same way. What a client lists and offers comes from views the runtime builds for
-one viewer; see [SECURITY.md](SECURITY.md).
+views answer the same way. What a client lists and offers comes from views the kernel builds for one
+viewer; see [SECURITY.md](SECURITY.md).
 
 ### What is new to a user
 
@@ -319,9 +319,8 @@ in one step; so their positions in the history order them as the user sees them.
     forward, so that two frontends of the user cannot move it back, and nobody else reads it.
 *   **Counted by the views.** What is new (`ChannelView::unread`, `Detail::UNREAD`) is what others
     said that a participant hears (`Message::is_heard`: no steps of a plan, no notices of the
-    runtime, nothing taken back), of what the user may read, after the mark and from where their
-    view begins - counted up to a cap, and whether one of these messages mentions them, `@all`
-    included.
+    kernel, nothing taken back), of what the user may read, after the mark and from where their view
+    begins - counted up to a cap, and whether one of these messages mentions them, `@all` included.
 *   **Announced as it is said.** Every message others hear is announced on the event bus once it is
     stored (`channel::SAID`), with the message, classified as the channel: it reaches who may read
     the channel and is cleared for it, which is who reads the message in the history. A frontend
@@ -330,8 +329,9 @@ in one step; so their positions in the history order them as the user sees them.
 ## Acting in a channel
 
 Whoever writes or approves does so in their own name. `ChannelLoop::user_actor(UserId)` returns
-*that user's* actor, and every envelope is built by the actor itself, so sender, name and
-`SecurityContext` follow from it. There is deliberately no way to reach "some" user actor. Someone
+*that user's* actor, and every envelope is built by the actor itself, so sender and name follow
+from it, and the channel builds the context it is checked in from the sender. There is
+deliberately no way to reach "some" user actor. Someone
 who is not a participant of a channel has no actor in it and is refused.
 
 A frontend talks to the user's actor, never to the channel. The actor queues what its user writes,
@@ -346,11 +346,12 @@ also while the channel does not run, without starting it. Each run of the actor 
 it (`Shown::Started`, `Shown::Ended`): what a run showed comes after its start and before its end,
 and an actor ended before it ran shows its end alone.
 
-The channel does not take an actor's word for whose name it speaks in. Each actor is given an
-`OriginEventSender`, which passes on only an envelope that speaks as the actor: as its sender, as
-the caller of its `SecurityContext`, and as the sender of every message it carries. Anything else
-is refused and logged as an error - a bug of the actor. Whose rights the actor has and who asked it
-may be someone else: an agent acts with its owner's rights and answers whoever asked it (see
+The channel does not take an actor's word for whose name it speaks in, nor for its rights. Each
+actor is given an `OriginEventSender`, which passes on only an envelope that speaks as the actor:
+as its sender, and as the sender of every message it carries. Anything else is refused and logged
+as an error - a bug of the actor. Whose rights the actor has, the channel knows itself and builds
+as it admits the envelope (issue 516); who asked it may be someone else: an agent acts with its
+owner's rights and answers whoever asked it (see
 [SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). What the channel says itself - a
 moderator's notice, a removal - does not come through an actor's sender.
 
@@ -470,7 +471,7 @@ message, and what they said in reply stays.
     heard it are labelled by it as it stands (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Taking back is not erasing.** The message stays in every participant's record, in the
-    contexts of what was answered to it, and with a remote agent that was given it (see
+    context of what was answered to it, and with a remote agent that was given it (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#messages)).
 
 ### Answering again
@@ -506,7 +507,7 @@ naming a message or a turn.
         (`RetryRefused`), which a user interface words itself.
 
     A retry accepted and a request to respond in the same batch are one turn, in the request's
-    contexts; its model is given the conversation as it stands, without what was replaced.
+    context; its model is given the conversation as it stands, without what was replaced.
 *   **An external agent** rejects every request to answer again: its remote agent keeps what it was
     given, and nothing here takes the answer back from it.
 
@@ -529,7 +530,7 @@ Adding is asked first as `UpdateChannel`, before anything of the newcomer is loo
 newcomer (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 Who takes part in a channel and whether they may is one question, owned by `Participation` (issue
-356), which the `RuntimeManager` holds once for the instance with the services it is asked with: the
+356), which the `Kernel` holds once for the instance with the services it is asked with: the
 agents' store, the controllers, the `AccessPolicy` and the `ConfidentialityPolicy`. It resolves a
 participant as a document names it into a `ResolvedParticipant` - what its actor is built from, and
 the place it takes part in - and answers whether it may run, join, lie where it may and is cleared
@@ -554,7 +555,7 @@ themselves or their own agent, never someone else.
     by those cleared for it.
 *   **The session first, then the channel.** One the channel refuses after all stays in the session.
     Who is in the session already is added to a channel by whoever may change the channel alone.
-*   **Stored in the runtime's name** for one who joined: joining was the act that was permitted. A
+*   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
     personal `Join` entry - an invitation - is used up then, so that one removed later cannot take
     themselves back in; an entry for a role, a group or everyone stays. Who joins a channel by
     themselves sees all of its history: whoever let them join let them read it.
@@ -576,7 +577,7 @@ Deleting an agent (`AgentManager::delete`) marks it and changes no channel: it r
 channel it takes part in until it is restored. The channels follow its mark instead:
 
 *   a running session, told of the deletion, has the agent's actor leave each of its channels, in
-    the runtime's name, and announces it as a leave (`channel::LEFT`);
+    the kernel's name, and announces it as a leave (`channel::LEFT`);
 *   a channel that starts leaves it out, as any participant that no longer exists -
     `Participation::resolve` asks the store whether it exists, not the controllers, which keep an
     agent's controller while an actor of it still runs;
@@ -652,13 +653,13 @@ one starts under the same id. An actor removed before the run loop started it is
 
 ### How others learn of it
 
-A join or a leave is announced on the event bus like every change of membership
-(`channel::JOINED`, `channel::LEFT`). In the channel itself, it is the channel's own word (issue
-408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` refuses them),
-told in the name of whoever made the change - who added or removed the participant, the participant
-itself if it joined by itself, `System` if the runtime did, as for an agent deleted or restored. The
-event is named for what happened to the participant; who made it happen is its sender. Each
-carries the participant's name as it was, so that it reads the same after a renaming.
+A join or a leave is announced on the event bus like every change of membership (`channel::JOINED`,
+`channel::LEFT`). In the channel itself, it is the channel's own word (issue 408):
+`ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` refuses them), told
+in the name of whoever made the change - who added or removed the participant, the participant
+itself if it joined by itself, `System` if the kernel did, as for an agent deleted or restored. The
+event is named for what happened to the participant; who made it happen is its sender. Each carries
+the participant's name as it was, so that it reads the same after a renaming.
 
 *   **Recorded where it happened.** The channel keeps it in its history
     (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what
@@ -770,9 +771,9 @@ it says what was refused, not which rule refused it.
 
 An **actor** is anything that sends and receives events in a channel.
 
-*   **`Actor`** (`caelumora_runtime::actor`) is the trait of all actors: `AgentActor`, `UserActor`,
-    `ApproverActor` and `ExternalAgentActor`. Its task, `run`, receives envelopes and sends its
-    output through the transport it is given. `wakeup`, `cancel`, `stop` and `leave` are
+*   **`Actor`** (`caelumora_api::actor`) is the trait of all actors: `AgentActor`,
+    `UserActor`, `ApproverActor` and `ExternalAgentActor`. Its task, `run`, receives envelopes and
+    sends its output through the transport it is given. `wakeup`, `cancel`, `stop` and `leave` are
     synchronous, because they come from other tasks and must take effect at once. The trait is
     public, so that a kind of agent can be built in a crate of its own (issue 370); only the channel
     controls its actors, after the operation that does it checked its permission - a rule for linked
@@ -789,10 +790,14 @@ An **actor** is anything that sends and receives events in a channel.
     queue takes over again. An overflow, a restart and a join are one case. What is not recorded is
     transient and may be lost while the inbox is behind (`ActorEvent::is_transient`) - streamed
     chunks, where an actor stands, the start of what ends recorded -, except the answers to
-    questions, which the history never holds (issue 165) and the inbox queues regardless. A live
-    envelope carries the security context its sender set as it sent it; one read from the history
-    carries the recorded initiator and the sender's context as it is now (`Actor::security_context`,
-    see [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)) - less exact, and the fallback alone. The
+    questions, which the history never holds (issue 165) and the inbox queues regardless. An
+    envelope carries no security context, live or read from the history: the channel builds the
+    sender's as it knows it when it admits the envelope (issue 516, see
+    [PERMISSION-CHECKS.md](PERMISSION-CHECKS.md)), and an actor reads back from the history the
+    event as it was recorded, with its initiator. A command asked of an agent is admitted again as
+    it is read back, with the issuer's rights as they are then: one not admitted is left out, and
+    nobody is told - the issuer was answered when it entered, and what is read back enters nothing.
+    The
     actor's half (`EventReceiver`) takes from one sequence, queue then history, nothing twice: it
     can wait for the next envelope of a kind, taking it ahead of the others, which stay where they
     are - as an agent waiting for approvals does -, and says where the actor stands (`heard`),
@@ -805,41 +810,44 @@ An **actor** is anything that sends and receives events in a channel.
 *   **Which actor runs an agent** is its personality's `kind`: `internal` - the default - an
     `AgentActor`; `external` an `ExternalAgentActor`, for an agent that runs elsewhere and is
     reached through the personality's one `ExternalAgent` component. What builds the actor of each
-    kind, and which facets its components are asked for, is registered with the runtime
-    (`AgentKinds`, `RuntimeBuilder::agent_kinds`, issue 370) - both by the agents' plugin
-    (`AgentsPlugin`), an essential one. The channel builds an agent's actor through them and names
+    kind, and which facets its components are asked for, is registered with the kernel
+    (`AgentKinds`, `LibraryBuilder::register_agent_kind`, issue 370) - both by the agents' library
+    (`AgentsLibrary`), an essential one. The channel builds an agent's actor through them and names
     no actor of an agent itself, reading the personality as the agent may read it; a kind the
     program registered nothing for is refused (`ChannelError::UnknownAgentKind`). The agent is
     `ActorId::Agent` either way, and nothing else - the participants, the REST API, the moderator -
     tells the two apart.
-*   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent and in
-    whose name it acts there, its `AgentChannelState`, how it takes in what it hears, its context
-    provider, the commands it carries out itself, and its `RunControl` - where its actor stands and
-    what `cancel`, `stop` and `leave` asked of it (issue 363). The two actors differ in their mind:
+*   **What both kinds of agent are in a channel** is their `AgentBody` (issue 355): the agent, its
+    runtime - which builds in whose name it acts there at every call (issue 516) -, its
+    `AgentChannelState`, how it takes in what it hears, its context provider, the commands it
+    carries out itself, and its `RunControl` - where its actor stands and what `cancel`, `stop` and
+    `leave` asked of it (issue 363). The two actors differ in their mind:
     a model run here with its tools, or the remote agent, whose every answer is a turn of the run
     control, ended by `cancel`, `stop` and `leave` as an agent's turn is. Both tell where they stand
     the same way; an external agent tells the begin and end of an answer at once.
 *   **`ActorId`** identifies an actor: a `User`, an `Agent` or an `Approver`, or `System` - the
-    runtime itself, set only deliberately.
-*   **`Envelope`** is the unit of communication: a timestamp, a `SecurityContext`, an `EventContext`
-    and the `ActorEvent` itself. The `SecurityContext` is what it is checked by, as its sender's
-    actor set it, at the time it was sent; the `EventContext` where it happens and in which chain -
-    its span, its depth, its hops between agents and the chain's initiator (issue 432), which what
-    reads the chain goes by. A client is never shown the `SecurityContext` (`ShownEnvelope`, see
-    [REST-SERVER.md](REST-SERVER.md)). Every envelope the runtime sends is built through `Answering`
-    (issue 352): the contexts of a request continued in the actor's name (`to`) - an agent's, an
-    external agent's, the approver's -, an actor's own (`own`) - a user's -, or, for what the
-    channel says itself, its place in someone's name (`in_channel`): a removal in the name of who
-    removed, a refusal in its own. Whose name an envelope carries is what the `OriginEventSender`
-    and the admission check, so it is decided in one place. Every envelope is an event of its own,
-    with an `event_id` of its own, even where many are sent in the same contexts - the events of a
-    turn share its span and what it answers (`correlation_id`), not their id.
+    kernel itself, set only deliberately.
+*   **`Envelope`** is the unit of communication: a timestamp, an `EventContext` and the `ActorEvent`
+    itself. The `EventContext` says where it happens and in which chain - its span, its depth, its
+    hops between agents and the chain's initiator (issue 432), which what reads the chain goes by.
+    It carries no `SecurityContext`: in whose name it is checked the channel builds itself as it
+    admits it, from the sender it names - the sender's context as the channel knows it then, with
+    the initiator the event names (issue 516, see
+    [SECURITY.md](SECURITY.md#operations-that-check-themselves)) -, so a client is shown an envelope
+    as it is. Every envelope the kernel sends is built through `Answering` (issue 352): the context
+    of a request continued in the actor's name (`to`) - an agent's, an external agent's, the
+    approver's -, an actor's own (`own`) - a user's -, or, for what the channel says itself, its
+    place in someone's name (`in_channel`): a removal in the name of who removed, a refusal in its
+    own. Whose name an envelope carries is what the `OriginEventSender` checks, so it is decided in
+    one place. Every envelope is an event of its own, with an `event_id` of its own, even where many
+    are sent in the same context - the events of a turn share its span and what it answers
+    (`correlation_id`), not their id.
 
 ### External agents
 
 An external agent has no turn and no tools here. It hears what others say and takes it in as an
 agent does: what it hears through its perceive processors into its transcript. When it is asked to
-respond - once for all it took in together, in the contexts of the last request - it gives its
+respond - once for all it took in together, in the context of the last request - it gives its
 remote agent:
 
 *   **the prompt parts** its `ContextProvider` assembles, as an agent's does for a turn - by default
@@ -877,12 +885,12 @@ what ties it to the remote side (see [STORAGE.md](STORAGE.md)).
 
 ## The channel and actor runtime
 
-A `ChannelLoop` is built with a `ChannelRuntime` alone, not with the `RuntimeManager` itself nor
+A `ChannelLoop` is built with a `ChannelRuntime` alone, not with the `Kernel` itself nor
 with its `Channel`. Its session makes it (`SessionLoop::channel_runtime`), and it carries what
 everything in the channel shares:
 
 *   the process-wide services the channel is built with, each by an accessor of its own and read
-    once by `ChannelLoop::new`, and never the `RuntimeManager` itself, so that what a channel can
+    once by `ChannelLoop::new`, and never the `Kernel` itself, so that what a channel can
     reach is what its runtime offers (issue 360);
 *   the user commands of the session, built once per session;
 *   the session: its controller, which guards the agents' tool calls with the session's rules, and
@@ -898,25 +906,37 @@ everything in the channel shares:
 A session exists before its channels: `SessionLoop::new` makes it, and then builds each channel as
 one created later is built (`add_channel_loop`), so that a channel has its session from the start.
 
-The `ChannelRuntime` is the only source of `ActorRuntime`s, so every actor belongs to exactly one
-channel. An `ActorRuntime` is made for one actor and hands out only what concerns that actor: the
-services every actor needs - the model is not among them, an agent has it as a component - and those
-its components may use; its own agent state and its state in the channel; its own event
+The `ChannelRuntime` is the only source of `ParticipantRuntime`s, so every actor belongs to exactly
+one channel. A `ParticipantRuntime` is made for one participant and hands out only what concerns it:
+the context it acts in, built at every call from what the channel resolved of the participant (issue
+516); the controllers of its session and its channel, which the actor reads them by and which guard
+its agent's tool calls, held so that they do not lapse while a turn ends (issue 374); its own event
 subscription, for its channel and nothing else; the attributes of an agent that asks something of
-it, as stored; what an actor asks of its channel - its classification and attributes, its users for
-the questions of a tool call, the workspace as the channel may use it (issue 370); the controllers
-of its session and its channel, which the actor reads them by and which guard its agent's tool
-calls, held so that they do not lapse while a turn ends (issue 374); and its own session as the root
-of what its work reads (`session_view`), from which the session's other channels are read as the
-confidentiality rules allow (see [MEMORY.md](MEMORY.md#reading-other-channels)). It does not hand
-out the `RuntimeManager` it is made from: what an actor may reach is read from `ActorRuntime` alone
-(issue 359). It is the actor's interface to its channel, not a way to its `ChannelLoop`: the loop's
-public API is the frontends', and acts in a user's name too. The loop is reached through it only by
-the user's and the approver's actors and by the views, all in the runtime (`pub(crate)`, see
-[CODING-GUIDELINES.md](CODING-GUIDELINES.md#runtimes-and-their-entities)).
+it, as stored; and the access policy and the managers the kernel's actors use - the outbox of a
+user's actor, the attachments a user names, the session's commands. It hands the `Kernel` it is made
+from to nobody but the runtime of its agent, in the kernel: what an actor may reach is read from its
+runtime alone (issue 359). It is the actor's interface to its channel, not a way to its
+`ChannelLoop`: the loop's public API is the frontends', and acts in a user's name too. The loop is
+reached through it only by the user's and the approver's actors, by the views and by the runtime of
+an agent, all in the kernel (`pub(crate)`, see
+[CODING-GUIDELINES.md](CODING-GUIDELINES.md#running-objects-and-their-entities)).
+
+The actor of an agent is on the agent side, and is given less (issue 516): its kind's factory
+(`AgentKinds::register`) is handed an `Arc<dyn ActorRuntime>` alone, which the kernel's
+`AgentRuntime` serves. It holds the agent's participant runtime, the controllers of the agent and of
+its personality and the agent's own state, and answers what only an agent asks itself: who the agent
+and its personality are as they are now (`agent`, `personality`), the ids of its session and its
+channel and the channel's classification; its state in the channel, its transcript and its own state
+(`agent_state`, `reserve_memory_id`, `apply_agent_state`); the attachments of its messages; its
+session and its channel to read, as readers at the classification of a piece of work (`session`,
+`channel`), from which the session's other channels are read as the confidentiality rules allow (see
+[MEMORY.md](MEMORY.md#reading-other-channels)); what the kernel decides of its work; the extensions
+bound to it; and its components (`build_components`). No controller, no registry and no store leaves
+it. Whether a command of an agent is hidden by a command of its session the kernel decides as it
+builds the actor: an agent whose command has the name of one of the session's is refused (issue 37).
 
 The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot
-reach them. Components are not given their actor's `ActorRuntime` either, only what their
+reach them. Components are not given their actor's runtime either, only what their
 `ComponentContext` holds; see [COMPONENTS.md](COMPONENTS.md).
 
 ## Moderators
@@ -953,7 +973,7 @@ which for what the history records is the rule its entry is read by (`HistoryEnt
 A moderator answers each event with a `Routing`: whether it goes where the rule sends it or to some
 participants alone, whom to ask to respond, and which of its own notices to tell whom - of a fixed
 few (`Notice`): a chain cut off, and that it could not be decided who responds. The channel builds
-every envelope from it: the event as it entered, a request to respond in the event's contexts, a
+every envelope from it: the event as it entered, a request to respond in the event's context, a
 notice in the system's name. So a moderator cannot change what anyone is told, nor speak in
 anybody's name.
 

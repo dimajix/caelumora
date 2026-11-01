@@ -1,8 +1,7 @@
-//! Skills through the whole runtime (issues 22, 323): the plugin joined to
-//! the world of the security suite - the ownership policy, recording what
-//! it is asked, and alice, bob and carol (`caelumora_runtime::testing`).
-//! The tests of an action that acts in someone's name assert what it asks,
-//! as the suite does for the core's.
+//! Skills through the whole kernel (issues 22, 323): the plugin joined to the world of the security
+//! suite - the ownership policy, recording what it is asked, and alice, bob and carol
+//! (`caelumora_kernel::testing`). The tests of an action that acts in someone's name assert what it
+//! asks, as the suite does for the kernel's.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -17,8 +16,14 @@ use caelumora_agents::testing::{
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_compaction::component::COMPACTION_KIND;
-use caelumora_compaction::plugin::CompactionPlugin;
+use caelumora_compaction::library::CompactionLibrary;
 use caelumora_compaction::KnowledgeRestorer;
+use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::session::SessionLoop;
+use caelumora_kernel::testing::{asked_for, shown, TestKernel, World, STAFF};
+use caelumora_kernel::view::Viewer;
 use caelumora_model::actor::{ActorEvent, ActorId};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
@@ -39,19 +44,15 @@ use caelumora_model::tool::{ToolCall, ToolVisibility};
 use caelumora_model::transcript::TranscriptEntry;
 use caelumora_model::value::name::ScopedName;
 use caelumora_model::value::text::Description;
-use caelumora_runtime::actor::user::ChannelWatch;
-use caelumora_runtime::channel::ChannelLoop;
-use caelumora_runtime::session::SessionLoop;
-use caelumora_runtime::testing::{asked_for, shown, TestRuntime, World, STAFF};
-use caelumora_runtime::view::Viewer;
 use caelumora_skills::component::{
     SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
     SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,
 };
-use caelumora_skills::manager::{SkillError, SkillManager};
+use caelumora_skills::extension::{SkillError, SkillReader, SkillWriter};
+use caelumora_skills::library::SkillsLibrary;
+use caelumora_skills::manager::SkillManager;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_skills::skill::{self, Skill, SkillBody};
-use caelumora_skills::view::SkillViews;
 use serde_json::{json, Value};
 use std::fs;
 use std::sync::atomic::Ordering;
@@ -59,12 +60,12 @@ use std::sync::Arc;
 
 /// The world with skills.
 async fn world() -> World {
-    World::with(&[&TestAgents, &SkillsPlugin], |_| {}).await
+    World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |_| {}).await
 }
 
 /// The one writer of skills of `world`.
 fn manager(world: &World) -> Arc<SkillManager> {
-    Arc::clone(world.runtime.services().get::<SkillManager>().expect("a service of the plugin"))
+    Arc::clone(world.kernel.services().get::<SkillManager>().expect("a service of the plugin"))
 }
 
 /// The store of skills of `world`, as the plugin has it.
@@ -76,7 +77,7 @@ fn component(world: &World) -> SkillsComponent {
     SkillsComponent::new(
         PromptPosition::Start,
         ApprovalMode::Always,
-        PromptTexts::new(Arc::clone(world.runtime.prompts()), None),
+        PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
     )
     .unwrap()
 }
@@ -293,7 +294,7 @@ async fn an_approver_is_shown_the_skill_whole() {
     let unapproved = SkillsComponent::new(
         PromptPosition::Start,
         ApprovalMode::Never,
-        PromptTexts::new(Arc::clone(world.runtime.prompts()), None),
+        PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
     )
     .unwrap()
     .tools();
@@ -410,9 +411,11 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         measured(50, "They met."),
         measured(60, "skill release-notes"),
     ];
-    let world = World::with(&[&TestAgents, &SkillsPlugin, &CompactionPlugin], |registry| {
-        register_scripted(registry, "scripted", script)
-    })
+    let world = World::with(
+        &[&SkillsPlugin],
+        &[&TestAgents, &SkillsLibrary, &CompactionLibrary],
+        |registry| register_scripted(registry, "scripted", script),
+    )
     .await;
     let mut skilled = Personality {
         components: ComponentConfig {
@@ -429,7 +432,7 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
         ..world.personality("skilled", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut skilled)
@@ -550,7 +553,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
         .await
         .unwrap()
         .iter()
-        .map(|s| (s.name().to_string(), s.scope().clone()))
+        .map(|s| (s.name.name.to_string(), s.name.scope.clone()))
         .collect();
     assert_eq!(usable, [
         ("deploy".to_string(), Scope::UserScope { user_id: bob }),
@@ -558,7 +561,7 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
         ("review".to_string(), Scope::GlobalScope),
     ], "its owner's, the session's before the global one of a name, one shared with him; not one above the channel, not another's, not another session's");
     assert_eq!(
-        views.usable_skill_named("Notes").await.unwrap().body().as_str(),
+        views.usable_skill_named("Notes").await.unwrap().body.as_str(),
         "notes: how it is done",
         "found as names are compared"
     );
@@ -580,6 +583,56 @@ async fn an_agent_loads_the_skills_its_owner_may_use_that_flow_into_its_channel_
     );
 }
 
+/// Decision 3 of issue 516, through an act: an agent's work lists the skills its owner's roles
+/// clear it for as they are at each call. An internal skill of alice's is listed by her agent's
+/// `list_skills` while her role clears her for it, and is gone from the next call of the same turn
+/// once the role is taken.
+#[tokio::test]
+async fn an_agent_lists_the_skills_its_owners_roles_clear_it_for_as_they_are_at_each_call() {
+    let world = world().await;
+    let (session, helper) = with_an_agent(&world).await;
+    manager(&world)
+        .create(
+            &World::as_user(world.alice),
+            "handbook",
+            Scope::UserScope { user_id: world.alice },
+            "How we work",
+            "Read it first.",
+            Classification::general(Confidentiality::Internal),
+        )
+        .await
+        .expect("hers");
+    let component = component(&world);
+    let mut state = AgentChannelState::default();
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    let listed = |output: ToolOutput| output.value["skills"].as_array().unwrap().len();
+
+    let before = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
+    assert_eq!(listed(before), 1, "cleared for it by her role");
+    world.take_roles(world.alice).await;
+    let after = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
+    assert_eq!(listed(after), 0, "not any more, at the next call");
+    drop(turn);
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Issue 516: what a work reads of skills is handed out where it reads, what it writes by only
+/// where it acts - a prompt part cannot write a skill.
+#[tokio::test]
+async fn a_skills_writer_is_handed_out_where_the_work_acts_its_reader_where_it_reads() {
+    let world = world().await;
+    let (session, helper) = with_an_agent(&world).await;
+    let mut state = AgentChannelState::default();
+    let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    assert!(turn.situation().reader::<dyn SkillReader>().await.is_some(), "read where it reads");
+    assert!(turn.situation().reader::<dyn SkillWriter>().await.is_none(), "but not written by");
+    assert!(turn.situation().has_writer::<dyn SkillWriter>().await, "though there is one");
+    assert!(turn.writer::<dyn SkillWriter>().await.is_some(), "written where it acts");
+    assert!(turn.writer::<dyn SkillReader>().await.is_none(), "a reader is no writer");
+    drop(turn);
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 // --- The seed --------------------------------------------------------------
 
 #[tokio::test]
@@ -589,8 +642,8 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
     let seed = dir.path().join("seed.yaml");
     fs::write(&seed, "skills:\n- id: 4f9a5e56-e5ea-43f9-9114-2098a6f417a9\n  name: quiz\n  description: How to run a quiz\n  body: Ask.\n  classification: { level: internal }\n").unwrap();
     let seeds = [seed];
-    world.runtime.seed(&seeds).await.unwrap();
-    world.runtime.seed(&seeds).await.expect("seeding again is no conflict");
+    world.kernel.seed(&seeds).await.unwrap();
+    world.kernel.seed(&seeds).await.expect("seeding again is no conflict");
     let skills =
         store(&world).list(&World::system(), &Query::all()).await.map(|page| page.items).unwrap();
     assert_eq!(skills.len(), 1, "once");
@@ -604,7 +657,7 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
 /// channel; and how bob's stream shows him what comes of his commands.
 async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId, ChannelWatch)
 {
-    let world = World::with(&[&TestAgents, &SkillsPlugin], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |registry| {
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
@@ -618,7 +671,7 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
         ..world.personality("skilled", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut skilled)
@@ -754,7 +807,7 @@ async fn with_a_writing_agent(
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = World::with(&[&TestAgents, &SkillsPlugin], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |registry| {
         register_scripted(registry, "writing", vec![call])
     })
     .await;
@@ -771,7 +824,7 @@ async fn with_a_writing_agent(
         ..world.personality("writing", None, &[]).await
     };
     world
-        .runtime
+        .kernel
         .entity_stores()
         .personalities
         .update(&World::system(), &mut writing)
@@ -904,10 +957,10 @@ async fn a_skill_of_a_sessions_scope_is_deleted_and_restored_with_it() {
 #[tokio::test]
 async fn a_skill_is_changed_once_more_when_it_was_written_meanwhile() {
     let (store, refusals) = ContendedStore::stores(Skill::KIND);
-    let runtime =
-        TestRuntime { store: store.clone(), plugins: vec![&SkillsPlugin], ..Default::default() }
+    let kernel =
+        TestKernel { store: store.clone(), plugins: vec![&SkillsPlugin], ..Default::default() }
             .build();
-    let manager = runtime.services().get::<SkillManager>().expect("a service of the plugin");
+    let manager = kernel.services().get::<SkillManager>().expect("a service of the plugin");
     let system = SecurityContext::system();
     let skill = manager
         .create(
@@ -937,4 +990,17 @@ async fn a_skill_is_changed_once_more_when_it_was_written_meanwhile() {
             .name,
         "release-notes"
     );
+}
+
+/// Issue 516: the library brings the component, the plugin what it reaches skills by - the library
+/// alone keeps the kernel from being built, as no plugin binds the reader of skills.
+#[test]
+fn the_library_needs_the_plugin() {
+    let built = |plugins: Vec<&dyn Plugin>| {
+        TestKernel { plugins, libraries: vec![&SkillsLibrary], ..Default::default() }.try_build()
+    };
+    let alone = built(Vec::new()).expect_err("no plugin binds the reader");
+    let message = format!("{alone:#}");
+    assert!(message.contains("SkillReader, which no plugin binds"), "{message}");
+    built(vec![&SkillsPlugin]).expect("both");
 }

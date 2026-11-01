@@ -32,8 +32,7 @@ The entity stores (`EntityStore<T>`, in `caelumora-model`) keep the long-lived d
     [Content](#content)), not in the document.
 *   **Groups**: lists of actors an access list names as one subject - a user's teams, and the
     participants of every session and channel (see [SECURITY.md](SECURITY.md#groups)).
-*   **The kinds of the plugins** (see [PLUGINS.md](PLUGINS.md)), kept like the
-    core's.
+*   **The kinds of the plugins** (see [PLUGINS.md](PLUGINS.md)), kept like the kernel's.
 
 Each kind is kept by a store of its own, `EntityStore<T>` (issue
 [323](../issues/323-kinds-enumerated-in-the-core.md)), with the same operations for every kind.
@@ -57,40 +56,40 @@ for every backend alike.
 
 A backend is made ready once, at start (`PersistenceBackend::open`, issue
 [447](../issues/447-store-seam-not-fit-for-a-database.md)): after every plugin registered, so after
-the kinds of the core and of the plugins were opened, and before anything reads or writes. A
+the kinds of the kernel and of the plugins were opened, and before anything reads or writes. A
 database connects there - by a secret, which the backend is given when it is made -, applies its
 migrations and makes what its kinds need; the memory and the JSON files need nothing. A kind opened
-later is the backend's to make ready when it is first used. `RuntimeBuilder::from_config` opens the
-backends it makes; whoever makes a runtime of stores of their own (`RuntimeBuilder::new`) opens
-them (`Persistence::open`), the backend of the states first, then that of the entities, if it is
-another instance.
+later is the backend's to make ready when it is first used. `KernelBuilder::from_config` opens the
+backends it makes; whoever makes a kernel of stores of their own (`KernelBuilder::new`) opens them
+(`Persistence::open`), the backend of the states first, then that of the entities, if it is another
+instance.
 
-What the runtime holds is one `Persistence`, the stores: made of the backend the configuration names
+What the kernel holds is one `Persistence`, the stores: made of the backend the configuration names
 under `persistence.entity_store`, the one it names under `persistence.state_store` - each a backend
-of the `Backends` like every other, the core's `memory` and `json` or a plugin's (`dyn
-PersistenceBackend`, see [CONFIGURATION.md](CONFIGURATION.md#backends)), the same type or two
+of the `Backends` like every other, the kernel's `memory` and `json` or a plugin's
+(`dyn PersistenceBackend`, see [CONFIGURATION.md](CONFIGURATION.md#backends)), the same type or two
 (`Persistence::new`; `Persistence::over` for one backend in both roles). It takes the documents from
 the first, as their kinds are opened, and the three state stores from the second when it is made,
 together - so that a backend that keeps no states fails the start, as the state store. It holds no
 policies: the store of a kind is checked by the `Policies` - the `AccessPolicy` and the
 `ConfidentialityPolicy` - given where it is opened (`Persistence::entity_store::<T>(&policies)`),
-and the runtime opens its stores by its own, those it was given (`RuntimeBuilder::new`), so that the
-policies come into the process at one place and no store of the runtime checks by others (issue
-[449](../issues/449-runtime-given-the-policies-twice.md)). Whoever opens a kind again, the core or a
-plugin, is given a store over the same storage; a kind whose name another kind has is refused. The
-stores of the core's kinds are `EntityStores` (`EntityStores::open(&persistence, &policies)`); a
+and the kernel opens its stores by its own, those it was given (`KernelBuilder::new`), so that the
+policies come into the process at one place and no store of the kernel checks by others (issue
+[449](../issues/449-runtime-given-the-policies-twice.md)). Whoever opens a kind again, the kernel or
+a plugin, is given a store over the same storage; a kind whose name another kind has is refused. The
+stores of the kernel's kinds are `EntityStores` (`EntityStores::open(&persistence, &policies)`); a
 plugin asks the builder for the store of its kind while it registers. A manager is made with
 `&EntityStores` - or the store of its kind - and keeps the stores of the kinds it uses as fields, as
 every service is held. Tests make their stores the same way, `Persistence::in_memory()` for stores
 in memory, which cannot fail, since the memory store is the three state stores itself; what a test
 writes before it runs what it tests, it writes through stores it opens by policies it names - most
-by `Policies::permitting_all()` -, while the runtime it runs checks by its own.
+by `Policies::permitting_all()` -, while the kernel it runs checks by its own.
 
 Every stored type says what it is to its store (`Stored`): its kind, `Stored::KIND`, an `EntityKind`
 named by a string (`"skill"`) that is unique among the kinds; its id - a UUID under a type of its
 kind's (`define_id!`), so that every store keys every kind alike - and the fields a query names; the
-kind of entity it lies in, `Stored::Within` - a channel in a `Session`, every other kind of the core
-in `NoEntity` -, by which its events name where it lies (issue 335, see
+kind of entity it lies in, `Stored::Within` - a channel in a `Session`, every other kind of the
+kernel in `NoEntity` -, by which its events name where it lies (issue 335, see
 [EVENTS.md](EVENTS.md#the-form-of-an-event)); and, if its kind is `Scoped`, the name that is unique
 in its scope (`Stored::unique_name`). The stores take all of it from the type they read and write:
 what is asked of the `AccessPolicy` (`ActionType::get(T::KIND, …)`), the name in errors, logs and
@@ -124,12 +123,12 @@ over one pool.
     store decides again. Laying a kind out in a form of its own - the memberships of the groups in a
     table - is issue [460](../issues/460-kinds-kept-in-one-form-in-postgres.md).
 *   **Tables made in code.** The table of a kind is made when the backend is opened at start, or
-    when a kind opened later is first used, under a lock of the kind, and entered in `kinds(name,
-    table_name, schema_version)`; one of a form this program does not know is refused. The core's
-    kinds are made as a plugin's are, since every one has one form: a change of it counts
-    `schema_version` up, and the tables of an older form are refused at start - they are deleted, as
-    stored data that is no longer read is. The migrations checked in (`sqlx`, in the crate's
-    `migrations/`) make the tables of the crate's own, `kinds` among them.
+    when a kind opened later is first used, under a lock of the kind, and entered in
+    `kinds(name, table_name, schema_version)`; one of a form this program does not know is refused.
+    The kernel's kinds are made as a plugin's are, since every one has one form: a change of it
+    counts `schema_version` up, and the tables of an older form are refused at start - they are
+    deleted, as stored data that is no longer read is. The migrations checked in (`sqlx`, in the
+    crate's `migrations/`) make the tables of the crate's own, `kinds` among them.
 *   **A connection by a secret.** The configuration names the secret that holds the URL of the
     database, a schema - its tables there, as the `search_path` of its connections - and the size
     of its pool. The secret is resolved when the backend is opened, so that a wrong one fails the
@@ -163,11 +162,11 @@ its own. Without the variable they are skipped.
 Binary content - the versions of artifacts, the attachments of messages - lies in the storages
 configured under `content`, each a `ContentStorage` (issue 282): bytes under keys, put, read and
 removed without asking anything - a backend made by the factory registered for its `type`, `local`
-the core's (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)). What lies under a key is kept whole or
-not at all. Each owner of content keeps it in a key space of its own, the first segment of its keys,
-and is the only code that writes there; who may read what a key names is that owner's to decide, by
-what the key belongs to. What one owner keeps of one thing lies under one prefix, removed with it at
-once.
+the kernel's (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)). What lies under a key is kept whole
+or not at all. Each owner of content keeps it in a key space of its own, the first segment of its
+keys, and is the only code that writes there; who may read what a key names is that owner's to
+decide, by what the key belongs to. What one owner keeps of one thing lies under one prefix, removed
+with it at once.
 
 The `ArtifactManager` keeps a version under `artifacts/<artifact>/<content>` - a `ContentId` of
 the publication's own, which the version names (`ArtifactVersion::content`), so that two
@@ -359,7 +358,7 @@ not by its time, which not every backend keeps exactly: restoring takes back wha
 of what is restored, and a restoring that fails puts the mark back as it was, so that it can be
 tried again. The mark names the caller; only that of the system itself
 (`SecurityContext::is_system`) names another, as it deletes the groups that go with a session in the
-runtime's name, by whoever deleted the session (`Validation` otherwise). What was deleted is reached
+kernel's name, by whoever deleted the session (`Validation` otherwise). What was deleted is reached
 by operations of its own, each with a permission of its own:
 
 | Operation | asks | does |
@@ -389,7 +388,7 @@ entity records it, apart from the mark of its deletion (`Stored::purging`) - del
 are two acts, each with a permission of its own -, and no restoring takes it back from then on; then
 what lies behind it is removed, then the document. The order is written once, in
 `store::purge_behind`, which every such purge goes through: a manager's in its caller's name and in
-its own errors, what goes with the holder of its scope in the runtime's name. A purge that fails
+its own errors, what goes with the holder of its scope in the kernel's name. A purge that fails
 between leaves it deleted with its purge begun, for the next purge to finish; the record holds
 across every writer of the store, as no lock in one process could. A channel is restored only
 through its running session, so the session's purge begun keeps its channels too; and nothing that
@@ -399,7 +398,7 @@ the `SessionManager`, under the lock it also starts a session with, so that a pu
 half deleted or half restored. Deleting, restoring and purging a project are serialised by the
 `ProjectManager`, under one lock per project id, since each goes through the project's sessions, its
 scope and its group. Both tables of locks by id are a `LocksById`, which keeps an id's lock only
-while somebody holds it or waits for it. What the runtime removes for good that is not marked - the
+while somebody holds it or waits for it. What the kernel removes for good that is not marked - the
 channels of a session being purged, a document whose creation failed - it marks first, in its own
 name. The state of what was deleted stays in the `StateStore` until it is purged (see
 [Deleting state](#deleting-state)).
@@ -411,7 +410,7 @@ bundles, personalities and session templates as the stores keep them, with fixed
 sections of the plugins - `skills` among them -, each seeded by the plugin that claims it
 (`SeedSection`); a section no plugin claims is an error before anything is stored. At startup both
 binaries put into the stores whatever they do not have yet, by id, as the system
-(`RuntimeManager::seed`): restarting changes nothing, and a document changed in the store stays as
+(`Kernel::seed`): restarting changes nothing, and a document changed in the store stays as
 it is. So does one that was deleted, whose id stays taken: every seeder creates through
 `seed::create_unless_taken`, which asks the store's `create` alone and takes a taken id for "there"
 (issue 457). Only a purge frees the id, and the next start seeds the document again.
@@ -612,20 +611,22 @@ from the agent's state document as the transcript is (issue 383):
 
 ### The agent state has one owner per process
 
-An agent may run in several channels and sessions at once, each with its own actor. Every one of
-them is handed the same `AgentStateHandle`, so that there is one owner of the agent's state per
-process. A turn does not hold the state: it reads a snapshot and stages changes. When it completes,
-`Turn::commit` applies the staged changes to the state as it is at that moment, under the handle's
-lock, stores it and announces `agent::STATE_CHANGED` without content. No actor thus overwrites
-another's changes, and every next turn sees them. Numbers for new memory entries are handed out by
-the handle at once, since turns in several channels may remember at the same time.
+An agent may run in several channels and sessions at once, each with its own actor. The runtime of
+every one of them (`AgentRuntime`) holds the same `AgentStateHandle`, so that there is one owner of
+the agent's state per process; an actor reads and changes the state through its runtime alone
+(`ActorRuntime::agent_state`, `reserve_memory_id`, `apply_agent_state`, issue 516). A turn does
+not hold the state: it reads a snapshot and stages changes. When it completes, `Turn::commit`
+applies the staged changes to the state as it is at that moment, under the handle's lock, stores it
+and announces `agent::STATE_CHANGED` without content. No actor thus overwrites another's changes,
+and every next turn sees them. Numbers for new memory entries are handed out by the handle at once,
+since turns in several channels may remember at the same time.
 
 ### One writer per state
 
 Every state has exactly one writer, and its puts never overlap. A store may keep only what changed
 since the state was last stored, and what changed is known of the one instance that was stored: a
 second writer would have its changes replayed onto what the first stored. A lock in the store would
-not help; the rule is the runtime's to keep:
+not help; the rule is the kernel's to keep:
 
 *   `ChannelState`: its `ChannelLoop`;
 *   `AgentChannelState`: the actor of that agent and channel;
@@ -667,12 +668,11 @@ state in every channel. It is never a side effect of the `EntityStore`.
 ## Controllers
 
 The live state of the entities of a running session is held by controllers
-(`caelumora_runtime::controller`): `SessionController`, `ChannelController`, `AgentController`,
+(`caelumora_kernel::controller`): `SessionController`, `ChannelController`, `AgentController`,
 `PersonalityController`, `UserController` and `WorkspaceController`, made by the
-`ControllerManager`. The model only defines
-the documents; keeping them live, writing them and announcing changes is the runtime's. What a
-controller changes and what its entity's manager does is in
-[ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
+`ControllerManager`. The model only defines the documents; keeping them live, writing them and
+announcing changes is the kernel's. What a controller changes and what its entity's manager does is
+in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
 
 *   **Live state.** A controller holds its entity for atomic, lock-free reads of the current value.
 *   **One writer.** A controller is the one writer of its document. It holds a write lock while it
@@ -688,13 +688,13 @@ controller changes and what its entity's manager does is in
     (`Updatable::apply`, in the model) is applied, stored with when it was changed
     (`Updatable::touch`, `updated_at` where a kind keeps it) without the entries of its access lists
     naming a group that is gone (see [SECURITY.md](SECURITY.md#access-lists)), taken over,
-    announced - to who reached the document as it was classified and as it is - and logged, once,
-    by the controller. What a controller does besides - a group that follows the participants, an
-    event of its own, the checks of a workspace, which is changed as stored rather than as live - it
-    does between the steps of a `Writing`, the change under way. A running session's and a channel's
-    loop only forward to their controller what does no more than that. The `UserController` holds no
+    announced - to who reached the document as it was classified and as it is - and logged, once, by
+    the controller. What a controller does besides - a group that follows the participants, an event
+    of its own, the checks of a workspace, which is changed as stored rather than as live - it does
+    between the steps of a `Writing`, the change under way. A running session's and a channel's loop
+    only forward to their controller what does no more than that. The `UserController` holds no
     `LiveDocument`: the user's record belongs to the system and is only kept current, and their
-    profile is created with its first change and announced as it stands, to its user and the runtime
+    profile is created with its first change and announced as it stands, to its user and the kernel
     alone. The `WorkspaceController` also holds the storage its workspace lies in and the
     confidentiality policy, which a new classification is asked of. The `PersonalityController` is
     no writer at all (issue 406): personalities are changed in the store, and it only holds the one
@@ -737,8 +737,8 @@ introduction. Only an agent's components stay as they were built, until its acto
 
 ## Several instances
 
-The server is meant to run in several instances one day
-([122](../issues/122-several-instances.md)). The runtime is cut so that this stays possible:
+The server is meant to run in several instances one day ([122](../issues/122-several-instances.md)).
+The kernel is cut so that this stays possible:
 
 *   **A session runs in exactly one instance**, with its channels, their actors and their
     controllers. Requests for a session go to the instance that runs it.

@@ -22,6 +22,19 @@ pub enum SecretError {
 
 pub type SecretResult<T> = Result<T, SecretError>;
 
+/// The secrets that may be read in one name, bound to it by the kernel (issue 516): what a
+/// component that talks to a remote system resolves its credential by, without naming the name or
+/// holding the `SecretManager`. Each read is asked of the policy (`ReadSecret`) in the name it is
+/// bound to.
+#[async_trait]
+pub trait Secrets: Send + Sync {
+    /// The secret `key`.
+    ///
+    /// # Errors
+    /// As `SecretManager::resolve`.
+    async fn resolve(&self, key: &str) -> SecretResult<String>;
+}
+
 /// A single source of secrets, tried in order by a `SecretManager`.
 ///
 /// `Ok(None)` means the key was not found in this provider and the next
@@ -47,6 +60,12 @@ impl SecretManager {
         Self { providers, access_policy }
     }
 
+    /// The secrets that may be read in the name of `context` (issue 516), each read asked of the
+    /// policy then.
+    pub fn for_context(self: &Arc<Self>, context: SecurityContext) -> SecretsFor {
+        SecretsFor { manager: Arc::clone(self), context }
+    }
+
     pub async fn resolve(&self, context: &SecurityContext, key: &str) -> SecretResult<String> {
         self.access_policy
             .require(context, ActionType::ReadSecret(key), |refused| {
@@ -66,6 +85,20 @@ impl SecretManager {
         }
 
         Err(SecretError::NotFound(key.to_string()))
+    }
+}
+
+/// The secrets of a `SecretManager` that may be read in one name (`SecretManager::for_context`).
+#[derive(Debug, Clone)]
+pub struct SecretsFor {
+    manager: Arc<SecretManager>,
+    context: SecurityContext,
+}
+
+#[async_trait]
+impl Secrets for SecretsFor {
+    async fn resolve(&self, key: &str) -> SecretResult<String> {
+        self.manager.resolve(&self.context, key).await
     }
 }
 

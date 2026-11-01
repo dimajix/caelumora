@@ -18,6 +18,10 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use caelumora_api::terminal::{
+    CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
+};
+use caelumora_kernel::controller::WorkspaceController;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::security::Grant;
 use caelumora_model::session::{ChannelId, SessionId};
@@ -30,10 +34,6 @@ use caelumora_rest_api::session::SessionSnapshot;
 use caelumora_rest_api::workspace::{
     AttachWorkspaceRequest, CommandResponse, CreateWorkspaceRequest, FileResponse, FilesQuery,
     RenameWorkspaceRequest, StorageResponse, UsesWorkspaceRequest, WorkspaceResponse,
-};
-use caelumora_runtime::controller::WorkspaceController;
-use caelumora_runtime::terminal::{
-    CommandState, FileEntry, Terminal, TerminalError, WorkspacePath,
 };
 use futures::TryStreamExt;
 use std::io::Error;
@@ -68,7 +68,7 @@ pub(super) async fn list_storages(
 ) -> Json<Vec<StorageResponse>> {
     Json(
         state
-            .runtime_manager
+            .kernel
             .workspace_manager()
             .storages()
             .map(|(name, has_shell)| StorageResponse { name: name.to_string(), has_shell })
@@ -91,7 +91,7 @@ pub(super) async fn create_workspace(
     })?;
     let classification = request.classification.unwrap_or(Classification::CHANNEL_DEFAULT);
     let made = state
-        .runtime_manager
+        .kernel
         .workspace_manager()
         .create(
             &user.security_context(),
@@ -162,8 +162,7 @@ pub(super) async fn delete_workspace(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let id = WorkspaceId(id);
-    let deleted =
-        state.runtime_manager.workspace_manager().delete(&user.security_context(), id).await?;
+    let deleted = state.kernel.workspace_manager().delete(&user.security_context(), id).await?;
     match deleted {
         true => Ok(StatusCode::NO_CONTENT),
         false => {
@@ -179,7 +178,7 @@ pub(super) async fn restore_workspace(
     user: AuthenticatedUser,
 ) -> Result<Json<WorkspaceResponse>, ApiError> {
     let id = WorkspaceId(id);
-    state.runtime_manager.workspace_manager().restore(&user.security_context(), id).await?;
+    state.kernel.workspace_manager().restore(&user.security_context(), id).await?;
     Ok(Json(owned(&state, &user, id).await?))
 }
 
@@ -191,8 +190,7 @@ pub(super) async fn purge_workspace(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let id = WorkspaceId(id);
-    let purged =
-        state.runtime_manager.workspace_manager().purge(&user.security_context(), id).await?;
+    let purged = state.kernel.workspace_manager().purge(&user.security_context(), id).await?;
     match purged {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(ApiError::not_found(
@@ -209,7 +207,7 @@ pub(super) async fn files(
     Query(query): Query<FilesQuery>,
     user: AuthenticatedUser,
 ) -> Result<Json<Vec<FileResponse>>, ApiError> {
-    list(terminal(&state, &user, WorkspaceId(id), Grant::Read).await?.as_ref(), &query.path).await
+    list(reader(&state, &user, WorkspaceId(id)).await?.as_ref(), &query.path).await
 }
 
 pub(super) async fn download_file(
@@ -217,7 +215,7 @@ pub(super) async fn download_file(
     Path((id, path)): Path<(Uuid, String)>,
     user: AuthenticatedUser,
 ) -> Result<Response, ApiError> {
-    download(terminal(&state, &user, WorkspaceId(id), Grant::Read).await?.as_ref(), &path).await
+    download(reader(&state, &user, WorkspaceId(id)).await?.as_ref(), &path).await
 }
 
 /// Writes a file of workspace `id`: whoever may change its files.
@@ -227,14 +225,7 @@ pub(super) async fn upload_file(
     user: AuthenticatedUser,
     body: Body,
 ) -> Result<StatusCode, ApiError> {
-    let limit = state.runtime_manager.workspace_manager().max_file_bytes();
-    upload(
-        terminal(&state, &user, WorkspaceId(id), Grant::Write).await?.as_ref(),
-        &path,
-        body,
-        limit,
-    )
-    .await
+    upload(terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &path, body).await
 }
 
 pub(super) async fn delete_file(
@@ -242,7 +233,7 @@ pub(super) async fn delete_file(
     Path((id, path)): Path<(Uuid, String)>,
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    remove(terminal(&state, &user, WorkspaceId(id), Grant::Write).await?.as_ref(), &path).await
+    remove(terminal(&state, &user, WorkspaceId(id)).await?.as_ref(), &path).await
 }
 
 /// Gives the workspace the access list in the body (issue 23), replacing
@@ -331,7 +322,7 @@ async fn controller(
     state: &Arc<AppState>,
     id: WorkspaceId,
 ) -> Result<Arc<WorkspaceController>, ApiError> {
-    Ok(state.runtime_manager.controller_manager().workspace_controller(id).await?)
+    Ok(state.kernel.controller_manager().workspace_controller(id).await?)
 }
 
 /// The user's workspace `id`, as they see it.
@@ -344,15 +335,22 @@ async fn owned(
     Ok(workspace.snapshot().await.into())
 }
 
-/// The terminal of workspace `id` for what `need` asks: reading its files,
-/// or changing them too (issue 23).
+/// The files of workspace `id` to read, through a terminal that reads alone (issues 23, 516).
+async fn reader(
+    state: &Arc<AppState>,
+    user: &AuthenticatedUser,
+    id: WorkspaceId,
+) -> Result<Arc<dyn TerminalReader>, ApiError> {
+    Ok(controller(state, id).await?.reader(&user.security_context()).await?)
+}
+
+/// The terminal of workspace `id`, to change its files (issue 23).
 async fn terminal(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
     id: WorkspaceId,
-    need: Grant,
 ) -> Result<Arc<dyn Terminal>, ApiError> {
-    Ok(controller(state, id).await?.terminal(&user.security_context(), need).await?)
+    Ok(controller(state, id).await?.terminal(&user.security_context()).await?)
 }
 
 /// `text` as a path inside the workspace.
@@ -360,27 +358,25 @@ fn path(text: &str) -> Result<WorkspacePath, ApiError> {
     Ok(WorkspacePath::parse(text)?)
 }
 
-async fn list(terminal: &dyn Terminal, dir: &str) -> Result<Json<Vec<FileResponse>>, ApiError> {
+async fn list(
+    terminal: &dyn TerminalReader,
+    dir: &str,
+) -> Result<Json<Vec<FileResponse>>, ApiError> {
     let entries = terminal.list(&path(dir)?).await?;
     Ok(Json(entries.into_iter().map(file_response).collect()))
 }
 
 /// The file, streamed, as an attachment under its name.
-async fn download(terminal: &dyn Terminal, file: &str) -> Result<Response, ApiError> {
+async fn download(terminal: &dyn TerminalReader, file: &str) -> Result<Response, ApiError> {
     let file = path(file)?;
     let (size, content) = terminal.read(&file).await?;
     Ok(attachment_response(size, content, file.file_name().unwrap_or("file")))
 }
 
 /// The request's body as the file, replacing what was there; `201`.
-async fn upload(
-    terminal: &dyn Terminal,
-    file: &str,
-    body: Body,
-    limit: u64,
-) -> Result<StatusCode, ApiError> {
+async fn upload(terminal: &dyn Terminal, file: &str, body: Body) -> Result<StatusCode, ApiError> {
     let content = Box::pin(body.into_data_stream().map_err(Error::other));
-    terminal.write(&path(file)?, content, limit).await?;
+    terminal.write(&path(file)?, content).await?;
     Ok(StatusCode::CREATED)
 }
 

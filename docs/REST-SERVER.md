@@ -1,9 +1,9 @@
 # REST Server
 
-`caelumora-rest-server` makes the runtime available over HTTP: a REST API, two server-sent event
-streams, and the login that guards both. It is a library; the program that serves it is
-`caelumora-app`, under `/api`, with the web UI beside it. It decides nothing itself - what a user
-may see or do is decided by the runtime, and the server maps the answers to responses. The browser
+`caelumora-rest-server` makes the kernel available over HTTP: a REST API, two server-sent event
+streams, and the login that guards both. It is a crate the program links; the program that serves it
+is `caelumora-app`, under `/api`, with the web UI beside it. It decides nothing itself - what a user
+may see or do is decided by the kernel, and the server maps the answers to responses. The browser
 frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind the permissions in
 [SECURITY.md](SECURITY.md), and its configuration (`server`, `auth`) in
 [CONFIGURATION.md](CONFIGURATION.md).
@@ -12,24 +12,24 @@ frontend built on it is described in [WEB-UI.md](WEB-UI.md), the policy behind t
 
 | File | Holds |
 |---|---|
-| `state.rs` | `AppState`: the `Auth`, the `RuntimeManager`, the `SessionManager` and the `ProjectManager` every handler reaches |
+| `state.rs` | `AppState`: the `Auth`, the `Kernel`, the `SessionManager` and the `ProjectManager` every handler reaches |
 | `auth.rs` | Login, logout, renewal, and the middleware `require_auth` and `require_stream_auth` |
 | `routes/` | The handlers, by resource, and `routes::api`, the router of all of them and of the plugins' routes |
 | `plugin.rs` | `RestPlugin`, a plugin that serves routes of its own |
 | `error.rs` | `ApiError` and the problem details it answers with; the `Json`, `Path` and `Query` extractors |
 | `sse.rs` | What both event streams have in common |
 
-The request and response types are not the server's: they lie in the crate `caelumora-rest-api`,
-one module per subject (`session`, `channel`, `workspace`, …), which depends on the model alone, so
-that a client reads them without the server (issue 323). A response is made there from the model's
-entities and snapshots, by `From` or an `of`. What only the runtime knows - the names of the places
-a message's knowledge was read in, a file of a workspace, a command of its shell - the handler puts
+The request and response types are not the server's: they lie in the crate `caelumora-rest-api`, one
+module per subject (`session`, `channel`, `workspace`, …), which depends on the model alone, so that
+a client reads them without the server (issue 323). A response is made there from the model's
+entities and snapshots, by `From` or an `of`. What only the kernel knows - the names of the places a
+message's knowledge was read in, a file of a workspace, a command of its shell - the handler puts
 into the response itself.
 
 ### The program
 
 `caelumora-app` is the composition root: its `main.rs` reads the configuration, lists the plugins
-(`plugins()`), builds the runtime with them (`RuntimeBuilder`), makes the `AppState`, and serves:
+(`plugins()`), builds the kernel with them (`KernelBuilder`), makes the `AppState`, and serves:
 
 *   the API under `/api` - `routes::api` nested there, with the routes of the plugins, every path of
     this document below it, and a path no route takes answered as a problem (`404 not_found`) like
@@ -51,19 +51,19 @@ everything it serves.
 
 A plugin that serves routes of its own (issue 323) implements `RestPlugin`, a `Plugin` with
 `routes(state)`: a `Router` built with the `AppState`, from which the plugin takes what its handlers
-need - its manager among the runtime's services - into a state of their own, so that a handler does
-not reach it through the runtime at every request. `routes::api` merges the routes of every plugin
-the program lists behind the same login as the core's (`require_auth`). A handler builds on the
-public modules of this library - `auth`, `error`, `state`, `sse` -, answers its errors as the core's
+need - its manager among the kernel's services - into a state of their own, so that a handler does
+not reach it through the kernel at every request. `routes::api` merges the routes of every plugin
+the program lists behind the same login as the kernel's (`require_auth`). A handler builds on the
+public modules of this crate - `auth`, `error`, `state`, `sse` -, answers its errors as the kernel's
 do (a plugin implements `From<…> for ApiError` for its own error types, see [Errors](#errors)), and
-its paths are the plugin's to choose, as long as no core route has them.
+its paths are the plugin's to choose, as long as no kernel route has them.
 
 ## How a handler works
 
 A handler translates; it does not decide. Every handler derives its `SecurityContext` from the
 `AuthenticatedUser` the authentication middleware put into the request.
 
-*   **It reaches a session through the runtime.** `ensure_session` opens the session for the user -
+*   **It reaches a session through the kernel.** `ensure_session` opens the session for the user -
     the running one, or loaded and started - and only if the user may read it. It tells a session
     that does not exist (`404`) from one that cannot be started (`500`, naming e.g. the broken
     component).
@@ -71,23 +71,22 @@ A handler translates; it does not decide. Every handler derives its `SecurityCon
     runs a command gets the running channel. A handler that only reads - the history, the notes,
     what an agent saw, the channel's stream - reaches the channel through the views
     (`routes::channel_view`), running or not, and starts nothing. Either way a channel the user may
-    not read is answered as absent, like one that does not exist; the runtime decides that.
+    not read is answered as absent, like one that does not exist; the kernel decides that.
 *   **It acts through the user's actor.** Writing, approving and running commands go through
     `user_actor_of`, the user's own actor in the channel. Someone who is not a participant has none
     and is refused with `403`. See [CHANNELS.md](CHANNELS.md#acting-in-a-channel).
 *   **It reads through the views.** What a client lists and offers - sessions, channels,
-    participants, `can_change`, `can_read_context` - a handler reaches through the runtime's views
-    as the user and answers with their snapshots, which `caelumora-rest-api` maps to responses. The
+    participants, `can_change`, `can_read_context` - a handler reaches through the kernel's views as
+    the user and answers with their snapshots, which `caelumora-rest-api` maps to responses. The
     server asks the `AccessPolicy` nothing itself. See [SECURITY.md](SECURITY.md#views).
 
 ## Endpoints
 
 Every path below lies under `/api`. Everything except `POST /auth/login` and `POST /auth/logout`
-requires a logged-in user. `…` stands
-for `/sessions/{id}/channels/{cid}` (or `/sessions/{id}` for the list of channels). What each
-operation does in the runtime is described with it - channels and participants in
-[CHANNELS.md](CHANNELS.md), approvals and questions in [APPROVALS.md](APPROVALS.md), commands in
-[COMMANDS.md](COMMANDS.md), notes in [MEMORY.md](MEMORY.md), the context of a message in
+requires a logged-in user. `…` stands for `/sessions/{id}/channels/{cid}` (or `/sessions/{id}` for
+the list of channels). What each operation does in the kernel is described with it - channels and
+participants in [CHANNELS.md](CHANNELS.md), approvals and questions in [APPROVALS.md](APPROVALS.md),
+commands in [COMMANDS.md](COMMANDS.md), notes in [MEMORY.md](MEMORY.md), the context of a message in
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw) - and the request and response of each in
 its handler's doc comment.
 
@@ -229,21 +228,21 @@ malformed path `invalid_path`, a malformed query string - `?limit=abc` - `400 in
 Every error answers itself, by its type and its variant, not by what the handler was doing (issue
 323): each error type that reaches a handler implements `From<…> for ApiError` in `error.rs` - or,
 for a plugin's, in the plugin - and a handler passes it on with `?`. A plugin's error reaches only
-the plugin's own handlers; to the core, a plugin answers in the core's types (see
-[PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-core-in-the-cores-types)).
+the plugin's own handlers; to the kernel, a plugin answers in the kernel's types (see
+[PLUGINS.md](PLUGINS.md#errors-a-plugin-answers-the-kernel-in-the-kernels-types)).
 
 *   **A refusal** is `403 <subject>_forbidden`, named by what was refused: the error carries the
-    runtime's `Refused` as its source, and its subject is the kind of the entity (`skill_forbidden`,
-    `session_forbidden`) or what one of the core's own actions concerns (`context_forbidden` for
+    kernel's `Refused` as its source, and its subject is the kind of the entity (`skill_forbidden`,
+    `session_forbidden`) or what one of the kernel's own actions concerns (`context_forbidden` for
     what an agent saw, `agent_forbidden` for its tools and components, `command_forbidden`, …). The
-    detail is the runtime's text. A refusal is found anywhere in an error's chain, also in an error
+    detail is the kernel's text. A refusal is found anywhere in an error's chain, also in an error
     of a type the server does not know.
 *   **What a request named and was not found** is told by the operation's own error
     (`SessionError::NotFound`, `ViewError::ChannelNotFound`, …), as `<kind>_not_found`. A
     `StoreError::NotFound` met on the way - a personality missing while a session is loaded - is a
-    server error. An operation that answers `false` where there was nothing the caller could see -
-    a deletion, a purge - is no error to the runtime; its handler answers that as
-    `<kind>_not_found` itself.
+    server error. An operation that answers `false` where there was nothing the caller could see - a
+    deletion, a purge - is no error to the kernel; its handler answers that as `<kind>_not_found`
+    itself.
 *   **A storage's failure** is answered alike whatever the storage keeps - the files of a
     workspace, an artifact's versions, the attachments of a message -: each kind carries its
     storage's error (`TerminalError`, `ContentError`), which answers itself once. Content larger
@@ -254,10 +253,10 @@ the plugin's own handlers; to the core, a plugin answers in the core's types (se
     a storage since removed from the configuration (`StorageGone`) -, `503 storage_unavailable`,
     its name for the log alone.
 *   **An `anyhow::Error`** is answered by an invalid value anywhere in its chain, then by its
-    outermost error if that is of a type the core knows, then by a name taken or a refusal anywhere
-    in the chain.
+    outermost error if that is of a type the kernel knows, then by a name taken or a refusal
+    anywhere in the chain.
 *   **A server error** is `500 internal_error` (or a code of the error type's own, such as
-    `command_failed`), and states its cause only if `caelumora_runtime::error::user_message` allows
+    `command_failed`), and states its cause only if `caelumora_kernel::error::user_message` allows
     it, otherwise pointing to the log; the full chain is logged in the request's span.
 
 How handlers produce errors is a rule of [CODING-GUIDELINES.md](CODING-GUIDELINES.md#rest-errors).
@@ -268,10 +267,10 @@ The server has two server-sent event streams:
 
 *   the **global stream**, `GET /events`, carrying `GlobalEvent`s from the event bus (see
     [EVENTS.md](EVENTS.md));
-*   a **channel's stream**, `GET /sessions/{id}/channels/{cid}/events`, carrying `Envelope`s
-    as a client is shown them (`ShownEnvelope`, issue 432): their time, their `EventContext` and
-    their event - never the `SecurityContext` they were sent in, which names the sender's owner
-    and roles and is the server's to check by alone.
+*   a **channel's stream**, `GET /sessions/{id}/channels/{cid}/events`, carrying `Envelope`s as
+    they are: their time, their `EventContext` and their event. An envelope carries no
+    `SecurityContext` (issues 432, 516): in whose name it was checked the channel built as it
+    admitted it, and no client sees it.
 
 Both are built of the same parts in `sse`: snapshot, resync on lag, and the end at the token's
 expiry. The global stream is one `sse::stream`; a channel's follows the user's actor across its

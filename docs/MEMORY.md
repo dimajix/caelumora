@@ -97,16 +97,16 @@ per personality.
     private notes, memory is the agent's own, seen by its owner in the context panel only.
 *   **Where it is recalled.** Every entry carries the label of the turn that wrote it
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)) and is recalled only where that
-    may be read. The component asks the policy (`may_copy_information`) in the context of the turn
-    it is called in - the agent's, with its owner's rights - once per channel the entries come
-    from. Under the ownership policy an entry is recalled where its classification flows into the
-    current channel's - within the session, and beyond it only where the entry's session permits
-    it. In another session an entry is recalled only where both the privacy its session had when it
-    was written and the privacy that session has now permit it, so that what was said under a
-    private policy stays private and a session made private again takes back what it let go. The
-    current privacy is looked up in the runtime's name, not along an edge the agent could follow;
-    of a session that is gone, the one kept decides, and one that cannot be looked up recalls
-    nothing.
+    may be read. The component asks the kernel (`Situation::may_copy_information`, issue 516) in the
+    context of the turn it is called in - the agent's, with its owner's rights - once per channel
+    the entries come from. Under the ownership policy an entry is recalled where its classification
+    flows into the current channel's - within the session, and beyond it only where the entry's
+    session permits it. In another session an entry is recalled only where both the privacy its
+    session had when it was written and the privacy that session has now permit it, so that what was
+    said under a private policy stays private and a session made private again takes back what it
+    let go. The current privacy is looked up in the kernel's name, not along an edge the agent could
+    follow; of a session that is gone, the one kept decides, and one that cannot be looked up
+    recalls nothing.
 *   **Changed where recalled.** Only entries recalled in a channel, or remembered in the turn, can
     be updated, forgotten or reclassified there (`reclassify_memory`, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)); the policy is asked about that one
@@ -123,9 +123,10 @@ per personality.
 
 ## Reading other channels
 
-Components read what other channels know through the views of the situation they are given
-(`Situation::session_view`, see [SECURITY.md](SECURITY.md#views)): the agent's session, its
-channels and their notes and histories, and the agent's own private notes of the other channels.
+Components read what other channels know through the readers of the situation they are given
+(`Situation::session`, a `SessionReader`, see [SECURITY.md](SECURITY.md#views)): the agent's
+session, its channels and their notes and histories, and the agent's own private notes of the other
+channels.
 
 *   **From the own channel.** The agent reads as a viewer *from a place*: its channel, the
     classification its turn began with and its session's privacy.

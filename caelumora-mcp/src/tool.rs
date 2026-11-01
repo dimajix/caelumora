@@ -2,16 +2,14 @@ use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
+use caelumora_api::component::{config_of_params, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::remote::ExpiringCache;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::question::Answers;
 use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::{SecretError, SecretManager};
-use caelumora_model::security::SecurityContext;
+use caelumora_model::secret::{SecretError, Secrets};
 use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
-use caelumora_runtime::component::{
-    config_of_params, ComponentFacets, ComponentKind, ComponentRegistry, Params,
-};
-use caelumora_runtime::remote::ExpiringCache;
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
 use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -138,7 +136,6 @@ pub struct McpToolProvider {
     /// The server's tools, and what it says of itself (`instructions`) if
     /// it does, as last discovered.
     discovered: ExpiringCache<(Vec<Tool>, Option<String>)>,
-    secret_manager: Arc<SecretManager>,
 }
 
 /// Between the component id and the remote name of a tool: an MCP tool is
@@ -147,14 +144,11 @@ const NAME_SEPARATOR: &str = "__";
 
 impl McpToolProvider {
     /// The provider of the component `descriptor_id` with `config`; its
-    /// tools are not discovered yet.
-    fn new(
-        descriptor_id: String,
-        config: McpToolConfig,
-        secret_manager: Arc<SecretManager>,
-    ) -> Self {
+    /// tools are not discovered yet. Its credential it resolves of the
+    /// secrets of whoever asks it (`Situation::secrets`, issue 516).
+    fn new(descriptor_id: String, config: McpToolConfig) -> Self {
         let discovered = ExpiringCache::new(config.refresh());
-        Self { descriptor_id, config, discovered, secret_manager }
+        Self { descriptor_id, config, discovered }
     }
 
     fn strip_prefix<'a>(&self, name: &'a str) -> ToolResult<&'a str> {
@@ -164,11 +158,10 @@ impl McpToolProvider {
     }
 
     /// The server's tools and what it says of itself, discovered in
-    /// `security` within the endpoint's timeout.
-    async fn discover(&self, security: &SecurityContext) -> McpResult<(Vec<Tool>, Option<String>)> {
+    /// the name `secrets` are bound to, within the endpoint's timeout.
+    async fn discover(&self, secrets: &dyn Secrets) -> McpResult<(Vec<Tool>, Option<String>)> {
         let discover = async {
-            let auth_header =
-                self.config.endpoint.bearer_token(&self.secret_manager, security).await?;
+            let auth_header = self.config.endpoint.bearer_token(secrets).await?;
             discover_tools(&self.descriptor_id, &self.config, auth_header).await
         };
         time::timeout(self.config.timeout(), discover).await.unwrap_or_else(|_| {
@@ -342,7 +335,8 @@ impl ToolProvider for McpToolProvider {
     /// without any, its tool set unavailable (issue 32) - and is asked again
     /// the next time.
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        match self.discovered.get(|| self.discover(situation.security_context())).await {
+        let secrets = situation.secrets();
+        match self.discovered.get(|| self.discover(&*secrets)).await {
             Ok(discovered) => Ok(discovered.0.clone()),
             Err(e) => match self.discovered.current() {
                 Some(discovered) => {
@@ -369,10 +363,10 @@ impl ToolProvider for McpToolProvider {
         turn: &mut Turn,
     ) -> ToolResult<ToolOutput> {
         let remote_name = self.strip_prefix(name)?.to_string();
-        let security_context = turn.situation().security_context().clone();
+        let secrets = turn.situation().secrets();
 
         let call_result: McpResult<Value> = async {
-            let auth_header = self.config.endpoint.bearer_token(&self.secret_manager, &security_context).await?;
+            let auth_header = self.config.endpoint.bearer_token(&*secrets).await?;
 
             let service = connect(&self.config.endpoint, auth_header).await?;
             let mut request = CallToolRequestParams::new(remote_name.clone());
@@ -405,20 +399,15 @@ impl ToolProvider for McpToolProvider {
     }
 }
 
-pub fn register(registry: &mut ComponentRegistry) {
+pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register(
-        ComponentKind::new(MCP_TOOL_KIND)
-            .params::<McpToolConfig>()
-            .provides::<dyn ToolProvider>()
-            .uses::<SecretManager>(),
-        |descriptor, context| {
+        ComponentKind::new(MCP_TOOL_KIND).params::<McpToolConfig>().provides::<dyn ToolProvider>(),
+        |descriptor, _context| {
             let config: McpToolConfig = config_of_params(&descriptor.params)?;
-            let secret_manager = Arc::clone(context.service::<SecretManager>()?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(McpToolProvider::new(
                 descriptor.id.clone(),
                 config,
-                secret_manager,
             )));
             Ok(facets)
         },
@@ -430,7 +419,6 @@ mod tests {
     use super::*;
     use caelumora_model::confidentiality::Confidentiality;
     use caelumora_model::remote::RemoteAuthConfig;
-    use caelumora_model::security::AllowAllPolicy;
     use serde_json::json;
 
     #[tokio::test]
@@ -516,9 +504,7 @@ mod tests {
             description: None,
             destination: None,
         };
-        let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        let provider =
-            McpToolProvider::new("github-mcp".to_string(), config, Arc::clone(&secret_manager));
+        let provider = McpToolProvider::new("github-mcp".to_string(), config);
 
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
@@ -531,7 +517,6 @@ mod tests {
         let cleared = McpToolProvider::new(
             "github-mcp".to_string(),
             McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() },
-            secret_manager,
         );
         assert_eq!(cleared.destination(), Some(internal));
         let configured: McpToolConfig = serde_json::from_value(
