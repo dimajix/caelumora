@@ -257,6 +257,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [419](419-approval-recorded-with-the-call.md) | done | Once a tool call was approved, nothing stored says who approved it or by which rule, so neither the chat nor the record of the turn can show it. |
 | [433](433-mcp-tools-list-changed.md) | open | An MCP server that announces a change of its tools (`notifications/tools/list_changed`) is not heard, so an agent follows the change only once its list of the server's tools expires. |
 | [512](512-comfyui-image-tool.md) | done | No tool can generate an image, and no tool can hand its model media at all: `ToolOutput` has no media and the channel refuses a tool result that carries some. |
+| [527](527-deny-on-first-decides-as-all.md) | open | `ApprovalStrategy::DenyOnFirst` and `ApprovalStrategy::All` decide every request alike - approved once all who may approve have approved, denied by the first who denies -, so that a configuration offers two names for one rule. |
 
 ## User interaction
 
