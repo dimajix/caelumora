@@ -795,7 +795,7 @@ do: permissions and approvals are untouched by it.
 `workspace_prompt_provider` describes the workspace the agent may use in its channel and names the
 instruction files at its root (`AGENTS.md`, `CLAUDE.md`) for the agent to read - by name only, so
 that the prompt does not change with their content. It lives with the tools it names, in the library
-`caelumora-workspace-tools` ([TOOLS.md](TOOLS.md#the-workspace)).
+`caelumora-tool-workspace` ([TOOLS.md](TOOLS.md#the-workspace)).
 
 ### Instructions within a turn
 

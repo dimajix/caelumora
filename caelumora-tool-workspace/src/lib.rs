@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 /// The namespace of the texts of the tools of the workspace in the prompt
 /// catalogue (issue 57).
-pub const NAMESPACE: &str = "workspace_tools";
+pub const NAMESPACE: &str = "tool_workspace";
 
 /// Their texts, added to the catalogue under `NAMESPACE` by the library.
 pub const PROMPTS: &str = include_str!("prompts.yaml");

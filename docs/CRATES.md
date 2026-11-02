@@ -32,11 +32,11 @@ flowchart TD
 
     subgraph libraries["Libraries"]
         agents["caelumora-agents"]
-        mcp["caelumora-mcp"]
         a2a["caelumora-a2a"]
-        tool_image["caelumora-tool-image"]
-        workspace_tools["caelumora-workspace-tools"]
         compaction["caelumora-compaction"]
+        tool_image["caelumora-tool-image"]
+        tool_mcp["caelumora-tool-mcp"]
+        tool_workspace["caelumora-tool-workspace"]
     end
 
     api["caelumora-api"]
@@ -63,7 +63,7 @@ flowchart TD
     plugins --> kernel
     model_comfyui & model_ollama --> model
     decision & kernel & open_terminal & rest_server & store & store_json & store_postgres --> security
-    a2a & compaction & mcp & tool_image & workspace_tools --> agents
+    a2a & compaction & tool_image & tool_mcp & tool_workspace --> agents
     libraries --> api
     libraries --> domain
     agents -. "test-support" .-> kernel
@@ -94,7 +94,9 @@ Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` w
 `caelumora-model`, `caelumora-model` `caelumora-models` and `caelumora-model-ollama`
 `caelumora-ollama`; the issues before it name them so. Until issue
 [525](../issues/525-image-models-are-a-tool-s-own.md), the backend of ComfyUI and the tool that
-generates images were one library, `caelumora-comfyui`.
+generates images were one library, `caelumora-comfyui`. Until issue
+[531](../issues/531-workspace-tools-named-apart-from-the-tools.md), `caelumora-tool-workspace` was
+named `caelumora-workspace-tools` and `caelumora-tool-mcp` `caelumora-mcp`.
 
 `caelumora-rest-client` depends on no crate of the workspace, and none on it; it is reserved for a
 client of the REST interface. `caelumora-web-ui` is no crate, but the browser frontend served by
@@ -119,6 +121,21 @@ The graph is not only what has grown, but holds rules of the design:
     plugin's service, as `caelumora-model-ollama` and `caelumora-model-comfyui` bring ones of the
     models of `caelumora-model` (issues 520, 525) -, and only the crates that are a plugin and a
     library at once, with `server`, on `caelumora-rest-server`.
+
+## How a crate is named
+
+A crate is named after its subject - `caelumora-skills`, `caelumora-compaction`,
+`caelumora-decision`, `caelumora-a2a`. Two kinds of crate are named by what they are first, then by
+their subject (issue 531): a backend of a service by the service - `caelumora-model-ollama` and
+`caelumora-model-comfyui` of the models, `caelumora-store-json` and `caelumora-store-postgres` of
+the stores -, and a library that brings an agent tools on a subject that is another's by `tool` -
+`caelumora-tool-image` on the image models, `caelumora-tool-workspace` on the kernel's workspace,
+`caelumora-tool-mcp` on MCP servers. A plugin that brings a service of its own with its manager is
+named after its subject, though it brings tools as well, which are a part of it:
+`caelumora-skills`, `caelumora-artifacts`. The name of a crate's plugin or library, and the
+namespace of its texts, is the crate's name without `caelumora-`, with `_` for `-` (`tool_image`);
+its type names the subject before the kind, then `Plugin` or `Library` (`ImageToolLibrary`,
+`OllamaModelPlugin`).
 
 ## How the graph is written
 

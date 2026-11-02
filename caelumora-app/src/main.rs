@@ -23,7 +23,6 @@ use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
-use caelumora_mcp::library::McpLibrary;
 use caelumora_model::plugin::ModelPlugin;
 use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
@@ -38,7 +37,8 @@ use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_tool_image::library::ImageToolLibrary;
-use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
+use caelumora_tool_mcp::library::McpToolLibrary;
+use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use clap::Parser;
 use std::future;
 use std::future::IntoFuture;
@@ -216,9 +216,9 @@ fn libraries() -> Vec<Box<dyn Library>> {
     vec![
         Box::new(AgentsLibrary),
         Box::new(CompactionLibrary),
-        Box::new(McpLibrary),
+        Box::new(McpToolLibrary),
         Box::new(A2aLibrary),
-        Box::new(WorkspaceToolsLibrary),
+        Box::new(WorkspaceToolLibrary),
         Box::new(ImageToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
@@ -274,7 +274,6 @@ mod tests {
     use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::seed::Seed;
     use caelumora_kernel::terminal::TerminalProvider;
-    use caelumora_mcp::tool::MCP_TOOL_KIND;
     use caelumora_model::plugin::{IMAGE, LANGUAGE, MODEL};
     use caelumora_model_ollama::client::OLLAMA_BACKEND;
     use caelumora_security::confidentiality::ConfidentialityRules;
@@ -282,6 +281,7 @@ mod tests {
     use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_skills::skill::Skill;
     use caelumora_store::Persistence;
+    use caelumora_tool_mcp::tool::MCP_TOOL_KIND;
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::path::Path;

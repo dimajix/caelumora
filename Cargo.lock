@@ -451,7 +451,6 @@ dependencies = [
  "caelumora-domain",
  "caelumora-kernel",
  "caelumora-logging",
- "caelumora-mcp",
  "caelumora-model",
  "caelumora-model-comfyui",
  "caelumora-model-ollama",
@@ -463,7 +462,8 @@ dependencies = [
  "caelumora-store-json",
  "caelumora-store-postgres",
  "caelumora-tool-image",
- "caelumora-workspace-tools",
+ "caelumora-tool-mcp",
+ "caelumora-tool-workspace",
  "clap",
  "mime_guess",
  "rust-embed",
@@ -611,29 +611,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "caelumora-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "caelumora-agents",
- "caelumora-api",
- "caelumora-domain",
- "caelumora-kernel",
- "caelumora-security",
- "caelumora-store",
- "chrono",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -890,40 +867,30 @@ dependencies = [
 ]
 
 [[package]]
-name = "caelumora-tui"
+name = "caelumora-tool-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "caelumora-a2a",
+ "async-trait",
+ "axum",
  "caelumora-agents",
  "caelumora-api",
- "caelumora-artifacts",
- "caelumora-compaction",
- "caelumora-decision",
  "caelumora-domain",
  "caelumora-kernel",
- "caelumora-logging",
- "caelumora-mcp",
- "caelumora-model",
- "caelumora-model-comfyui",
- "caelumora-model-ollama",
- "caelumora-open-terminal",
- "caelumora-skills",
- "caelumora-store-json",
- "caelumora-store-postgres",
- "caelumora-tool-image",
- "caelumora-workspace-tools",
+ "caelumora-security",
+ "caelumora-store",
  "chrono",
- "clap",
- "rustyline",
+ "rmcp",
+ "schemars",
+ "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "tracing",
- "uuid",
 ]
 
 [[package]]
-name = "caelumora-workspace-tools"
+name = "caelumora-tool-workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -941,6 +908,39 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "caelumora-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "caelumora-a2a",
+ "caelumora-agents",
+ "caelumora-api",
+ "caelumora-artifacts",
+ "caelumora-compaction",
+ "caelumora-decision",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-logging",
+ "caelumora-model",
+ "caelumora-model-comfyui",
+ "caelumora-model-ollama",
+ "caelumora-open-terminal",
+ "caelumora-skills",
+ "caelumora-store-json",
+ "caelumora-store-postgres",
+ "caelumora-tool-image",
+ "caelumora-tool-mcp",
+ "caelumora-tool-workspace",
+ "chrono",
+ "clap",
+ "rustyline",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

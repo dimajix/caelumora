@@ -7,11 +7,11 @@ use caelumora_api::library::{Library, LibraryBuilder};
 
 /// The tools of the workspace and its prompt part, as a library.
 #[derive(Debug, Default)]
-pub struct WorkspaceToolsLibrary;
+pub struct WorkspaceToolLibrary;
 
-impl Library for WorkspaceToolsLibrary {
+impl Library for WorkspaceToolLibrary {
     fn name(&self) -> &'static str {
-        "workspace_tools"
+        "tool_workspace"
     }
 
     fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {

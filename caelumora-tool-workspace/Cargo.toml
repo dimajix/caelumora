@@ -1,5 +1,5 @@
 [package]
-name = "caelumora-mcp"
+name = "caelumora-tool-workspace"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,11 +10,12 @@ caelumora-api.workspace = true
 caelumora-agents.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
-rmcp.workspace = true
+bytes.workspace = true
+futures.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["rt", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
@@ -23,10 +24,6 @@ caelumora-store.workspace = true
 caelumora-agents = { workspace = true, features = ["test-support"] }
 caelumora-kernel = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
-rmcp = { workspace = true, features = ["transport-streamable-http-server"] }
-axum.workspace = true
-schemars.workspace = true
-chrono.workspace = true
 
 [lints]
 workspace = true

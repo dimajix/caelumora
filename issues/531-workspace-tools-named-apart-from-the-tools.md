@@ -1,6 +1,6 @@
 # 531 — The crate of the workspace's tools is named apart from the crates of tools
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -47,3 +47,15 @@ After 525, so that the scheme is the one that crate set.
 
 - **2026-11-02** — Opened at the maintainer's request, in the discussion of issue
   [525](525-image-models-are-a-tool-s-own.md).
+- **2026-11-02** — Decided: a crate that brings one kind of thing for a subject that is another's,
+  and nothing else, is named by that kind first - a library that brings an agent tools
+  `caelumora-tool-…` -, while a plugin that brings a service of its own with its manager is named
+  after its subject, though it brings tools as well (`caelumora-skills`, `caelumora-artifacts`).
+  `caelumora-a2a` brings no tool but an external agent, and keeps its name; `caelumora-mcp` brings
+  nothing but the tools of MCP servers, and follows the scheme. Whether the component kinds are
+  named after their facet - `_tool` - became issue
+  [532](532-component-kinds-named-after-their-facet.md).
+- **2026-11-02** — Done. `caelumora-workspace-tools` is `caelumora-tool-workspace`, its library
+  `WorkspaceToolLibrary`, named `tool_workspace` as the namespace of its texts is;
+  `caelumora-mcp` is `caelumora-tool-mcp`, its library `McpToolLibrary`, named `tool_mcp`.
+  CRATES.md says how a crate is named and records the old names; the component kinds keep theirs.

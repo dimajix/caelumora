@@ -18,8 +18,8 @@ use caelumora_domain::tool::ToolResultStatus;
 use caelumora_domain::user::UserId;
 use caelumora_kernel::testing::World;
 use caelumora_kernel::view::Viewer;
-use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
-use caelumora_workspace_tools::terminal_tool::TERMINAL_TOOL_KIND;
+use caelumora_tool_workspace::library::WorkspaceToolLibrary;
+use caelumora_tool_workspace::terminal_tool::TERMINAL_TOOL_KIND;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +35,7 @@ async fn asked_for_a_call_on_the_workspace(
     made: &str,
     owner: fn(&World) -> UserId,
 ) -> Vec<String> {
-    let world = World::with(&[], &[&AgentsLibrary, &WorkspaceToolsLibrary], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary, &WorkspaceToolLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![calling(function, arguments)])
     })
     .await;
@@ -125,7 +125,7 @@ async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_par
 async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_channel() {
     let write =
         calling("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }));
-    let world = World::with(&[], &[&AgentsLibrary, &WorkspaceToolsLibrary], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary, &WorkspaceToolLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![write])
     })
     .await;

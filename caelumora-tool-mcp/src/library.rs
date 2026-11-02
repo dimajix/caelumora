@@ -7,11 +7,11 @@ use caelumora_api::library::{Library, LibraryBuilder};
 
 /// The tools of MCP servers, as a library.
 #[derive(Debug, Default)]
-pub struct McpLibrary;
+pub struct McpToolLibrary;
 
-impl Library for McpLibrary {
+impl Library for McpToolLibrary {
     fn name(&self) -> &'static str {
-        "mcp"
+        "tool_mcp"
     }
 
     fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {

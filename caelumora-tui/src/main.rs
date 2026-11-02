@@ -31,7 +31,6 @@ use caelumora_kernel::session::{SessionManager, SessionSpec};
 use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
-use caelumora_mcp::library::McpLibrary;
 use caelumora_model::plugin::ModelPlugin;
 use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
@@ -41,7 +40,8 @@ use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_tool_image::library::ImageToolLibrary;
-use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
+use caelumora_tool_mcp::library::McpToolLibrary;
+use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use clap::Parser;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
@@ -553,9 +553,9 @@ fn libraries() -> Vec<Box<dyn Library>> {
     vec![
         Box::new(AgentsLibrary),
         Box::new(CompactionLibrary),
-        Box::new(McpLibrary),
+        Box::new(McpToolLibrary),
         Box::new(A2aLibrary),
-        Box::new(WorkspaceToolsLibrary),
+        Box::new(WorkspaceToolLibrary),
         Box::new(ImageToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),

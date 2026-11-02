@@ -12,12 +12,12 @@ caelumora-agents.workspace = true
 caelumora-logging.workspace = true
 caelumora-skills = { workspace = true, features = ["kernel", "library"] }
 caelumora-artifacts = { workspace = true, features = ["kernel", "library"] }
-caelumora-mcp.workspace = true
+caelumora-tool-mcp.workspace = true
 caelumora-a2a.workspace = true
 caelumora-open-terminal.workspace = true
 caelumora-store-json.workspace = true
 caelumora-store-postgres.workspace = true
-caelumora-workspace-tools.workspace = true
+caelumora-tool-workspace.workspace = true
 caelumora-model.workspace = true
 caelumora-model-ollama.workspace = true
 caelumora-decision.workspace = true

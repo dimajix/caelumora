@@ -32,10 +32,10 @@ use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::testing::{asked_for, TestKernel, World};
-use caelumora_mcp::library::McpLibrary;
-use caelumora_mcp::tool::MCP_TOOL_KIND;
 use caelumora_security::{Policies, SecurityContext};
 use caelumora_store::{EntityStores, Persistence};
+use caelumora_tool_mcp::library::McpToolLibrary;
+use caelumora_tool_mcp::tool::MCP_TOOL_KIND;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
@@ -131,7 +131,8 @@ fn names(tools: &[Tool]) -> Vec<String> {
 
 /// A kernel over `store` with the library of MCP servers, as the programs build theirs.
 fn kernel(store: &Persistence) -> Arc<Kernel> {
-    TestKernel { store: store.clone(), libraries: vec![&McpLibrary], ..Default::default() }.build()
+    TestKernel { store: store.clone(), libraries: vec![&McpToolLibrary], ..Default::default() }
+        .build()
 }
 
 /// The tool provider of the one MCP tool component configured with
@@ -468,7 +469,7 @@ async fn a_server_gone_leaves_the_tools_discovered_before() {
 /// for alice's agent, asked by bob, as its turn begins.
 #[tokio::test]
 async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
-    let world = World::with(&[], &[&AgentsLibrary, &McpLibrary], |_| {}).await;
+    let world = World::with(&[], &[&AgentsLibrary, &McpToolLibrary], |_| {}).await;
     let mcp = ComponentDescriptor {
         params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "MCP_TOKEN" } } }),
         ..ComponentDescriptor::new("tools", MCP_TOOL_KIND)

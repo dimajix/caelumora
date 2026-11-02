@@ -70,8 +70,9 @@ drawn in [CRATES.md](CRATES.md):
     which keeps their content in the kernel's storages of content (issue 282) and extends the view
     of a channel with what was published in it (issue 328), and the view of a project with what lies
     in it (issue 467). See [TOOLS.md](TOOLS.md#artifacts).
-*   **`caelumora-mcp`** - the tools of MCP servers, a library that brings nothing but its component
-    kind `mcp_tool`, and with it `rmcp` (issue 325). See [TOOLS.md](TOOLS.md#mcp-servers).
+*   **`caelumora-tool-mcp`** - the tools of MCP servers, a library that brings nothing but its
+    component kind `mcp_tool`, and with it `rmcp` (issue 325). See
+    [TOOLS.md](TOOLS.md#mcp-servers).
 *   **`caelumora-compaction`** - compaction of an agent's context (issue 464), a library that brings
     the component `compaction` - an activity of the agent and `/compact` -, the strategies, with the
     facet `CompactionStrategy` and the `KnowledgeRestorer` others serve, and their texts. See
@@ -107,7 +108,7 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-store-postgres`** - the stores in Postgres (`PostgresStore`, with `sqlx`), a plugin
     that brings nothing but the backend `postgres` of the stores, which keeps the entities and the
     states (issues 03, 04). See [STORAGE.md](STORAGE.md#in-postgres).
-*   **`caelumora-workspace-tools`** - what an agent is given to work on the session's workspace, a
+*   **`caelumora-tool-workspace`** - what an agent is given to work on the session's workspace, a
     library that brings nothing but its component kinds `terminal_tool`, the workspace's files and
     its shell, and `workspace_prompt_provider`, the prompt part that names them (issue 428). See
     [TOOLS.md](TOOLS.md#the-workspace).
@@ -144,8 +145,8 @@ alone. What runs an agent or serves its facets is no plugin but a **library** of
 is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`). The agents
 are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose actors the
 channel builds (`AgentKinds`), and the kinds of their components; without it, the program is a chat
-between users. `caelumora-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
-`caelumora-compaction`, `caelumora-workspace-tools` and `caelumora-tool-image` bring component kinds
+between users. `caelumora-tool-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
+`caelumora-compaction`, `caelumora-tool-workspace` and `caelumora-tool-image` bring component kinds
 alone; they build on the agents' library, and a library that defines facets of its own for others to
 serve is built on in turn: `caelumora-skills` serves the `KnowledgeRestorer` of
 `caelumora-compaction`. A service with a manager of its own that extends the kernel - skills and

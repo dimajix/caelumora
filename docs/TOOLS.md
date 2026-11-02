@@ -196,9 +196,9 @@ transport:
 { "id": "github-mcp", "kind": "mcp_tool", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
 ```
 
-The kind lives in the library `caelumora-mcp` (issue 325), with `rmcp`, so that the kernel does not
-depend on it; `caelumora-app` and `caelumora-tui` list the library, and a personality names the kind
-as before. What such a component kind may use of the kernel is said in
+The kind lives in the library `caelumora-tool-mcp` (issue 325), with `rmcp`, so that the kernel
+does not depend on it; `caelumora-app` and `caelumora-tui` list the library, and a personality names
+the kind as before. What such a component kind may use of the kernel is said in
 [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-kernel-may-use).
 
 *   **Several servers.** Each server is an instance of its own; its tools are named
@@ -296,7 +296,7 @@ views on every call all the same, before anything is sent: a call where there is
 list does not grant, fails and says so. Which calls need approval is configured as for `mcp_tool`:
 all - the default -, none, or all but those that only read files.
 
-The kind lives in the library `caelumora-workspace-tools` (issue 428), with the prompt part that
+The kind lives in the library `caelumora-tool-workspace` (issue 428), with the prompt part that
 names its `read_file`, `workspace_prompt_provider`: the workspaces are the kernel's, what an agent
 is given to work on them is built on the terminal's public API and the agents' tools, as the tools
 of any other subject are. `caelumora-app` and `caelumora-tui` list the library, and a personality

@@ -1,5 +1,5 @@
 # The texts the tools of the workspace give a model (issue 57), namespace
-# `workspace_tools`: templates of `minijinja`, rendered by `PromptCatalogue`;
+# `tool_workspace`: templates of `minijinja`, rendered by `PromptCatalogue`;
 # the conventions are those of the agents' file
 # (`caelumora-agents/src/prompts.yaml`). Names of tools are values.
 
