@@ -8,7 +8,6 @@ use crate::query::FieldValue;
 use crate::role::RoleId;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
 use std::iter;
 
 /// Who an entity belongs to and who else may reach it - what a policy

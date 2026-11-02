@@ -60,6 +60,7 @@ pub enum Reach {
 }
 
 impl Reach {
+    /// Whether it applies everywhere within its place, in no session or channel alone.
     pub fn is_everywhere(&self) -> bool {
         *self == Reach::Everywhere
     }

@@ -1,6 +1,6 @@
 # 526 — Several modules of the domain hold many concepts in one file
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -117,3 +117,12 @@ concepts each file is to hold, not yet every item.
   `InternalActor`, and `FormerParticipant`, which the table had left unnamed), `state.rs`
   (`ChannelState`, `ChannelStateChange`), `testing.rs` (the former `pub mod testing`). The paths
   are as before.
+- **2026-11-02** — Cleanup, from the reviews of the steps: the test of what is not recorded, which
+  tests `Envelope::entry` and `ActorEvent::is_transient`, lies in `actor/envelope.rs`; the context's
+  test helper `text` is built from `make_message`; `use std::fmt::Debug;` is gone where `Debug` was
+  only derived (`privacy`, `message`, `history/filter`, `security/attributes`, `tool`); `Approver`,
+  `ApprovalStrategy` and its variants, `ApprovalRequest` and `Reach::is_everywhere` have doc
+  comments. `Pick` stays in `actor/envelope.rs`: the review proposed it for
+  `caelumora_api::transport`, but the domain returns it itself (`Personality::pick`), and the domain
+  does not link the API.
+  Done: the modules of the table are directories, and no public path changed.

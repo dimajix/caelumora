@@ -572,7 +572,9 @@ mod tests {
     use crate::agent::{AgentId, RetryRefused};
     use crate::approval::ApproverId;
     use crate::confidentiality::Classification;
+    use crate::message::testing::{id, make_message};
     use crate::message::{Message, MessageId, MessageRole};
+    use crate::question::QuestionId;
     use crate::turn::GivenUpReason;
     use crate::user::UserId;
     use crate::work::TurnId;
@@ -990,6 +992,60 @@ mod tests {
         ] {
             let kind = event.kind();
             assert!(present.concerned(user, event).is_empty(), "{kind}");
+        }
+    }
+
+    /// Issue 223: of what the history does not record, the answers to
+    /// questions are not lost on the way; the rest is transient.
+    #[test]
+    fn of_what_is_not_recorded_only_the_answers_are_kept() {
+        let turn_id = TurnId::new();
+        let message = make_message(id(1));
+        for (event, transient) in [
+            (
+                ActorEvent::QuestionAnswered {
+                    id: QuestionId::new(),
+                    agent_id: AgentId::new(),
+                    responses: Vec::new(),
+                },
+                false,
+            ),
+            (
+                ActorEvent::QuestionDeclined { id: QuestionId::new(), agent_id: AgentId::new() },
+                false,
+            ),
+            (ActorEvent::PartialMessageGenerated(message.clone()), true),
+            (ActorEvent::IntermediatePartialGenerated(message), true),
+            (ActorEvent::StateChanged(ActorState::Idle), true),
+            (ActorEvent::ResponseStarted { turn_id }, true),
+            (
+                ActorEvent::CommandStarted {
+                    command: "mark".to_string(),
+                    args: String::new(),
+                    to: ActorId::None,
+                    turn_id,
+                },
+                true,
+            ),
+            (ActorEvent::ActivityStarted { turn_id, activity: "compacting".to_string() }, true),
+            (
+                ActorEvent::PlanStepFinished {
+                    turn_id,
+                    step_index: 0,
+                    total_steps: 1,
+                    description: "first".to_string(),
+                },
+                true,
+            ),
+            (ActorEvent::WakeupRequested, true),
+            (ActorEvent::NudgeRequested { participant: ActorId::None }, true),
+        ] {
+            let kind = event.kind();
+            assert!(
+                Envelope::new(EventContext::default(), event.clone()).entry().is_none(),
+                "{kind} is not recorded"
+            );
+            assert_eq!(event.is_transient(), transient, "{kind}");
         }
     }
 }

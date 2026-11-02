@@ -15,7 +15,6 @@ use crate::confidentiality::{Classification, Visibility};
 use crate::intern::intern;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use std::fmt::Debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]

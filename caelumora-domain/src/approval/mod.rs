@@ -23,6 +23,8 @@ use std::collections::HashMap;
 
 define_id!(ApproverId);
 
+/// The approver of a channel (`ApproverActor` in the kernel): the one that puts the calls an agent
+/// waits for to those who may approve them, and decides by their answers as its `strategy` says.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Approver {
     pub id: ApproverId,
@@ -38,12 +40,17 @@ impl Approver {
 
 define_id!(ApprovalId);
 
+/// How an approver decides by the answers of those who may approve (`decide`).
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ApprovalStrategy {
+    /// Approved by the first who approves; denied once all have denied.
     #[default]
     Any,
+    /// Approved by more than half, denied by at least half.
     Majority,
+    /// Approved once all have approved; denied by the first who denies.
     All,
+    /// Denied by the first who denies; approved once all have approved.
     DenyOnFirst,
 }
 
@@ -108,6 +115,8 @@ impl ApprovalStrategy {
     }
 }
 
+/// A tool call an agent waits for, as it is put to those who may approve it: where and by whom it
+/// was made, the call itself and how it is described to them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub id: ApprovalId,
