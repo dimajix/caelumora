@@ -216,9 +216,10 @@ plugin or a library depends on:
     `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
     `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
-*   **If it talks to a remote system:** `caelumora_api::remote`, which describes its errors
-    as the kernel's are described - `describe_request_error`, `describe_chain` (issue 326) -, and
-    the `Secrets` its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
+*   **If it talks to a remote system:** its errors described as the kernel's are -
+    `caelumora_api::error::describe_request_error`, `describe_chain` (issue 326) -, what it reads
+    of its remote side kept for a time (`caelumora_api::cache::ExpiringCache`), and the `Secrets`
+    its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
     `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516).
 *   **The domain's types** of what it handles: `Tool`, `RemoteEndpoint`, `Classification`, ...
 

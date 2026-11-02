@@ -6,7 +6,7 @@
 //! registered, a configuration is planned and a graph is built is the kernel's
 //! (`caelumora_kernel::component`).
 
-use crate::remote::describe_chain;
+use crate::error::describe_chain;
 use async_trait::async_trait;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_domain::prompt_catalogue::PromptError;

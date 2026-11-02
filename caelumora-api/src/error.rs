@@ -3,7 +3,9 @@
 //! (`StorageGone`) -, and how the API's errors are told to a person (issue 02): some are written to
 //! be read by users - they name the component, the endpoint or the entity that failed, and nothing
 //! that must not be disclosed -, others, like a store backend failure, may carry file paths or
-//! other internals and belong in the log only.
+//! other internals and belong in the log only. An error's chain of causes is described as one line
+//! (`describe_chain`), a failed request's without the URL its client writes into it
+//! (`describe_request_error`, issue 188).
 
 use crate::command::CommandError;
 use crate::component::ComponentError;
@@ -200,6 +202,28 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
     } else {
         None
     }
+}
+
+/// The full chain of the causes of `error`, a failed request, without the
+/// URL that `reqwest` writes into its messages.
+pub fn describe_request_error(error: reqwest::Error) -> String {
+    describe_chain(&error.without_url())
+}
+
+/// The full chain of an error's causes as one line, e.g. "error sending
+/// request: connection refused", for errors whose own `Display` stops at
+/// the outermost layer.
+pub fn describe_chain(error: &(dyn Error + 'static)) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current: Option<&(dyn Error + 'static)> = Some(error);
+    while let Some(e) = current {
+        let text = e.to_string();
+        if !parts.iter().any(|p| p.contains(&text)) {
+            parts.push(text);
+        }
+        current = e.source();
+    }
+    parts.join(": ")
 }
 
 #[cfg(test)]

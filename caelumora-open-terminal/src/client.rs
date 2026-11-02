@@ -4,7 +4,7 @@
 //! paths inside it - and logged with the endpoint, shown without
 //! credentials.
 
-use caelumora_api::remote::describe_request_error;
+use caelumora_api::error::describe_request_error;
 use caelumora_api::terminal::{TerminalError, TerminalResult};
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_security::secret::SecretManager;

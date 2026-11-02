@@ -3,6 +3,7 @@
 //! traits, and a library links it and the domain, never the kernel.
 
 pub mod actor;
+pub mod cache;
 pub mod command;
 pub mod component;
 pub mod error;
@@ -10,7 +11,6 @@ pub mod library;
 pub mod logging;
 pub mod model;
 pub mod reader;
-pub mod remote;
 pub mod runtime;
 pub mod terminal;
 pub mod transport;

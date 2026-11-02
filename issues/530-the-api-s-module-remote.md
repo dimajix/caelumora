@@ -1,6 +1,6 @@
 # 530 — The API's module `remote` holds a cache and the description of errors
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -45,3 +45,6 @@ the module (CODING-GUIDELINES.md, PLUGINS.md) follow.
 ## History
 
 - **2026-11-02** — Opened at the maintainer's request, with the cut agreed.
+- **2026-11-02** — Done: `caelumora-api/src/remote.rs` is `cache.rs` (`ExpiringCache` and its
+  tests); `describe_chain` and `describe_request_error` are in `error.rs`, whose module docs name
+  them; the users' imports, CODING-GUIDELINES.md and PLUGINS.md follow.

@@ -8,7 +8,7 @@
 //! which ends whatever runs, someone else's prompt too.
 
 use bytes::Bytes;
-use caelumora_api::remote::describe_request_error;
+use caelumora_api::error::describe_request_error;
 use caelumora_domain::remote::RemoteEndpoint;
 use regex::Regex;
 use reqwest::{Client, Error, RequestBuilder, Response, Url};

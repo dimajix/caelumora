@@ -1,39 +1,14 @@
-//! What every component that talks to a remote system over HTTP shares besides its endpoint
-//! (`caelumora_domain::remote`): how its errors are described, without the URL a client crate
-//! writes into them (issue 188), and how what it reads of its remote side is kept (`ExpiringCache`,
-//! issue 126). Public for the component kinds outside the kernel, such as `a2a_agent` (issue 326).
+//! A value read and kept for a time, read again once it is outdated (`ExpiringCache`, issue 126):
+//! what a component reads of its remote side - the tools of an MCP server, where an A2A agent is
+//! reached.
 
 use arc_swap::ArcSwapOption;
-use reqwest::Error;
-use std::error;
 use std::fmt::{self, Debug};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
-
-/// The full chain of the causes of `error`, a failed request, without the
-/// URL that `reqwest` writes into its messages.
-pub fn describe_request_error(error: Error) -> String {
-    describe_chain(&error.without_url())
-}
-
-/// The full chain of an error's causes as one line, e.g. "error sending
-/// request: connection refused", for errors whose own `Display` stops at
-/// the outermost layer.
-pub fn describe_chain(error: &(dyn error::Error + 'static)) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut current: Option<&(dyn error::Error + 'static)> = Some(error);
-    while let Some(e) = current {
-        let text = e.to_string();
-        if !parts.iter().any(|p| p.contains(&text)) {
-            parts.push(text);
-        }
-        current = e.source();
-    }
-    parts.join(": ")
-}
 
 /// A value read from a remote side and kept for a time (issue 126): the
 /// tools of an MCP server, where an A2A agent is reached. It is read the

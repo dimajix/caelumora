@@ -7,7 +7,7 @@
 //! of 2 to 26 options, and `noul`, yes or no. Its error format is not
 //! documented, so an error is told by its status alone.
 
-use caelumora_api::remote::describe_request_error;
+use caelumora_api::error::describe_request_error;
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::secret::SecretError;
 use caelumora_security::secret::SecretManager;
