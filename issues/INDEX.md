@@ -562,6 +562,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [521](521-a-registration-made-again-replaces-the-first.md) | open | A component kind registered under a name that is taken, and a single declared again, replace the registration before without a word, so that a library registered after a plugin can change what every agent of the program is built of - its model among it. |
 | [522](522-two-crates-named-model.md) | open | The crate of the domain's data and rules is named `caelumora-model` and the plugin of the language models `caelumora-models`, so that two crates a letter apart mean two unrelated things, and "model" means the domain in one and a language model in the other. |
 | [523](523-the-model-s-store-module-is-named-after-the-stores.md) | open | The module `store` of `caelumora-model` holds what the domain says of being stored and asked for - `Stored`, `Revision`, `EntityKind`, fields, filters and pages - but its name reads as the stores of `caelumora-store`, and it holds `StoreError`, the error of the stores. |
+| [524](524-two-memberships.md) | open | `caelumora_security::Memberships`, the groups an access list names, and `caelumora_store::history::Memberships`, who took part in a channel when, share a name, although "membership" was decided to be the groups' word and a channel's the participant's. |
 
 ## Integrations
 
