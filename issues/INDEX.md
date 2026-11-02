@@ -568,6 +568,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [526](526-large-modules-of-the-domain.md) | done | Several files of `caelumora-domain` hold several concepts each in up to 1400 lines of code - the actors' events, envelopes and states in `actor.rs`, the history's entries, records and readers in `history/mod.rs`, an agent's context, its model's profile and its resolution in `context.rs` -, so that no first sentence of their module docs can name one responsibility. |
 | [528](528-session-re-exports-the-channel-s-types.md) | done | `caelumora_domain::session` re-exports `Channel`, `ChannelId`, `ChannelState` and `Participant` from `caelumora_domain::channel`, so that each of them is imported by two paths - most code by the channel's, some by the session's. |
 | [530](530-the-api-s-module-remote.md) | done | `caelumora_api::remote` holds a cache of values kept for a time (`ExpiringCache`) and how an error's chain of causes is described (`describe_chain`, `describe_request_error`) - neither of them about a remote system -, under a name that `caelumora_domain::remote`, where an endpoint is, also bears. |
+| [531](531-workspace-tools-named-apart-from-the-tools.md) | open | The library of the workspace's tools is named `caelumora-workspace-tools`, subject first and plural, while the crates that bring one kind of something are named by the kind first - `caelumora-model-ollama`, and `caelumora-tool-image` of issue 525 -, so that two crates of tools follow two schemes. |
 
 ## Integrations
 
