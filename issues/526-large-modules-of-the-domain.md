@@ -90,3 +90,8 @@ concepts each file is to hold, not yet every item.
   `ProcessingStateHolder`). `ActorDescription` lies in `mod.rs` beside `ActorId`, as who an actor
   is, not how far it is; `Rejection` with `ActorEvent::MessageRejected`, whose reason it is; `Pick`
   with the envelope. The paths are as before.
+- **2026-11-02** — Step `history` done: `history/mod.rs` (`History`, `fold`, `HistoryPage`, what is
+  read from a history and how it is changed), `entry.rs` (`HistoryEntry`), `recorded.rs`
+  (`Recorded`, `Audience`, `Recipients`), `reader.rs` (`Reader`, `Heard`, `EVERY_POSITION`), beside
+  `filter.rs`. `HistoryEntry::named_sender` and `Recorded::delivered`, private before, are
+  `pub(super)` now that their callers lie in another file of `history`. The paths are as before.
