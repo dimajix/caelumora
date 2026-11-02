@@ -14,15 +14,16 @@ use futures::stream::BoxStream;
 use std::sync::Arc;
 use tracing::debug;
 
-/// The language models the platform offers, by the names the configuration gives them (the section
-/// `plugins.model`): what builds each agent its client of one. A service the plugin offers.
+/// The language models the platform offers, by the names the configuration gives them
+/// (`plugins.model.language`): what builds each agent its client of one. A service the plugin
+/// offers.
 #[derive(Debug)]
 pub(crate) struct ModelManager {
     models: NamedBackends<dyn LanguageModelProvider>,
 }
 
 impl ModelManager {
-    /// The models `models` names, of the section `plugins.model`.
+    /// The models `models` names, of `plugins.model.language`.
     pub(crate) fn new(models: NamedBackends<dyn LanguageModelProvider>) -> Self {
         Self { models }
     }
@@ -43,7 +44,9 @@ impl ModelManager {
             .chosen(name)
             .map_err(|why| ComponentError::InvalidConfig(format!("'name' {why}")))?;
         let Some((name, model)) = chosen else {
-            return Err(ComponentError::InvalidConfig("no model is configured".to_string()));
+            return Err(ComponentError::InvalidConfig(
+                "no language model is configured".to_string(),
+            ));
         };
         Ok(LanguageModelClientFor { acting, name: name.to_string(), model: Arc::clone(model) })
     }

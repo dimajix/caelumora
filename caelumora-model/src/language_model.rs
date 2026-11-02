@@ -2,7 +2,7 @@
 //! offers, as the agent is given it - its client, which is built for this agent alone, and the
 //! profile by which its context is framed for that model.
 //!
-//! Parameters: `name`, the model of the section `plugins.model` - left out, the one there is -,
+//! Parameters: `name`, the model of `plugins.model.language` - left out, the one there is -,
 //! and how the context is framed for it: `reasoning_history`, which reasoning of earlier messages
 //! the model is given back (`never`, `current_turn` - the default - or `always`, issue 63),
 //! `system_messages`, where the model keeps system messages (`only_at_start` - the default - or
@@ -104,94 +104,32 @@ pub(crate) fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::{with_default_model, ModelPlugin, MODEL};
-    use crate::LanguageModelProvider;
-    use anyhow::Result;
-    use async_trait::async_trait;
+    use crate::plugin::LANGUAGE;
+    use crate::testing::{configuring, kernel_of, ANSWERING};
     use caelumora_api::component::{ComponentContainer, ComponentError, ComponentResult};
-    use caelumora_api::model::{unlabelled_message, ModelResult};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::config::{AppConfig, BackendConfig};
-    use caelumora_domain::message::{Message, MessageEvent};
-    use caelumora_domain::tool::Tool;
+    use caelumora_domain::message::MessageEvent;
     use caelumora_domain::type_map::TypeKey;
-    use caelumora_kernel::backend::Backends;
     use caelumora_kernel::component::BuildContext;
-    use caelumora_kernel::kernel::{Kernel, KernelBuilder};
-    use caelumora_kernel::plugin::Plugin;
-    use caelumora_kernel::testing::TestKernel;
+    use caelumora_kernel::kernel::Kernel;
     use caelumora_security::SecurityContext;
-    use futures::stream::{self, BoxStream, StreamExt};
+    use futures::stream::StreamExt;
     use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
-    /// What a model of the backend `answering` is configured with.
-    #[derive(Debug, Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct Answer {
-        answer: String,
-        #[serde(default)]
-        seeing: bool,
-    }
-
-    impl Params for Answer {}
-
-    /// A model that answers what it is configured to, whatever it is asked.
-    #[derive(Debug)]
-    struct Answering(Answer);
-
-    #[async_trait]
-    impl LanguageModelProvider for Answering {
-        async fn sees_images(&self) -> bool {
-            self.0.seeing
-        }
-
-        async fn chat_completion(
-            &self,
-            _: &[Message],
-            _: &[Tool],
-        ) -> BoxStream<'static, ModelResult<MessageEvent>> {
-            let answer = Message { content: Some(self.0.answer.clone()), ..unlabelled_message() };
-            stream::iter([Ok(MessageEvent::Complete(answer))]).boxed()
-        }
-    }
-
-    /// Brings the backend `answering`.
-    struct Answerers;
-
-    impl Plugin for Answerers {
-        fn name(&self) -> &'static str {
-            "answerers"
-        }
-
-        fn backends(&self, backends: &mut Backends) {
-            backends
-                .register::<dyn LanguageModelProvider, Answer, _>("answering", |_, answer, _| {
-                    Ok(Arc::new(Answering(answer)))
-                });
-        }
-
-        fn register(&self, _: &mut KernelBuilder) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    /// The kernel of a test that offers the models `models`, each answering with its `answer`, and
-    /// the variants of the texts `prompts`.
+    /// The kernel of a test that offers the language models `models`, each answering with its
+    /// `answer`, and the variants of the texts `prompts`.
     fn offering(models: &[(&str, Value)], prompts: &[(&str, PathBuf)]) -> Kernel {
         let models: BTreeMap<&str, BackendConfig> = models
             .iter()
-            .map(|(name, params)| (*name, BackendConfig::new("answering", params.clone())))
+            .map(|(name, params)| (*name, BackendConfig::new(ANSWERING, params.clone())))
             .collect();
-        let plugins = [(MODEL.to_string(), serde_json::to_value(models).unwrap())].into();
         let prompts =
             prompts.iter().map(|(variant, dir)| (variant.to_string(), dir.clone())).collect();
-        let config = AppConfig { plugins, prompts, ..AppConfig::default() };
-        TestKernel { config, plugins: vec![&ModelPlugin, &Answerers], ..Default::default() }
-            .try_build()
-            .unwrap()
+        kernel_of(AppConfig { prompts, ..configuring(json!({ LANGUAGE: models })) }).unwrap()
     }
 
     /// The components of `kernel` an agent's model is made of - built of the kind `language_model`
@@ -267,7 +205,7 @@ mod tests {
 
         let none = offering(&[], &[]);
         let refused = model_of(&none, json!({})).await.unwrap_err().to_string();
-        assert!(refused.contains("no model is configured"), "{refused}");
+        assert!(refused.contains("no language model is configured"), "{refused}");
     }
 
     /// Issue 57: the model is given the variant of the texts its component names, and a component
@@ -316,25 +254,5 @@ mod tests {
         let container =
             registry.build(&ComponentConfig::default(), &facets, &context).await.unwrap();
         assert_eq!(answer_of(&container).await.as_deref(), Some("the one"));
-    }
-
-    /// Issue 520: a program's model is configured where the section names none, and only there.
-    #[test]
-    fn a_default_model_fills_a_section_that_names_none() {
-        let local = || BackendConfig::new("local", Value::Null);
-        let filled = with_default_model(AppConfig::default(), "local", local());
-        assert_eq!(filled.plugins[MODEL], json!({ "local": { "type": "local" } }));
-        let kept =
-            with_default_model(filled.clone(), "other", BackendConfig::new("other", Value::Null));
-        assert_eq!(kept.plugins, filled.plugins, "one configured is kept");
-        let empty =
-            AppConfig { plugins: [(MODEL.to_string(), json!({}))].into(), ..AppConfig::default() };
-        assert_eq!(with_default_model(empty, "local", local()).plugins, filled.plugins);
-        let wrong = AppConfig {
-            plugins: [(MODEL.to_string(), json!("gemma"))].into(),
-            ..AppConfig::default()
-        };
-        let left = with_default_model(wrong.clone(), "local", local());
-        assert_eq!(left.plugins, wrong.plugins, "for the plugin to refuse");
     }
 }

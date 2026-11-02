@@ -274,7 +274,7 @@ mod tests {
     use caelumora_kernel::seed::Seed;
     use caelumora_kernel::terminal::TerminalProvider;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
-    use caelumora_model::plugin::MODEL;
+    use caelumora_model::plugin::{LANGUAGE, MODEL};
     use caelumora_model_ollama::client::OLLAMA_BACKEND;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::secret::SecretManager;
@@ -379,7 +379,7 @@ mod tests {
     fn without_a_model_configured_the_program_offers_one_served_by_ollama() {
         let config = with_local_model(AppConfig::default());
         let models: BTreeMap<String, BackendConfig> =
-            serde_json::from_value(config.plugins[MODEL].clone()).unwrap();
+            serde_json::from_value(config.plugins[MODEL][LANGUAGE].clone()).unwrap();
         let backends: Vec<&str> = models.values().map(|model| model.kind.as_str()).collect();
         assert_eq!(backends, [OLLAMA_BACKEND]);
         kernel_of(&Persistence::in_memory(), &config);

@@ -1,5 +1,5 @@
 //! The backend `ollama`: a language model the platform offers, served by Ollama (issues 130, 520),
-//! one entry of the section `plugins.model`, which an agent's model names (the kind
+//! one entry of `plugins.model.language`, which an agent's model names (the kind
 //! `language_model` of `caelumora-model`) - or the one a program offers where none is configured
 //! (`plugin::with_local_model`, issue 329): a local Ollama and the model `DEFAULT_MODEL`.
 //!
@@ -728,7 +728,7 @@ fn default_model() -> String {
     DEFAULT_MODEL.to_string()
 }
 
-/// A model served by Ollama, as the section `plugins.model` names it.
+/// A model served by Ollama, as `plugins.model.language` names it.
 #[derive(Debug, Clone)]
 pub(crate) struct OllamaModel {
     http: Client,

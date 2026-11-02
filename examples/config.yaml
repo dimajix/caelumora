@@ -112,12 +112,13 @@ plugins:
   # (`keep_in`).
   artifacts:
     max_bytes: 52428800
-  # The language models the platform offers (issue 520), each by its name and
-  # a backend: `ollama` of the plugin caelumora-model-ollama. Without this section
-  # the program offers one: the Ollama server at 127.0.0.1:11434 and the model
-  # gemma4:26b (issue 329). Here that model, with the size of its context set,
-  # as docs/LLM-MODELS.md recommends, so that it is not cut off at Ollama's
-  # default. Further parameters, with their defaults:
+  # The models the platform offers (issue 520), by their kind: the language
+  # models under `language`, each by its name and a backend - `ollama` of the
+  # plugin caelumora-model-ollama. Without them the program offers one: the
+  # Ollama server at 127.0.0.1:11434 and the model gemma4:26b (issue 329).
+  # Here that model, with the size of its context set, as docs/LLM-MODELS.md
+  # recommends, so that it is not cut off at Ollama's default. Further
+  # parameters, with their defaults:
   #      endpoint:
   #        url: "http://127.0.0.1:11434"
   #      tokenizer: the model itself - for a model of Ollama's cloud, which
@@ -125,10 +126,11 @@ plugins:
   #      think: Ollama's default for the model
   #      vision: asked of the server
   model:
-    gemma:
-      type: ollama
-      model: "gemma4:26b"
-      context_size: 65536
+    language:
+      gemma:
+        type: ollama
+        model: "gemma4:26b"
+        context_size: 65536
 
 # The sections of the libraries of the agent side (issue 516), each claimed
 # by the library of its name.
@@ -189,11 +191,11 @@ users:
 # such facet it provides - the model's client and its profile, built once for
 # both. Without this section the built-in defaults are used: for the model, the
 # kind `language_model` of caelumora-model, which talks to the one model of
-# `plugins.model` - among several, a component of it names one (`name`). Here
-# how the context is framed for that model, as docs/LLM-MODELS.md recommends
-# for it: senders marked in XML, which it attributes best. Further parameters,
-# with their defaults:
-#      name: the one model of `plugins.model`
+# `plugins.model.language` - among several, a component of it names one
+# (`name`). Here how the context is framed for that model, as
+# docs/LLM-MODELS.md recommends for it: senders marked in XML, which it
+# attributes best. Further parameters, with their defaults:
+#      name: the one model of `plugins.model.language`
 #      reasoning_history: current_turn
 #      system_messages: only_at_start
 #      message_times: true

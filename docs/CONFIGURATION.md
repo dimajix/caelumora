@@ -55,7 +55,7 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
 | `plugins.artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
-| `plugins.model` | The section of the plugin `caelumora-model` (issue 520): the language models the platform offers, each a [backend](#backends) by its name - see [The model](#the-model). | none - the program offers one |
+| `plugins.model` | The section of the plugin `caelumora-model` (issue 520): the models the platform offers by their kind - the language models under `language` -, each a [backend](#backends) by its name - see [The model](#the-model). | none - the program offers one |
 | `libraries.comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LanguageModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults - for the model, the kind `language_model` ([The model](#the-model)) |
@@ -158,20 +158,22 @@ ComfyUI's template of that name.
 ## The model
 
 The language models the platform offers are a plugin's, `caelumora-model` (issue 520): its section
-`plugins.model` names each by its name and a [backend](#backends), and every call of one passes the
-plugin. Without the section, the program offers one - `caelumora-app` and `caelumora-tui` a local
-Ollama with the defaults of the backend `ollama`, of the plugin `caelumora-model-ollama` (issue
-329); the kernel names no model. There is no environment variable for it.
+`plugins.model` holds the models by their kind, and under `language` names each language model by
+its name and a [backend](#backends); every call of one passes the plugin. Without a language model
+configured, the program offers one - `caelumora-app` and `caelumora-tui` a local Ollama with the
+defaults of the backend `ollama`, of the plugin `caelumora-model-ollama` (issue 329); the kernel
+names no model. There is no environment variable for it.
 
 ```yaml
 plugins:
   model:
-    gemma:
-      type: ollama
-      endpoint:
-        url: "http://127.0.0.1:11434"
-      model: "gemma4:26b"
-      context_size: 65536
+    language:
+      gemma:
+        type: ollama
+        endpoint:
+          url: "http://127.0.0.1:11434"
+        model: "gemma4:26b"
+        context_size: 65536
 ```
 
 | Parameter of `ollama` | Meaning | Default |
@@ -215,7 +217,7 @@ component_defaults:
 
 | Parameter of `language_model` | Meaning | Default |
 |---|---|---|
-| `name` | The model of `plugins.model`; one not configured keeps the agent from being built | the one there is - needed where there are several |
+| `name` | The model of `plugins.model.language`; one not configured keeps the agent from being built | the one there is - needed where there are several |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
 | `system_messages` | Where the model keeps system messages: `only_at_start` - any later one is given as a user message - or `anywhere` (see [AGENT-TURN.md](AGENT-TURN.md#system-messages)) | `only_at_start` |
 | `sender_format` | How the model is told who wrote a message of another participant: `none`, `prefix` or `xml` (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `prefix` |
@@ -223,10 +225,10 @@ component_defaults:
 | `message_times` | Whether the marker says when the message was written, in the session's time zone (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `true` |
 | `prompt_texts` | Which variant of the texts the model is given (see [The texts given to models](#the-texts-given-to-models)); one not configured keeps the agent from being built | the default |
 
-An unknown parameter is refused: of a model or in `component_defaults`, the kernel does not start;
-in a personality, a request that writes it is refused, and one stored before is not built: its agent
-does not start. Which values suit which model, as far as measured, is in
-[LLM-MODELS.md](LLM-MODELS.md).
+An unknown parameter is refused: of a model, in `component_defaults` or a key of `plugins.model` it
+does not know, the kernel does not start; in a personality, a request that writes it is refused, and
+one stored before is not built: its agent does not start. Which values suit which model, as far as
+measured, is in [LLM-MODELS.md](LLM-MODELS.md).
 
 A channel may choose who answers by asking a decision model (`decision_policy`, see
 [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). Only an operator configures it: in a

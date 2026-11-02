@@ -9,7 +9,7 @@ use caelumora_domain::config::{AppConfig, BackendConfig};
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_model::plugin::with_default_model;
+use caelumora_model::plugin::with_default_language_model;
 use serde_json::Value;
 
 /// The backend `ollama`, as a plugin.
@@ -30,9 +30,10 @@ impl Plugin for OllamaModelPlugin {
     }
 }
 
-/// `config`, with a model served by a local Ollama where its section `plugins.model` names none -
-/// the backend `ollama` without parameters -, for a program that makes it the model it offers
-/// (issues 329, 520).
+/// `config`, with a model served by a local Ollama where its section `plugins.model` names no
+/// language model - the backend `ollama` without parameters -, for a program that makes it the
+/// model it offers (issues 329, 520).
 pub fn with_local_model(config: AppConfig) -> AppConfig {
-    with_default_model(config, OLLAMA_BACKEND, BackendConfig::new(OLLAMA_BACKEND, Value::Null))
+    let local = BackendConfig::new(OLLAMA_BACKEND, Value::Null);
+    with_default_language_model(config, OLLAMA_BACKEND, local)
 }

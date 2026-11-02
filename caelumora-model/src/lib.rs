@@ -1,6 +1,6 @@
 //! The language models the platform offers (issue 520), as a plugin: a service whose backends other
-//! plugins bring (`LanguageModelProvider`), configured by name in the section `plugins.model`. An
-//! agent asks such a model through a client the plugin builds for it alone
+//! plugins bring (`LanguageModelProvider`), configured by name in the section `plugins.model`,
+//! under `language`. An agent asks such a model through a client the plugin builds for it alone
 //! (`ModelManager::language_client_for`), which makes each call in the agent's name as the kernel
 //! holds it at that call - the one place where what is called of the models the platform offers, by
 //! whom, can be known. A model an agent's library brings itself is the agent's affair, and passes
@@ -15,6 +15,8 @@
 mod language_model;
 mod manager;
 pub mod plugin;
+#[cfg(test)]
+mod testing;
 
 use async_trait::async_trait;
 use caelumora_api::model::ModelResult;
@@ -23,7 +25,7 @@ use caelumora_domain::tool::Tool;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
-/// A language model the platform offers: one entry of the section `plugins.model`, served by the
+/// A language model the platform offers: one entry of `plugins.model.language`, served by the
 /// backend its `type` names, which a plugin registers (`Backends::register`). It knows where and
 /// how its model is served, and decides nothing: in whose name it is asked is the kernel's.
 #[async_trait]

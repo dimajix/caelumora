@@ -86,8 +86,8 @@ drawn in [CRATES.md](CRATES.md):
     kernel. See [CONFIGURATION.md](CONFIGURATION.md#the-model).
 *   **`caelumora-model-ollama`** - language models served by Ollama, a plugin that brings nothing
     but the backend `ollama` of the models of `caelumora-model`, so that neither names a model
-    provider; the programs offer a local one where the configuration names no model (issues 329,
-    520).
+    provider; the programs offer a local one where the configuration names no language model
+    (issues 329, 520).
 *   **`caelumora-decision`** - decision models, which answer typed questions about a text with
     probabilities, reached through the `/v1/systemone` contract: a plugin that brings nothing but
     its component kind `decision_policy`, a `ResponderPolicy` that chooses who answers by what was

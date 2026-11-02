@@ -1,12 +1,12 @@
 # Language Models
 
 Which settings suit which model, as far as it was measured: those of the model, of the backend
-`ollama` in `plugins.model`, and those of how an agent's context is framed for it, of the kind
-`language_model` of `caelumora-model`. The parameters themselves are described in
+`ollama` in `plugins.model.language`, and those of how an agent's context is framed for it, of the
+kind `language_model` of `caelumora-model`. The parameters themselves are described in
 [CONFIGURATION.md](CONFIGURATION.md#the-model); the rules they set, in
 [AGENT-TURN.md](AGENT-TURN.md). `caelumora-app` and `caelumora-tui` offer a local Ollama where
-`plugins.model` names none (issue 329); the kernel names no model. What is not measured is said so:
-a setting without a measurement is the default, not a recommendation.
+`plugins.model.language` names none (issue 329); the kernel names no model. What is not measured is
+said so: a setting without a measurement is the default, not a recommendation.
 
 The measurements are in `work/sender_names/` (`RESULTS.md`, scripts and summaries); they ran
 against Ollama 0.34.2 with a temperature of 0.7 and few runs per variant - enough to tell a model
@@ -17,10 +17,11 @@ that works from one that does not, not to rank close ones.
 ```yaml
 plugins:
   model:
-    gemma:
-      type: ollama
-      model: "gemma4:26b"
-      context_size: 65536
+    language:
+      gemma:
+        type: ollama
+        model: "gemma4:26b"
+        context_size: 65536
 component_defaults:
   - id: model
     kind: language_model
@@ -54,10 +55,11 @@ cloud model is given the tokens of a local model that shares its tokenizer, name
 ```yaml
 plugins:
   model:
-    gemma-cloud:
-      type: ollama
-      model: "gemma4:cloud"
-      tokenizer: "gemma4:e2b"
+    language:
+      gemma-cloud:
+        type: ollama
+        model: "gemma4:cloud"
+        tokenizer: "gemma4:e2b"
 ```
 
 Which local model shares the tokenizer is the operator's to know; it is not checked.

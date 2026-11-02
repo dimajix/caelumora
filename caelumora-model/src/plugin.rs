@@ -8,13 +8,25 @@ use anyhow::Result;
 use caelumora_domain::config::{AppConfig, BackendConfig};
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use serde_json::Value;
+use serde::Deserialize;
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// The name of the plugin, and of its section of the configuration: the models by their names,
-/// each a backend.
+/// The name of the plugin, and of its section of the configuration: the models by their kind -
+/// `LANGUAGE` - and their names, each a backend.
 pub const MODEL: &str = "model";
+
+/// The key of the language models in the section.
+pub const LANGUAGE: &str = "language";
+
+/// The section `plugins.model`: the models the platform offers, by their kind and their names.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ModelConfig {
+    /// The language models; left out, none.
+    language: BTreeMap<String, BackendConfig>,
+}
 
 /// The models, as a plugin.
 #[derive(Debug, Default)]
@@ -26,20 +38,31 @@ impl Plugin for ModelPlugin {
     }
 
     fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
-        let configs: BTreeMap<String, BackendConfig> = kernel.config(MODEL)?;
-        let models = kernel.make_named::<dyn LanguageModelProvider>("model", &configs)?;
-        kernel.provide(Arc::new(ModelManager::new(models)));
+        let section: ModelConfig = kernel.config(MODEL)?;
+        let language =
+            kernel.make_named::<dyn LanguageModelProvider>("language model", &section.language)?;
+        kernel.provide(Arc::new(ModelManager::new(language)));
         language_model::register_all(kernel.components());
         Ok(())
     }
 }
 
-/// `config`, with `model` as the model of the name `name` where its section names none - left out,
-/// empty or null -, for a program that offers a model of its own (issues 329, 520). A section that
-/// is anything else is left as it is, for `ModelPlugin` to read or refuse.
-pub fn with_default_model(mut config: AppConfig, name: &str, model: BackendConfig) -> AppConfig {
+/// `config`, with `model` as the language model of the name `name` where its section names none -
+/// the section or its `LANGUAGE` left out, empty or null -, for a program that offers a model of
+/// its own (issues 329, 520). A section that is anything else is left as it is, for `ModelPlugin`
+/// to read or refuse.
+pub fn with_default_language_model(
+    mut config: AppConfig,
+    name: &str,
+    model: BackendConfig,
+) -> AppConfig {
     let section = config.plugins.entry(MODEL.to_string()).or_insert(Value::Null);
-    let configures_none = match section {
+    if section.is_null() {
+        *section = Value::Object(Map::new());
+    }
+    let Value::Object(kinds) = section else { return config };
+    let language = kinds.entry(LANGUAGE).or_insert(Value::Null);
+    let configures_none = match language {
         Value::Null => true,
         Value::Object(models) => models.is_empty(),
         _ => false,
@@ -47,7 +70,44 @@ pub fn with_default_model(mut config: AppConfig, name: &str, model: BackendConfi
     if configures_none {
         let models = BTreeMap::from([(name.to_string(), model)]);
         // Never fails: names to configurations of backends.
-        *section = serde_json::to_value(models).unwrap_or(Value::Null);
+        *language = serde_json::to_value(models).unwrap_or(Value::Null);
     }
     config
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{configuring, kernel_of, ANSWERING};
+    use serde_json::json;
+
+    /// Issue 520: a program's model is configured where the section names no language model, and
+    /// only there.
+    #[test]
+    fn a_default_language_model_fills_a_section_that_names_none() {
+        let local = || BackendConfig::new("local", Value::Null);
+        let filled = with_default_language_model(AppConfig::default(), "local", local());
+        assert_eq!(filled.plugins[MODEL], json!({ "language": { "local": { "type": "local" } } }));
+        let other = BackendConfig::new("other", Value::Null);
+        let kept = with_default_language_model(filled.clone(), "other", other);
+        assert_eq!(kept.plugins, filled.plugins, "one configured is kept");
+        for none in [json!(null), json!({}), json!({ "language": null }), json!({ "language": {} })]
+        {
+            let config = with_default_language_model(configuring(none.clone()), "local", local());
+            assert_eq!(config.plugins, filled.plugins, "{none}");
+        }
+        for wrong in [json!("gemma"), json!({ "language": "gemma" })] {
+            let left = with_default_language_model(configuring(wrong.clone()), "local", local());
+            assert_eq!(left.plugins, configuring(wrong).plugins, "for the plugin to refuse");
+        }
+    }
+
+    /// The section holds the models by their kind: one that names a model where a kind belongs
+    /// keeps the kernel from being built.
+    #[test]
+    fn a_section_holds_the_models_by_their_kind() {
+        let section = json!({ "gemma": { "type": ANSWERING, "answer": "ok" } });
+        let refused = kernel_of(configuring(section)).unwrap_err();
+        assert!(format!("{refused:#}").contains("unknown field `gemma`"), "{refused:#}");
+    }
 }

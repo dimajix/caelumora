@@ -107,3 +107,7 @@ issue [531](531-workspace-tools-named-apart-from-the-tools.md).
 - **2026-11-02** — Step 1 done: the language model's facet, backend trait and kind are named
   `LanguageModelClient`, `LanguageModelProvider` and `language_model`. Stored personalities and
   configurations whose components name the kind `model` have to name `language_model`.
+- **2026-11-02** — Step 2 done: `plugins.model` holds the language models under `language`, read
+  as a section that refuses a key it does not know; `with_default_model` is
+  `with_default_language_model` and fills `language`. A configuration that names its language
+  models directly under `plugins.model` has to move them under `language`.
