@@ -1,7 +1,7 @@
 # 523 — The domain's module `store` reads as the stores, and holds the error of the stores
 
-**Status:** open
-**Type:** question
+**Status:** in progress
+**Type:** refactoring
 **Priority:** low
 **Area:** Code structure
 **Summary:** The module `store` of `caelumora-model` holds what the domain says of being stored and asked for - `Stored`, `Revision`, `EntityKind`, fields, filters and pages - but its name reads as the stores of `caelumora-store`, and it holds `StoreError`, the error of the stores.
@@ -50,6 +50,45 @@ The maintainer proposed to name it `fields` and to move `StoreError` to `caelumo
 
 Recommended: split off `query`, rename the rest `stored`, and leave `StoreError` with it.
 
+## Decided
+
+Discussed with the maintainer on 2026-11-02, after issue
+[522](522-two-crates-named-model.md) renamed the crate to `caelumora-domain`; the recommendation
+above was revised:
+
+- **`fields` is not the name.** The fields of the kinds already lie with their kinds
+  (`SessionField` with `impl Filter<SessionField>` in `session.rs`, `ChannelField`, `UserField`,
+  `GroupField`, `ScopeField`); a module `fields` would hold the trait `Field` and `HistoryField`,
+  and nothing of `Stored`, `Revision` or `EntityKind`.
+- **The queries become a module of their own**, `query`: every kind has fields and every store
+  answers queries; they lay under `store` only because the stores evaluate them.
+- **The history's fields go to the history**: `HistoryField`, `KeptItem` and their filters beside
+  `Recorded` and `Reader`, as `SessionField` stands beside `Session`.
+- **The rest keeps the name `store`.** It is the pattern of `caelumora_domain::security` beside
+  `caelumora_security`: the domain's module says what a thing has to carry, the crate of its name
+  decides or keeps it. The crate's prefix tells the two apart, unlike two crate names a letter
+  apart. `stored` would break the pattern, is the only participle among the domain's modules of
+  nouns, and reads `stored::Stored` beside `chain::Stored<E>`.
+- **`StoreError` stays in the domain**, beside `Stored`: the API given to libraries names it, and
+  moving it would need an error of the API's own, a type without a responsibility of its own -
+  as `Refused` lies in `caelumora_domain::security` for the same reason.
+
+## Plan
+
+One step without behaviour change; no stored data changes.
+
+- **`query`.** `caelumora-domain/src/store/query.rs` becomes `caelumora-domain/src/query.rs`,
+  declared `pub mod query;` in the crate's root; every `store::query` becomes `query` - imports,
+  `$crate::store::query::FieldValue` in `macros.rs`, doc comments, STORAGE.md.
+- **`history::filter`.** `caelumora-domain/src/store/history.rs` becomes
+  `caelumora-domain/src/history/filter.rs`, declared `mod filter;` in `history` and re-exported
+  (`pub use filter::{HistoryField, KeptItem};`), so that they are imported as
+  `caelumora_domain::history::HistoryField`, as `caelumora_domain::session::SessionField` is.
+- **`store`.** Its module docs name what is left: what an entity is to be stored, what a journaled
+  state tells, and how a store fails; the queries and the history's fields are named where they
+  went.
+- **Tests.** None new; the build, the tests, clippy and the checks of the pre-commit hook.
+
 ## Done when
 
 - The module's name, or the names of its parts, say what they hold, decided with the maintainer.
@@ -59,3 +98,5 @@ Recommended: split off `query`, rename the rest `stored`, and leave `StoreError`
 
 - **2026-11-02** — Opened at the maintainer's request, after the discussion of the names of the
   crates (issue [522](522-two-crates-named-model.md)).
+- **2026-11-02** — Decided with the maintainer as above, and planned, on the branch
+  `issue-523-store-module`.
