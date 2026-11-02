@@ -1,6 +1,6 @@
 use crate::documents::{Document, DocumentOf, DocumentStorage};
 use crate::history::{
-    answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,
+    answer_of, page_of, seen, seen_nodes, Attendance, HistoryStore, StandingItems,
 };
 use crate::kept_chain::KeptChain;
 use crate::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
@@ -60,12 +60,12 @@ struct KeptGiven {
 }
 
 /// A history as the memory store keeps it: its chain whole, and the items
-/// and the memberships derived from it.
+/// and the attendance derived from it.
 #[derive(Debug, Default)]
 struct KeptHistory {
     chain: KeptChain<Recorded>,
     items: StandingItems,
-    memberships: Memberships,
+    attendance: Attendance,
 }
 
 impl MemoryStore {
@@ -90,7 +90,7 @@ impl MemoryStore {
             })?;
             for node in kept.chain.from(end) {
                 kept.items.take(node);
-                kept.memberships.take(node);
+                kept.attendance.take(node);
             }
             Ok::<_, StoreError>(())
         })?;
@@ -506,7 +506,7 @@ impl HistoryStore for MemoryStore {
     ) -> StoreResult<HistoryPage> {
         read_lock(&self.histories, |all| match all.get(&channel) {
             Some(kept) => {
-                let ranges = kept.memberships.of_reader(reader);
+                let ranges = kept.attendance.of_reader(reader);
                 let newest = kept
                     .items
                     .newest_before(before.unwrap_or(Position::MAX))
@@ -530,7 +530,7 @@ impl HistoryStore for MemoryStore {
     ) -> StoreResult<Option<(Position, HistoryEntry)>> {
         read_lock(&self.histories, |all| {
             match all.get(&channel).and_then(|kept| kept.items.said(id).map(|item| (kept, item))) {
-                Some((kept, item)) => seen(reader, &kept.memberships.of_reader(reader), None, item),
+                Some((kept, item)) => seen(reader, &kept.attendance.of_reader(reader), None, item),
                 None => Ok(None),
             }
         })
@@ -547,7 +547,7 @@ impl HistoryStore for MemoryStore {
                 .map(|kept| {
                     let nodes =
                         kept.chain.from(range.start).iter().take_while(|node| node.seq < range.end);
-                    seen_nodes(reader, &kept.memberships.of_reader(reader), nodes)
+                    seen_nodes(reader, &kept.attendance.of_reader(reader), nodes)
                 })
                 .unwrap_or_default()
         }))
@@ -568,20 +568,20 @@ impl HistoryStore for MemoryStore {
                         &nodes[at].entry.entry,
                         nodes[..at].iter().rev(),
                         reader,
-                        &kept.memberships.of_reader(reader),
+                        &kept.attendance.of_reader(reader),
                     ))
                 })
                 .unwrap_or_default()
         }))
     }
 
-    async fn memberships(
+    async fn attendance(
         &self,
         channel: ChannelId,
         actor: ActorId,
     ) -> StoreResult<Vec<Range<Position>>> {
         Ok(read_lock(&self.histories, |all| {
-            all.get(&channel).map(|kept| kept.memberships.of_member(actor)).unwrap_or_default()
+            all.get(&channel).map(|kept| kept.attendance.of_participant(actor)).unwrap_or_default()
         }))
     }
 
@@ -589,7 +589,7 @@ impl HistoryStore for MemoryStore {
         write_lock(&self.histories, |all| {
             if let Some(kept) = all.get_mut(&channel) {
                 kept.items = StandingItems::of(kept.chain.from(Position::START));
-                kept.memberships = Memberships::of(kept.chain.from(Position::START));
+                kept.attendance = Attendance::of(kept.chain.from(Position::START));
             }
         });
         Ok(())

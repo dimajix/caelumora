@@ -202,8 +202,8 @@ A channel is built and stored empty, and its founders join it by the one way in,
 later does (`ChannelLoop::found`, issue 420): each taken in, its actor started, and its joining
 recorded in the channel's history - its `ParticipantJoined`, in the creator's name; nothing of the
 history is shared with a founder, which is given what is said from its join on.
-So every member of a channel has its join in the history, and the history alone says who was a
-member when. Founding asks nothing beyond what anyone taken in is asked: naming the founders was
+So every participant of a channel has its join in the history, and the history alone says who
+took part when. Founding asks nothing beyond what anyone taken in is asked: naming the founders was
 creating the channel (`CreateChannel`), so changing it is not asked, and it is reachable from
 creating a channel alone - a requested one (`SessionLoop::create_channel`) and those of a template,
 whose users and agents join the channels that name them once the session is made. Each founder's
@@ -612,7 +612,7 @@ When a participant leaves, its `ParticipantLeft` says from which position on the
 nothing to it any more (`until`) - where it stopped, which may lie before the entry, since what the
 leaving actor still sends comes first (issue 262).
 
-So the history alone says who was a member when, and every read of it applies that, without the
+So the history alone says who took part when, and every read of it applies that, without the
 channel's document (issues 379, 417): what went to every member is given to whom it was one then -
 from the position shared with them, or else from their join, up to where delivery stopped (see
 [STORAGE.md](STORAGE.md#histories)) - over REST, in the snapshot, for `read_history` (see
@@ -621,7 +621,7 @@ to it while it took part, and nothing after.
 
 *   A **joining actor** reads what it was given through its inbox (issue 223, see
     [Actors and envelopes](#actors-and-envelopes)): the inbox opens behind, at where its view
-    begins, and reads the history on from there as the actor - a participant whose membership the
+    begins, and reads the history on from there as the actor - a participant whose attendance the
     join just recorded -, then what is delivered from there on. An agent takes it in as what it
     hears, and keeps what passes its perceive processors in its transcript; an actor that keeps
     nothing - a user, the approver - opens at the end, and reads its own join alone. Nothing the
@@ -653,13 +653,13 @@ one starts under the same id. An actor removed before the run loop started it is
 
 ### How others learn of it
 
-A join or a leave is announced on the event bus like every change of membership (`channel::JOINED`,
-`channel::LEFT`). In the channel itself, it is the channel's own word (issue 408):
-`ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` refuses them), told
-in the name of whoever made the change - who added or removed the participant, the participant
-itself if it joined by itself, `System` if the kernel did, as for an agent deleted or restored. The
-event is named for what happened to the participant; who made it happen is its sender. Each carries
-the participant's name as it was, so that it reads the same after a renaming.
+A join or a leave is announced on the event bus like every change of who takes part
+(`channel::JOINED`, `channel::LEFT`). In the channel itself, it is the channel's own word (issue
+408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` refuses
+them), told in the name of whoever made the change - who added or removed the participant, the
+participant itself if it joined by itself, `System` if the kernel did, as for an agent deleted or
+restored. The event is named for what happened to the participant; who made it happen is its
+sender. Each carries the participant's name as it was, so that it reads the same after a renaming.
 
 *   **Recorded where it happened.** The channel keeps it in its history
     (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what

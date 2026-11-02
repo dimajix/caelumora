@@ -6,7 +6,7 @@ use crate::chain::Position;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
-/// Every position of a history: the range of a member from its start on.
+/// Every position of a history: the range of a participant from its start on.
 pub const EVERY_POSITION: Range<Position> = Position::START..Position::MAX;
 
 /// Where a reader of a history stands in it (issue 223): `next`, the first

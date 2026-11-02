@@ -84,14 +84,14 @@ CREATE TABLE frames (
 CREATE INDEX frames_channel ON frames (channel_id);
 
 -- The histories of the channels (issue 379): the chain, its head and its
--- memberships (issue 417) - kept whole, as `Memberships` takes them in,
--- none before an entry is -,
+-- attendance (issue 417) - kept whole, as `Attendance` takes the entries
+-- in, nothing before an entry is -,
 -- and the items derived from it, each as it stands, found by the message it
 -- said.
 CREATE TABLE histories (
     channel_id text PRIMARY KEY,
     head text,
-    memberships jsonb
+    attendance jsonb
 );
 
 CREATE TABLE history_entries (

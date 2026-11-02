@@ -1,7 +1,7 @@
 //! A history as a store keeps it (issue 379): its chain, which is the truth
 //! and only appended to, and beside it the items as they stand - every
-//! message with every change since folded into it - and who was a member
-//! when (`Memberships`), both derived from the chain and rebuilt from it at
+//! message with every change since folded into it - and who took part
+//! when (`Attendance`), both derived from the chain and rebuilt from it at
 //! any time. The chain is written by the put of the state that holds it
 //! (`StateStore`); the `HistoryStore` is the read side, for whoever reads a
 //! history without holding it - always as a reader, who is given what of
@@ -43,7 +43,7 @@ pub trait HistoryStore: Debug + Send + Sync {
     /// history as it stands (issue 218), oldest first, with `earlier` set if
     /// an older item from `from` on is kept, and the digest of the history
     /// as it was read. The page counts what its reader sees; where their
-    /// view begins is the store's to know (`memberships`), `from` only
+    /// view begins is the store's to know (`attendance`), `from` only
     /// bounds a query - what is new since a reader last read. Read backwards
     /// in the cost of the page and of what it passes over.
     async fn page(
@@ -94,29 +94,29 @@ pub trait HistoryStore: Debug + Send + Sync {
     ) -> StoreResult<Vec<Message>>;
 
     /// The ranges of positions in which `actor` was given what went to
-    /// every member of the channel (`Memberships`), oldest first: none if it
+    /// every member of the channel (`Attendance`), oldest first: none if it
     /// never was one, the last open - to `Position::MAX` - while it is.
-    async fn memberships(
+    async fn attendance(
         &self,
         channel: ChannelId,
         actor: ActorId,
     ) -> StoreResult<Vec<Range<Position>>>;
 
-    /// Derives the items and the memberships anew from the chain: what
+    /// Derives the items and the attendance anew from the chain: what
     /// repairs them, and what shows that they are derived.
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()>;
 }
 
-/// Who was a member of a channel when (issue 417): each member's ranges of
-/// positions in which it was given what went to every member, oldest first,
-/// each from the `from` of the `HistoryShared` before its
+/// Who took part in a channel when (issue 417): each participant's ranges
+/// of positions in which it was given what went to every member, oldest
+/// first, each from the `from` of the `HistoryShared` before its
 /// `ParticipantJoined`, or else from its join, up to the `until` of its
 /// `ParticipantLeft`.
 /// Derived from the chain beside the items, by `take`, and rebuilt with them;
 /// kept whole beside the chain - also by a database (issue 04), which would
 /// otherwise rebuild in SQL what a share before a join gives.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct Memberships {
+pub struct Attendance {
     ranges: Vec<(ActorId, Range<Position>)>,
     /// What the `HistoryShared` before a join shared, from where.
     shared: Vec<(ActorId, Position)>,
@@ -124,15 +124,15 @@ pub struct Memberships {
     end: Position,
 }
 
-impl Memberships {
-    /// The memberships `nodes` - a chain from its start, in the order its
+impl Attendance {
+    /// The attendance that `nodes` - a chain from its start, in the order its
     /// entries were added - record.
     pub fn of<'a>(nodes: impl IntoIterator<Item = &'a Node<Recorded>>) -> Self {
-        let mut memberships = Self::default();
+        let mut attendance = Self::default();
         for node in nodes {
-            memberships.take(node);
+            attendance.take(node);
         }
-        memberships
+        attendance
     }
 
     /// Takes `node`, the next of the chain, in - once: a node before the end
@@ -146,14 +146,14 @@ impl Memberships {
         self.end = node.seq.next();
         match &node.entry.entry {
             HistoryEntry::HistoryShared { participant, from, .. } => {
-                self.shared.retain(|(member, _)| member != participant);
+                self.shared.retain(|(of, _)| of != participant);
                 self.shared.push((*participant, *from));
             }
             HistoryEntry::ParticipantJoined { participant, .. } => {
                 let from = self
                     .shared
                     .iter()
-                    .position(|(member, _)| member == participant)
+                    .position(|(of, _)| of == participant)
                     .map_or(node.seq, |at| self.shared.remove(at).1);
                 self.ranges.push((*participant, from..Position::MAX));
             }
@@ -162,7 +162,7 @@ impl Memberships {
                     .ranges
                     .iter_mut()
                     .rev()
-                    .find(|(member, range)| member == participant && range.end == Position::MAX)
+                    .find(|(of, range)| of == participant && range.end == Position::MAX)
                 {
                     range.end = (*until).max(range.start);
                 }
@@ -171,16 +171,20 @@ impl Memberships {
         }
     }
 
-    /// The ranges of `member`, oldest first.
-    pub fn of_member(&self, member: ActorId) -> Vec<Range<Position>> {
-        self.ranges.iter().filter(|(of, _)| *of == member).map(|(_, range)| range.clone()).collect()
+    /// The ranges of `participant`, oldest first.
+    pub fn of_participant(&self, participant: ActorId) -> Vec<Range<Position>> {
+        self.ranges
+            .iter()
+            .filter(|(of, _)| *of == participant)
+            .map(|(_, range)| range.clone())
+            .collect()
     }
 
     /// The ranges `reader` reads by (`Recorded::seen_by`): a participant's
     /// own; none for anyone else.
     pub fn of_reader(&self, reader: &Reader) -> Vec<Range<Position>> {
         match reader {
-            Reader::Participant(member) => self.of_member(*member),
+            Reader::Participant(participant) => self.of_participant(*participant),
             Reader::Outsider | Reader::Channel => Vec::new(),
         }
     }
@@ -291,7 +295,7 @@ impl From<StandingItems> for Vec<(Position, Recorded)> {
 }
 
 /// The item at the position `seq` as `reader`, with `ranges` as theirs
-/// (`Memberships::of_reader`), may see it, if it meets `filter`: what a
+/// (`Attendance::of_reader`), may see it, if it meets `filter`: what a
 /// store returns of an item it read.
 ///
 /// # Errors
@@ -783,7 +787,7 @@ mod tests {
         assert!(at(Filter::eq(HistoryField::Published, true)), "and whether it is published");
     }
 
-    /// Issue 417: who was a member when is read off the chain - from a
+    /// Issue 417: who took part when is read off the chain - from a
     /// share before the join, or else from the join, up to where the leave
     /// says delivery stopped -, and what went to every member is given to
     /// whom it was a member then; what went to one by name, or what one
@@ -837,10 +841,10 @@ mod tests {
         ] {
             assert!(history.enter(Recorded::new(entry, sender, audience)));
         }
-        let memberships = Memberships::of(history.all_entries());
-        let starts_and_ends = |member| {
-            memberships
-                .of_member(member)
+        let attendance = Attendance::of(history.all_entries());
+        let starts_and_ends = |participant| {
+            attendance
+                .of_participant(participant)
                 .into_iter()
                 .map(|range| (range.start.get(), range.end.get()))
                 .collect::<Vec<_>>()
@@ -849,11 +853,11 @@ mod tests {
         assert_eq!(
             starts_and_ends(bob),
             [(1, u64::MAX)],
-            "from what was shared with him, a member still"
+            "from what was shared with him, a participant still"
         );
         let seen = |reader: ActorId| -> Vec<u64> {
             let reading = Reader::Participant(reader);
-            let ranges = memberships.of_reader(&reading);
+            let ranges = attendance.of_reader(&reading);
             history
                 .all_entries()
                 .filter(|node| node.entry.seen_by(node.seq, &reading, &ranges))
@@ -871,8 +875,8 @@ mod tests {
             "what was shared with him, and since - the last his own"
         );
         assert_eq!(
-            Memberships::of(history.all_entries().chain(history.all_entries())).of_member(bob),
-            memberships.of_member(bob),
+            Attendance::of(history.all_entries().chain(history.all_entries())).of_participant(bob),
+            attendance.of_participant(bob),
             "an entry taken in twice changes nothing"
         );
     }

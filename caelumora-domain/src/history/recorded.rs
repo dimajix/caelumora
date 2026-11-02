@@ -192,7 +192,7 @@ impl Recorded {
 
     /// Whether `reader` is given anything of the entry at the position
     /// `seq` (issue 417), `ranges` being the reader's as a participant -
-    /// where it was given what went to every member (`Memberships`): the
+    /// where it was given what went to every member (`Attendance`): the
     /// channel everything; a participant what it sent, and, if anything of
     /// it is published, what went to it by name or what went to every
     /// member of its kind while it was one; an outsider what was published

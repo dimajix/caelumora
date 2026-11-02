@@ -1,9 +1,9 @@
 //! The histories of the channels (issue 379), as the Postgres store keeps
-//! them: per channel a chain in `history_entries`, its head and who was a
-//! member when (`Memberships`, issue 417) in `histories`, and the items as
+//! them: per channel a chain in `history_entries`, its head and who took part
+//! when (`Attendance`, issue 417) in `histories`, and the items as
 //! they stand in `history_items`, each as it is kept to be judged
 //! (`KeptItem`) and found by the message it said. A put writes the chain and
-//! derives the items and the memberships from what it added, in its
+//! derives the items and the attendance from what it added, in its
 //! transaction: the items it changes - every one, for a fitting - are read,
 //! taken further by the stores' rule (`StandingItems`) and written back. A
 //! page asks the database for the items its reader is given
@@ -26,7 +26,7 @@ use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::Filter;
 use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_store::history::{
-    answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,
+    answer_of, page_of, seen, seen_nodes, Attendance, HistoryStore, StandingItems,
 };
 use serde_json::Value;
 use sqlx::postgres::PgConnection;
@@ -61,7 +61,7 @@ fn item((seq, Json(kept)): ItemRow) -> (Position, Recorded) {
 }
 
 /// Writes what `history`, that of `channel` as its state holds it, added
-/// since it was stored, and derives the items and the memberships of what
+/// since it was stored, and derives the items and the attendance of what
 /// it added. Marks nothing: that is for when the transaction is committed.
 pub(crate) async fn append(
     conn: &mut PgConnection,
@@ -75,13 +75,13 @@ pub(crate) async fn append(
         return Ok(());
     }
     let mut items = StandingItems::from(changed_by(conn, &key, &name, &added).await?);
-    let mut memberships = read_memberships(conn, &key, &name).await?;
+    let mut attendance = read_attendance(conn, &key, &name).await?;
     for node in &added {
         items.take(node);
-        memberships.take(node);
+        attendance.take(node);
     }
     write_items(conn, &key, &name, items.into()).await?;
-    write_memberships(conn, &key, &name, &memberships).await
+    write_attendance(conn, &key, &name, &attendance).await
 }
 
 /// The history of `channel` from the position `from` on, as its state
@@ -166,32 +166,32 @@ async fn write_items(
     Ok(())
 }
 
-/// Who was a member when, as far as the chain was taken in; nobody, if no
+/// Who took part when, as far as the chain was taken in; nobody, if no
 /// entry was.
-async fn read_memberships(
+async fn read_attendance(
     conn: &mut PgConnection,
     key: &[String; 1],
     name: &str,
-) -> StoreResult<Memberships> {
-    let read: Option<Option<Json<Memberships>>> =
-        sqlx::query_scalar("SELECT memberships FROM histories WHERE channel_id = $1")
+) -> StoreResult<Attendance> {
+    let read: Option<Option<Json<Attendance>>> =
+        sqlx::query_scalar("SELECT attendance FROM histories WHERE channel_id = $1")
             .bind(&key[0])
             .fetch_optional(&mut *conn)
             .await
             .map_err(failed(name))?;
-    Ok(read.flatten().map(|Json(memberships)| memberships).unwrap_or_default())
+    Ok(read.flatten().map(|Json(attendance)| attendance).unwrap_or_default())
 }
 
-/// Writes `memberships` beside the head, which the chain's put wrote.
-async fn write_memberships(
+/// Writes `attendance` beside the head, which the chain's put wrote.
+async fn write_attendance(
     conn: &mut PgConnection,
     key: &[String; 1],
     name: &str,
-    memberships: &Memberships,
+    attendance: &Attendance,
 ) -> StoreResult<()> {
-    sqlx::query("UPDATE histories SET memberships = $2 WHERE channel_id = $1")
+    sqlx::query("UPDATE histories SET attendance = $2 WHERE channel_id = $1")
         .bind(&key[0])
-        .bind(Json(memberships))
+        .bind(Json(attendance))
         .execute(&mut *conn)
         .await
         .map_err(failed(name))?;
@@ -214,7 +214,7 @@ impl HistoryStore for PostgresStore {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         let head = HISTORIES.head(&mut conn, &key, &name).await?;
-        let ranges = read_memberships(&mut conn, &key, &name).await?.of_reader(reader);
+        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
         let asked = match (Filter::seen_by(reader, &ranges), filter) {
             (Some(given), Some(filter)) => Some(Filter::all_of([given, filter.clone()])),
             (given, filter) => given.or_else(|| filter.cloned()),
@@ -265,7 +265,7 @@ impl HistoryStore for PostgresStore {
         .await
         .map_err(failed(&name))?;
         let Some(found) = found else { return Ok(None) };
-        let ranges = read_memberships(&mut conn, &key, &name).await?.of_reader(reader);
+        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
         seen(reader, &ranges, None, &item(found))
     }
 
@@ -278,7 +278,7 @@ impl HistoryStore for PostgresStore {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
         let nodes = HISTORIES.nodes(&mut conn, &key, &name, range, false, None).await?;
-        let ranges = read_memberships(&mut conn, &key, &name).await?.of_reader(reader);
+        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
         Ok(seen_nodes(reader, &ranges, &nodes))
     }
 
@@ -314,21 +314,21 @@ impl HistoryStore for PostgresStore {
                 break;
             }
         }
-        let ranges = read_memberships(&mut conn, &key, &name).await?.of_reader(reader);
+        let ranges = read_attendance(&mut conn, &key, &name).await?.of_reader(reader);
         Ok(answer_of(&ended.entry.entry, &older, reader, &ranges))
     }
 
-    async fn memberships(
+    async fn attendance(
         &self,
         channel: ChannelId,
         actor: ActorId,
     ) -> StoreResult<Vec<Range<Position>>> {
         let mut conn = self.connection.acquire().await?;
         let (key, name) = key(channel);
-        Ok(read_memberships(&mut conn, &key, &name).await?.of_member(actor))
+        Ok(read_attendance(&mut conn, &key, &name).await?.of_participant(actor))
     }
 
-    /// In one transaction: the items and the memberships of the whole chain.
+    /// In one transaction: the items and the attendance of the whole chain.
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
         let mut tx = self.connection.begin().await?;
         let (key, name) = key(channel);
@@ -341,7 +341,7 @@ impl HistoryStore for PostgresStore {
             .await
             .map_err(failed(&name))?;
         write_items(&mut tx, &key, &name, StandingItems::of(&nodes).into()).await?;
-        write_memberships(&mut tx, &key, &name, &Memberships::of(&nodes)).await?;
+        write_attendance(&mut tx, &key, &name, &Attendance::of(&nodes)).await?;
         tx.commit().await.map_err(failed(&name))
     }
 }

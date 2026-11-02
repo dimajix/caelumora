@@ -773,11 +773,15 @@ mod tests {
         })
         .await
         .expect("recorded");
-        let from =
-            channel.memberships(other).await.first().map(|range| range.start).expect("a member");
+        let from = channel
+            .attendance(other)
+            .await
+            .first()
+            .map(|range| range.start)
+            .expect("a participant");
         assert!(from > Position::START, "from the last message");
         assert_eq!(
-            channel.memberships(ctx.initiator_id).await.first().map(|range| range.start),
+            channel.attendance(ctx.initiator_id).await.first().map(|range| range.start),
             Some(Position::START),
             "all of it: a founder"
         );

@@ -1513,11 +1513,11 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         "nothing that went to every member to who never was one"
     );
     assert_eq!(
-        histories.memberships(key, other).await.unwrap(),
+        histories.attendance(key, other).await.unwrap(),
         vec![EVERY_POSITION],
-        "a member from what was shared, and still"
+        "a participant from what was shared, and still"
     );
-    assert!(histories.memberships(key, stranger).await.unwrap().is_empty());
+    assert!(histories.attendance(key, stranger).await.unwrap().is_empty());
     let last = |page: HistoryPage| {
         page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>()
     };

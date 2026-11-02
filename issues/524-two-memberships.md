@@ -1,6 +1,6 @@
 # 524 — Two types are named `Memberships`: the groups' and a channel's participants'
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -48,3 +48,11 @@ Recommended: rename the history's, to `Attendance` - the name of its own keeps i
 
 - **2026-11-02** — Opened at the maintainer's request, from the finding of issue
   [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md).
+- **2026-11-02** — Done: the history's `Memberships` is `Attendance` (`caelumora_store::history`),
+  `of_member` is `of_participant`, `HistoryStore::memberships` is `HistoryStore::attendance`; what
+  stores keep of it is named alike - `attendance.json` beside a history of the JSON files, the
+  column `histories.attendance` in Postgres, changed in its migration `0002_states.sql`. Doc
+  comments and the documents speak of a channel's attendance where they said membership. The
+  stored histories of the JSON files and the Postgres schema are to be deleted. Left for later: that
+  what went to all of a channel's participants is still what went to "every member" - in
+  `Recipients::members`, its doc comments and the documents.

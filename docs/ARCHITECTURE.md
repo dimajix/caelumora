@@ -503,7 +503,7 @@ The design repeats a few decisions; new code follows them.
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to
     and what a newcomer was given of it are fixed when they arise and stored, so a later change of
-    scheme, name or membership cannot rewrite the past.
+    scheme, name or attendance cannot rewrite the past.
 
 ## Documents
 

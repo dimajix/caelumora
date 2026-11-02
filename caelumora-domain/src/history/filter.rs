@@ -141,7 +141,7 @@ impl Filter<HistoryField> {
         }
     }
 
-    /// What `reader`, with `ranges` as theirs (`Memberships::of_reader`),
+    /// What `reader`, with `ranges` as theirs (`Attendance::of_reader`),
     /// is given of a history (issue 451): the rule of `Recorded::seen_by`
     /// as a condition over an item as it is kept (`KeptItem`), which a
     /// database adds to the `WHERE` of a page; no condition for the channel,

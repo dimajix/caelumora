@@ -320,10 +320,10 @@ impl ChannelView {
     }
 
     /// The position from which on the viewer sees the history (issues 46,
-    /// 417): where the first range of their membership begins - all of it,
-    /// `0`, unless they joined later and were given less, or never were a
-    /// member. An agent reads as itself, not as the owner it acts for: its
-    /// own membership counts, not the owner's. What a page holds is the
+    /// 417): where the first range of their attendance begins - all of it,
+    /// `0`, unless they joined later and were given less, or never took
+    /// part. An agent reads as itself, not as the owner it acts for: its
+    /// own attendance counts, not the owner's. What a page holds is the
     /// store's to decide by every range; this says where it begins.
     ///
     /// # Errors
@@ -332,7 +332,7 @@ impl ChannelView {
         let ranges = self
             .views()
             .histories()
-            .memberships(self.channel.id, self.reader())
+            .attendance(self.channel.id, self.reader())
             .await
             .map_err(|e| self.failed_reading(e))?;
         Ok(ranges.first().map_or(Position::START, |range| range.start))

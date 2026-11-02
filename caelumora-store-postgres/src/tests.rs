@@ -35,7 +35,7 @@ use caelumora_kernel::secret::env::EnvSecretProvider;
 use caelumora_security::secret::SecretManager;
 use caelumora_security::{Admission, AllowAllPolicy, OwnershipPolicy, Policies, SecurityContext};
 use caelumora_store::documents::Document;
-use caelumora_store::history::Memberships;
+use caelumora_store::history::Attendance;
 use caelumora_store::memory::MemoryStore;
 use caelumora_store::{suite, EntityStores, Persistence, Presence};
 use chrono::Utc;
@@ -469,7 +469,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
         state.history.all_entries().filter(|node| node.entry.entry.is_item()).count()
     };
     let pool = database.connection.pool().await.unwrap();
-    let memberships = Memberships::of(state.history.all_entries());
+    let attendance = Attendance::of(state.history.all_entries());
     for reader in [
         Reader::Channel,
         Reader::Outsider,
@@ -478,7 +478,7 @@ async fn the_database_gives_a_reader_what_the_model_gives_them() {
         Reader::Participant(agent),
         Reader::Participant(approver),
     ] {
-        let ranges = memberships.of_reader(&reader);
+        let ranges = attendance.of_reader(&reader);
         let given: Vec<i64> = state
             .history
             .all_entries()

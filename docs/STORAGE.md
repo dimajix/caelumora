@@ -447,7 +447,7 @@ against an update of the entity.
     a node is merged only at the position it has, or at the one after the last if it is new. A
     position is a type of its own, `chain::Position` - its place in the order entries were added,
     across every branch, written as its number -, and so is everything that addresses entries by
-    one: a page and its cursor, a delivery, a mark of what was read, a member's range, where a
+    one: a page and its cursor, a delivery, a mark of what was read, a participant's range, where a
     window begins.
 *   A small part - the processing state, the turn under way, the tokens the agent's calls used, an
     external agent's open tasks and the classifications it was given, where an agent stands in its
@@ -491,9 +491,9 @@ participant (issue 417), and is kept apart from the channel state's document (is
     message with every change since folded into it by the one rule of folding
     (`HistoryEntry::fold_into`), the marks of turns, steps, commands, activities, compactions and
     of who joined or left -
-    each at the position of the entry that added it (`StandingItems`). So is who was a member
-    when (`Memberships`): each member's ranges of positions, from the `from` of the `HistoryShared`
-    before its `ParticipantJoined`, or else from its join, up to the `until` of its
+    each at the position of the entry that added it (`StandingItems`). So is who took part
+    when (`Attendance`): each participant's ranges of positions, from the `from` of the
+    `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the `until` of its
     `ParticipantLeft` - where the channel stopped delivering to it. Both are derived entry by entry
     as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store suite
     checks that the items equal the chain folded, and what each reader is given.
@@ -522,7 +522,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
     message, what an agent saw -, the checks before a change, an actor's inbox that fell behind, the
     tool that reads another channel. The answer of a turn, what its end carried as it was delivered,
     is read from the messages of the turn said before its end (`HistoryStore::answer`). Where a
-    participant's view begins is the start of their first range (`HistoryStore::memberships`). A
+    participant's view begins is the start of their first range (`HistoryStore::attendance`). A
     page is addressed by the position (`seq`) of its oldest item; a client passes it back without
     computing with it.
 *   **The holder keeps a window.** The channel loop holds the history from `history_from` on, a
@@ -534,7 +534,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
 *   **The `JsonFileStore`** keeps a history in `<key>.history/` beside its state's snapshot: the
     chain in segments of 256 positions (`chain-<from>.json`) and `head.json` - the head and where
     the chain ends -, written after the segments; the items likewise (`items-<from>.json`), the
-    memberships (`memberships.json`) and `items-head.json` - up to where both are derived -,
+    attendance (`attendance.json`) and `items-head.json` - up to where both are derived -,
     written after them. Entries a crash
     left past the head's end are not there; items behind the chain are derived anew when the
     history is next loaded or appended to. A message is found by scanning the items backwards, and
@@ -542,7 +542,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
 *   **In Postgres** ([04](../issues/04-postgres-state-store.md)) a history is the chain in
     `history_entries`, the items in `history_items(channel_id, seq, message_id, item)` - each as it
     is kept to be judged (`KeptItem`), found by the message it said through an index -, and the head
-    and the memberships in `histories`, the memberships whole, as `jsonb`. The put of the channel's
+    and the attendance in `histories`, the attendance whole, as `jsonb`. The put of the channel's
     state reads the items the entries it adds change - every one for a fitting -, takes them further
     as `StandingItems` does and writes them back. A page reads the items backwards in batches,
     asking the database for those its reader is given (`Filter::seen_by`, issue

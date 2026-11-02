@@ -89,17 +89,18 @@ impl ChannelLoop {
         })
     }
 
-    /// The position from which on `participant`, a member before - an
+    /// The position from which on `participant`, a participant before - an
     /// agent restored, which rested in the channel (issue 314) -, is given
-    /// the history as it takes part again: where its last membership began,
-    /// as when it joined (issue 417); all of it if it never was one.
+    /// the history as it takes part again: where its last range of
+    /// attendance began, as when it joined (issue 417); all of it if it
+    /// never took part.
     ///
     /// # Errors
     /// If the store cannot be read.
     pub(crate) async fn rejoining_from(&self, participant: ActorId) -> StoreResult<Position> {
         Ok(self
             .history_store
-            .memberships(self.id, participant)
+            .attendance(self.id, participant)
             .await?
             .last()
             .map_or(Position::START, |range| range.start))
