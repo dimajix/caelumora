@@ -6,13 +6,11 @@ use super::ContextItem;
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
 use crate::content::ContentRef;
-use crate::digest::Digest;
 use crate::mention::handle_of;
-use crate::message::{Message, MessageId, MessageRole};
+use crate::message::{Message, MessageRole};
 use crate::prompt_catalogue::{
     context, PromptCatalogue, PromptError, PromptTexts, PromptVariant, KERNEL,
 };
-use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::value::time_zone::TimeZone;
 use serde::{Deserialize, Serialize};
 use std::iter;
@@ -207,34 +205,6 @@ impl ModelProfile {
         (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
-    /// What a receiver that keeps its own conversation - the remote agent
-    /// of an external agent - is given of the active path of `transcript`,
-    /// for `agent`: its messages as they stand (`Transcript::messages`) and,
-    /// where someone joined or left the channel, what it is told of that
-    /// (issue 408), worded by `texts`, each as `given` makes it.
-    ///
-    /// # Errors
-    /// `PromptError` if the text of a notice cannot be had.
-    pub fn given_messages(
-        &self,
-        texts: &PromptTexts,
-        transcript: &Transcript,
-        agent: ActorId,
-        time_zone: TimeZone,
-    ) -> Result<Vec<Message>, PromptError> {
-        let mut given = Vec::new();
-        for (node, message) in as_they_stand(transcript.entries()) {
-            let message = match message {
-                Some(message) => Some(message),
-                None => {
-                    participant_notice(texts, &node.entry, &node.digest, agent, self.sender_style)?
-                }
-            };
-            given.extend(message.map(|message| self.given(message, agent, false, time_zone)));
-        }
-        Ok(given)
-    }
-
     /// What the model is to be told of how the messages of others are framed
     /// (`frame`) - their senders, and when they were written -, worded by
     /// `texts` (`kernel.framing`); `None` if they are not (issues 135, 424).
@@ -368,50 +338,6 @@ fn with_note(text: String, note: String) -> String {
 /// nothing more - escaping more hides typos in code from the model (RESULTS.md, 7).
 fn attribute(text: &str) -> String {
     text.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
-}
-
-/// What the model of `agent` is told of `entry`, whose digest is `digest`, if someone joined or
-/// left the channel (issue 408): who, and who made them, named in `style` as the senders of
-/// messages are - the agent itself as "you" -, worded by `texts` (`kernel.participant_joined`,
-/// `…_left`). A fixed text of the kernel's, marked as the channel's notice, so that it reads as no
-/// participant's, given as a system message where the model keeps one
-/// (`ModelProfile::place_system_messages`); its id is the entry's, so that it is the same each time
-/// it is resolved. `None` for any other entry.
-pub(super) fn participant_notice(
-    texts: &PromptTexts,
-    entry: &TranscriptEntry,
-    digest: &Digest,
-    agent: ActorId,
-    style: SenderStyle,
-) -> Result<Option<Message>, PromptError> {
-    let (key, participant, name, by, by_name, at) = match entry {
-        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, at } => {
-            ("participant_joined", participant, name, by, by_name, at)
-        }
-        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, at } => {
-            ("participant_left", participant, name, by, by_name, at)
-        }
-        _ => return Ok(None),
-    };
-    let text = texts.render(
-        &format!("{KERNEL}.{key}"),
-        context! {
-            participant => style.of(name),
-            you => *participant == agent,
-            by => style.of(by_name),
-            by_you => *by == agent,
-            by_self => by == participant,
-            by_system => *by == ActorId::System,
-        },
-    )?;
-    Ok(Some(Message {
-        id: MessageId(digest.as_uuid()),
-        timestamp: *at,
-        role: MessageRole::System,
-        content: Some(text),
-        sender_id: ActorId::System,
-        ..Message::new(Classification::PUBLIC)
-    }))
 }
 
 #[cfg(test)]

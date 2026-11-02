@@ -764,9 +764,10 @@ is given to the model as the channel's notice - "Channel notice: @alice added @b
 "... joined", "... left", "... was removed", the agent itself as "you" - named in the `sender_style`
 of its profile and unmarked by any participant, as a system message where the model keeps one
 (`SystemMessages`), else as a user message. The ContextResolver words it, so that the transcript
-keeps what happened rather than words; an external agent's remote agent is given the same
-(`ModelProfile::given_messages`). With `changes_only`, the roster is told again as a whole when it
-changed, without an account of its own of what changed: that is the notices' (issue 410).
+keeps what happened rather than words; an external agent's remote agent is given the same notices,
+kept as system messages (`ContextResolver::given_messages`). With `changes_only`, the roster is told
+again as a whole when it changed, without an account of its own of what changed: that is the
+notices' (issue 410).
 
 ### The channel's language
 
@@ -849,7 +850,9 @@ What the model is given is not stored; it is resolved from what is (`caelumora_d
     question about a message go through it: the turn against the active branch, the texts and the
     tool sets the agent's state holds (`ContextResolver::of`), a question about an older message
     against the path, the texts and the tool sets its reference names, loaded from the store
-    (`ContextResolver::on_path`).
+    (`ContextResolver::on_path`). An external agent's remote agent is given the transcript's
+    messages through it as well, each framed as the profile says
+    (`ContextResolver::given_messages`).
 
 What the model was given and what is recorded as given are the same reference, resolved by one
 implementation, and therefore cannot diverge.

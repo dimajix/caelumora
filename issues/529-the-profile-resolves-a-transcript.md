@@ -1,6 +1,6 @@
 # 529 — The model's profile resolves a transcript beside the context's resolver
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Context and knowledge
@@ -68,3 +68,9 @@ messages, if wanted, as a change of its own.
 - **2026-11-02** — Opened at the maintainer's request, from the review of the step `context` of
   issue [526](526-large-modules-of-the-domain.md), after looking at whether the two resolutions
   differ.
+- **2026-11-02** — Done: `ContextResolver::given_messages(profile, agent, time_zone)` takes the
+  place of `ModelProfile::given_messages`, the texts taken from the profile itself and the
+  transcript read through the resolver's source (`TranscriptSource::entries`), so that it serves a
+  path loaded from the store as well; `participant_notice` is private to `resolver.rs`,
+  `profile.rs` imports no transcript, and the test lies beside the method. What a remote agent is
+  given is unchanged: its system messages are still not placed.

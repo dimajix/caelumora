@@ -1,9 +1,9 @@
-//! How a reference to a context is resolved into what the model is given (issues 47, 387,
-//! `ContextResolver`): from the transcript and the prompt texts, for the next call as for a message
-//! produced earlier.
+//! How an agent's data in a channel is resolved into what a receiver is given (issues 47, 387,
+//! `ContextResolver`): the context a reference names, for its model's next call as for a message
+//! produced earlier, and the transcript's messages for a remote agent that keeps its own
+//! conversation.
 
-use super::profile::participant_notice;
-use super::{ContextItem, ContextRef};
+use super::{ContextItem, ContextRef, ModelProfile, SenderStyle};
 use crate::actor::ActorId;
 use crate::agent::AgentChannelState;
 use crate::chain::Node;
@@ -15,6 +15,7 @@ use crate::prompt_catalogue::{context, PromptCatalogue, PromptError, PromptTexts
 use crate::tool::ToolSet;
 use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
+use crate::value::time_zone::TimeZone;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -32,11 +33,13 @@ pub struct ResolvedContext {
     pub tool_sets: Vec<ToolSet>,
 }
 
-/// Resolves references against an agent's data in a channel - its
-/// transcript, the texts of its prompt parts and the sets of tools it was
-/// offered - into what its model is given. One implementation for the model
-/// call, for telling afterwards what the model saw, and for measuring how
-/// much of its context it fills (issue 284).
+/// Resolves an agent's data in a channel - its transcript, the texts of its
+/// prompt parts and the sets of tools it was offered - into what a receiver
+/// is given: its model, the context a reference names; the remote agent of
+/// an external agent, the transcript's messages (issue 529). One
+/// implementation for the model call, for telling afterwards what the model
+/// saw, for measuring how much of its context it fills (issue 284), and for
+/// the remote agent.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextResolver<'a> {
     transcript: TranscriptSource<'a>,
@@ -57,6 +60,14 @@ enum TranscriptSource<'a> {
 }
 
 impl<'a> TranscriptSource<'a> {
+    /// All of its entries.
+    fn entries(self) -> Vec<&'a Node<TranscriptEntry>> {
+        match self {
+            TranscriptSource::Held(transcript) => transcript.entries().collect(),
+            TranscriptSource::Path(path) => path.iter().collect(),
+        }
+    }
+
     /// The entries of the path `digest` names, up to and including its
     /// entry; `None` if it holds no such entry.
     fn prefix(self, digest: &Digest) -> Option<Vec<&'a Node<TranscriptEntry>>> {
@@ -204,6 +215,40 @@ impl<'a> ContextResolver<'a> {
         Ok(Some((positions, first.is_some())))
     }
 
+    /// What a receiver that keeps its own conversation - the remote agent
+    /// of an external agent - is given of the transcript it reads (the
+    /// state's active path, or the path it was made on), for `agent`:
+    /// its messages as they stand (`Transcript::messages`) and, where
+    /// someone joined or left the channel, what it is told of that (issue
+    /// 408), each framed by `profile` at `time_zone` and worded in its
+    /// variant.
+    ///
+    /// # Errors
+    /// `PromptError` if the text of a notice cannot be had.
+    pub fn given_messages(
+        &self,
+        profile: &ModelProfile,
+        agent: ActorId,
+        time_zone: TimeZone,
+    ) -> Result<Vec<Message>, PromptError> {
+        let texts = profile.texts(self.catalogue);
+        let mut given = Vec::new();
+        for (node, message) in as_they_stand(self.transcript.entries()) {
+            let message = match message {
+                Some(message) => Some(message),
+                None => participant_notice(
+                    &texts,
+                    &node.entry,
+                    &node.digest,
+                    agent,
+                    profile.sender_style,
+                )?,
+            };
+            given.extend(message.map(|message| profile.given(message, agent, false, time_zone)));
+        }
+        Ok(given)
+    }
+
     /// What the model of `agent` is given of the transcript `reference`
     /// names, in turn `turn`, entry by entry, with the prompt parts where
     /// they were placed - before `ModelProfile::place_system_messages`.
@@ -326,14 +371,56 @@ fn given_up_notice(
     })
 }
 
+/// What the model of `agent` is told of `entry`, whose digest is `digest`, if someone joined or
+/// left the channel (issue 408): who, and who made them, named in `style` as the senders of
+/// messages are - the agent itself as "you" -, worded by `texts` (`kernel.participant_joined`,
+/// `…_left`). A fixed text of the kernel's, marked as the channel's notice, so that it reads as no
+/// participant's, given as a system message where the model keeps one
+/// (`ModelProfile::place_system_messages`); its id is the entry's, so that it is the same each time
+/// it is resolved. `None` for any other entry.
+fn participant_notice(
+    texts: &PromptTexts,
+    entry: &TranscriptEntry,
+    digest: &Digest,
+    agent: ActorId,
+    style: SenderStyle,
+) -> Result<Option<Message>, PromptError> {
+    let (key, participant, name, by, by_name, at) = match entry {
+        TranscriptEntry::ParticipantJoined { participant, name, by, by_name, at } => {
+            ("participant_joined", participant, name, by, by_name, at)
+        }
+        TranscriptEntry::ParticipantLeft { participant, name, by, by_name, at } => {
+            ("participant_left", participant, name, by, by_name, at)
+        }
+        _ => return Ok(None),
+    };
+    let text = texts.render(
+        &format!("{KERNEL}.{key}"),
+        context! {
+            participant => style.of(name),
+            you => *participant == agent,
+            by => style.of(by_name),
+            by_you => *by == agent,
+            by_self => by == participant,
+            by_system => *by == ActorId::System,
+        },
+    )?;
+    Ok(Some(Message {
+        id: MessageId(digest.as_uuid()),
+        timestamp: *at,
+        role: MessageRole::System,
+        content: Some(text),
+        sender_id: ActorId::System,
+        ..Message::new(Classification::PUBLIC)
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::context::testing::text;
-    use crate::context::{
-        FrameRef, ModelProfile, PromptRef, ReasoningHistory, SenderFormat, SystemMessages,
-    };
+    use crate::context::{FrameRef, PromptRef, ReasoningHistory, SenderFormat, SystemMessages};
     use crate::digest;
     use crate::digest::prompt;
     use crate::message::TokenUsage;
@@ -472,20 +559,52 @@ mod tests {
         );
         let again = resolver.resolve(&reference, TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(ids(&seen.items), ids(&again.items), "the same each time it is resolved");
-        let told: Vec<_> = reference
-            .frame
-            .profile
-            .given_messages(
-                &ModelProfile::default().texts(kernel_catalogue()),
-                &state.transcript,
-                agent,
-                Default::default(),
-            )
+    }
+
+    #[test]
+    fn a_remote_agent_is_given_the_messages_framed_and_the_notices_as_system_messages() {
+        let agent = ActorId::Agent(AgentId::new());
+        let alice = ActorId::User(UserId::new());
+        let mut state = AgentChannelState::default();
+        state.transcript.push(Message {
+            sender_id: alice,
+            sender_name: "Alice".to_string(),
+            role: MessageRole::User,
+            ..text("hello")
+        });
+        state.transcript.record(TranscriptEntry::ParticipantJoined {
+            participant: agent,
+            name: "Helper".to_string(),
+            by: alice,
+            by_name: "Alice".to_string(),
+            at: Utc::now(),
+        });
+        state.transcript.push(Message {
+            sender_id: agent,
+            role: MessageRole::Assistant,
+            ..text("hi")
+        });
+        let profile =
+            ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
+
+        let told: Vec<_> = ContextResolver::of(&state, kernel_catalogue())
+            .given_messages(&profile, agent, Default::default())
             .unwrap()
             .into_iter()
-            .filter_map(|m| m.content)
+            .map(|message| (message.role, message.content.unwrap_or_default()))
             .collect();
-        assert_eq!(told, contents(&seen.items), "what a remote agent is given, too");
+        assert_eq!(
+            told,
+            [
+                (MessageRole::User, "@alice: hello".to_string()),
+                (
+                    MessageRole::System,
+                    "Channel notice: @alice added you to the channel.".to_string()
+                ),
+                (MessageRole::Assistant, "hi".to_string()),
+            ],
+            "framed as the model is given them, the notice kept a system message"
+        );
     }
 
     /// The ids of the messages among `items`.

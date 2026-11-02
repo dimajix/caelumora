@@ -46,7 +46,7 @@ use caelumora_domain::agent::RetryRefused;
 use caelumora_domain::command::Command;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::PromptPart;
+use caelumora_domain::context::{ContextResolver, PromptPart};
 use caelumora_domain::digest;
 use caelumora_domain::external_agent::{OpenTaskState, TaskId};
 use caelumora_domain::history::Heard;
@@ -348,9 +348,8 @@ impl ExternalAgentActor {
         // now - every message, and every change of one, as it may have used
         // either version (issue 236).
         state.classifications_given().iter().for_each(|c| work.see(c));
-        let given = work.context.frame.profile.given_messages(
-            &work.context.frame.profile.texts(self.body.runtime.prompts()),
-            &state.transcript,
+        let given = ContextResolver::of(state, self.body.runtime.prompts()).given_messages(
+            &work.context.frame.profile,
             self.id(),
             work.context.frame.time_zone,
         )?;
