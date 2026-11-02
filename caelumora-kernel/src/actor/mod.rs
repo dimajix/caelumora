@@ -12,7 +12,8 @@ pub use manager::{ActorManager, Shown};
 
 use caelumora_api::actor::Answering;
 use caelumora_domain::actor::EventContext;
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
 use uuid::Uuid;
 

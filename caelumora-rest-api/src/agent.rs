@@ -4,7 +4,8 @@
 use crate::scope::{ScopeKind, ScopeResponse};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentId, PersonalityId, PersonalityKind};
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot;
 use caelumora_domain::value::text::Description;
 use serde::{Deserialize, Serialize};

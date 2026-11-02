@@ -3,10 +3,11 @@
 
 use crate::artifact::{ArtifactId, ArtifactSnapshot};
 use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::project::ProjectId;
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::value::text::Description;
 use caelumora_rest_api::access::AccessEntry;
 use chrono::{DateTime, Utc};

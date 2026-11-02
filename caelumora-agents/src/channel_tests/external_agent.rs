@@ -17,7 +17,7 @@ use caelumora_domain::agent::{
 };
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::testing::{founded, make_channel};
-use caelumora_domain::channel::{Channel, HistoryAccess};
+use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::ContextItem;
@@ -26,7 +26,7 @@ use caelumora_domain::external_agent::{OpenTaskState, TaskId};
 use caelumora_domain::history::Heard;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::testing::{bare_session, make_session};
-use caelumora_domain::session::{ChannelId, Participant, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::work::Work;
 use caelumora_kernel::actor::user::ChannelWatch;

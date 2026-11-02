@@ -1003,11 +1003,11 @@ mod tests {
         RetryTarget,
     };
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::history::{HistoryEntry, Recipients};
     use caelumora_domain::message::{Message, MessageId, MessageRole};
-    use caelumora_domain::session::ChannelId;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolMedia};
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;

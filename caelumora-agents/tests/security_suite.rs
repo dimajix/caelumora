@@ -46,7 +46,7 @@ use caelumora_domain::approval::{
     ApprovalDecision, ApprovalRequest, ApprovalRule, ApprovalRuleId, ArgumentMatcher, Reach,
     RuleDecision, ToolMatcher,
 };
-use caelumora_domain::channel::HistoryAccess;
+use caelumora_domain::channel::{ChannelId, HistoryAccess};
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality, Visibility};
@@ -60,7 +60,7 @@ use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::secret::Secrets;
 use caelumora_domain::security::{AclEntry, Grant, Secured, Subject};
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::PersonalitySnapshot;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::template::{

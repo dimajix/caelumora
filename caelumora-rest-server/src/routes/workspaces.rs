@@ -21,9 +21,10 @@ use axum::response::{IntoResponse, Response};
 use caelumora_api::terminal::{
     CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
 };
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::security::Grant;
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::controller::WorkspaceController;
 use caelumora_rest_api::access::AccessEntry;

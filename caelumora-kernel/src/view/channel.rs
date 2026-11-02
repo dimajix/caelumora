@@ -15,7 +15,7 @@ use caelumora_domain::actor::{ActorDescription, ActorId, ActorState};
 use caelumora_domain::agent::{AgentChannelState, PersonalityKind};
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{Channel, Participant};
+use caelumora_domain::channel::{Channel, ChannelId, Participant};
 use caelumora_domain::command::Command;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
@@ -27,7 +27,6 @@ use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::note::Note;
 use caelumora_domain::query::Filter;
 use caelumora_domain::removal::Removal;
-use caelumora_domain::session::ChannelId;
 use caelumora_domain::snapshot::{
     ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, Unread,
 };

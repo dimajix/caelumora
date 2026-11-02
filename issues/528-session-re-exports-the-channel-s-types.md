@@ -1,6 +1,6 @@
 # 528 — The session module re-exports the channel's types, which so have two paths
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -45,3 +45,7 @@ Recommended: drop the re-export.
 
 - **2026-11-02** — Opened at the maintainer's request, from the review of the step `channel` of
   issue [526](526-large-modules-of-the-domain.md).
+- **2026-11-02** — Done: `session` re-exports none of the channel's types and imports `ChannelId`
+  and `Participant` for itself; the 53 files that imported one of them by `session::` import it
+  by `channel::`, merged with what they imported from there already, and the alias
+  `SessionParticipant` in the kernel's view tests, the same type imported twice, is gone.

@@ -10,10 +10,11 @@
 //! read; this only chooses among it, so it never widens what anybody
 //! reads.
 
+use crate::channel::ChannelId;
 use crate::group::GroupId;
 use crate::project::ProjectId;
 use crate::query::{Field, FieldValue, Filter};
-use crate::session::{ChannelId, SessionId};
+use crate::session::SessionId;
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use serde::{Deserialize, Serialize};

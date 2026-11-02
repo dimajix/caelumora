@@ -23,7 +23,7 @@ use anyhow::{Error, Result};
 use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::channel::Participant;
-use caelumora_domain::channel::{Channel, ChannelField};
+use caelumora_domain::channel::{Channel, ChannelField, ChannelId};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
@@ -32,7 +32,7 @@ use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::{Scope, ScopeField};
 use caelumora_domain::security::{SecurityAttributes, Subject};
 use caelumora_domain::session;
-use caelumora_domain::session::{ChannelId, Session, SessionId};
+use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::template::{
     ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate,
@@ -1142,7 +1142,9 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::approval::ApprovalStrategy;
     use caelumora_domain::channel::testing::main_channel;
-    use caelumora_domain::channel::{self, moderation_components, Channel, InternalActor};
+    use caelumora_domain::channel::{
+        self, moderation_components, Channel, ChannelId, InternalActor, Participant,
+    };
     use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::event::EntityChange;
@@ -1154,7 +1156,6 @@ mod tests {
     use caelumora_domain::security::{Grant, Secured, SecurityAttributes, Subject};
     use caelumora_domain::session;
     use caelumora_domain::session::testing::make_session;
-    use caelumora_domain::session::ChannelId;
     use caelumora_domain::session::Session;
     use caelumora_domain::store::{StoreError, Stored};
     use caelumora_domain::template::testing::{make_channel_template, make_template};
@@ -2343,7 +2344,7 @@ mod tests {
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let mut session = make_session("thinking", UserId::new());
         session.participants = participants;
-        session.participants.push(session::Participant::Agent(thinker.id));
+        session.participants.push(Participant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session
             .create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent]))

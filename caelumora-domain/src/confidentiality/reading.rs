@@ -2,9 +2,8 @@
 //! between (`Place`) and the bound of a reading (`Reading`).
 
 use super::{Classification, Compartments};
-use crate::channel::Channel;
+use crate::channel::{Channel, ChannelId};
 use crate::privacy::SessionPrivacy;
-use crate::session::ChannelId;
 
 /// One side of a copy (`ConfidentialityQuestions::may_copy_information`): a channel, the
 /// classification of what is read there or of the channel that reads, and

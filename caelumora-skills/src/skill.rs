@@ -5,6 +5,7 @@
 //! and brings none of its own. One classification holds for the whole of it.
 
 use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::define_id;
@@ -12,7 +13,7 @@ use caelumora_domain::digest::{Digest, Encoder};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::{Scope, ScopeField, Scoped};
 use caelumora_domain::security::{Secured, SecurityAttributes};
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::ScopeSnapshot;
 use caelumora_domain::store::{EntityKind, NoEntity, Revision, Stored};
 use caelumora_domain::value::name::ScopedName;
@@ -235,7 +236,8 @@ pub struct SkillSnapshot {
 mod tests {
     use super::*;
     use caelumora_domain::agent::AgentId;
-    use caelumora_domain::session::{ChannelId, SessionId};
+    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::session::SessionId;
     use caelumora_domain::user::UserId;
 
     fn skill(scope: Scope, owner: ActorId) -> Skill {

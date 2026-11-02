@@ -19,6 +19,7 @@
 use crate::actor::{ActorId, ActorState};
 use crate::agent::{AgentId, PersonalityId, PersonalityKind};
 use crate::approval::{ApprovalRequest, ApprovalRule};
+use crate::channel::ChannelId;
 use crate::command::Command;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
@@ -31,7 +32,7 @@ use crate::question::QuestionRequest;
 use crate::removal::Removal;
 use crate::scope::Scope;
 use crate::security::{Grant, Subject};
-use crate::session::{ChannelId, SessionId};
+use crate::session::SessionId;
 use crate::user::UserId;
 use crate::value::language::Language;
 use crate::value::text::{Briefing, Description, Summary};

@@ -6,6 +6,7 @@
 //! names, configured, not stored, one piece per version; the document holds what is known of them.
 
 use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
 use caelumora_domain::define_id;
@@ -17,7 +18,7 @@ use caelumora_domain::scope::{Scope, Scoped, ScopedField};
 use caelumora_domain::security::{
     AclEntry, Grant, Secured, SecuredMut, SecurityAttributes, Subject,
 };
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::AccessSnapshot;
 use caelumora_domain::store::{EntityKind, NoEntity, Revision, Stored};
 use caelumora_domain::user::UserId;

@@ -700,13 +700,14 @@ mod tests {
     use caelumora_api::component::ComponentError;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::Agent;
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::content::ContentId;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::project::ProjectId;
     use caelumora_domain::question::QuestionId;
     use caelumora_domain::scope::Scope;
-    use caelumora_domain::session::{ChannelId, SessionId};
+    use caelumora_domain::session::SessionId;
     use caelumora_domain::store::Stored;
     use caelumora_domain::template::SessionTemplateId;
     use caelumora_domain::user::UserId;

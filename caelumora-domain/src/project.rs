@@ -277,8 +277,8 @@ impl Scoped for Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::ChannelId;
     use crate::security::AclEntry;
-    use crate::session::ChannelId;
 
     fn shared(scope: Scope, owner: UserId) -> Project {
         Project::new(ScopedName::new("report", scope).unwrap(), owner)

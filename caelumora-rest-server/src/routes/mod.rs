@@ -28,7 +28,8 @@ use axum::{
     Router,
 };
 use caelumora_api::terminal::ByteStream;
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::store::StoreError;
 use caelumora_kernel::channel::ChannelLoop;

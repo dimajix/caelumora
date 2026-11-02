@@ -535,12 +535,11 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::actor::Envelope;
     use caelumora_domain::chain::Position;
-    use caelumora_domain::channel::{Channel, HistoryAccess, JOINED, LEFT};
+    use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, JOINED, LEFT};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::history::HistoryEntry;
     use caelumora_domain::security::{Grant, Subject};
     use caelumora_domain::session::testing::make_session;
-    use caelumora_domain::session::ChannelId;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
     use caelumora_security::SecurityContext;

@@ -12,8 +12,9 @@
 //! stored with it.
 
 use crate::actor::ActorId;
+use crate::channel::Participant;
 use crate::security::Secured;
-use crate::session::{Participant, Session, SessionId};
+use crate::session::{Session, SessionId};
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;

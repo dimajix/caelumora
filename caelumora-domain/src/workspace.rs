@@ -255,9 +255,10 @@ pub enum CommandStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::ChannelId;
     use crate::scope::Scope;
     use crate::security::AclEntry;
-    use crate::session::{ChannelId, SessionId};
+    use crate::session::SessionId;
     use Stored;
 
     fn named(scope: Scope) -> ScopedName {

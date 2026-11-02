@@ -7,11 +7,11 @@
 use crate::privacy::PrivacyPolicy;
 use crate::{ActionType, Policies, SecurityContext};
 use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::{Classification, Compartments, Place, Reading};
 use caelumora_domain::config::AppConfig;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::role::{RoleId, Roles};
-use caelumora_domain::session::ChannelId;
 use std::fmt;
 
 /// The flow decisions (issues 133, 304): whether information may go where

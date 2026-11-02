@@ -58,6 +58,7 @@ use caelumora_api::component::Services;
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentId, Personality};
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::{Place, Reading};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::privacy::SessionPrivacy;
@@ -67,7 +68,7 @@ use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{AclEntry, SecurityAttributes, Subject};
-use caelumora_domain::session::{ChannelId, SessionField, SessionId};
+use caelumora_domain::session::{SessionField, SessionId};
 use caelumora_domain::snapshot::{
     AccessSnapshot, DeletedSnapshot, PersonalitySnapshot, ScopeSnapshot,
 };
@@ -985,7 +986,7 @@ mod tests {
     use caelumora_domain::message::Message;
     use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
     use caelumora_domain::session::testing::make_session;
-    use caelumora_domain::session::{Participant as SessionParticipant, Session};
+    use caelumora_domain::session::Session;
     use caelumora_domain::snapshot::Detail;
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;
@@ -3022,7 +3023,7 @@ mod tests {
             SecurityContext::new(ActorId::User(alice.id), Default::default(), Default::default());
         let mut session = make_session("thinking", UserId::new());
         session.participants = participants;
-        session.participants.push(SessionParticipant::Agent(thinker.id));
+        session.participants.push(Participant::Agent(thinker.id));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let channel = session
             .create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent]))

@@ -363,12 +363,12 @@ mod tests {
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::Agent;
     use caelumora_domain::channel::testing::main_channel;
-    use caelumora_domain::channel::{Channel, HistoryAccess, Participant};
+    use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::{Grant, Subject};
     use caelumora_domain::session::testing::make_session;
-    use caelumora_domain::session::{ChannelId, SessionId};
+    use caelumora_domain::session::SessionId;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::name::Name;

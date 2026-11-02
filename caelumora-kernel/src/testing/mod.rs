@@ -45,7 +45,9 @@ use caelumora_domain::actor::{ActorEvent, Envelope};
 use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::{Agent, AgentId, Personality, PersonalityId};
 use caelumora_domain::approval::{ApprovalStrategy, Approver};
-use caelumora_domain::channel::{moderation_components, Channel, InternalActor, Participant};
+use caelumora_domain::channel::{
+    moderation_components, Channel, ChannelId, InternalActor, Participant,
+};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{
     Classification, Clearance, Compartments, Confidentiality, Place, Reading,
@@ -59,7 +61,7 @@ use caelumora_domain::role::{RoleId, Roles};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
 use caelumora_domain::session::testing::make_session;
-use caelumora_domain::session::{ChannelId, Session, SessionId};
+use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{EntityKind, StoreError, Stored};
 use caelumora_domain::template::testing::{make_channel_template, make_template};
 use caelumora_domain::template::{

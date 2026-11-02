@@ -10,7 +10,7 @@ use caelumora_api::reader::PrivateNotesElsewhere;
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
-use caelumora_domain::channel::{Channel, ChannelField, Participant};
+use caelumora_domain::channel::{Channel, ChannelField, ChannelId, Participant};
 use caelumora_domain::confidentiality::{Place, Reading};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::note::Note;
@@ -18,7 +18,7 @@ use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::scope::ScopeField;
-use caelumora_domain::session::{ChannelId, Session, SessionId};
+use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::snapshot::{
     CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot,
     SessionSnapshot,

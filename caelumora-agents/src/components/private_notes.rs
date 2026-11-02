@@ -312,8 +312,8 @@ mod tests {
     use super::*;
     use crate::testing;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::message::MessageId;
-    use caelumora_domain::session::ChannelId;
     use caelumora_kernel::testing::Discard;
     use chrono::Utc;
 

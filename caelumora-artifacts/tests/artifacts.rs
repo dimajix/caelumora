@@ -35,6 +35,7 @@ use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_artifacts::view::{ArtifactChannelViews, ArtifactProjectViews, ArtifactViews};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentChannelState, AgentId};
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::config::{
     AppConfig, AttachmentsConfig, AuthConfig, BackendConfig, ContentConfig,
@@ -46,7 +47,7 @@ use caelumora_domain::project::Project;
 use caelumora_domain::prompt_catalogue::PromptTexts;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{AclEntry, Grant, Refused, Secured, SecurityAttributes, Subject};
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::ScopedName;

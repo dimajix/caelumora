@@ -286,14 +286,14 @@ mod tests {
     use caelumora_domain::actor::{ActorId, EventContext};
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::testing::main_channel;
-    use caelumora_domain::channel::Participant;
+    use caelumora_domain::channel::{ChannelId, Participant};
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::confidentiality::{Compartments, Place, Reading};
     use caelumora_domain::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_domain::role::{RoleId, Roles};
     use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::make_session;
-    use caelumora_domain::session::{ChannelId, Session, SessionId};
+    use caelumora_domain::session::{Session, SessionId};
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
     use caelumora_domain::work::Work;

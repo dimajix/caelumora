@@ -1,9 +1,10 @@
 //! Where something lies that is kept in a scope: a workspace, a skill, a group, an agent, a
 //! personality, a project (issue 467).
 
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::ScopeSnapshot;
 use caelumora_domain::user::UserId;
 use serde::{Deserialize, Serialize};

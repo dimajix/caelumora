@@ -1,12 +1,13 @@
 //! Access lists as they are written and shown (issue 23): whom an entry grants what.
 
 use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::group::GroupId;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{AclEntry, Grant, Subject};
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot;
 use caelumora_domain::user::UserId;
 use serde::{Deserialize, Serialize};

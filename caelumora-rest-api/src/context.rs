@@ -3,12 +3,13 @@
 
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::Position;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, LabelCauses};
 use caelumora_domain::context::{ContextItem, ModelProfile};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
-use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::tool::ToolSet;
 use serde::Serialize;
 use uuid::Uuid;
