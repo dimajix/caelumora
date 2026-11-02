@@ -84,3 +84,9 @@ concepts each file is to hold, not yet every item.
   since it reads messages and the model's profile), `clearance.rs`, `reading.rs`,
   `visibility.rs`, `testing.rs`; `Clearance` reads a classification by its getters now that it
   lies in another file. The paths are as before.
+- **2026-11-02** — Step `actor` done: `actor/mod.rs` (`ActorId`, `ActorDescription`; module docs,
+  which the file lacked), `event.rs` (`ActorEvent`, `RequestReason`, `RetryTarget`, `Rejection`),
+  `envelope.rs` (`Envelope`, `EventContext`, `Pick`), `state.rs` (`ActorState`,
+  `ProcessingStateHolder`). `ActorDescription` lies in `mod.rs` beside `ActorId`, as who an actor
+  is, not how far it is; `Rejection` with `ActorEvent::MessageRejected`, whose reason it is; `Pick`
+  with the envelope. The paths are as before.
