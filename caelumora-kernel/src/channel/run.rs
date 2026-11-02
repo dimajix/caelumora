@@ -2525,8 +2525,8 @@ mod tests {
         everybody.let_in(said("hello"), &HashMap::new()).await;
         assert_eq!(
             recorded(Arc::clone(&everybody)).await,
-            Some((ActorId::User(alice.id), Recipients::members(true))),
-            "as every channel delivers: to every member"
+            Some((ActorId::User(alice.id), Recipients::participants(true))),
+            "as every channel delivers: to every participant"
         );
 
         let to_bob =
@@ -2708,7 +2708,7 @@ mod tests {
             recorded().await,
             (
                 Some((Some("found it".to_string()), Some("weighing".to_string()), 1)),
-                Recipients::members(true)
+                Recipients::participants(true)
             ),
             "the channel records it whole"
         );

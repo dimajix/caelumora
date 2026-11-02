@@ -56,3 +56,7 @@ Recommended: rename the history's, to `Attendance` - the name of its own keeps i
   stored histories of the JSON files and the Postgres schema are to be deleted. Left for later: that
   what went to all of a channel's participants is still what went to "every member" - in
   `Recipients::members`, its doc comments and the documents.
+- **2026-11-02** — What was left is done too: what goes to all of a channel's participants is
+  `Recipients::participants`, no longer `Recipients::members`, and doc comments, tests and the
+  documents speak of a channel's participants where they said members. Members of a group, of a
+  project and of a scope keep the word. No stored data changes.

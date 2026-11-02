@@ -444,7 +444,7 @@ impl HistoryEntry {
 
     /// Whom the entry goes to when it goes to everybody, by the rule every
     /// channel delivers by (issue 417, `Envelope::recipients`): a message to
-    /// every member who is a user, and to every agent too if there is
+    /// every participant who is a user, and to every agent too if there is
     /// something to hear in it; a change of a message and who joined or left
     /// to every user and agent; how a turn went, what it carried out and
     /// what came of what it did of its own accord to the users; what
@@ -465,20 +465,20 @@ impl HistoryEntry {
             | HistoryEntry::CommandFailed { to, .. } => Recipients::only(
                 vec![*to].into_iter().filter(|to| matches!(to, ActorId::User(_))).collect(),
             ),
-            HistoryEntry::Said { message } => Recipients::members(message.is_heard()),
+            HistoryEntry::Said { message } => Recipients::participants(message.is_heard()),
             HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Fitted { .. }
             | HistoryEntry::ParticipantJoined { .. }
-            | HistoryEntry::ParticipantLeft { .. } => Recipients::members(true),
+            | HistoryEntry::ParticipantLeft { .. } => Recipients::participants(true),
             HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. }
             | HistoryEntry::CommandExecuted { to: None, .. }
             | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. } => Recipients::members(false),
+            | HistoryEntry::RetryRejected { .. } => Recipients::participants(false),
             HistoryEntry::Compacted { .. }
             | HistoryEntry::Given { .. }
             | HistoryEntry::ChainCutOff { .. }
@@ -495,7 +495,7 @@ impl HistoryEntry {
             HistoryEntry::ApprovalRequested { by, .. }
             | HistoryEntry::ApprovalRequestWithdrawn { by, .. } => match by {
                 ActorId::Agent(_) => Recipients::APPROVERS,
-                ActorId::Approver(_) => Recipients::members(false),
+                ActorId::Approver(_) => Recipients::participants(false),
                 _ => Recipients::NOBODY,
             },
             HistoryEntry::ApprovalDecided { response, status, by, .. } => match by {
@@ -503,7 +503,7 @@ impl HistoryEntry {
                 ActorId::User(_) if *status != ApprovalStatus::Timeout => Recipients::APPROVERS,
                 ActorId::Approver(_) => Recipients {
                     named: vec![ActorId::Agent(response.agent_id)],
-                    ..Recipients::members(false)
+                    ..Recipients::participants(false)
                 },
                 _ => Recipients::NOBODY,
             },

@@ -449,7 +449,7 @@ mod tests {
             allows(bob, tools(&hers, &theirs)).await,
             "who reads the agent sees what it can do"
         );
-        assert!(allows(carol, tools(&hers, &theirs)).await, "and every member of the channel");
+        assert!(allows(carol, tools(&hers, &theirs)).await, "and whoever reads the channel");
         assert!(!allows(carol, tools(&hers, &hers)).await, "but nobody else");
         let approve = ActionType::ApproveToolCall;
         assert!(allows(alice, approve(&hers)).await, "the agent's owner approves its calls");
@@ -461,18 +461,18 @@ mod tests {
             usage: None,
             owners_only,
         };
-        let (members, owners) = (command(false), command(true));
+        let (for_everyone, owners) = (command(false), command(true));
         let run =
             |command, agent, channel| ActionType::ExecuteAgentCommand { command, agent, channel };
         let show =
             |command, agent, channel| ActionType::ShowAgentCommand { command, agent, channel };
         assert!(
-            allows(carol, run(&members, &hers, &theirs)).await,
-            "a command for the members: whoever may write in the channel"
+            allows(carol, run(&for_everyone, &hers, &theirs)).await,
+            "a command for everyone: whoever may write in the channel"
         );
-        assert!(allows(carol, show(&members, &hers, &theirs)).await);
+        assert!(allows(carol, show(&for_everyone, &hers, &theirs)).await);
         assert!(
-            !allows(bob, run(&members, &hers, &theirs)).await,
+            !allows(bob, run(&for_everyone, &hers, &theirs)).await,
             "not the agent's reader outside the channel"
         );
         assert!(
@@ -490,11 +490,11 @@ mod tests {
         let run = |command, channel| ActionType::ExecuteCommand { command, channel };
         let show = |command, channel| ActionType::ShowCommand { command, channel };
         assert!(
-            allows(carol, run(&members, &theirs)).await
-                && allows(carol, show(&members, &theirs)).await,
-            "a command for the members: whoever reads the channel"
+            allows(carol, run(&for_everyone, &theirs)).await
+                && allows(carol, show(&for_everyone, &theirs)).await,
+            "a command for everyone: whoever reads the channel"
         );
-        assert!(!allows(bob, run(&members, &theirs)).await, "nobody else");
+        assert!(!allows(bob, run(&for_everyone, &theirs)).await, "nobody else");
         assert!(
             allows(carol, run(&owners, &theirs)).await,
             "a command for the owners: whose channel it is"
@@ -502,7 +502,7 @@ mod tests {
         assert!(
             !allows(alice, run(&owners, &theirs)).await
                 && !allows(alice, show(&owners, &theirs)).await,
-            "not a member who does not own it"
+            "not who reads it without owning it"
         );
         assert!(!allows(bob, ActionType::update(Session::KIND, &hers)).await);
         assert!(!allows(bob, ActionType::delete(Session::KIND, &hers)).await);
@@ -528,11 +528,12 @@ mod tests {
         let (alice, bob) = (user(), user());
         let hers = ActorId::Agent(AgentId::new());
         let his = ActorId::Agent(AgentId::new());
-        let member = ActorId::Agent(AgentId::new());
+        let taking_part = ActorId::Agent(AgentId::new());
         let place = GroupId::of_channel(ChannelId::new());
         let alices =
             SecurityAttributes::owned_by(alice).granting(Subject::Group(place), Grant::Read);
-        let access_policy = knowing(Known { members: vec![(member, place)], ..Known::default() });
+        let access_policy =
+            knowing(Known { members: vec![(taking_part, place)], ..Known::default() });
         assert!(
             access_policy
                 .check(
@@ -551,7 +552,7 @@ mod tests {
         assert!(
             access_policy
                 .check(
-                    &context(bob).next(member, bob, bob),
+                    &context(bob).next(taking_part, bob, bob),
                     ActionType::get(Channel::KIND, &alices)
                 )
                 .await,
@@ -560,7 +561,7 @@ mod tests {
         assert!(
             access_policy
                 .check(
-                    &context(bob).next(member, bob, bob),
+                    &context(bob).next(taking_part, bob, bob),
                     ActionType::get(Session::KIND, &alices)
                 )
                 .await,
@@ -569,7 +570,7 @@ mod tests {
         assert!(
             !access_policy
                 .check(
-                    &context(bob).next(member, bob, bob),
+                    &context(bob).next(taking_part, bob, bob),
                     ActionType::update(Channel::KIND, &alices)
                 )
                 .await,
@@ -577,7 +578,10 @@ mod tests {
         );
         assert!(
             !access_policy
-                .check(&context(bob).next(member, bob, bob), ActionType::CancelChannel(&alices))
+                .check(
+                    &context(bob).next(taking_part, bob, bob),
+                    ActionType::CancelChannel(&alices)
+                )
                 .await,
             "and so does acting on it"
         );

@@ -49,9 +49,9 @@ pub struct AgentContextView {
 #[cfg(any(test, feature = "test-support"))]
 impl AgentContextView {
     /// The context of `actor`, an agent, as `state` holds it, in a channel whose history is
-    /// `history` after the agent's join - a member from its start (issue 417) -, reached by nobody:
-    /// for a test that compares what an agent was given with what the view shows of it. Both are
-    /// put into a store of their own; what it saw is worded with the kernel's texts.
+    /// `history` after the agent's join - a participant from its start (issue 417) -, reached by
+    /// nobody: for a test that compares what an agent was given with what the view shows of it.
+    /// Both are put into a store of their own; what it saw is worded with the kernel's texts.
     ///
     /// # Panics
     /// If `actor` is no agent.
@@ -80,15 +80,15 @@ impl AgentContextView {
             by_name: actor.to_string(),
             at: Utc::now(),
         };
-        let mut member = History::default();
-        member.enter(Recorded::new(joined, actor, Audience::Everybody));
+        let mut since_join = History::default();
+        since_join.enter(Recorded::new(joined, actor, Audience::Everybody));
         for node in history.all_entries() {
-            member.enter(node.entry.clone());
+            since_join.enter(node.entry.clone());
         }
         store
             .put_channel_state(
                 channel,
-                &mut ChannelState { history: member, ..ChannelState::new(channel) },
+                &mut ChannelState { history: since_join, ..ChannelState::new(channel) },
             )
             .await
             .expect("and a history");

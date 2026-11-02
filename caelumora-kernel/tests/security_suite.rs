@@ -235,7 +235,7 @@ async fn a_channel_is_read_by_its_participants_wherever_they_act_and_no_more_onc
             .with_roles(vec![*STAFF], None);
     assert!(
         session.channel_for(&elsewhere, main.id()).await.is_ok(),
-        "a member, though she acts elsewhere"
+        "a participant, though she acts elsewhere"
     );
 
     let mut events = world
@@ -3655,7 +3655,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
         .unwrap();
     let (usable, asked) =
         world.asked(async { in_main(&bob).await.workspace().await.unwrap() }).await;
-    let bobs = usable.expect("bob, a member of the channel, uses alice's workspace there");
+    let bobs = usable.expect("bob, a participant, uses alice's workspace there");
     assert!(
         asked.ends_with(&checks(&[
             "bob: GetWorkspace(alice's) yes",
@@ -3687,7 +3687,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
     let channel = Arc::clone(&session.channels()[0]);
     assert!(
         denied(&channel.update_uses_workspace(&bob, false).await.unwrap_err()),
-        "a member does not switch it off"
+        "a participant does not switch it off"
     );
     channel.update_uses_workspace(&alice, false).await.expect("the channel's owner does");
     assert!(

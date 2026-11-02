@@ -2471,7 +2471,7 @@ mod tests {
         assert_eq!(
             history.items.len(),
             4,
-            "its member's join, its messages, and how its turns ended (issue 258)"
+            "its participant's join, its messages, and how its turns ended (issue 258)"
         );
         assert_eq!(texts(history), ["the plan", "the date"], "a channel reads itself as a whole");
         assert!(itself

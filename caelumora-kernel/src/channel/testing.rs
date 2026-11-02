@@ -253,7 +253,7 @@ impl ChannelLoop {
     }
 
     /// The ranges of positions in which `participant` was given what went to
-    /// every member (`HistoryStore::attendance`, issue 417).
+    /// every participant (`HistoryStore::attendance`, issue 417).
     pub async fn attendance(&self, participant: ActorId) -> Vec<Range<Position>> {
         self.history_store.attendance(self.id, participant).await.expect("the history is read")
     }

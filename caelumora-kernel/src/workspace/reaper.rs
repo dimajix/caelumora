@@ -175,7 +175,7 @@ impl CommandReaper {
             return Ok(false);
         };
         for participant in &channel.participants {
-            let member = match participant {
+            let as_participant = match participant {
                 // One whose record is gone asks with no roles, as before.
                 Participant::User(user) => match self
                     .controllers
@@ -207,7 +207,7 @@ impl CommandReaper {
                     }
                 }
             };
-            let ctx = SecurityContext { initiator_id: ActorId::System, ..member };
+            let ctx = SecurityContext { initiator_id: ActorId::System, ..as_participant };
             match workspace.usable_in_channel(&ctx, &session, &channel, Grant::Write).await {
                 Ok(_) => return Ok(true),
                 Err(WorkspaceError::NotUsableInChannel | WorkspaceError::ReadOnly { .. }) => {}

@@ -210,7 +210,7 @@ whose users and agents join the channels that name them once the session is made
 clearance is asked before anything is stored, and again as they join; if one cannot join, the
 channel is taken back. A channel's `run` applies the joins that wait as it begins, before it routes
 anything, so that what a founder says comes after the joins of all who hear it. A channel started
-again or restored records no joins: its members' are in its history.
+again or restored records no joins: its participants' are in its history.
 
 A request that cannot be met is refused before anything is stored: no name, a name the session
 already has, someone who is not a participant of the session, or a classification the policy
@@ -365,9 +365,9 @@ no end in anyone's name. A turn whose agent was aborted after the grace, saying 
 without an end: nobody ended it.
 
 **Everything shown is recorded** (issue 417). Every entry says who sent it and whom it went to:
-every member at the time it concerns by the rule every channel delivers by - resolved as it is
-recorded, so that who was a member then decides who reads it -, or those the moderator named. What a
-participant was shown live is what the history holds for them, in the same order - also what went
+every participant at the time it concerns by the rule every channel delivers by - resolved as it
+is recorded, so that who took part then decides who reads it -, or those the moderator named. What
+a participant was shown live is what the history holds for them, in the same order - also what went
 to them alone: the answer to a request to answer again, a command's answer and a command not carried
 out, a chain cut off, that it could not be decided who responds, a refusal, a request to respond,
 each notice and request recorded in the system's name as the channel sends it. What it delivers
@@ -613,9 +613,9 @@ nothing to it any more (`until`) - where it stopped, which may lie before the en
 leaving actor still sends comes first (issue 262).
 
 So the history alone says who took part when, and every read of it applies that, without the
-channel's document (issues 379, 417): what went to every member is given to whom it was one then -
-from the position shared with them, or else from their join, up to where delivery stopped (see
-[STORAGE.md](STORAGE.md#histories)) - over REST, in the snapshot, for `read_history` (see
+channel's document (issues 379, 417): what went to every participant is given to whom it was one
+then - from the position shared with them, or else from their join, up to where delivery stopped
+(see [STORAGE.md](STORAGE.md#histories)) - over REST, in the snapshot, for `read_history` (see
 [MEMORY.md](MEMORY.md)) and for what a joining actor is given. A former participant reads what went
 to it while it took part, and nothing after.
 

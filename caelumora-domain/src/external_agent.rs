@@ -247,11 +247,11 @@ mod tests {
         assert!(remote.work_of(&two).is_none(), "none kept");
         remote.open(&one, OpenTaskState::InputRequired);
 
-        remote.give("members".to_string(), digest::prompt("[Who is in this channel]"));
-        assert!(remote.has_given("members", &digest::prompt("[Who is in this channel]")));
+        remote.give("participants".to_string(), digest::prompt("[Who is in this channel]"));
+        assert!(remote.has_given("participants", &digest::prompt("[Who is in this channel]")));
         remote.converse_in(ConversationId("c-1".to_string()));
         assert!(
-            remote.has_given("members", &digest::prompt("[Who is in this channel]")),
+            remote.has_given("participants", &digest::prompt("[Who is in this channel]")),
             "the first conversation keeps what it was given"
         );
         remote.converse_in(ConversationId("c-2".to_string()));

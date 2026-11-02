@@ -39,7 +39,7 @@ use std::fmt;
 /// it one more. Given when the entry is added and never changed; one names
 /// one entry of a chain for good. What a range of a chain is read by, and
 /// what every reader of a history or a transcript addresses entries by - a
-/// page, a delivery, a mark of what was read, a member's range. Written as
+/// page, a delivery, a mark of what was read, a participant's range. Written as
 /// its number.
 #[derive(
     Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,

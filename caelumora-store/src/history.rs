@@ -94,8 +94,8 @@ pub trait HistoryStore: Debug + Send + Sync {
     ) -> StoreResult<Vec<Message>>;
 
     /// The ranges of positions in which `actor` was given what went to
-    /// every member of the channel (`Attendance`), oldest first: none if it
-    /// never was one, the last open - to `Position::MAX` - while it is.
+    /// every participant of the channel (`Attendance`), oldest first: none
+    /// if it never was one, the last open - to `Position::MAX` - while it is.
     async fn attendance(
         &self,
         channel: ChannelId,
@@ -108,7 +108,7 @@ pub trait HistoryStore: Debug + Send + Sync {
 }
 
 /// Who took part in a channel when (issue 417): each participant's ranges
-/// of positions in which it was given what went to every member, oldest
+/// of positions in which it was given what went to every participant, oldest
 /// first, each from the `from` of the `HistoryShared` before its
 /// `ParticipantJoined`, or else from its join, up to the `until` of its
 /// `ParticipantLeft`.
@@ -693,8 +693,8 @@ mod tests {
 
     /// Issue 451: the rule of what a reader is given, as a filter over an
     /// item as it is kept, decides as `Recorded::seen_by` does - for every
-    /// reader, sender, audience, kind of entry and position, in a member's
-    /// ranges or out of them.
+    /// reader, sender, audience, kind of entry and position, in a
+    /// participant's ranges or out of them.
     #[test]
     fn what_a_reader_is_given_is_the_same_as_a_filter() {
         use caelumora_domain::actor::EventContext;
@@ -717,12 +717,12 @@ mod tests {
         ];
         let audiences = [
             Recipients::NOBODY,
-            Recipients::members(false),
-            Recipients::members(true),
+            Recipients::participants(false),
+            Recipients::participants(true),
             Recipients::APPROVERS,
             Recipients::only(vec![bob]),
             Recipients::only(vec![agent]),
-            Recipients { named: vec![agent], ..Recipients::members(false) },
+            Recipients { named: vec![agent], ..Recipients::participants(false) },
         ];
         let rangings = [
             vec![],
@@ -789,11 +789,11 @@ mod tests {
 
     /// Issue 417: who took part when is read off the chain - from a
     /// share before the join, or else from the join, up to where the leave
-    /// says delivery stopped -, and what went to every member is given to
-    /// whom it was a member then; what went to one by name, or what one
+    /// says delivery stopped -, and what went to every participant is given
+    /// to whom it was one then; what went to one by name, or what one
     /// sent, regardless.
     #[test]
-    fn what_went_to_every_member_is_given_to_who_was_one_then() {
+    fn what_went_to_every_participant_is_given_to_who_was_one_then() {
         use caelumora_domain::user::UserId;
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let joined = |participant| HistoryEntry::ParticipantJoined {
@@ -867,7 +867,7 @@ mod tests {
         assert_eq!(
             seen(alice),
             [0, 1, 3, 4, 5, 6, 8],
-            "hers, what went to every member while she was one, and what went to her by name"
+            "hers, what went to every participant while she was one, and what went to her by name"
         );
         assert_eq!(
             seen(bob),

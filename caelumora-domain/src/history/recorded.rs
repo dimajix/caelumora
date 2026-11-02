@@ -51,25 +51,25 @@ pub enum Audience {
 }
 
 /// Whom something in a channel goes to, resolved as it is recorded (issue
-/// 417): every member of the kinds it names at the time - whoever's range
-/// holds the entry's position -, the channel's approvers, and whom it names,
-/// member or not. What a store filters by - for a database, columns of the
-/// row and a `WHERE` over them and the reader's ranges (`Recorded::seen_by`);
-/// and, read off an envelope, whom a channel delivers it to
-/// (`Envelope::recipients`). Nobody if it names nobody.
+/// 417): every participant of the kinds it names at the time - whoever's
+/// range holds the entry's position -, the channel's approvers, and whom it
+/// names, participant or not. What a store filters by - for a database,
+/// columns of the row and a `WHERE` over them and the reader's ranges
+/// (`Recorded::seen_by`); and, read off an envelope, whom a channel delivers
+/// it to (`Envelope::recipients`). Nobody if it names nobody.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recipients {
-    /// Every user that was a member at the time.
+    /// Every user that took part at the time.
     #[serde(default, skip_serializing_if = "Not::not")]
     pub users: bool,
-    /// Every agent that was a member at the time.
+    /// Every agent that took part at the time.
     #[serde(default, skip_serializing_if = "Not::not")]
     pub agents: bool,
     /// The channel's approvers: its own actors, no participants (issue
     /// 420), and so of no range - there all along.
     #[serde(default, skip_serializing_if = "Not::not")]
     pub approvers: bool,
-    /// These by name, member or not.
+    /// These by name, participant or not.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub named: Vec<ActorId>,
 }
@@ -79,9 +79,9 @@ impl Recipients {
     pub const NOBODY: Recipients =
         Recipients { users: false, agents: false, approvers: false, named: Vec::new() };
 
-    /// Every user that was a member at the time, and every agent too if
+    /// Every user that took part at the time, and every agent too if
     /// `agents`.
-    pub fn members(agents: bool) -> Self {
+    pub fn participants(agents: bool) -> Self {
         Self { users: true, agents, ..Self::NOBODY }
     }
 
@@ -94,11 +94,11 @@ impl Recipients {
         Self { named, ..Self::NOBODY }
     }
 
-    /// Every user that was a member at the time, or, if `shown_to` names
-    /// some, the users among them alone - by name, member or not.
+    /// Every user that took part at the time, or, if `shown_to` names
+    /// some, the users among them alone - by name, participant or not.
     pub fn users(shown_to: Option<Vec<ActorId>>) -> Self {
         match shown_to {
-            None => Self::members(false),
+            None => Self::participants(false),
             Some(shown_to) => Self::only(
                 shown_to.into_iter().filter(|actor| matches!(actor, ActorId::User(_))).collect(),
             ),
@@ -106,7 +106,7 @@ impl Recipients {
     }
 
     /// Whether it goes to `actor` for what `actor` is or by its name -
-    /// whether a user or an agent was a member at the time is the ranges'
+    /// whether a user or an agent took part at the time is the ranges'
     /// to say (`reaches`).
     pub fn names(&self, actor: ActorId) -> bool {
         self.named.contains(&actor) || self.of_kind(actor)
@@ -124,8 +124,8 @@ impl Recipients {
     }
 
     /// Whether it reached `actor` at the position `seq`, `ranges` being
-    /// where `actor` was a member: by name; as an approver; as a user or an
-    /// agent while it was a member.
+    /// where `actor` took part: by name; as an approver; as a user or an
+    /// agent while it took part.
     fn reaches(&self, actor: ActorId, seq: Position, ranges: &[Range<Position>]) -> bool {
         self.named.contains(&actor)
             || (self.approvers && matches!(actor, ActorId::Approver(_)))
@@ -190,17 +190,17 @@ impl Recorded {
         })
     }
 
-    /// Whether `reader` is given anything of the entry at the position
-    /// `seq` (issue 417), `ranges` being the reader's as a participant -
-    /// where it was given what went to every member (`Attendance`): the
-    /// channel everything; a participant what it sent, and, if anything of
-    /// it is published, what went to it by name or what went to every
-    /// member of its kind while it was one; an outsider what was published
-    /// to every member. The one rule by which a history is read, a predicate
-    /// over what a store keeps of the entry - its sender, its recipients,
-    /// whether it is published, its position - and the reader's ranges, so
-    /// that a database answers it as a `WHERE`: the model gives it as a
-    /// filter too (`Filter::seen_by`, issue 451), which decides the same.
+    /// Whether `reader` is given anything of the entry at the position `seq`
+    /// (issue 417), `ranges` being the reader's as a participant - where it
+    /// was given what went to every participant (`Attendance`): the channel
+    /// everything; a participant what it sent, and, if anything of it is
+    /// published, what went to it by name or what went to every participant
+    /// of its kind while it was one; an outsider what was published to every
+    /// participant. The one rule by which a history is read, a predicate over
+    /// what a store keeps of the entry - its sender, its recipients, whether
+    /// it is published, its position - and the reader's ranges, so that a
+    /// database answers it as a `WHERE`: the model gives it as a filter too
+    /// (`Filter::seen_by`, issue 451), which decides the same.
     pub fn seen_by(&self, seq: Position, reader: &Reader, ranges: &[Range<Position>]) -> bool {
         match reader {
             Reader::Channel => true,
@@ -260,7 +260,7 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     fn a_reader_is_given_what_went_to_them_and_what_they_sent_in_full() {
         use crate::tool::{ToolCall, ToolVisibility};
-        // Every participant a member all along.
+        // Each reader taking part all along.
         const ALL: &[Range<Position>] = &[EVERY_POSITION];
         let agent = ActorId::Agent(AgentId::new());
         let other = ActorId::Agent(AgentId::new());
@@ -572,12 +572,12 @@ mod tests {
                 ActorId::User(UserId::new()),
                 ActorId::Approver(Default::default()),
             ] {
-                let member_all_along = [EVERY_POSITION];
+                let taking_part_all_along = [EVERY_POSITION];
                 assert_eq!(
                     recorded.seen_by(
                         Position::START,
                         &Reader::Participant(participant),
-                        &member_all_along
+                        &taking_part_all_along
                     ),
                     envelope.recipients().names(participant),
                     "{kind} of {sender} for {participant}"

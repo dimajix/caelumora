@@ -1424,7 +1424,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     );
 
     // Read for a reader (issue 417): what went to them and what they sent,
-    // the latter in full; what went to every member for whoever was one
+    // the latter in full; what went to every participant for whoever was one
     // then, and for an outsider. Both users are given all of it as they join.
     let user = ActorId::User(UserId::new());
     let other = ActorId::User(UserId::new());
@@ -1445,10 +1445,10 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         ..make_message(id(602))
     };
     let mut more = states.get_channel_state(channel).await.expect("get");
-    for member in [user, other] {
+    for participant in [user, other] {
         more.history.enter(Recorded::new(
             HistoryEntry::HistoryShared {
-                participant: member,
+                participant,
                 from: Position::new(0),
                 by: speaker,
                 by_name: String::new(),
@@ -1459,7 +1459,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         ));
         more.history.enter(Recorded::new(
             HistoryEntry::ParticipantJoined {
-                participant: member,
+                participant,
                 name: String::new(),
                 by: speaker,
                 by_name: String::new(),
@@ -1510,7 +1510,7 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     );
     assert!(
         histories.said(key, &Reader::Participant(stranger), id(602)).await.unwrap().is_none(),
-        "nothing that went to every member to who never was one"
+        "nothing that went to every participant to who never was one"
     );
     assert_eq!(
         histories.attendance(key, other).await.unwrap(),

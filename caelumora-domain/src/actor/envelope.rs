@@ -359,7 +359,7 @@ impl Envelope {
             | ActorEvent::PartialMessageGenerated(_)
             | ActorEvent::IntermediatePartialGenerated(_)
             | ActorEvent::PlanStepFinished { .. }
-            | ActorEvent::ActivityStarted { .. } => Recipients::members(false),
+            | ActorEvent::ActivityStarted { .. } => Recipients::participants(false),
             ActorEvent::CommandStarted { to, .. } => Recipients::users(Some(vec![*to])),
             ActorEvent::QuestionAnswered { agent_id, .. }
             | ActorEvent::QuestionDeclined { agent_id, .. }

@@ -403,7 +403,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
 
 /// The database gives a reader of a history what the domain gives them
 /// (issue 451): what they sent, what went to them by name, what went to
-/// every member while they were one, an approver what went to the
+/// every participant while they were one, an approver what went to the
 /// approvers, an outsider what went to every user - each only if anything
 /// of it is published.
 #[tokio::test]

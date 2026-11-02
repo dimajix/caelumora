@@ -57,7 +57,7 @@ pub fn main_channel(session: &Session) -> Channel {
 
 /// The state of `channel` - a channel a test stores as it is, its participants written into
 /// its document - with their joins recorded in its history, in its owner's name, as if they
-/// had founded it (issue 420): so that its history says who is a member, as it does of a
+/// had founded it (issue 420): so that its history says who takes part, as it does of a
 /// channel created by the one way in. What a test records in the history goes after them.
 pub fn founded(channel: &Channel) -> ChannelState {
     let mut state = ChannelState::new(channel.id);

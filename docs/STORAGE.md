@@ -480,9 +480,9 @@ participant (issue 417), and is kept apart from the channel state's document (is
     state: first the entries added since it was last stored, then the document. Every entry is
     recorded with the actor whose envelope it was and whom it went to, resolved as it is recorded
     into what a store filters by (`Recorded { entry, sender, recipients }`, issue 417): every
-    member at the time of the kinds it names - users, agents -, the channel's approvers, and some
-    by name (`Recipients`), by the rule every channel delivers by. It is recorded with the head of
-    the envelope it came in too - its context and when it was sent (issue 223) -, which no digest
+    participant at the time of the kinds it names - users, agents -, the channel's approvers, and
+    some by name (`Recipients`), by the rule every channel delivers by. It is recorded with the head
+    of the envelope it came in too - its context and when it was sent (issue 223) -, which no digest
     covers: what it is delivered again from (`Recorded::envelope`) to an actor whose inbox fell
     behind. What an actor depends on receiving is recorded for that alone - a command or a request
     to answer again asked of an agent, approvals, questions asked and closed -: entries that are
@@ -506,8 +506,8 @@ participant (issue 417), and is kept apart from the channel state's document (is
     Whether a reader is given an entry is one predicate (`Recorded::seen_by`) over what the store
     keeps of it - its sender, its recipients, whether anything of it is published, its position -
     and the reader's ranges: the channel everything; a participant what it sent, and what went to it
-    by name or to every member of its kind while it was one; an outsider what went to every user.
-    The domain gives the same rule as data (`Filter::seen_by`, issue
+    by name or to every participant of its kind while it was one; an outsider what went to every
+    user. The domain gives the same rule as data (`Filter::seen_by`, issue
     [451](../issues/451-history-reader-judged-after-reading.md)), over an item as it is kept
     (`KeptItem`: the item as recorded, its position, whether it is published), which a test holds
     to `seen_by`; a database adds it to the `WHERE` of a page. A page counts what its reader sees.

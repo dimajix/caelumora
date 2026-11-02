@@ -39,7 +39,7 @@ pub enum HistoryField {
     /// what the channel says itself - not always the message's sender.
     Origin,
     /// Whether it went to every user, every agent, the channel's approvers
-    /// that were members at the time (`Recipients`, issue 417).
+    /// that took part at the time (`Recipients`, issue 417).
     ToUsers,
     ToAgents,
     ToApprovers,
@@ -154,7 +154,7 @@ impl Filter<HistoryField> {
                 Some(Filter::all_of([published, Filter::eq(HistoryField::ToUsers, true)]))
             }
             Reader::Participant(actor) => {
-                let while_a_member = |kind| {
+                let while_taking_part = |kind| {
                     let within = ranges
                         .iter()
                         .map(|range| {
@@ -167,8 +167,8 @@ impl Filter<HistoryField> {
                     Filter::all_of([Filter::eq(kind, true), Filter::Or(within)])
                 };
                 let of_kind = match actor {
-                    ActorId::User(_) => while_a_member(HistoryField::ToUsers),
-                    ActorId::Agent(_) => while_a_member(HistoryField::ToAgents),
+                    ActorId::User(_) => while_taking_part(HistoryField::ToUsers),
+                    ActorId::Agent(_) => while_taking_part(HistoryField::ToAgents),
                     ActorId::Approver(_) => Filter::eq(HistoryField::ToApprovers, true),
                     ActorId::System | ActorId::None => Filter::nothing(),
                 };
