@@ -107,3 +107,7 @@ concepts each file is to hold, not yet every item.
   `ToolParameters`, `ArgumentLanguage`, `ToolVisibility`, `ToolPresentation`), `call.rs` (a call as
   it is recorded and where it stands: `ToolCall`, `ToolCallResult`, `ToolResultStatus`,
   `ToolMedia`, `ToolCallState`, `ToolCallStatus`). The paths are as before.
+- **2026-11-02** — Step `approval` done: `approval/mod.rs` (asking: `ApproverId`, `Approver`,
+  `ApprovalStrategy`, a request, its answers and status; module docs, which it lacked), `rule.rs`
+  (the rules: `ApprovalRule`, `ApprovalRuleId`, the matchers, `Reach`, `RuleDecision`, `Coverage`,
+  `RuleError` and the limits), beside `shell.rs`. The paths are as before.
