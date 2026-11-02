@@ -116,6 +116,189 @@ makes outside a turn, if there is one, is to be found in the plan.
   different contract (`POST /v1/systemone`), called by a module of the kernel already.
 - The external agent (`caelumora-a2a`): it is an agent elsewhere, not a model.
 
+## The plan
+
+Agreed with the maintainer on 2026-11-02. It revises the considerations above: the facet stays,
+and what the kernel hands an agent is a client of its own, built for it alone.
+
+### The pattern
+
+The secrets: a manager of the kernel over backends that plugins bring (`SecretManager` over
+`SecretProvider`), which hands out a handle that acts in a context and asks the policy at every
+use (`SecretManager::for_context`, `ActorRuntime::secrets`). A model is the same: a backend that
+knows its server, a manager that decides, and a client that is a handle of the kernel.
+
+### Three types
+
+- **`ModelProvider`** (`caelumora-kernel`, `model`) - the backend: one configured model, served by
+  the backend its `type` names. It knows its server - the endpoint, the HTTP client, the control
+  tokens (issue 149), what is cached per server - and decides nothing.
+
+  ```rust
+  /// A language model the kernel offers: one entry of the configuration's `models` (issue 520).
+  #[async_trait]
+  pub trait ModelProvider: Send + Sync + Debug {
+      /// Whether the model is given images - configured, or asked of its server once.
+      async fn sees_images(&self) -> bool;
+      /// Sends `context` and `tools` and streams the answer: partial messages, then the complete
+      /// ones, built on `unlabelled_message` and carrying the measures of the call. Defuses the
+      /// model's control tokens before anything is sent.
+      async fn chat_completion(
+          &self,
+          context: &[Message],
+          tools: &[Tool],
+      ) -> BoxStream<'static, ModelResult<MessageEvent>>;
+  }
+  ```
+
+  Registered by plugins with `Backends::register::<dyn ModelProvider, _, _>` and configured by name
+  like the storages (`NamedBackends`):
+
+  ```yaml
+  models:
+    gemma:       { type: ollama, endpoint: { url: http://localhost:11434 }, model: gemma4:27b }
+    gemma-cloud: { type: ollama, model: gemma4:cloud, tokenizer: gemma4:27b }
+  default_model: gemma
+  ```
+
+- **`ModelManager`** (`caelumora-kernel`, `model`) - the service of the kernel: the models by
+  their names, and the clients of them. Where a later issue checks which agent may use which model
+  and counts what it uses; in this issue it resolves the name and builds the client.
+
+  ```rust
+  impl ModelManager {
+      /// The models `models` configures, `default` the one an agent uses that names none.
+      pub fn new(models: NamedBackends<dyn ModelProvider>, default: Option<String>) -> Self;
+      /// The client of `model` - the default where `None` - for the one actor `acting` acts for,
+      /// each call made in the context `acting` builds at that call (issue 520).
+      ///
+      /// # Errors
+      /// `ModelError::Unknown` for a model not configured.
+      pub(crate) fn client_for(
+          self: &Arc<Self>,
+          acting: Acting,
+          model: Option<&str>,
+      ) -> ModelResult<AgentModelClient>;
+  }
+  ```
+
+- **`ModelClient`** (`caelumora-api`, `model`; today `LLMClient`) - the facet through which an
+  agent asks its model, implemented by the kernel's client (`AgentModelClient`) alone.
+
+  ```rust
+  #[async_trait]
+  pub trait ModelClient: Send + Sync + Debug {
+      /// Sends `context` and the `tools` the model may call, in the agent's name for `initiator`,
+      /// and streams its answer as `MessageEvent`s. The stream owns the request; dropping it
+      /// abandons it.
+      async fn chat_completion(
+          &self,
+          initiator: ActorId,
+          context: &[Message],
+          tools: &[Tool],
+      ) -> BoxStream<'static, ModelResult<MessageEvent>>;
+  }
+  ```
+
+### In whose name a call is made
+
+Not decided here, and kept open: the client is built for one agent, and forms the context of each
+call when it is made, as `ParticipantRuntime::acting_for(initiator)` does - the agent's rights as
+they are then, and the initiator of the work. So the context of a call names the initiator, the
+caller, the owner, the principal, the session and the channel, and whatever a later check or
+accounting counts by is there. The client keeps no `SecurityContext` from when it was built: the
+context is built from the participant at each call (`ResolvedParticipant::context_in`), and one
+built once would grow stale. The initiator is passed with every call, as every call of the kernel
+in the work's name is told it (`Situation::initiator`).
+
+### `Acting`: in whose name an actor acts
+
+What builds that context exists, but not as a type of its own: `ParticipantRuntime` holds the
+actor, its session and channel and an enum `Acting` - the resolved participant with the
+controllers of its user or its agent and personality, or the approver; in tests `Itself` or
+`Fixed` -, and `acting_for` builds the context from them and the channel as it is now. `Acting`
+becomes the type of that concept, with the method that builds the context:
+
+```rust
+/// In whose name an actor acts (issue 516): builds the context of each of its calls from what the
+/// kernel holds of it now - never handed in by the actor.
+#[derive(Debug, Clone)]
+pub(crate) struct Acting { … } // the channel's controller and the resolved participant; the test variants inside
+
+impl Acting {
+    /// The context the actor acts in now, for `initiator` - who began the chain it answers, for the
+    /// record, never for rights.
+    pub(crate) fn context_for(&self, initiator: ActorId) -> SecurityContext;
+}
+```
+
+It holds handles of the controllers, not ids, so that every context it builds is as the
+controllers are then: a role taken away or a personality that limits more applies at the next
+call. Its users:
+
+- **`ParticipantRuntime`** holds an `Acting`; `acting_for` becomes `self.acting.context_for(…)`.
+- **`BuildContext`** holds an `Acting` instead of a context built once; planning the components
+  (`ComponentContainer`, today the only reader of that context) asks `context_for(actor)`. The
+  kinds of the kernel reach it through the `BuildContext`; the API's `ComponentContext` does not
+  carry it.
+- **`ModelManager::client_for`** takes it; the client keeps it and builds the context of each call.
+
+`Acting` is `pub(crate)` in the kernel: whoever holds it can make contexts in the participant's
+name. It is never part of `caelumora-api` nor handed to a library, and no plugin needs it - a
+backend of models decides nothing.
+
+### How the agent gets its client
+
+As a component, as today: the kind `model`, registered by the kernel - no longer by a library -,
+in the agent's components instead of `ollama_client`. Its parameters: `name`, a model of
+`models` (the default left out), and the framing (`sender_format`, `sender_style`,
+`message_times`, `reasoning_history`, `system_messages`, `prompt_texts`). It provides
+`ModelClient`, built by `ModelManager::client_for` while the agent's components are built
+(`ActorRuntime::build_components`), and `ModelProfileProvider`, its `images` asked of the model
+(`sees_images`). The agent's actor and the compaction keep asking for the facet as they do; they
+pass the initiator of their turn.
+
+What this needs of the kernel:
+
+- **A kind of the kernel builds for one agent.** Its factory takes the agent's `Acting` from the
+  `BuildContext` and hands it to `ModelManager::client_for`. It is the first kind of the kernel
+  that provides a facet of an agent; the mechanism allows it, PLUGINS.md is to say so.
+- **No library brings a `ModelClient`.** `libraries_keep_to_their_side` refuses, as it refuses a
+  kind of a facet the kernel builds in its own name, a library's kind that provides `ModelClient`,
+  and a library that declares it a single - so that no call of a model passes the kernel.
+- **`ModelProfileProvider` moves to the API**, since a kind of the kernel provides it;
+  `caelumora-a2a` keeps providing it for the external agent.
+
+### Renames
+
+The concept is called *model* everywhere else (`ModelProfile`, a model call, LLM-MODELS.md), so
+in the same change: `LLMClient` → `ModelClient`, `LLMError` → `ModelError`, `LLMResult` →
+`ModelResult`, `caelumora_agents::llm` → `caelumora_api::model` (with `unlabelled_message`).
+
+### What moves
+
+- `caelumora-ollama` becomes a plugin (`OllamaPlugin`) that registers the backend `ollama`; it no
+  longer depends on `caelumora-agents`. `control_tokens` moves into it, its only user.
+  `caelumora-app` and `caelumora-tui` list the plugin and no longer name a default kind of the
+  facet: the kernel's kind `model` is the one there is.
+- The scripted models of the tests (`TestModel` of the channel tests, the compaction's
+  `Summariser`, the security suite) become a `ModelProvider` of the kernel's `test-support`.
+- **Stored data:** personalities and `component_defaults` that configure `ollama_client` are to be
+  rewritten to `model`, their endpoint and model moved to `models`; no compatibility for the old
+  form.
+
+### Steps
+
+1. **Rename and move** (no behaviour change): `LLMClient`, `LLMError`, `LLMResult`,
+   `unlabelled_message` and `ModelProfileProvider` to `caelumora_api::model` under their new names;
+   the call takes the initiator.
+2. **`Acting` as a type** (no behaviour change): drawn out of `ParticipantRuntime`, held by it and
+   by `BuildContext` instead of the context built once.
+3. **The service**: `ModelProvider`, `ModelManager`, the kind `model`, the guard against a
+   library's `ModelClient`, `OllamaPlugin`, the scripted backend of the tests, the configuration;
+   the documents (ARCHITECTURE.md, PLUGINS.md, AGENT-TURN.md, CONFIGURATION.md, CRATES.md,
+   LLM-MODELS.md).
+
 ## Done when
 
 - No library calls a language model: `caelumora-ollama` is a plugin that brings a backend of the
@@ -129,3 +312,8 @@ makes outside a turn, if there is one, is to be found in the plan.
 
 - **2026-11-01** — Opened at the maintainer's request: the model is to be a service of the kernel
   rather than a library, so that an accounting of its use can be built in the kernel later.
+- **2026-11-02** — Planned with the maintainer: a `ModelManager` of the kernel over the backends
+  (`ModelProvider`) builds each agent a client of its own (`ModelClient`, today `LLMClient`), which
+  forms the context of every call when it is made; in whose name a call is counted is left open.
+  What builds that context becomes a type of its own, `Acting`, drawn out of `ParticipantRuntime`
+  as a step before the service.
