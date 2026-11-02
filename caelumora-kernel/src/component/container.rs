@@ -274,7 +274,7 @@ impl ComponentRegistry {
         context: &BuildContext,
     ) -> ComponentResult<ComponentContainer> {
         let own_defaults = self.defaults_of(defaults)?;
-        let planned = self.plan(config, &own_defaults, &context.security_context).await?;
+        let planned = self.plan(config, &own_defaults, &context.acting.context()).await?;
         // Refused before anything is built: params a kind does not take or
         // finds wrong (issue 515), and what nobody asks for, which would read
         // its owner's secrets for nothing (issue 337).

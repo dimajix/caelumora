@@ -1,23 +1,30 @@
 //! The environment a configuration of components is built in (`BuildContext`).
 
+use crate::kernel::Acting;
 use caelumora_api::component::Services;
 use caelumora_model::security::SecurityContext;
 
-/// The environment a configuration of components is built in (issues 321, 516): the name of its
-/// owner - an agent's own, a channel's owner's -, in which every `ref` is resolved and the graph
-/// keeps, and the services of the kernel, of which each component is given those its kind uses
+/// The environment a configuration of components is built in (issues 321, 516): in whose name -
+/// an agent's own, a channel's owner's -, in which every `ref` is resolved and the graph keeps,
+/// and the services of the kernel, of which each component is given those its kind uses
 /// (`ComponentContext`). A component does not keep the name: what it does later it does in the
 /// context of the act it serves, as a tool does in its turn's.
 #[derive(Debug, Clone)]
 pub struct BuildContext {
-    pub(crate) security_context: SecurityContext,
+    pub(super) acting: Acting,
     pub(super) services: Services,
 }
 
 impl BuildContext {
-    /// The environment of a graph built in `security_context`'s name, with `services`.
+    /// The environment of a graph built in `security_context`'s name, given once, with `services`.
     pub fn new(security_context: SecurityContext, services: Services) -> Self {
-        Self { security_context, services }
+        Self::acting_as(Acting::Given(security_context), services)
+    }
+
+    /// The environment of a graph built in the name of `acting` - an agent's -, as the kernel holds
+    /// it when the graph is planned, with `services`.
+    pub(crate) fn acting_as(acting: Acting, services: Services) -> Self {
+        Self { acting, services }
     }
 }
 

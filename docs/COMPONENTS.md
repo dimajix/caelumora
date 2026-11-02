@@ -310,14 +310,14 @@ checks.
 A container is built in a `BuildContext`, and each of its components with a `ComponentContext`;
 between them they hold:
 
-*   the `SecurityContext` the graph is built in, the name of its owner, which the `BuildContext`
-    holds and the graph keeps - never a `ComponentContext`, so that no component is given it (issue
-    516) - for an agent's components the agent's own, with its owner's rights
-    (`ActorRuntime::build_components`); for a channel's components and a session's commands the
-    owner's, with their roles as they are when it is built (`ControllerManager::owner_context`). The
-    graph resolves every `ref` in it; a component is not given it: what it asks it asks in the
-    context of the act it serves - a tool in its turn's, a moderator in the event's it routes -, one
-    context per piece of work;
+*   in whose name the graph is built, which the `BuildContext` holds as an `Acting` and the graph
+    keeps - never a `ComponentContext`, so that no component is given it (issue 516) - for an
+    agent's components the agent's own, with its owner's rights, as the controllers hold them when
+    the graph is planned (`ActorRuntime::build_components`); for a channel's components and a
+    session's commands the owner's, given once, with their roles as they are when it is built
+    (`ControllerManager::owner_context`). The graph resolves every `ref` in its context; a
+    component is not given it: what it asks it asks in the context of the act it serves - a tool in
+    its turn's, a moderator in the event's it routes -, one context per piece of work;
 *   the services of the kernel its kind declares it uses - for a component of the kernel the
     policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
     that a new service needs no new field and no component is given one it does not declare. They

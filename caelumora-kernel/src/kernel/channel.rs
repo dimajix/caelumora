@@ -1,7 +1,7 @@
 //! `ChannelRuntime`: what a channel is built with (issues 360, 361), and the one source of the
 //! runtimes of its participants.
 
-use super::actor::Acting;
+use super::Acting;
 use super::{Kernel, ParticipantRuntime};
 use crate::actor::AgentKinds;
 use crate::attachment::AttachmentManager;
@@ -91,13 +91,16 @@ impl ChannelRuntime {
     /// runtimes of their participants (`participant_runtime`).
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
-        self.runtime_acting(actor, Acting::Itself)
+        let (session_id, channel_id) = (self.session.id(), self.channel.id());
+        self.runtime_acting(actor, Acting::Itself { actor, session_id, channel_id })
     }
 
     /// The runtime of the participant `resolved` in the channel this runtime is for: acting in
     /// the participant's context as the controllers hold it now (issue 516).
     pub(crate) fn participant_runtime(&self, resolved: &ResolvedParticipant) -> ParticipantRuntime {
-        self.runtime_acting(resolved.actor_id(), Acting::Participant(resolved.clone()))
+        let participant = resolved.clone();
+        let channel = Arc::clone(self.channel_controller());
+        self.runtime_acting(resolved.actor_id(), Acting::Participant { participant, channel })
     }
 
     fn runtime_acting(&self, actor: ActorId, acting: Acting) -> ParticipantRuntime {

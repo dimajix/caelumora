@@ -243,6 +243,17 @@ call. Its users:
   carry it.
 - **`ModelManager::client_for`** takes it; the client keeps it and builds the context of each call.
 
+Revised on 2026-11-02, with the maintainer, when step 2 was begun: a `BuildContext` is made not
+only for an agent's components but for a channel's (in its owner's name), a session's commands
+and in the system's name, where there is no participant, only a context given once. So `Acting`
+stays an enum and gains a variant for that, `Given(SecurityContext)` - the test-only `Fixed` of
+before, now one of production -, beside `Participant` and the test's `Itself`; it answers
+`context()`, in its own name, beside `context_for(initiator)`. `BuildContext::new(context,
+services)` stays for every caller of before and makes a `Given`; `BuildContext::acting_as(acting,
+services)` is the agent's. Weighed and not chosen: an `Option<Acting>` beside the context in
+`BuildContext`, set for agents alone, and leaving `BuildContext` as it is and handing the `Acting`
+to the kind `model` as a service only an agent's build offers.
+
 `Acting` is `pub(crate)` in the kernel: whoever holds it can make contexts in the participant's
 name. It is never part of `caelumora-api` nor handed to a library, and no plugin needs it - a
 backend of models decides nothing.
@@ -323,3 +334,7 @@ in the same change: `LLMClient` → `ModelClient`, `LLMError` → `ModelError`, 
   `caelumora-ollama`, its only user, which no longer depends on `caelumora-agents`. The texts of
   `ModelError` users see still say "LLM backend"; they change with step 3, where the errors of a
   backend are rewritten anyway.
+- **2026-11-02** — Step 2 done on the branch: `Acting` is a type of its own (`kernel/acting.rs`),
+  with `Given` beside `Participant` and the test's `Itself`, as revised in *The plan*;
+  `ParticipantRuntime` builds its contexts by it, and `BuildContext` holds it - an agent's
+  components are built in the agent's `Acting`, all others in a context given once, as before.

@@ -13,13 +13,17 @@
 //!   one interface its kind is given, which the kernel's `AgentRuntime` serves (issue 516).
 //! - What the plugins and the kernel bind to the views of an agent's work is kept as its extensions
 //!   (`extension`, issue 516).
+//! - In whose name an actor acts or a graph of components is built is an `Acting` (`acting`, issues
+//!   516, 520): what the kernel builds the context of each call from.
 
+mod acting;
 mod actor;
 mod agent;
 mod builder;
 mod channel;
 mod extension;
 
+pub(crate) use acting::Acting;
 pub use actor::ParticipantRuntime;
 pub use agent::AgentRuntime;
 pub use builder::KernelBuilder;

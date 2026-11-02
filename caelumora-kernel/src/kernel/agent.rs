@@ -127,10 +127,10 @@ impl AgentRuntime {
     /// # Panics
     /// If `participant` is no agent's: the kernel makes the runtime of an agent alone.
     pub fn in_test(participant: ParticipantRuntime, state: Arc<AgentStateHandle>) -> Self {
-        use super::actor::Acting;
+        use super::Acting;
         use crate::channel::ResolvedKind;
         let (agent, personality) = match &participant.acting {
-            Acting::Participant(resolved) => match resolved.kind() {
+            Acting::Participant { participant: resolved, .. } => match resolved.kind() {
                 ResolvedKind::Agent(agent, personality) => {
                     (Arc::clone(agent), Arc::clone(personality))
                 }
@@ -138,7 +138,7 @@ impl AgentRuntime {
                     panic!("{} takes part as no agent", participant.actor)
                 }
             },
-            Acting::Itself | Acting::Fixed(_) => Self::made_up(&participant),
+            Acting::Itself { .. } | Acting::Given(_) => Self::made_up(&participant),
         };
         Self { kernel: Arc::clone(participant.kernel()), participant, agent, personality, state }
     }
@@ -380,9 +380,9 @@ impl ActorRuntime for AgentRuntime {
         facets: &[TypeKey],
     ) -> ComponentResult<ComponentContainer> {
         let registry = self.kernel.component_registry();
-        // In the agent's own name, as the kernel holds it now (issue 321).
-        let context = self.acting_for(self.participant.actor);
-        let context = BuildContext::new(context, self.kernel.services().clone());
+        // In the agent's own name, as the kernel holds it at each call (issues 321, 520).
+        let acting = self.participant.acting.clone();
+        let context = BuildContext::acting_as(acting, self.kernel.services().clone());
         registry.build_with_defaults(config, defaults, facets, &context).await
     }
 
