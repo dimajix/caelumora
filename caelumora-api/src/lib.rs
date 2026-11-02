@@ -7,6 +7,7 @@ pub mod cache;
 pub mod command;
 pub mod component;
 pub mod error;
+pub mod image;
 pub mod library;
 pub mod logging;
 pub mod model;

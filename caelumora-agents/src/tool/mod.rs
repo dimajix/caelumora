@@ -24,6 +24,7 @@ use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_api::error::AttachmentError;
 use caelumora_api::error::ContentError;
 use caelumora_api::error::StorageGone;
+use caelumora_api::model::ModelError;
 use caelumora_api::reader::ViewError;
 use caelumora_api::runtime::{ActorRuntime, CallPermit};
 use caelumora_api::terminal::TerminalError;
@@ -74,6 +75,21 @@ impl From<ViewError> for ToolError {
             ViewError::Failed(_) => ToolError::ExecutionFailed(error.to_string()),
             ViewError::Attachment(error) => error.into(),
             _ => ToolError::InvalidParameter(error.to_string()),
+        }
+    }
+}
+
+/// What a model a tool asks failed with (issue 525), as the agent's model is told it: a request the
+/// asked model does not take is the agent's model's to correct, anything else the asked model's
+/// server's failure.
+impl From<ModelError> for ToolError {
+    fn from(error: ModelError) -> Self {
+        match error {
+            ModelError::Unfit { .. } => ToolError::InvalidParameter(error.to_string()),
+            ModelError::Connection { .. }
+            | ModelError::Rejected { .. }
+            | ModelError::Backend { .. }
+            | ModelError::InvalidResponse { .. } => ToolError::ExecutionFailed(error.to_string()),
         }
     }
 }

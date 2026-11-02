@@ -24,7 +24,8 @@ members = [
     "caelumora-model",
     "caelumora-model-ollama",
     "caelumora-decision",
-    "caelumora-comfyui",
+    "caelumora-model-comfyui",
+    "caelumora-tool-image",
 ]
 resolver = "2"
 
@@ -111,7 +112,8 @@ caelumora-workspace-tools = { path = "caelumora-workspace-tools" }
 caelumora-model = { path = "caelumora-model" }
 caelumora-model-ollama = { path = "caelumora-model-ollama" }
 caelumora-decision = { path = "caelumora-decision" }
-caelumora-comfyui = { path = "caelumora-comfyui" }
+caelumora-model-comfyui = { path = "caelumora-model-comfyui" }
+caelumora-tool-image = { path = "caelumora-tool-image" }
 
 [profile.release]
 opt-level = 3

@@ -9,6 +9,7 @@
 
 use bytes::Bytes;
 use caelumora_api::error::describe_request_error;
+use caelumora_api::image::Image;
 use caelumora_domain::remote::RemoteEndpoint;
 use regex::Regex;
 use reqwest::{Client, Error, RequestBuilder, Response, Url};
@@ -38,8 +39,12 @@ const CANCEL_WITHIN: Duration = Duration::from_secs(5);
 pub(crate) enum ComfyUiError {
     #[error("ComfyUI at '{endpoint}' cannot be reached: {reason}")]
     Unreachable { endpoint: String, reason: String },
+    /// A request answered with an HTTP error, by its status and the reason that goes with it.
+    #[error("ComfyUI at '{endpoint}' answered HTTP {status}: {reason}")]
+    Rejected { endpoint: String, status: u16, reason: String },
+    /// An answer that is not what ComfyUI answers.
     #[error("ComfyUI at '{endpoint}' answered {answer}")]
-    Answered { endpoint: String, answer: String },
+    Unreadable { endpoint: String, answer: String },
     /// The workflow, as ComfyUI checked it before running it.
     #[error("ComfyUI refused the workflow: {0}")]
     Refused(String),
@@ -91,17 +96,18 @@ impl ComfyUiClient {
     }
 
     /// The images `graph` gives - those of the node `output`, else of every node -, each by its
-    /// file name with its bytes: the whole of it - queue, run and fetch - bounded by the endpoint's
-    /// timeout. A prompt queued is ended in ComfyUI if the call is dropped, the time runs out or
-    /// asking for it fails before it ended (`CancelOnDrop`).
+    /// file's name: the whole of it - queue, run and fetch - bounded by the endpoint's timeout. A
+    /// prompt queued is ended in ComfyUI if the call is dropped, the time runs out or asking for it
+    /// fails before it ended (`CancelOnDrop`).
     ///
     /// # Errors
-    /// `Unreachable`, `Answered`; `Refused`, `Failed` as ComfyUI says; `NoImage`; `TimedOut`.
+    /// `Unreachable`, `Rejected`, `Unreadable`; `Refused`, `Failed` as ComfyUI says; `NoImage`;
+    /// `TimedOut`.
     pub(crate) async fn generate(
         &self,
         graph: Map<String, Value>,
         output: Option<&str>,
-    ) -> ComfyUiResult<Vec<(String, Bytes)>> {
+    ) -> ComfyUiResult<Vec<Image>> {
         let within = self.endpoint.timeout_or(DEFAULT_TIMEOUT);
         time::timeout(within, self.run(graph, output))
             .await
@@ -115,7 +121,7 @@ impl ComfyUiClient {
         &self,
         graph: Map<String, Value>,
         output: Option<&str>,
-    ) -> ComfyUiResult<Vec<(String, Bytes)>> {
+    ) -> ComfyUiResult<Vec<Image>> {
         let mut guard = CancelOnDrop {
             client: self.clone(),
             prompt_id: Uuid::new_v4().to_string(),
@@ -146,7 +152,7 @@ impl ComfyUiClient {
         let mut fetched = Vec::with_capacity(chosen.len());
         for image in chosen {
             let content = self.image(&image).await?;
-            fetched.push((image.filename, content));
+            fetched.push(Image { name: image.filename, content });
         }
         Ok(fetched)
     }
@@ -161,7 +167,7 @@ impl ComfyUiClient {
         }
         let queued: Value = self.read(response).await?;
         let prompt_id = queued.get("prompt_id").and_then(Value::as_str);
-        let prompt_id = prompt_id.ok_or_else(|| self.answered("no prompt id"))?.to_string();
+        let prompt_id = prompt_id.ok_or_else(|| self.unreadable("no prompt id"))?.to_string();
         debug!(prompt = %prompt_id, "Queued in ComfyUI");
         Ok(prompt_id)
     }
@@ -262,14 +268,18 @@ impl ComfyUiClient {
         if status.is_success() {
             Ok(response)
         } else {
-            Err(self.answered(&status.to_string()))
+            Err(ComfyUiError::Rejected {
+                endpoint: self.endpoint.shown(),
+                status: status.as_u16(),
+                reason: status.canonical_reason().unwrap_or_default().to_string(),
+            })
         }
     }
 
     /// The JSON of `response`, a success.
     async fn read(&self, response: Response) -> ComfyUiResult<Value> {
         let response = self.successful(response)?;
-        response.json().await.map_err(|_| self.answered("what is no JSON"))
+        response.json().await.map_err(|_| self.unreadable("what is no JSON"))
     }
 
     fn unreachable(&self, error: Error) -> ComfyUiError {
@@ -279,8 +289,8 @@ impl ComfyUiClient {
         }
     }
 
-    fn answered(&self, answer: &str) -> ComfyUiError {
-        ComfyUiError::Answered { endpoint: self.endpoint.shown(), answer: answer.to_string() }
+    fn unreadable(&self, answer: &str) -> ComfyUiError {
+        ComfyUiError::Unreadable { endpoint: self.endpoint.shown(), answer: answer.to_string() }
     }
 }
 

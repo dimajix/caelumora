@@ -7,7 +7,6 @@ use caelumora_agents::library::AgentsLibrary;
 use caelumora_api::library::Library;
 use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
-use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::actor::{ActorEvent, ActorId};
@@ -34,12 +33,14 @@ use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
 use caelumora_model::plugin::ModelPlugin;
+use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
+use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
 use clap::Parser;
 use rustyline::error::ReadlineError;
@@ -539,6 +540,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(OpenTerminalPlugin),
         Box::new(ModelPlugin),
         Box::new(OllamaModelPlugin),
+        Box::new(ComfyUiModelPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
@@ -554,7 +556,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(McpLibrary),
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolsLibrary),
-        Box::new(ComfyUiLibrary),
+        Box::new(ImageToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
     ]

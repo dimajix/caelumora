@@ -739,15 +739,15 @@ mod tests {
     fn the_kernel_is_not_built_where_a_library_reaches_what_is_the_kernel_s() {
         /// A service a library offers its own kinds.
         #[derive(Debug)]
-        struct Workflows;
-        /// What a library does as it registers, besides offering its workflows.
+        struct OwnService;
+        /// What a library does as it registers, besides offering its own service.
         struct Brings(fn(&mut LibraryComponents<'_>));
         impl Library for Brings {
             fn name(&self) -> &'static str {
                 "brings"
             }
             fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
-                library.provide(Arc::new(Workflows))?;
+                library.provide(Arc::new(OwnService))?;
                 (self.0)(&mut library.components());
                 Ok(())
             }
@@ -765,7 +765,7 @@ mod tests {
             TestKernel { libraries: vec![brings], ..Default::default() }.try_build().map(drop)
         };
 
-        built(&Brings(|c| brought(c, |kind| kind.uses::<Workflows>().uses::<PromptCatalogue>())))
+        built(&Brings(|c| brought(c, |kind| kind.uses::<OwnService>().uses::<PromptCatalogue>())))
             .expect("its own service and the texts");
         built(&Brings(|c| brought(c, |kind| kind.provides::<dyn LanguageModelClient>())))
             .expect("a model of its own, the agent's affair (issue 520)");

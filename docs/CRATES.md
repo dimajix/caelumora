@@ -24,6 +24,7 @@ flowchart TD
         decision["caelumora-decision"]
         model["caelumora-model"]
         model_ollama["caelumora-model-ollama"]
+        model_comfyui["caelumora-model-comfyui"]
         open_terminal["caelumora-open-terminal"]
         store_json["caelumora-store-json"]
         store_postgres["caelumora-store-postgres"]
@@ -33,7 +34,7 @@ flowchart TD
         agents["caelumora-agents"]
         mcp["caelumora-mcp"]
         a2a["caelumora-a2a"]
-        comfyui["caelumora-comfyui"]
+        tool_image["caelumora-tool-image"]
         workspace_tools["caelumora-workspace-tools"]
         compaction["caelumora-compaction"]
     end
@@ -60,9 +61,9 @@ flowchart TD
     plugins --> api
     plugins --> domain
     plugins --> kernel
-    model_ollama --> model
+    model_comfyui & model_ollama --> model
     decision & kernel & open_terminal & rest_server & store & store_json & store_postgres --> security
-    a2a & comfyui & compaction & mcp & workspace_tools --> agents
+    a2a & compaction & mcp & tool_image & workspace_tools --> agents
     libraries --> api
     libraries --> domain
     agents -. "test-support" .-> kernel
@@ -91,7 +92,9 @@ those it takes with other features than their default ones.
 
 Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` was named
 `caelumora-model`, `caelumora-model` `caelumora-models` and `caelumora-model-ollama`
-`caelumora-ollama`; the issues before it name them so.
+`caelumora-ollama`; the issues before it name them so. Until issue
+[525](../issues/525-image-models-are-a-tool-s-own.md), the backend of ComfyUI and the tool that
+generates images were one library, `caelumora-comfyui`.
 
 `caelumora-rest-client` depends on no crate of the workspace, and none on it; it is reserved for a
 client of the REST interface. `caelumora-web-ui` is no crate, but the browser frontend served by
@@ -113,9 +116,9 @@ The graph is not only what has grown, but holds rules of the design:
     build the kernel's world with.
 *   A plugin links the kernel, which it extends (see [PLUGINS.md](PLUGINS.md)).
 *   Nothing but the programs depends on a plugin - but a plugin that brings a backend of another
-    plugin's service, as `caelumora-model-ollama` brings one of the models of `caelumora-model`
-    (issue 520) -, and only the crates that are a plugin and a library at once, with `server`, on
-    `caelumora-rest-server`.
+    plugin's service, as `caelumora-model-ollama` and `caelumora-model-comfyui` bring ones of the
+    models of `caelumora-model` (issues 520, 525) -, and only the crates that are a plugin and a
+    library at once, with `server`, on `caelumora-rest-server`.
 
 ## How the graph is written
 

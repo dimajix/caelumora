@@ -1,6 +1,6 @@
 # 525 — An image model is reached only by a tool of its own, past the models' service
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Integrations
@@ -111,3 +111,12 @@ issue [531](531-workspace-tools-named-apart-from-the-tools.md).
   as a section that refuses a key it does not know; `with_default_model` is
   `with_default_language_model` and fills `language`. A configuration that names its language
   models directly under `plugins.model` has to move them under `language`.
+- **2026-11-02** — Step 3 done: `caelumora-model` offers image models under `plugins.model.image`
+  (`ImageModelProvider`, the kind `image_model`, the API's `ImageModelClient`); ComfyUI is the
+  backend `comfyui` of the plugin `caelumora-model-comfyui`, one workflow a model; the tool is the
+  kind `image_tool` of the library `caelumora-tool-image`, whose argument `workflow` became
+  `model`; `caelumora-comfyui` is gone. `LibraryBuilder::config` and `provide` lost their only
+  user and are kept, by the maintainer's decision. Stored personalities with a `comfyui_tool`
+  component - the seeded `bob-painter` among them, which seeding again does not replace - have to
+  be deleted or given an `image_model` and an `image_tool`; a configuration with
+  `libraries.comfyui` has to name its workflows as image models under `plugins.model.image`. Done.

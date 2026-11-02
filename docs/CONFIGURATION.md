@@ -19,8 +19,8 @@ than taken for a switch.
 ### Backends
 
 Where a service is served by one of a choice of backends - a storage of workspaces or of content, a
-language model, a secret provider, a user provider, a store - the backend is named by its `type`,
-with its parameters beside it (`BackendConfig`, issues 324, 446):
+language model, an image model, a secret provider, a user provider, a store - the backend is named
+by its `type`, with its parameters beside it (`BackendConfig`, issues 324, 446):
 
 ```yaml
 workspaces:
@@ -55,8 +55,7 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
 | `plugins.artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
-| `plugins.model` | The section of the plugin `caelumora-model` (issue 520): the models the platform offers by their kind - the language models under `language` -, each a [backend](#backends) by its name - see [The model](#the-model). | none - the program offers one |
-| `libraries.comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
+| `plugins.model` | The section of the plugin `caelumora-model` (issues 520, 525): the models the platform offers by their kind - the language models under `language`, the image models under `image` -, each a [backend](#backends) by its name - see [The model](#the-model) and [Image models](#image-models). | no language model - the program offers one; no image model |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LanguageModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults - for the model, the kind `language_model` ([The model](#the-model)) |
 
@@ -119,41 +118,6 @@ The variants are read when the kernel is built, after every plugin and library a
 checked whole: a file of no namespace, a text the defaults do not have, a template that does not
 parse and a value a template names that its default is not given keep the kernel from starting,
 named by the variant, the namespace and the key.
-
-## ComfyUI
-
-`libraries.comfyui.workflows` names the directory of the workflows of ComfyUI (issue 512), which a
-`comfyui_tool` generates images with ([TOOLS.md](TOOLS.md#comfyui)), read as `seed` is, from where
-the program runs, when the kernel is built:
-
-```yaml
-libraries:
-  comfyui:
-    workflows: examples/comfyui/workflows
-```
-
-A workflow is two files of one name, an identifier - lower case letters, digits, `_` and `-`:
-`<name>.json`, the graph as ComfyUI exports it with "Export (API)", unchanged, and `<name>.yaml`
-beside it, which says what it is for and where the tool's parameters go:
-
-```yaml
-description: fast and photorealistic   # as the tool lists the workflow to a model
-parameters:                            # each to <node id>.<input> of the graph
-  prompt: 27.text                      # required
-  width: 13.width
-  height: 13.height
-  seed: 3.seed                         # negative_prompt as well, where the workflow takes one
-size: { min: 512, max: 2048, multiple_of: 16 }   # optional, 256 to 2048 by 16 when left out
-output: 9                              # the node whose images are the result; left out, every one
-```
-
-The directory is checked whole: a file without the other, a name that is no identifier, a parameter
-mapped to an input the graph does not have or that holds no value of its kind - a prompt a text, a
-size or seed a whole number, never a link to another node -, a width or height of the graph outside
-its own bounds, an output node that is not there keep the kernel from starting, named by the
-workflow. Other files are not read. Whether the nodes are ones the server has, and whether the
-output node gives images, only the server can tell. The example names one, `z_image_turbo`, after
-ComfyUI's template of that name.
 
 ## The model
 
@@ -253,3 +217,68 @@ Every message the model produces carries the size of the context it was produced
 `context_size`, or else the size Ollama has the model loaded with, which may be unknown. Ollama
 counts in a prompt's tokens all of the prompt, also what it kept from the previous call, so prompt
 and answer against the context size say how full the context was.
+
+### Image models
+
+The image models the platform offers are the same plugin's (issue 525): under `image`, its section
+`plugins.model` names each image model by its name and a [backend](#backends), and every call of one
+passes the plugin, as a language model's does. Without one, no agent can generate images.
+
+```yaml
+plugins:
+  model:
+    image:
+      z_image_turbo:
+        type: comfyui
+        endpoint:
+          url: http://127.0.0.1:8188
+          timeout_secs: 300
+        workflow: examples/comfyui/workflows/z_image_turbo
+```
+
+An agent is given an image model as a component of the kind `image_model` of `caelumora-model`,
+which names it - `name`, the one there is unless given, needed among several - and provides its
+`ImageModelClient`. An agent may have several, and the tool that generates images offers those it
+has ([TOOLS.md](TOOLS.md#images)).
+
+### ComfyUI
+
+The backend `comfyui`, of the plugin `caelumora-model-comfyui` (issues 512, 525), is an image model
+that runs one workflow on one ComfyUI server:
+
+| Parameter of `comfyui` | Meaning | Default |
+|---|---|---|
+| `endpoint` | The ComfyUI server: its `url`, and its `timeout_secs` - how long a whole call may take, its queue, its run and its fetch. ComfyUI is reached without authentication: an `auth` is refused | required; 300 s |
+| `workflow` | The path of the workflow's two files without their extension, read as `seed` is, from where the program runs, when the kernel is built | required |
+
+A workflow is two files of one path: `<path>.json`, the graph as ComfyUI exports it with "Export
+(API)", unchanged, and `<path>.yaml` beside it, which says what it is for and where the parts of a
+request go:
+
+```yaml
+description: fast and photorealistic   # as the model describes itself, which the tool lists
+parameters:                            # each to <node id>.<input> of the graph
+  prompt: 27.text                      # required
+  width: 13.width
+  height: 13.height
+  seed: 3.seed                         # negative_prompt as well, where the workflow takes one
+size: { min: 512, max: 2048, multiple_of: 16 }   # optional, 256 to 2048 by 16 when left out
+output: 9                              # the node whose images are the result; left out, every one
+```
+
+A workflow is checked whole: a file that cannot be read, a parameter mapped to an input the graph
+does not have or that holds no value of its kind - a prompt a text, a size or seed a whole number,
+never a link to another node -, a width or height of the graph outside its own bounds, an output
+node that is not there keep the kernel from starting, named by the model and the parameter
+`workflow`. A request for a size outside the bounds is refused before anything is sent, for the
+asker to correct. Whether the nodes are ones the server has, and whether the output node gives
+images, only the server can tell. The example names one, `z_image_turbo`, after ComfyUI's template
+of that name.
+
+A request queues the workflow (`POST /prompt`), follows it in the server's history and fetches the
+images of its output node (`GET /view`). What ComfyUI refused or failed with is the model's failure,
+in its words - but for the absolute paths on its host they name, each written `<path>`. A request
+given up - dropped, its time run out, its server no longer answering - ends its prompt in ComfyUI:
+taken from the queue where it waits, interrupted by its id where it runs, so that no other prompt
+is hit. The prompt is given its id before it is queued, so that a request dropped meanwhile ends it
+too.

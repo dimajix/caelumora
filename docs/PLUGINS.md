@@ -67,14 +67,14 @@ it registers, a plugin
     namespace of its own, from a file it compiles in - `decision` from its `src/prompts.yaml`, as a
     library adds its own (`LibraryBuilder::add_prompts`): the agents' `agents`, from
     `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `workspace_tools`, `artifacts` and
-    `comfyui` from a `src/prompts.yaml` of their own -; its component kinds that write for a model
-    use the catalogue as a service (see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool
-    that names another plugin's tool writes its name as text: it does not know it as a value;
+    `tool_image` from a `src/prompts.yaml` of their own -; its component kinds that write for a
+    model use the catalogue as a service (see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)).
+    A tool that names another plugin's tool writes its name as text: it does not know it as a value;
 *   is handed the kernel's storages of content (`content_storages`, issue 282) for what it keeps
     beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes the backends its own service is served by, which other plugins may bring, from its section
     (`make_named`, issue 520) - the models of `caelumora-model`, served by the backend `ollama` of
-    `caelumora-model-ollama`;
+    `caelumora-model-ollama` and the backend `comfyui` of `caelumora-model-comfyui` (issue 525);
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
     says only what its kind adds - where it announces and what lies behind an entity), and
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
@@ -116,7 +116,7 @@ A library (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-i
 the agent side: what runs an agent - `caelumora-agents`, the essential one, which brings the kinds
 of agent and the built-in components (issue 370) - or brings components for an agent's facets -
 `caelumora-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-workspace-tools` (issue 428),
-`caelumora-compaction` (issue 464), `caelumora-comfyui` (issue 512), and the library sides of
+`caelumora-compaction` (issue 464), `caelumora-tool-image` (issue 525), and the library sides of
 `caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`, `ArtifactsLibrary`). It is linked
 into the program as a plugin is, but trusted for nothing, and links the kernel's API
 (`caelumora-api`), the domain and other libraries, never the kernel, `caelumora-security` or
@@ -137,7 +137,11 @@ and nothing of the kernel - no store, no policy, no secret, no controller:
     of the catalogue: its variants are the configuration's;
 *   its section of the configuration (`config::<C>(name)`, over `section`), under `libraries`;
 *   a service of its own to its own kinds (`provide`, over `provide_of`), which decides nothing of
-    the kernel's - `caelumora-comfyui` its workflows.
+    the kernel's.
+
+No library uses the last two today (issue 525). They are kept as a library's counterpart of a
+plugin's section and service, so that a library whose kinds share a setting or a service of their
+own need not become a plugin for it.
 
 The typed calls (`config`, `provide`) lie on `dyn LibraryBuilder`, the trait's erased ones beside
 them (`section`, `provide_of`), as `ActorRuntime::reader` lies over `reader_of`.

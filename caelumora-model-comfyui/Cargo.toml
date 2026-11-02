@@ -1,0 +1,30 @@
+[package]
+name = "caelumora-model-comfyui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-domain.workspace = true
+caelumora-api.workspace = true
+caelumora-kernel.workspace = true
+caelumora-model.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "time"] }
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+axum.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true

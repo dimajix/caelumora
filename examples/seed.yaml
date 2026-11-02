@@ -167,9 +167,8 @@ personalities:
         prompt_texts: gemma4
     fail_policy: FailClosed
 # A painter, named after the TV painter Bob Ross (issue 512): the one personality that generates
-# images, with ComfyUI by the workflows of the section `comfyui` of the configuration, and shows
-# them to the channel with `attach`. Its server runs on this machine, cleared for what is
-# internal.
+# images, with the image model `z_image_turbo` of the configuration (issue 525), and shows them to
+# the channel with `attach`. Its server runs on this machine, cleared for what is internal.
 - id: 410a837e-8a11-4435-a1c3-14413e56120c
   name: bob-painter
   description: A gentle painter who paints what you describe
@@ -201,13 +200,15 @@ personalities:
   - id: attachment-tool
     kind: attachment_tool
     fail_policy: FailClosed
-  - id: comfyui-tool
-    kind: comfyui_tool
+  # The image model it paints with, and the tool that offers it.
+  - id: image-model
+    kind: image_model
     params:
-      endpoint:
-        url: http://127.0.0.1:8188
-        timeout_secs: 300
-      workflows: [z_image_turbo]
+      name: z_image_turbo
+    fail_policy: FailClosed
+  - id: image-tool
+    kind: image_tool
+    params:
       destination:
         level: internal
     fail_policy: FailClosed

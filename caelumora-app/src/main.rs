@@ -15,7 +15,6 @@ use caelumora_agents::library::AgentsLibrary;
 use caelumora_api::library::Library;
 use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
-use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
@@ -26,6 +25,7 @@ use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
 use caelumora_model::plugin::ModelPlugin;
+use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
@@ -37,6 +37,7 @@ use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
+use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
 use clap::Parser;
 use std::future;
@@ -195,20 +196,21 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin)]
 }
 
-/// The plugins of the program that bring no routes (issues 03, 327, 403, 446), which only its
+/// The plugins of the program that bring no routes (issues 03, 327, 403, 446, 525), which only its
 /// kernel is built with.
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(OpenTerminalPlugin),
         Box::new(ModelPlugin),
         Box::new(OllamaModelPlugin),
+        Box::new(ComfyUiModelPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
     ]
 }
 
-/// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 512, 516) -
+/// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 516, 525) -
 /// first the essential one, the agents' (issue 370).
 fn libraries() -> Vec<Box<dyn Library>> {
     vec![
@@ -217,7 +219,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(McpLibrary),
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolsLibrary),
-        Box::new(ComfyUiLibrary),
+        Box::new(ImageToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
     ]
@@ -258,7 +260,6 @@ mod tests {
     use caelumora_agents::testing::offered_anywhere;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_api::component::Services;
-    use caelumora_comfyui::library::COMFYUI;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::config::BackendConfig;
@@ -274,7 +275,7 @@ mod tests {
     use caelumora_kernel::seed::Seed;
     use caelumora_kernel::terminal::TerminalProvider;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
-    use caelumora_model::plugin::{LANGUAGE, MODEL};
+    use caelumora_model::plugin::{IMAGE, LANGUAGE, MODEL};
     use caelumora_model_ollama::client::OLLAMA_BACKEND;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::secret::SecretManager;
@@ -294,16 +295,21 @@ mod tests {
     /// The kernel of the program, with its plugins and libraries, over `store`, with the policy of
     /// the example configuration, which knows the roles the example seed names, its models and its
     /// component defaults, on which the example seed's models build (issue 445), its variants of
-    /// the texts, which they are given (issue 57), and the workflows of ComfyUI its agent generates
-    /// images with (issue 512) - read from where the program runs, the root of the sources.
+    /// the texts, which they are given (issue 57), and the workflows its image models run (issues
+    /// 512, 525) - read from where the program runs, the root of the sources.
     fn kernel(store: &Persistence) -> Kernel {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let prompts =
             config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
-        let workflows = root.join(config.libraries[COMFYUI]["workflows"].as_str().unwrap());
-        let libraries = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
-        let models = [(MODEL.to_string(), config.plugins[MODEL].clone())].into();
+        let mut models = config.plugins[MODEL].clone();
+        for model in
+            models[IMAGE].as_object_mut().into_iter().flat_map(|models| models.values_mut())
+        {
+            let workflow = root.join(model["workflow"].as_str().unwrap());
+            model["workflow"] = json!(workflow);
+        }
+        let models = [(MODEL.to_string(), models)].into();
         let AppConfig { compartments, roles, component_defaults, .. } = config;
         kernel_of(
             store,
@@ -313,7 +319,6 @@ mod tests {
                 component_defaults,
                 prompts,
                 plugins: models,
-                libraries,
                 ..AppConfig::default()
             },
         )

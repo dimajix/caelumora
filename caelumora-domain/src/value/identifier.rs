@@ -1,5 +1,5 @@
 //! What the configuration names things by (issue 512): `Identifier`, lower case letters, digits,
-//! `_` and `-` - a variant of the texts, a workflow of ComfyUI.
+//! `_` and `-` - a variant of the texts.
 
 use super::ValueError;
 use std::borrow::Borrow;

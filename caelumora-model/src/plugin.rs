@@ -1,9 +1,9 @@
-//! How the models are joined to the kernel (issue 520): the section `plugins.model`, the service
-//! that builds an agent its client, and the kind `language_model` with the model's facets.
+//! How the models are joined to the kernel (issues 520, 525): the section `plugins.model`, the
+//! service that builds an agent its clients, the kind `language_model` with the language model's
+//! facets and the kind `image_model` with an image model's.
 
-use crate::language_model;
 use crate::manager::ModelManager;
-use crate::LanguageModelProvider;
+use crate::{image_model, language_model, ImageModelProvider, LanguageModelProvider};
 use anyhow::Result;
 use caelumora_domain::config::{AppConfig, BackendConfig};
 use caelumora_kernel::kernel::KernelBuilder;
@@ -14,11 +14,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The name of the plugin, and of its section of the configuration: the models by their kind -
-/// `LANGUAGE` - and their names, each a backend.
+/// `LANGUAGE`, `IMAGE` - and their names, each a backend.
 pub const MODEL: &str = "model";
 
 /// The key of the language models in the section.
 pub const LANGUAGE: &str = "language";
+
+/// The key of the image models in the section (issue 525).
+pub const IMAGE: &str = "image";
 
 /// The section `plugins.model`: the models the platform offers, by their kind and their names.
 #[derive(Debug, Default, Deserialize)]
@@ -26,6 +29,8 @@ pub const LANGUAGE: &str = "language";
 struct ModelConfig {
     /// The language models; left out, none.
     language: BTreeMap<String, BackendConfig>,
+    /// The image models; left out, none.
+    image: BTreeMap<String, BackendConfig>,
 }
 
 /// The models, as a plugin.
@@ -41,8 +46,10 @@ impl Plugin for ModelPlugin {
         let section: ModelConfig = kernel.config(MODEL)?;
         let language =
             kernel.make_named::<dyn LanguageModelProvider>("language model", &section.language)?;
-        kernel.provide(Arc::new(ModelManager::new(language)));
+        let image = kernel.make_named::<dyn ImageModelProvider>("image model", &section.image)?;
+        kernel.provide(Arc::new(ModelManager::new(language, image)));
         language_model::register_all(kernel.components());
+        image_model::register_all(kernel.components());
         Ok(())
     }
 }

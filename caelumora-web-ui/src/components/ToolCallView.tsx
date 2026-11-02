@@ -913,10 +913,10 @@ const NoteListToolCallContent: React.FC<ToolCallContentProps> = ({call, result})
 };
 
 /**
- * An image generated (issue 512): the description it was generated from, as prose, what it was to
- * leave out, and what it was generated with - the workflow, the size where the call names it, and
- * the seed, by which it can be repeated or varied. The images are shown by the frame, as what any
- * result gave its model.
+ * An image generated (issues 512, 525): the description it was generated from, as prose, what it
+ * was to leave out, and what it was generated with - the image model, the size where the call names
+ * it, and the seed, by which it can be repeated or varied. The images are shown by the frame, as
+ * what any result gave its model.
  */
 const ImageToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Description not shown</span>;
@@ -927,7 +927,7 @@ const ImageToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
   const height = numberOf(args, 'height');
   const seed = numberOf(answered, 'seed') ?? numberOf(args, 'seed');
   const detail = [
-    textOf(answered, 'workflow') ?? textOf(args, 'workflow'),
+    textOf(answered, 'model') ?? textOf(args, 'model'),
     width !== null && height !== null ? `${width} × ${height}` : width !== null ? `width ${width}` : height !== null ? `height ${height}` : null,
     seed !== null ? `seed ${seed}` : null,
   ].filter(Boolean).join(' · ');

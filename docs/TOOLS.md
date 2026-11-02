@@ -133,8 +133,8 @@ at, and what the future holds is released. A tool therefore:
     own cannot be interrupted at all;
 *   ends on drop what it started outside the process and that would go on without it, in a task
     of its own, bounded and logged, which the drop does not await: the commands of
-    `terminal_tool`, which live with the storage, and the prompts of `comfyui_tool`, which hold its
-    server;
+    `terminal_tool`, which live with the storage, and the prompts an image model of the backend
+    `comfyui` runs for `image_tool`, which hold its server;
 *   does not block: code that never reaches an `await` cannot be interrupted, and holds up the
     agent's whole task, which even the abort after the stop's grace does not end.
 
@@ -224,45 +224,43 @@ as before. What such a component kind may use of the kernel is said in
 *   **Calls.** Each call opens a connection, and so an MCP session, of its own. An interrupted call
     drops it, which ends the session; whether the remote tool stops is up to the server.
 
-## ComfyUI
+## Images
 
-A `comfyui_tool` component (issue 512, library `caelumora-comfyui`) generates images on one ComfyUI
-server with the workflows it names, of those the section `libraries.comfyui` of the configuration
-holds (see [CONFIGURATION.md](CONFIGURATION.md#comfyui)):
+An `image_tool` component (issue 525, library `caelumora-tool-image`) generates images with the
+image models its agent is given: those of its components of the kind `image_model`, each one of the
+image models the platform offers (see [CONFIGURATION.md](CONFIGURATION.md#image-models)). The tool
+names no backend; where and how a model generates is its backend's - ComfyUI's
+([CONFIGURATION.md](CONFIGURATION.md#comfyui)).
 
 ```yaml
-- id: comfyui-tool
-  kind: comfyui_tool
+- id: image-model
+  kind: image_model
   params:
-    endpoint: { url: http://127.0.0.1:8188, timeout_secs: 300 }
-    workflows: [z_image_turbo]
+    name: z_image_turbo
+- id: image-tool
+  kind: image_tool
+  params:
     destination: { level: internal }
 ```
 
 *   **One tool.** `generate_image` makes an image from a description: `prompt`, and optionally
-    `workflow` - one the component names, the first unless given -, `negative_prompt`, `width`,
-    `height` and `seed`. The parameters are the tool's; a workflow maps those it takes to the
-    inputs of its nodes and leaves the others out, and its description lists the workflows with
-    what each says of itself. A workflow not named, or a size outside the workflow's bounds, is the
-    model's to correct.
+    `model` - one of the agent's image models, the first unless given -, `negative_prompt`,
+    `width`, `height` and `seed`. The parameters are the tool's, the same for every image model; an
+    image model takes those it can and leaves the others out, and the tool's description lists the
+    image models with what each says of itself. An image model not offered, or a request the image
+    model does not take - a size outside its bounds -, is the agent's model's to correct. An agent
+    without an image model has no such tool: the component is not built.
 *   **A seed** left out is chosen at random, below 2^53, so that another call gives another
-    image; the result names the seed taken, so that the model can repeat or vary one.
-*   **A call** queues the workflow (`POST /prompt`), follows it in the server's history, fetches
-    the images of its output node (`GET /view`) and gives them to the model
-    ([Media a tool gives its model](#media-a-tool-gives-its-model)); its value names the workflow,
-    the seed and the files. What ComfyUI refused or failed with is the call's failure, in its
-    words - but for the absolute paths on its host they name, each written `<path>`. The
-    endpoint's `timeout_secs` bounds the whole call - its queue, its run and its fetch, 300 seconds
-    unless given.
-*   **A call given up** - its turn cancelled or stopped, its time run out, its server no longer
-    answering - ends its prompt in ComfyUI (see [Running tool calls](#running-tool-calls)): taken
-    from the queue where it waits, interrupted by its id where it runs, so that no other prompt is
-    hit. The prompt is given its id before it is queued, so that a call dropped meanwhile ends it
-    too.
-*   **Parameters.** `endpoint` (required, without `auth`: ComfyUI knows no authentication),
-    `workflows` (required, at least one), `requires_approval` (`false` unless given: a call
-    changes nothing but the server's time), `destination` (`public` unless given - what the server
-    is cleared for, where the arguments go and stay, in its history and in what it saves) and
+    image; the result names the seed taken, so that the agent's model can repeat or vary one.
+*   **A call** asks the image model, in the agent's name, and gives the images it generated to the
+    agent's model ([Media a tool gives its model](#media-a-tool-gives-its-model)); its value names
+    the image model, the seed and the files. What the image model's server refused or failed with
+    is the call's failure, in its words. A call given up - its turn cancelled or stopped - drops the
+    request to the image model, and a backend that started something on its server ends it (see
+    [Running tool calls](#running-tool-calls)).
+*   **Parameters.** `requires_approval` (`false` unless given: a call changes nothing but the
+    server's time), `destination` (`public` unless given - what the servers of its image models are
+    cleared for, where the arguments go and stay, in a server's history and in what it saves) and
     `description`. The result is classified as the turn's label: it follows from the arguments
     alone.
 

@@ -125,22 +125,26 @@ plugins:
   #        lists no tokens, a local one that shares its tokenizer
   #      think: Ollama's default for the model
   #      vision: asked of the server
+  #
+  # The image models under `image` (issue 525), each by its name and a
+  # backend - `comfyui` of the plugin caelumora-model-comfyui: one workflow on
+  # one ComfyUI server, the path of its two files without their extension -
+  # `<path>.json`, exported from ComfyUI with "Export (API)", and `<path>.yaml`
+  # beside it, which says what it is for and where the parts of a request go.
+  # Read and checked when the kernel is built. Here ComfyUI on this machine.
   model:
     language:
       gemma:
         type: ollama
         model: "gemma4:26b"
         context_size: 65536
-
-# The sections of the libraries of the agent side (issue 516), each claimed
-# by the library of its name.
-libraries:
-  # ComfyUI (issue 512): the directory of the workflows a `comfyui_tool` generates images with -
-  # each `<name>.json`, exported from ComfyUI with "Export (API)", with `<name>.yaml` beside it,
-  # which says what it is for and where the parameters of a call go. Read and checked when the
-  # kernel is built.
-  comfyui:
-    workflows: examples/comfyui/workflows
+    image:
+      z_image_turbo:
+        type: comfyui
+        endpoint:
+          url: http://127.0.0.1:8188
+          timeout_secs: 300
+        workflow: examples/comfyui/workflows/z_image_turbo
 
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY

@@ -1,8 +1,9 @@
-//! What an agent is given of a language model (issues 130, 520): the facet `LanguageModelClient`,
-//! through which it asks its model, with the errors of a call (`ModelError`), and the profile by
-//! which its context is written for that model (`ModelProfileProvider`). The models the platform
-//! offers come from the plugin `caelumora-model`, which builds each agent its client; a library may
-//! bring a model of its own, which is then the agent's affair (issue 520).
+//! What an agent is given of the models the platform offers (issues 130, 520, 525): the facet of
+//! its language model, `LanguageModelClient`, through which it asks it, the profile by which its
+//! context is written for that model (`ModelProfileProvider`), and the errors of a call of any
+//! model (`ModelError`) - an image model's facet is `image`'s. The models come from the plugin
+//! `caelumora-model`, which builds each agent its clients; a library may bring a model of its own,
+//! which is then the agent's affair (issue 520).
 
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -13,9 +14,9 @@ use caelumora_domain::tool::Tool;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
-/// A failure talking to a model's backend. Every variant names the endpoint (with any credentials
-/// stripped from it), so that the message is actionable on its own - it is shown to users when a
-/// turn fails (issue 02).
+/// A failure talking to a model's backend - of a language model or of an image model (issue 525).
+/// Every variant its server caused names the endpoint (with any credentials stripped from it), so
+/// that the message is actionable on its own - it is shown to users when a turn fails (issue 02).
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
     /// The backend could not be reached or the connection broke.
@@ -31,6 +32,10 @@ pub enum ModelError {
     /// The response could not be understood.
     #[error("invalid response from the model server at {endpoint}: {reason}")]
     InvalidResponse { endpoint: String, reason: String },
+    /// The request is not one the model takes - a size outside its bounds, say -, which whoever
+    /// asked can correct; nothing was sent.
+    #[error("the model '{model}' does not take this request: {reason}")]
+    Unfit { model: String, reason: String },
 }
 
 /// What a call of a model answers.

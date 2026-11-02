@@ -84,9 +84,8 @@ impl dyn LibraryBuilder + '_ {
         }
     }
 
-    /// Offers `service`, the library's own - which decides nothing of the kernel's, as
-    /// `caelumora-comfyui`'s workflows -, to the kinds of the libraries that use it
-    /// (`provide_of`).
+    /// Offers `service`, the library's own - which decides nothing of the kernel's -, to the kinds
+    /// of the libraries that use it (`provide_of`).
     ///
     /// # Errors
     /// As `provide_of`.

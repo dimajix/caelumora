@@ -446,7 +446,6 @@ dependencies = [
  "caelumora-agents",
  "caelumora-api",
  "caelumora-artifacts",
- "caelumora-comfyui",
  "caelumora-compaction",
  "caelumora-decision",
  "caelumora-domain",
@@ -454,6 +453,7 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-model-comfyui",
  "caelumora-model-ollama",
  "caelumora-open-terminal",
  "caelumora-rest-server",
@@ -462,6 +462,7 @@ dependencies = [
  "caelumora-store",
  "caelumora-store-json",
  "caelumora-store-postgres",
+ "caelumora-tool-image",
  "caelumora-workspace-tools",
  "clap",
  "mime_guess",
@@ -498,30 +499,6 @@ dependencies = [
  "thiserror",
  "tokio",
  "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "caelumora-comfyui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "bytes",
- "caelumora-agents",
- "caelumora-api",
- "caelumora-domain",
- "caelumora-kernel",
- "rand 0.10.3",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
  "tracing",
  "uuid",
 ]
@@ -665,6 +642,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
  "caelumora-api",
  "caelumora-domain",
  "caelumora-kernel",
@@ -675,6 +653,29 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "caelumora-model-comfyui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "bytes",
+ "caelumora-api",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-model",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -873,6 +874,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-tool-image"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "caelumora-agents",
+ "caelumora-api",
+ "caelumora-domain",
+ "rand 0.10.3",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "caelumora-tui"
 version = "0.1.0"
 dependencies = [
@@ -881,7 +898,6 @@ dependencies = [
  "caelumora-agents",
  "caelumora-api",
  "caelumora-artifacts",
- "caelumora-comfyui",
  "caelumora-compaction",
  "caelumora-decision",
  "caelumora-domain",
@@ -889,11 +905,13 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-model-comfyui",
  "caelumora-model-ollama",
  "caelumora-open-terminal",
  "caelumora-skills",
  "caelumora-store-json",
  "caelumora-store-postgres",
+ "caelumora-tool-image",
  "caelumora-workspace-tools",
  "chrono",
  "clap",
