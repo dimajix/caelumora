@@ -111,3 +111,9 @@ concepts each file is to hold, not yet every item.
   `ApprovalStrategy`, a request, its answers and status; module docs, which it lacked), `rule.rs`
   (the rules: `ApprovalRule`, `ApprovalRuleId`, the matchers, `Reach`, `RuleDecision`, `Coverage`,
   `RuleError` and the limits), beside `shell.rs`. The paths are as before.
+- **2026-11-02** — Step `channel` done: `channel/mod.rs` (`Channel` with how it is stored and asked
+  for, `ChannelField`, the events of its changes, its moderation; module docs, which it lacked),
+  `history_access.rs` (`HistoryAccess`, `HistoryStart`), `participant.rs` (`Participant`,
+  `InternalActor`, and `FormerParticipant`, which the table had left unnamed), `state.rs`
+  (`ChannelState`, `ChannelStateChange`), `testing.rs` (the former `pub mod testing`). The paths
+  are as before.
