@@ -1,6 +1,6 @@
 # 527 — The approval strategy `DenyOnFirst` decides as `All` does
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Tools and approvals
@@ -46,3 +46,7 @@ Recommended: remove it.
 
 - **2026-11-02** — Opened at the maintainer's request, from the review of the last step of issue
   [526](526-large-modules-of-the-domain.md).
+- **2026-11-02** — Done: `DenyOnFirst` is removed, as recommended. Since the answers are counted per
+  approver it decided as `All` does, so no rule of its own is lost. The enum and its test, the web
+  UI's type and APPROVALS.md name only `Any`, `Majority` and `All`. Stored templates and channels
+  whose approver names `DenyOnFirst` can no longer be read and have to be deleted.

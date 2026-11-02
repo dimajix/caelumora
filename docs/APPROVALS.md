@@ -19,11 +19,11 @@ waits.
 3.  **Answers.** A user approves or denies through their `UserActor`; the moderator routes the
     answer to the approver only. A rule of the user's may answer for them (see [Rules of a
     person](#rules-of-a-person)).
-4.  **Decision.** The approver decides by its `ApprovalStrategy` (`Any`, `Majority`, `All`,
-    `DenyOnFirst`), counting only those who may approve, and decides again when users join or leave.
-    A request nobody decides times out after ten minutes. The approver's decision is the only way a
-    decision reaches an agent, and an approval is over only once the approver says so, not when one
-    user answered. The approver speaks in its own name, answered for by the owner of its channel,
+4.  **Decision.** The approver decides by its `ApprovalStrategy` (`Any`, `Majority`, `All`),
+    counting only those who may approve, and decides again when users join or leave. A request
+    nobody decides times out after ten minutes. The approver's decision is the only way a decision
+    reaches an agent, and an approval is over only once the approver says so, not when one user
+    answered. The approver speaks in its own name, answered for by the owner of its channel,
     with whoever began the call as initiator.
 5.  **Resumption.** The agent runs the granted calls and continues its turn.
 
@@ -36,9 +36,9 @@ whose it is (`ApprovalResponse::decisions`): a person's answer their own part al
 as then, the rule of theirs that answered if one did, and when (`ApprovalDecision`) -, set by their
 actor; the channel lets in no answer of a person that says anything else. The approver keeps each
 part with the answer, and its decision says whose answers made it: every counted answer that agrees
-with it - the first who approved under `Any`, all of them under `All`, the majority under
-`Majority`, who denied under `DenyOnFirst` -, in the order they were given; none where it timed out
-or nobody may approve. The agent keeps that with the call from the decision on, whatever the call
+with it - the first who approved under `Any`, the majority under `Majority`, all who approved
+under `All` or the first who denied -, in the order they were given; none where it timed out or
+nobody may approve. The agent keeps that with the call from the decision on, whatever the call
 waits for next, and takes it into the call's result as it ends (`ToolCallResult::approval`): so the
 tool message in the transcript and the channel's history says by whom the call was approved or
 denied - whether it was, its status says. It is published with the call even where its result is

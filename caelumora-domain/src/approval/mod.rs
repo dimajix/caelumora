@@ -50,8 +50,6 @@ pub enum ApprovalStrategy {
     Majority,
     /// Approved once all have approved; denied by the first who denies.
     All,
-    /// Denied by the first who denies; approved once all have approved.
-    DenyOnFirst,
 }
 
 impl ApprovalStrategy {
@@ -98,15 +96,6 @@ impl ApprovalStrategy {
                     Some(ApprovalStatus::Approved)
                 } else if denied_count > 0 {
                     Some(ApprovalStatus::Denied)
-                } else {
-                    None
-                }
-            }
-            ApprovalStrategy::DenyOnFirst => {
-                if denied_count > 0 {
-                    Some(ApprovalStatus::Denied)
-                } else if approved_count >= user_count {
-                    Some(ApprovalStatus::Approved)
                 } else {
                     None
                 }
@@ -205,8 +194,8 @@ mod tests {
     #[test]
     fn each_strategy_decides_by_the_answers_of_those_who_may_approve() {
         use ApprovalStatus::{Approved, Denied};
-        use ApprovalStrategy::{All, Any, DenyOnFirst, Majority};
-        for strategy in [Any, Majority, All, DenyOnFirst] {
+        use ApprovalStrategy::{All, Any, Majority};
+        for strategy in [Any, Majority, All] {
             assert_eq!(decided(strategy, 0, &[]), Some(Denied), "{strategy:?}: nobody may approve");
             assert_eq!(
                 decided(strategy, 3, &[]),
@@ -236,9 +225,6 @@ mod tests {
         assert_eq!(decided(All, 3, &[Approved, Approved]), None);
         assert_eq!(decided(All, 3, &[Approved, Approved, Approved]), Some(Approved));
         assert_eq!(decided(All, 3, &[Approved, Denied]), Some(Denied), "one denial ends it");
-
-        assert_eq!(decided(DenyOnFirst, 3, &[Denied]), Some(Denied), "the first denial ends it");
-        assert_eq!(decided(DenyOnFirst, 2, &[Approved]), None);
-        assert_eq!(decided(DenyOnFirst, 2, &[Approved, Approved]), Some(Approved));
+        assert_eq!(decided(All, 3, &[Denied]), Some(Denied), "the first denial ends it");
     }
 }

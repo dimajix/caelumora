@@ -1137,7 +1137,7 @@ export interface CreateChannelRequest {
 }
 
 /** How an approver decides on a tool call (`ApprovalStrategy`). */
-export type ApprovalStrategy = 'Any' | 'Majority' | 'All' | 'DenyOnFirst';
+export type ApprovalStrategy = 'Any' | 'Majority' | 'All';
 
 /**
  * An internal actor of a channel to create (issue 420): an approver, deciding by `strategy` - `Any`
