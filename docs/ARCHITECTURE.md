@@ -26,13 +26,13 @@ drawn in [CRATES.md](CRATES.md):
     of its own, `caelumora-api`.
 *   **`caelumora-api`** - the kernel's API (issue 516): what a library is given and declares - an
     actor and its `ActorRuntime`, the readers, a workspace's terminal, the components as a library
-    declares and is given them, the `LibraryBuilder` - and the errors they answer in, with how they
-    are told to a person. It depends on the model alone; the kernel implements its traits, and a
-    library links it and the model, never the kernel.
+    declares and is given them, the `LibraryBuilder`, the facet of a model and its profile - and the
+    errors they answer in, with how they are told to a person. It depends on the model alone; the
+    kernel implements its traits, and a library links it and the model, never the kernel.
 *   **`caelumora-agents`** - what an agent does in a channel (issue 370): both kinds of agent - a
     model run here, or an agent that runs elsewhere -, the agent's cognitive cycle and its turn, and
-    the facets its components serve (tools, prompt parts, the model, message stages, its commands,
-    what it does of its own accord) with their built-in kinds. It joins the kernel as a library of
+    the facets its components serve (tools, prompt parts, message stages, its commands, what it does
+    of its own accord) with their built-in kinds. It joins the kernel as a library of
     the agent side (see [Principles](#principles)), `AgentsLibrary`, an essential one: without it,
     the program is a chat between users.
 *   **`caelumora-rest-api`** - the wire of the REST API: the requests and responses, as `serde`
@@ -64,7 +64,7 @@ drawn in [CRATES.md](CRATES.md):
     `ExternalAgent` and name no protocol (issue 326). See
     [Agents that run elsewhere](#agents-that-run-elsewhere).
 *   **`caelumora-ollama`** - language models served by Ollama, a library that brings nothing but its
-    component kind `ollama_client`, so that the agents keep the facet `LLMClient` and name no model
+    component kind `ollama_client`, so that the API keeps the facet `ModelClient` and names no model
     provider; the programs name it as the default model (issue 329). See
     [CONFIGURATION.md](CONFIGURATION.md#the-model).
 *   **`caelumora-decision`** - decision models, which answer typed questions about a text with
@@ -273,12 +273,13 @@ What an agent can do is not programmed into the `AgentActor` but configured: a p
 **components**, and each component offers one or more **facets** - traits through which it takes
 part in the turn. A component contributes tools (`ToolProvider`), text for the model
 (`PromptProvider`), or filters incoming messages (`PerceiveInProcessor`). Of some facets an agent
-has exactly one: the `LLMClient`, the language model it talks to, and the `ContextProvider`, which
-assembles the model's context. Both have built-in defaults that a personality or the configuration
-can replace. Tool calls are run by the agent's `ToolExecutor` with the tools of its providers; it is
-no component, so that what it checks is never a personality's choice, and what of a call is the
-kernel's to decide - whether it may be called, what the rules of its places say, what may flow
-where - it asks of the kernel (`ActorRuntime::admit_tool_call`, `may_publish`, issue 516).
+has exactly one: the `ModelClient`, the language model it talks to, and the `ContextProvider`, which
+assembles the model's context. The `ContextProvider` has a built-in default, the `ModelClient` the
+one the program names; a personality or the configuration can replace either. Tool calls are run by
+the agent's `ToolExecutor` with the tools of its providers; it is no component, so that what it
+checks is never a personality's choice, and what of a call is the kernel's to decide - whether it
+may be called, what the rules of its places say, what may flow where - it asks of the kernel
+(`ActorRuntime::admit_tool_call`, `may_publish`, issue 516).
 
 Components are wired by type, much like Spring beans: a component asks for the facets it needs, and
 the container builds whatever provides them. User commands such as `/help` are components as well,

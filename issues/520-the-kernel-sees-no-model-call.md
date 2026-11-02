@@ -1,6 +1,6 @@
 # 520 — The kernel sees no call of a model
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -317,3 +317,9 @@ in the same change: `LLMClient` → `ModelClient`, `LLMError` → `ModelError`, 
   forms the context of every call when it is made; in whose name a call is counted is left open.
   What builds that context becomes a type of its own, `Acting`, drawn out of `ParticipantRuntime`
   as a step before the service.
+- **2026-11-02** — Step 1 done on the branch: `ModelClient`, `ModelError`, `ModelResult`,
+  `unlabelled_message` and `ModelProfileProvider` are in `caelumora_api::model`, the call takes the
+  initiator, a `ModelError` is judged for users by the API; `control_tokens` moved into
+  `caelumora-ollama`, its only user, which no longer depends on `caelumora-agents`. The texts of
+  `ModelError` users see still say "LLM backend"; they change with step 3, where the errors of a
+  backend are rewritten anyway.

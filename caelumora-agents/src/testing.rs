@@ -9,8 +9,6 @@
 )]
 
 use crate::library::{register_components, AgentsLibrary};
-use crate::llm::{LLMClient, LLMError, LLMResult};
-use crate::prompt::ModelProfileProvider;
 use crate::prompt::{NAMESPACE, PROMPTS};
 use crate::tool::ToolProvider;
 use crate::turn::Turn;
@@ -18,6 +16,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::library::{Library, LibraryBuilder};
+use caelumora_api::model::{ModelClient, ModelError, ModelProfileProvider, ModelResult};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_kernel::agent::state::AgentStateHandle;
 use caelumora_kernel::component::ComponentRegistry;
@@ -198,13 +197,14 @@ pub const UNASKED_MODEL_KIND: &str = "unasked_model";
 struct Unasked;
 
 #[async_trait]
-impl LLMClient for Unasked {
+impl ModelClient for Unasked {
     async fn chat_completion(
         &self,
+        _: ActorId,
         _: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
-        let refused = LLMError::Connection {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
+        let refused = ModelError::Connection {
             endpoint: UNASKED_MODEL_KIND.to_string(),
             reason: "the model of a test is not to be asked".to_string(),
         };
@@ -304,17 +304,17 @@ pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
 fn with_unasked_model(components: &mut LibraryComponents<'_>) {
     components.register(
         ComponentKind::new(UNASKED_MODEL_KIND)
-            .provides::<dyn LLMClient>()
+            .provides::<dyn ModelClient>()
             .provides::<dyn ModelProfileProvider>(),
         |_, _| {
             let model = Arc::new(Unasked);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Unasked>::clone(&model));
+            facets.insert::<dyn ModelClient>(Arc::<Unasked>::clone(&model));
             facets.insert::<dyn ModelProfileProvider>(model);
             Ok(facets)
         },
     );
-    components.single::<dyn LLMClient>(Some(UNASKED_MODEL_KIND));
+    components.single::<dyn ModelClient>(Some(UNASKED_MODEL_KIND));
     components.single::<dyn ModelProfileProvider>(Some(UNASKED_MODEL_KIND));
 }
 
@@ -324,12 +324,13 @@ fn with_unasked_model(components: &mut LibraryComponents<'_>) {
 pub struct Scripted(pub Mutex<VecDeque<Message>>);
 
 #[async_trait]
-impl LLMClient for Scripted {
+impl ModelClient for Scripted {
     async fn chat_completion(
         &self,
+        _: ActorId,
         _: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         match self.0.lock().unwrap().pop_front() {
             Some(answer) => stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),
             None => stream::pending().boxed(),
@@ -457,10 +458,12 @@ pub fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 pub fn register_scripted(registry: &mut ComponentRegistry, kind: &str, answers: Vec<Message>) {
     let model = Arc::new(Scripted(Mutex::new(answers.into())));
     registry.register(
-        ComponentKind::new(kind).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(),
+        ComponentKind::new(kind)
+            .provides::<dyn ModelClient>()
+            .provides::<dyn ModelProfileProvider>(),
         move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Scripted>::clone(&model));
+            facets.insert::<dyn ModelClient>(Arc::<Scripted>::clone(&model));
             facets.insert::<dyn ModelProfileProvider>(Arc::<Scripted>::clone(&model));
             Ok(facets)
         },

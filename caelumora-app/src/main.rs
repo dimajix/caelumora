@@ -12,10 +12,9 @@ use axum::routing;
 use axum::Router;
 use caelumora_a2a::library::A2aLibrary;
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_agents::llm::LLMClient;
-use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_api::component::ComponentError;
 use caelumora_api::library::Library;
+use caelumora_api::model::{ModelClient, ModelProfileProvider};
 use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_comfyui::library::ComfyUiLibrary;
@@ -234,7 +233,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
 /// # Errors
 /// If a plugin that brings a default kind is not among `plugins`.
 fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentError> {
-    components.set_default_kind::<dyn LLMClient>(OLLAMA_CLIENT_KIND)?;
+    components.set_default_kind::<dyn ModelClient>(OLLAMA_CLIENT_KIND)?;
     components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
 }
 
@@ -391,7 +390,7 @@ mod tests {
         assert_eq!(
             kernel
                 .component_registry()
-                .kind_of::<dyn LLMClient>(&ComponentConfig::default())
+                .kind_of::<dyn ModelClient>(&ComponentConfig::default())
                 .as_deref(),
             Some(OLLAMA_CLIENT_KIND)
         );

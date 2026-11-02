@@ -4,11 +4,11 @@
 use super::*;
 use crate::external::testing::{CallsRead, ScriptedExternalAgent};
 use crate::external::ExternalAgent;
-use crate::prompt::ModelProfileProvider;
 use crate::prompt::PromptProvider;
 use crate::testing::TestAgents;
 use anyhow::Result;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::model::ModelProfileProvider;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::ComponentRegistry;

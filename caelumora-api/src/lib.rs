@@ -8,6 +8,7 @@ pub mod component;
 pub mod error;
 pub mod library;
 pub mod logging;
+pub mod model;
 pub mod reader;
 pub mod remote;
 pub mod runtime;

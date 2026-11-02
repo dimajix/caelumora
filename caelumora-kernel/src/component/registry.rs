@@ -282,7 +282,7 @@ impl ComponentRegistry {
 
     /// Takes the configuration's defaults (`AppConfig::component_defaults`):
     /// each of its components replaces the default kind of the singles it
-    /// provides, for every container - a model, of its `LLMClient` and of
+    /// provides, for every container - a model, of its `ModelClient` and of
     /// its profile alike, built once for both.
     ///
     /// # Errors

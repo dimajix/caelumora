@@ -2,13 +2,13 @@
 //! here (`actor::agent`), one whose mind runs elsewhere (`actor::external_agent`) - with what they
 //! share (their body, how they take in what they hear, the commands they carry out), the turn of an
 //! agent run here (`turn`, `work`, `memory`, `notes`), and the facets their components serve: tools
-//! (`tool`), prompt parts and contexts (`prompt`), the model (`llm`), message stages (`message`),
-//! an agent that runs elsewhere (`external`), an agent's commands (`command`) and what it does of
-//! its own accord (`activity`) - compacting its context, which the library `caelumora-compaction`
-//! provides -, with the built-in kinds (`components`). It runs on the kernel, which knows agents
-//! only as a kind of participant, and joins it through its API (`caelumora-api`) as a library of
-//! the agent side (`library::AgentsLibrary`, issue 516) - an essential one: without it, the program
-//! is a chat between users.
+//! (`tool`), prompt parts and contexts (`prompt`), message stages (`message`), an agent that runs
+//! elsewhere (`external`), an agent's commands (`command`) and what it does of its own accord
+//! (`activity`) - compacting its context, which the library `caelumora-compaction` provides -, with
+//! the built-in kinds (`components`); the model's facet is the API's (`caelumora_api::model`). It
+//! runs on the kernel, which knows agents only as a kind of participant, and joins it through its
+//! API (`caelumora-api`) as a library of the agent side (`library::AgentsLibrary`, issue 516) - an
+//! essential one: without it, the program is a chat between users.
 
 pub mod activity;
 pub(crate) mod actor;
@@ -19,7 +19,6 @@ pub mod components;
 pub mod error;
 pub mod external;
 pub mod library;
-pub mod llm;
 pub(crate) mod memory;
 pub mod message;
 pub(crate) mod notes;

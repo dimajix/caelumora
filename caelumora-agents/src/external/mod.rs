@@ -162,7 +162,7 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use crate::prompt::ModelProfileProvider;
+    use caelumora_api::model::ModelProfileProvider;
     use caelumora_model::context::ModelProfile;
     use caelumora_model::security::{AccessPolicy, ActionType, SecurityContext};
     use futures::stream;

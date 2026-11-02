@@ -393,7 +393,6 @@ dependencies = [
 name = "caelumora-agents"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
  "async-trait",
  "caelumora-agents",
@@ -652,13 +651,13 @@ dependencies = [
 name = "caelumora-ollama"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "async-stream",
  "async-trait",
  "axum",
  "base64 0.22.1",
  "bytes",
- "caelumora-agents",
  "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",

@@ -55,7 +55,7 @@ flowchart TD
     plugins --> api
     plugins --> kernel
     plugins --> model
-    a2a & comfyui & compaction & mcp & ollama & workspace_tools --> agents
+    a2a & comfyui & compaction & mcp & workspace_tools --> agents
     libraries --> api
     agents -. "test-support" .-> kernel
     libraries --> model

@@ -25,9 +25,10 @@ use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_api::component::{config_of_params, ComponentImpl, ComponentResult, Params};
 use caelumora_api::component::{ComponentContext, ComponentKind, LibraryComponents};
+use caelumora_api::model::ModelProfileProvider;
 use caelumora_api::reader::ViewError;
 use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
+use caelumora_model::context::{KnowledgeRef, PromptPart};
 use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError, PromptTexts};
 use caelumora_model::store::StoreError;
 use serde::Deserialize;
@@ -191,18 +192,6 @@ pub trait ContextProvider: Send + Sync + Debug {
     ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError>;
 }
 
-/// How an agent's model is to be given its context (issue 57): the profile of the model - which
-/// reasoning of earlier messages it is given back, how the senders of others' messages are marked,
-/// say (issues 63, 135). A property of the model, fixed for as long as its component lives, kept in
-/// the context of every turn and applied where the model's input is resolved (`ContextResolver`).
-/// An agent has exactly one: its model's component provides it beside its `LLMClient`, an external
-/// agent's beside its `ExternalAgent` - so what writes for a model learns how without asking the
-/// model itself. Without a default in the kernel, as the `LLMClient`: the program names the kind of
-/// its model for both.
-pub trait ModelProfileProvider: Send + Sync + Debug {
-    fn profile(&self) -> ModelProfile;
-}
-
 /// `kind`, declaring what a component of it needs to write for the agent's
 /// model (issue 57): the prompt catalogue, and the profile that names the
 /// variant of its texts (`texts_of`).
@@ -257,7 +246,6 @@ pub enum ContextError {
 /// default kind (issue 99).
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
     registry.single::<dyn ContextProvider>(Some(turn_context_provider::TURN_CONTEXT_PROVIDER_KIND));
-    registry.single::<dyn ModelProfileProvider>(None);
 
     channel_briefing_prompt_provider::register(registry);
     channel_language_prompt_provider::register(registry);
@@ -274,12 +262,12 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{LLMClient, LLMResult};
     use crate::prompt::current_time_prompt_provider::CURRENT_TIME_PROMPT_PROVIDER_KIND;
     use crate::testing::{agent_runtime, TestAgents};
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
     use caelumora_api::component::ComponentFacets;
+    use caelumora_api::model::{ModelClient, ModelResult};
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::component::ComponentRegistry;
     use caelumora_kernel::session::testing::detached_participant_in;
@@ -289,6 +277,7 @@ mod tests {
     use caelumora_model::channel::testing::bare_channel;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::config::AppConfig;
+    use caelumora_model::context::ModelProfile;
     use caelumora_model::message::{Message, MessageEvent};
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_model::security::SecurityContext;
@@ -309,12 +298,13 @@ mod tests {
     struct Gemma;
 
     #[async_trait]
-    impl LLMClient for Gemma {
+    impl ModelClient for Gemma {
         async fn chat_completion(
             &self,
+            _: ActorId,
             _: &[Message],
             _: &[Tool],
-        ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+        ) -> BoxStream<'static, ModelResult<MessageEvent>> {
             stream::empty().boxed()
         }
     }
@@ -340,12 +330,12 @@ mod tests {
         let components = |registry: &mut ComponentRegistry| {
             registry.register(
                 ComponentKind::new("gemma")
-                    .provides::<dyn LLMClient>()
+                    .provides::<dyn ModelClient>()
                     .provides::<dyn ModelProfileProvider>(),
                 |_, _| {
                     let model = Arc::new(Gemma);
                     let mut facets = ComponentFacets::empty();
-                    facets.insert::<dyn LLMClient>(Arc::<Gemma>::clone(&model));
+                    facets.insert::<dyn ModelClient>(Arc::<Gemma>::clone(&model));
                     facets.insert::<dyn ModelProfileProvider>(model);
                     Ok(facets)
                 },

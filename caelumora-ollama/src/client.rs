@@ -1,5 +1,5 @@
 //! The `ollama_client` component: the language model an agent talks to,
-//! served by Ollama (issue 130). It provides the `LLMClient` facet, of
+//! served by Ollama (issue 130). It provides the `ModelClient` facet, of
 //! which an agent has exactly one: its personality's, the one
 //! `AppConfig::component_defaults` names, or the default kind the program
 //! names (issue 329) - which, where it is this one, is built with its
@@ -37,16 +37,17 @@
 //! one Ollama serves from its cloud, which tokenizes content the same way
 //! (measured, issue 462) - is given the `tokenizer` of a model that does.
 
+use crate::control_tokens::ControlTokens;
 use async_stream::stream;
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use bytes::Buf;
-use caelumora_agents::llm::control_tokens::ControlTokens;
-use caelumora_agents::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
-use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::model::{
+    unlabelled_message, ModelClient, ModelError, ModelProfileProvider, ModelResult,
+};
 use caelumora_api::remote::{describe_chain, describe_request_error};
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentRef;
@@ -389,7 +390,7 @@ impl ControlTokenCache {
         endpoint: &RemoteEndpoint,
         model: &str,
         tokenizer: Option<&str>,
-    ) -> LLMResult<Arc<ControlTokens>> {
+    ) -> ModelResult<Arc<ControlTokens>> {
         let cell = self
             .models
             .entry((endpoint.url.clone(), tokenizer.unwrap_or(model).to_string()))
@@ -410,21 +411,21 @@ async fn show(
     model: &str,
     verbose: bool,
     what: &str,
-) -> LLMResult<OllamaShowResponse> {
+) -> ModelResult<OllamaShowResponse> {
     let endpoint = remote.shown();
     let request = serde_json::json!({ "model": model, "verbose": verbose });
     let response = send(http.post(api_url(remote, "show")?).json(&request), remote).await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(LLMError::Rejected {
+        return Err(ModelError::Rejected {
             endpoint,
             model: model.to_string(),
             status: status.as_u16(),
             message: backend_error_message(&body),
         });
     }
-    response.json().await.map_err(|e| LLMError::InvalidResponse {
+    response.json().await.map_err(|e| ModelError::InvalidResponse {
         endpoint,
         reason: format!("cannot read {what}: {}", describe_request_error(e)),
     })
@@ -437,13 +438,13 @@ async fn read_control_tokens(
     remote: &RemoteEndpoint,
     model: &str,
     tokenizer: Option<&str>,
-) -> LLMResult<Arc<ControlTokens>> {
+) -> ModelResult<Arc<ControlTokens>> {
     let endpoint = remote.shown();
     let shown = tokenizer.unwrap_or(model);
     let show = show(http, remote, shown, true, "the model's tokens").await.map_err(|e| {
         match (e, tokenizer) {
-            (LLMError::Rejected { endpoint, model: asked, status, message }, Some(_)) => {
-                LLMError::Rejected {
+            (ModelError::Rejected { endpoint, model: asked, status, message }, Some(_)) => {
+                ModelError::Rejected {
                     endpoint,
                     model: asked,
                     status,
@@ -463,7 +464,7 @@ async fn read_control_tokens(
             None => format!("the model '{model}' does not list its tokens and their types, so its control tokens cannot be kept out of messages; \
                 a model that shares its tokenizer and lists them can be named as its 'tokenizer'"),
         };
-        return Err(LLMError::InvalidResponse { endpoint, reason });
+        return Err(ModelError::InvalidResponse { endpoint, reason });
     }
     let control = info
         .tokens
@@ -471,7 +472,7 @@ async fn read_control_tokens(
         .zip(info.token_types)
         .filter(|(_, kind)| *kind == CONTROL_TOKEN_TYPE || *kind == USER_DEFINED_TOKEN_TYPE)
         .map(|(token, _)| token);
-    let tokens = ControlTokens::new(control).map_err(|e| LLMError::InvalidResponse {
+    let tokens = ControlTokens::new(control).map_err(|e| ModelError::InvalidResponse {
         endpoint,
         reason: format!("cannot search for the model's control tokens: {e}"),
     })?;
@@ -519,11 +520,11 @@ impl ModelVision {
                     show(http, endpoint, model, false, "what the model can take"),
                 )
                 .await
-                .map_err(|_| LLMError::Connection {
+                .map_err(|_| ModelError::Connection {
                     endpoint: endpoint.shown(),
                     reason: format!("no answer within {} s", VISION_ASKED_WITHIN.as_secs()),
                 })??;
-                Ok::<_, LLMError>(
+                Ok::<_, ModelError>(
                     shown.capabilities.iter().any(|capability| capability == "vision"),
                 )
             })
@@ -601,20 +602,20 @@ async fn read_running_context_size(
     http: &Client,
     remote: &RemoteEndpoint,
     model: &str,
-) -> LLMResult<Option<u64>> {
+) -> ModelResult<Option<u64>> {
     let endpoint = remote.shown();
     let response = send(http.get(api_url(remote, "ps")?), remote).await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(LLMError::Rejected {
+        return Err(ModelError::Rejected {
             endpoint,
             model: model.to_string(),
             status: status.as_u16(),
             message: backend_error_message(&body),
         });
     }
-    let ps: OllamaPsResponse = response.json().await.map_err(|e| LLMError::InvalidResponse {
+    let ps: OllamaPsResponse = response.json().await.map_err(|e| ModelError::InvalidResponse {
         endpoint,
         reason: format!("cannot read the models loaded: {}", describe_request_error(e)),
     })?;
@@ -724,8 +725,8 @@ fn default_endpoint() -> RemoteEndpoint {
 ///
 /// # Errors
 /// `Connection` for an endpoint that is no URL.
-fn api_url(endpoint: &RemoteEndpoint, path: &str) -> LLMResult<Url> {
-    endpoint.url_of(&["api", path]).ok_or_else(|| LLMError::Connection {
+fn api_url(endpoint: &RemoteEndpoint, path: &str) -> ModelResult<Url> {
+    endpoint.url_of(&["api", path]).ok_or_else(|| ModelError::Connection {
         endpoint: endpoint.shown(),
         reason: "the endpoint is no URL".to_string(),
     })
@@ -733,18 +734,18 @@ fn api_url(endpoint: &RemoteEndpoint, path: &str) -> LLMResult<Url> {
 
 /// `request` sent to `endpoint`, answered within its timeout if it has one -
 /// a streamed answer with its beginning.
-async fn send(request: RequestBuilder, endpoint: &RemoteEndpoint) -> LLMResult<Response> {
+async fn send(request: RequestBuilder, endpoint: &RemoteEndpoint) -> ModelResult<Response> {
     let sent = request.send();
     let response = match endpoint.timeout_secs {
         Some(secs) => time::timeout(Duration::from_secs(secs), sent).await.map_err(|_| {
-            LLMError::Connection {
+            ModelError::Connection {
                 endpoint: endpoint.shown(),
                 reason: format!("no answer within {secs} s"),
             }
         })?,
         None => sent.await,
     };
-    response.map_err(|e| LLMError::Connection {
+    response.map_err(|e| ModelError::Connection {
         endpoint: endpoint.shown(),
         reason: describe_request_error(e),
     })
@@ -814,7 +815,7 @@ fn answer_of<S, D, E>(
     bytes: S,
     endpoint: String,
     model: String,
-) -> impl Stream<Item = LLMResult<MessageEvent>> + Send + 'static
+) -> impl Stream<Item = ModelResult<MessageEvent>> + Send + 'static
 where
     S: Stream<Item = Result<D, E>> + Send + 'static,
     D: Buf + Send + 'static,
@@ -834,11 +835,11 @@ where
             let line = match line {
                 Ok(line) => line,
                 Err(LinesCodecError::Io(e)) if e.kind() == ErrorKind::InvalidData => {
-                    yield Err(LLMError::InvalidResponse { endpoint, reason: e.to_string() });
+                    yield Err(ModelError::InvalidResponse { endpoint, reason: e.to_string() });
                     return;
                 }
                 Err(e) => {
-                    yield Err(LLMError::Connection { endpoint, reason: describe_chain(&e) });
+                    yield Err(ModelError::Connection { endpoint, reason: describe_chain(&e) });
                     return;
                 }
             };
@@ -847,7 +848,7 @@ where
             }
             // Ollama reports errors that occur mid-stream as `{"error": ...}`.
             if let Ok(OllamaErrorResponse { error }) = serde_json::from_str::<OllamaErrorResponse>(&line) {
-                yield Err(LLMError::Backend { endpoint, model, message: error });
+                yield Err(ModelError::Backend { endpoint, model, message: error });
                 return;
             }
             match serde_json::from_str::<OllamaChatResponse>(&line) {
@@ -923,17 +924,18 @@ where
                 }
             }
         }
-        yield Err(LLMError::InvalidResponse { endpoint, reason: "the response ended without a final message".to_string() });
+        yield Err(ModelError::InvalidResponse { endpoint, reason: "the response ended without a final message".to_string() });
     }
 }
 
 #[async_trait]
-impl LLMClient for OllamaClient {
+impl ModelClient for OllamaClient {
     async fn chat_completion(
         &self,
+        _: ActorId,
         context: &[Message],
         tools: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         let url = api_url(&self.endpoint, "chat");
         let message_count = context.len();
 
@@ -998,7 +1000,7 @@ impl LLMClient for OllamaClient {
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
-                yield Err(LLMError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
+                yield Err(ModelError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
                 return;
             }
             let mut answer = std::pin::pin!(answer_of(response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url)), endpoint, model.clone()));
@@ -1035,7 +1037,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         ComponentKind::new(OLLAMA_CLIENT_KIND)
             .params::<OllamaClientConfig>()
-            .provides::<dyn LLMClient>()
+            .provides::<dyn ModelClient>()
             .provides::<dyn ModelProfileProvider>()
             .uses::<PromptCatalogue>(),
         move |descriptor, context| {
@@ -1056,7 +1058,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
                     running_context_sizes,
                 ));
                 let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn LLMClient>(Arc::<OllamaClient>::clone(&client));
+                facets.insert::<dyn ModelClient>(Arc::<OllamaClient>::clone(&client));
                 facets.insert::<dyn ModelProfileProvider>(client);
                 Ok(facets)
             }
@@ -1337,7 +1339,7 @@ mod tests {
 
     /// The context size of the complete message of a call of `client`.
     async fn context_size_of_an_answer(client: &OllamaClient) -> Option<u64> {
-        let events: Vec<_> = client.chat_completion(&[], &[]).await.collect().await;
+        let events: Vec<_> = client.chat_completion(ActorId::None, &[], &[]).await.collect().await;
         match events.last() {
             Some(Ok(MessageEvent::Complete(message))) => message.context_size,
             other => panic!("{other:?}"),
@@ -1547,7 +1549,7 @@ mod tests {
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             },
         ];
-        let _: Vec<_> = client.chat_completion(&context, &[]).await.collect().await;
+        let _: Vec<_> = client.chat_completion(ActorId::None, &context, &[]).await.collect().await;
         let sent = fake.sent.lock().unwrap();
         assert_eq!(sent[0]["messages"][0]["images"], json!(["cG5n"]));
         assert!(sent[0]["messages"][1].get("images").is_none(), "nothing of what is only noted");
@@ -1603,7 +1605,8 @@ mod tests {
         }];
 
         for _ in 0..2 {
-            let events: Vec<_> = client.chat_completion(&context, &tools).await.collect().await;
+            let events: Vec<_> =
+                client.chat_completion(ActorId::None, &context, &tools).await.collect().await;
             assert!(matches!(events.last(), Some(Ok(MessageEvent::Complete(_)))), "{events:?}");
         }
 
@@ -1650,9 +1653,10 @@ mod tests {
         }];
 
         let alone = client_with(json!({ "endpoint": { "url": url }, "model": "qwen3:cloud" }));
-        let events: Vec<_> = alone.chat_completion(&context, &[]).await.collect().await;
+        let events: Vec<_> =
+            alone.chat_completion(ActorId::None, &context, &[]).await.collect().await;
         assert!(
-            matches!(events.as_slice(), [Err(LLMError::InvalidResponse { reason, .. })] if reason.contains("'tokenizer'")),
+            matches!(events.as_slice(), [Err(ModelError::InvalidResponse { reason, .. })] if reason.contains("'tokenizer'")),
             "{events:?}"
         );
         assert!(fake.sent.lock().unwrap().is_empty(), "nothing sent unprotected");
@@ -1660,7 +1664,8 @@ mod tests {
         let shared = client_with(
             json!({ "endpoint": { "url": url }, "model": "qwen3:cloud", "tokenizer": "qwen3:8b" }),
         );
-        let events: Vec<_> = shared.chat_completion(&context, &[]).await.collect().await;
+        let events: Vec<_> =
+            shared.chat_completion(ActorId::None, &context, &[]).await.collect().await;
         assert!(matches!(events.last(), Some(Ok(MessageEvent::Complete(_)))), "{events:?}");
         assert_eq!(
             *fake.shown_models.lock().unwrap(),
@@ -1676,9 +1681,10 @@ mod tests {
         let listless = client_with(
             json!({ "endpoint": { "url": url }, "model": "qwen3:other", "tokenizer": "qwen3:cloud" }),
         );
-        let events: Vec<_> = listless.chat_completion(&context, &[]).await.collect().await;
+        let events: Vec<_> =
+            listless.chat_completion(ActorId::None, &context, &[]).await.collect().await;
         assert!(
-            matches!(events.as_slice(), [Err(LLMError::InvalidResponse { reason, .. })] if reason.contains("'qwen3:cloud', the 'tokenizer' of 'qwen3:other'")),
+            matches!(events.as_slice(), [Err(ModelError::InvalidResponse { reason, .. })] if reason.contains("'qwen3:cloud', the 'tokenizer' of 'qwen3:other'")),
             "names the tokenizer as such: {events:?}"
         );
     }
@@ -1712,7 +1718,7 @@ mod tests {
     #[tokio::test]
     async fn an_unreachable_server_is_named_without_what_may_carry_a_credential() {
         let client = client("http://user:secret@127.0.0.1:9/?key=secret");
-        let events: Vec<_> = client.chat_completion(&[], &[]).await.collect().await;
+        let events: Vec<_> = client.chat_completion(ActorId::None, &[], &[]).await.collect().await;
         let error = match events.as_slice() {
             [Err(e)] => e.to_string(),
             other => panic!("{other:?}"),
@@ -1731,9 +1737,10 @@ mod tests {
         }];
 
         for _ in 0..2 {
-            let events: Vec<_> = client.chat_completion(&context, &[]).await.collect().await;
+            let events: Vec<_> =
+                client.chat_completion(ActorId::None, &context, &[]).await.collect().await;
             assert!(
-                matches!(events.as_slice(), [Err(LLMError::Rejected { status: 404, .. })]),
+                matches!(events.as_slice(), [Err(ModelError::Rejected { status: 404, .. })]),
                 "{events:?}"
             );
         }

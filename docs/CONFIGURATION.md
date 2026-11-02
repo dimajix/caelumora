@@ -57,7 +57,7 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `plugins.artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
 | `libraries.comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
-| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
+| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`ModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
 
 The approval rules and the compartments are checked when the configuration is read; the backends,
 `component_defaults`, the sections of the plugins and of the libraries, each among its own, and the
@@ -156,7 +156,7 @@ ComfyUI's template of that name.
 
 ## The model
 
-The language model an agent talks to is a component: the `LLMClient` facet, of which an agent has
+The language model an agent talks to is a component: the `ModelClient` facet, of which an agent has
 exactly one. A personality may configure its own; every other agent gets the one
 `component_defaults` names, or else the default model of the program: `ollama_client` with its
 defaults in `caelumora-app` and `caelumora-tui`, which list its library `caelumora-ollama` and name
@@ -207,7 +207,8 @@ does not start. Which values suit which model, as far as measured, is in
 
 Before the first call to a model, the client reads the model's control tokens from the server and
 keeps them from being produced by any text it sends; if they cannot be read, the call fails
-(`llm::control_tokens`). They are read of the model's `tokenizer`, if one is configured.
+(`control_tokens` of `caelumora-ollama`). They are read of the model's `tokenizer`, if one is
+configured.
 
 A channel may choose who answers by asking a decision model (`decision_policy`, see
 [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). Only an operator configures it: in a

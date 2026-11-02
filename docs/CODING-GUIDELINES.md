@@ -427,7 +427,7 @@ Errors carry what failed, and only what may be shown goes to users.
 *   An error caused by a remote system names the endpoint, without credentials, query or fragment
     (`caelumora_model::remote::redact_endpoint`), and the chain of its causes (the kernel's
     `caelumora_api::remote::describe_chain`; for a failed request without the URL `reqwest` writes
-    into it, `describe_request_error`). `LLMError` names the endpoint, the model and the backend's
+    into it, `describe_request_error`). `ModelError` names the endpoint, the model and the backend's
     own explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
 *   Messages never contain secret values or file paths, because they may be shown to users.
 

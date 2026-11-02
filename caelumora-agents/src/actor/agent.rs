@@ -4,10 +4,9 @@ use super::run_control::Interrupt;
 use crate::activity::ActivityProvider;
 use crate::command::AgentCommandProvider;
 use crate::error::failure_message;
-use crate::llm::LLMClient;
 use crate::message::apply_stage_processors;
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
-use crate::prompt::{ContextProvider, ModelProfileProvider};
+use crate::prompt::ContextProvider;
 use crate::tool::{not_executed_result, ToolExecutor, ToolProvider};
 use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use anyhow::{anyhow, Context, Error, Result};
@@ -15,6 +14,7 @@ use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::logging::{agent_span, envelope_span};
+use caelumora_api::model::{ModelClient, ModelProfileProvider};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{
@@ -47,7 +47,7 @@ pub(crate) struct AgentActor {
 
     // Components
     /// The model it talks to: exactly one (issue 130).
-    llm_client: ComponentImpl<dyn LLMClient>,
+    model_client: ComponentImpl<dyn ModelClient>,
     /// What it does of its own accord before a model call - compacting its
     /// context -, in the order of its components (issue 464).
     activities: Vec<ComponentImpl<dyn ActivityProvider>>,
@@ -62,7 +62,7 @@ impl AgentActor {
     /// through its body.
     pub(crate) const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ContextProvider>(),
-        TypeKey::of::<dyn LLMClient>(),
+        TypeKey::of::<dyn ModelClient>(),
         TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn ActivityProvider>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
@@ -94,7 +94,7 @@ impl AgentActor {
             resume,
         )
         .await?;
-        let llm_client = components.one::<dyn LLMClient>().await?;
+        let model_client = components.one::<dyn ModelClient>().await?;
         let activities = components.get_all::<dyn ActivityProvider>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let tool_executor = ToolExecutor::new(
@@ -102,7 +102,7 @@ impl AgentActor {
             Arc::clone(&body.runtime),
         )?;
 
-        Ok(AgentActor { body, llm_client, activities, emit_out_processors, tool_executor })
+        Ok(AgentActor { body, model_client, activities, emit_out_processors, tool_executor })
     }
 
     /// A message as it leaves the agent, through the emit processors - a
@@ -596,7 +596,7 @@ impl AgentActor {
         Ok(())
     }
 
-    /// Calls the LLM and streams its response for a single turn step. Loops
+    /// Calls the model and streams its response for a single turn step. Loops
     /// back to itself (via the run loop, after a trip through
     /// `ExecutingTools`) as long as the model keeps making tool calls, up to
     /// `MAX_MODEL_CALLS` in a turn: a turn that would make one more is given
@@ -653,7 +653,8 @@ impl AgentActor {
         // `create_plan_tool` is wired in, and the tools the turn began with
         // (issue 137); it fails if it cannot be resolved.
         let (messages, tools) = turn.full_context().await?;
-        let mut response = self.llm_client.chat_completion(&messages, &tools).await;
+        let initiator = turn.situation().initiator();
+        let mut response = self.model_client.chat_completion(initiator, &messages, &tools).await;
         use futures::stream::TryStreamExt;
         loop {
             // A cancel wins over the next chunk, and returning drops the
@@ -667,7 +668,7 @@ impl AgentActor {
                     info!("Interrupting the model call of agent {} {}", self.id(), agent_name);
                     return Ok(ActorState::Planning);
                 }
-                next = response.try_next() => next.with_context(|| "Error during LLM stream".to_string())?,
+                next = response.try_next() => next.with_context(|| "Error during the model's stream".to_string())?,
             };
             let Some(event) = next else { break };
 

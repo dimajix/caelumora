@@ -7,6 +7,7 @@
 
 use crate::command::CommandError;
 use crate::component::ComponentError;
+use crate::model::ModelError;
 use crate::reader::ViewError;
 use crate::terminal::TerminalError;
 use crate::workspace::WorkspaceError;
@@ -172,6 +173,8 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
         component_message(e)
     } else if let Some(e) = e.downcast_ref::<CommandError>() {
         Some(e.to_string())
+    } else if let Some(e) = e.downcast_ref::<ModelError>() {
+        Some(e.to_string())
     } else if let Some(e) = e.downcast_ref::<ViewError>() {
         view_message(e)
     } else if let Some(e) = e.downcast_ref::<WorkspaceError>() {
@@ -196,5 +199,25 @@ fn judged(e: &(dyn Error + 'static)) -> Option<String> {
         store_message(e)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Error;
+
+    #[test]
+    fn finds_the_disclosable_error_inside_a_context_chain() {
+        let error = Error::new(ModelError::Connection {
+            endpoint: "http://localhost:11434".to_string(),
+            reason: "connection refused".to_string(),
+        })
+        .context("Error during the model's stream");
+
+        assert_eq!(
+            user_message_with(&error, |_| None).as_deref(),
+            Some("cannot reach LLM backend at http://localhost:11434: connection refused")
+        );
     }
 }

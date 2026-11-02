@@ -1269,7 +1269,7 @@ impl Envelope {
 pub enum ActorState {
     #[default]
     Idle,
-    /// Calling the LLM and streaming its response - covers everything from
+    /// Calling the model and streaming its response - covers everything from
     /// initial research/deliberation through proposing or extending a plan
     /// to executing its steps, and the ordinary single-shot tool loop for
     /// personalities without extended planning.

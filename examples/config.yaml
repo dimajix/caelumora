@@ -166,7 +166,7 @@ users:
 
 # Components that replace a built-in default for every personality that does
 # not configure its own (issue 99): of some facets an agent has exactly one -
-# the language model it talks to (`LLMClient`, issue 130), or what assembles
+# the language model it talks to (`ModelClient`, issue 130), or what assembles
 # the model's context (`ContextProvider`) - and a personality without a
 # component for it gets the default. A component here is the default of each
 # such facet it provides - the model of its client and its profile, built

@@ -28,9 +28,9 @@ use async_trait::async_trait;
 use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage,
 };
-use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_api::component::{config_of_params, ComponentError, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::model::ModelProfileProvider;
 use caelumora_model::confidentiality::Classification;
 use caelumora_model::context::{message_times_by_default, ModelProfile, SenderFormat, SenderStyle};
 use caelumora_model::external_agent::{ConversationId, TaskId};

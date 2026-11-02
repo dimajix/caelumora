@@ -24,8 +24,6 @@ use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
 use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage,
 };
-use caelumora_agents::llm::{LLMClient, LLMResult};
-use caelumora_agents::prompt::ModelProfileProvider;
 use caelumora_agents::testing as agent_testing;
 use caelumora_agents::testing::{
     about_agent_commands, calling, register_scripted, TestAgents, ONCE_MODEL_KIND,
@@ -36,6 +34,7 @@ use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::reader::ViewError;
 use caelumora_api::workspace::WorkspaceError;
 use caelumora_kernel::actor::user::ChannelWatch;
@@ -2336,12 +2335,13 @@ struct Held {
 }
 
 #[async_trait]
-impl LLMClient for Held {
+impl ModelClient for Held {
     async fn chat_completion(
         &self,
+        _: ActorId,
         messages: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         self.given
             .lock()
             .unwrap()
@@ -2399,11 +2399,11 @@ async fn bob_speaks_while_alices_turn_works(
         let model = Arc::clone(&model);
         registry.register(
             ComponentKind::new("held")
-                .provides::<dyn LLMClient>()
+                .provides::<dyn ModelClient>()
                 .provides::<dyn ModelProfileProvider>(),
             move |_, _| {
                 let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn LLMClient>(Arc::<Held>::clone(&model));
+                facets.insert::<dyn ModelClient>(Arc::<Held>::clone(&model));
                 facets.insert::<dyn ModelProfileProvider>(Arc::<Held>::clone(&model));
                 Ok(facets)
             },

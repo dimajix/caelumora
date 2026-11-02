@@ -67,7 +67,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md) | open | medium | refactoring | A library links the model, and the model still holds the `SecurityContext`, the policies, the secret manager, the user providers and the traits of the stores, so the compiler lets a library name what only the kernel may decide by, and only a script finds it. |
-| [520](520-the-kernel-sees-no-model-call.md) | open | medium | refactoring | A language model is called by the library that brings it, from inside the agent, so no call of a model passes the kernel: it does not know who calls which model in whose name, and cannot count, limit or refuse a call. |
+| [520](520-the-kernel-sees-no-model-call.md) | in progress | medium | refactoring | A language model is called by the library that brings it, from inside the agent, so no call of a model passes the kernel: it does not know who calls which model in whose name, and cannot count, limit or refuse a call. |
 
 ## Low priority
 
