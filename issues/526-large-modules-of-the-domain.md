@@ -95,3 +95,11 @@ concepts each file is to hold, not yet every item.
   (`Recorded`, `Audience`, `Recipients`), `reader.rs` (`Reader`, `Heard`, `EVERY_POSITION`), beside
   `filter.rs`. `HistoryEntry::named_sender` and `Recorded::delivered`, private before, are
   `pub(super)` now that their callers lie in another file of `history`. The paths are as before.
+- **2026-11-02** — Step `context` done: `context/mod.rs` (module docs, re-exports), `item.rs` (what
+  a context is made of and refers to), `profile.rs` (`ModelProfile` and its settings, with the
+  framing it applies), `resolver.rs` (`ContextResolver`, `ResolvedContext`), and `testing.rs` with
+  the one helper the tests of `profile` and `resolver` share. `participant_notice` and
+  `ModelProfile::place_system_messages`, private before, are `pub(super)` for the resolver. The
+  estimate of an image given along, asserted inside a test of the profile before, is a test of its
+  own beside `ContextItem::estimated_tokens`, so that `IMAGE_TOKENS` stays private there; the two
+  `impl ContextItem` are one. The paths are as before.
