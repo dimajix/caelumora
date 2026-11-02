@@ -1,6 +1,6 @@
 # 526 — Several modules of the domain hold many concepts in one file
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -76,3 +76,6 @@ concepts each file is to hold, not yet every item.
 - **2026-11-02** — Opened at the maintainer's request, after splitting `query` and
   `confidentiality` was proposed in the work on issue
   [523](523-the-model-s-store-module-is-named-after-the-stores.md).
+- **2026-11-02** — Step `query` done: `query/mod.rs` (`Query`, `Cursor`, `Page`, `ordered_after`),
+  `field.rs` (`Field`, `FieldPath`, `NoField`, `FieldValue`), `filter.rs` (`Filter`, `meeting`);
+  the paths are as before.
