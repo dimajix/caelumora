@@ -187,7 +187,7 @@ pub async fn load(
 mod tests {
     use super::*;
     use caelumora_domain::config::AppConfig;
-    use caelumora_domain::store::query::Query;
+    use caelumora_domain::query::Query;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::Policies;
     use caelumora_store::Persistence;

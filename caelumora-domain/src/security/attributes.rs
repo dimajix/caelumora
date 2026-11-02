@@ -4,8 +4,8 @@
 
 use crate::actor::ActorId;
 use crate::group::GroupId;
+use crate::query::FieldValue;
 use crate::role::RoleId;
-use crate::store::query::FieldValue;
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -186,8 +186,8 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::approval::ApproverId;
+    use crate::query::meets_exactly_its_equals;
     use crate::security::testing::{shared, user};
-    use crate::store::query::meets_exactly_its_equals;
     use uuid::Uuid;
 
     #[test]

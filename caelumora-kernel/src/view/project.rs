@@ -6,8 +6,8 @@ use super::{SessionView, Views};
 use caelumora_api::reader::ViewResult;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::snapshot::ProjectSnapshot;
-use caelumora_domain::store::query::{Filter, Query};
 use caelumora_security::AccessQuestions;
 
 #[derive(Clone)]

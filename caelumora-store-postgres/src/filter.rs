@@ -2,7 +2,7 @@
 //! judges, so that a scan reads what meets it rather than every document of
 //! the kind.
 
-use caelumora_domain::store::query::{FieldPath, FieldValue, Filter};
+use caelumora_domain::query::{FieldPath, FieldValue, Filter};
 use serde_json::{Map, Value};
 use sqlx::postgres::PgArguments;
 use sqlx::query::QueryAs;

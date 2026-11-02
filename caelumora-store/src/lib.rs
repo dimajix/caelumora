@@ -2,7 +2,8 @@
 //! (`EntityStore`), opened from a backend (`Persistence`), and the state, the histories and the
 //! transcripts of what runs (`StateStore`). A stored entity is deleted by a mark (`Removal`, issue
 //! 164), which the store hands out with what was deleted (`Deleted`). What an entity is to be
-//! stored, and how a store fails, are the domain's words (`caelumora_domain::store`).
+//! stored and how a store fails (`caelumora_domain::store`), and what a query of a list asks
+//! (`caelumora_domain::query`), are the domain's.
 
 pub(crate) mod access;
 pub mod documents;
@@ -26,9 +27,9 @@ use caelumora_domain::channel::{Channel, ChannelId, ChannelState};
 use caelumora_domain::component::ComponentBundle;
 use caelumora_domain::group::Group;
 use caelumora_domain::project::Project;
+use caelumora_domain::query::{Page, Query};
 use caelumora_domain::removal::{Removal, RemovalId};
 use caelumora_domain::session::Session;
-use caelumora_domain::store::query::{Page, Query};
 use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
 use caelumora_domain::template::SessionTemplate;
 use caelumora_domain::type_map::TypeKey;
@@ -494,11 +495,11 @@ mod tests {
     use crate::memory::MemoryStore;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::define_id;
+    use caelumora_domain::query::NoField;
     use caelumora_domain::removal::Removal;
     use caelumora_domain::security::{Secured, SecurityAttributes};
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::SessionId;
-    use caelumora_domain::store::query::NoField;
     use caelumora_domain::store::{NoEntity, Revision};
     use caelumora_domain::value::name::Name;
     use caelumora_security::{OwnershipPolicy, SecurityContext};

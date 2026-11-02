@@ -54,9 +54,9 @@ macro_rules! define_id {
             }
         }
 
-        impl From<$name> for $crate::store::query::FieldValue {
+        impl From<$name> for $crate::query::FieldValue {
             fn from(id: $name) -> Self {
-                $crate::store::query::FieldValue::Uuid(id.0)
+                $crate::query::FieldValue::Uuid(id.0)
             }
         }
     };

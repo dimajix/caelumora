@@ -280,7 +280,7 @@ assigned.
 
 ### Queries
 
-Every list of the entity store takes a query (`caelumora_domain::store::query`) and answers a page:
+Every list of the entity store takes a query (`caelumora_domain::query`) and answers a page:
 
 *   **A filter**, purely declarative, so that a database could push it into a `WHERE` clause. It
     names fields of the kind, each a path into the document as serialized. Values take the forms

@@ -27,6 +27,7 @@ pub mod plan;
 pub mod privacy;
 pub mod project;
 pub mod prompt_catalogue;
+pub mod query;
 pub mod question;
 pub mod remote;
 pub mod removal;

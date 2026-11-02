@@ -1,6 +1,6 @@
 # 523 — The domain's module `store` reads as the stores, and holds the error of the stores
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -100,3 +100,6 @@ One step without behaviour change; no stored data changes.
   crates (issue [522](522-two-crates-named-model.md)).
 - **2026-11-02** — Decided with the maintainer as above, and planned, on the branch
   `issue-523-store-module`.
+- **2026-11-02** — Done: the queries are `caelumora_domain::query`, the history's fields
+  `caelumora_domain::history::{HistoryField, KeptItem}` (`history/filter.rs`); `store` keeps what
+  the domain says of being stored, with `StoreError`.

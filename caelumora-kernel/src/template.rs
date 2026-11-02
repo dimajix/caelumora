@@ -237,11 +237,11 @@ mod tests {
     use crate::scoped::ScopeHolders;
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::Personality;
+    use caelumora_domain::query::Query;
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::Session;
-    use caelumora_domain::store::query::Query;
     use caelumora_domain::store::Stored;
     use caelumora_domain::template::testing::make_template;
     use caelumora_domain::template::{ParticipantTemplate, ScopeTemplate, TemplateError};

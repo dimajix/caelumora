@@ -12,8 +12,8 @@
 
 use crate::group::GroupId;
 use crate::project::ProjectId;
+use crate::query::{Field, FieldValue, Filter};
 use crate::session::{ChannelId, SessionId};
-use crate::store::query::{Field, FieldValue, Filter};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use serde::{Deserialize, Serialize};
@@ -324,7 +324,7 @@ pub fn found_from<'a, D: Scoped>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::query::meets_exactly_its_equals;
+    use crate::query::meets_exactly_its_equals;
     use uuid::Uuid;
 
     #[test]

@@ -54,12 +54,12 @@ use caelumora_domain::config::AppConfig;
 use caelumora_domain::config::{BackendConfig, ContentConfig, WorkspacesConfig};
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::privacy::SessionPrivacy;
+use caelumora_domain::query::Query;
 use caelumora_domain::role::{RoleId, Roles};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
 use caelumora_domain::session::testing::make_session;
 use caelumora_domain::session::{ChannelId, Session, SessionId};
-use caelumora_domain::store::query::Query;
 use caelumora_domain::store::{EntityKind, StoreError, Stored};
 use caelumora_domain::template::testing::{make_channel_template, make_template};
 use caelumora_domain::template::{

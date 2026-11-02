@@ -13,11 +13,11 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-domain`** - the domain: entities (`Session`, `Channel`, `Agent`, `Personality`,
     `User`, `SessionTemplate`, `Workspace`, `Group`, `Project`), the values with rules
     their fields hold (`value`: `Name`, `Language`, free text such as `Summary`), messages and
-    events, the words of the stores - what an entity is to be stored, how a store fails -, what an
-    entity carries of who may reach it (`SecurityAttributes`) and what a refusal says (`Refused`),
-    the classifications and the one flow rule over them, and the configuration (`AppConfig`). It
-    holds data and the rules over its values, but decides nothing in anyone's name and runs
-    nothing.
+    events, what an entity is to be stored and how a store fails (`store`), what a query of a list
+    asks (`query`), what an entity carries of who may reach it (`SecurityAttributes`) and what a
+    refusal says (`Refused`), the classifications and the one flow rule over them, and the
+    configuration (`AppConfig`). It holds data and the rules over its values, but decides nothing
+    in anyone's name and runs nothing.
 *   **`caelumora-security`** - who may do what, and what may flow where (issue 517): the
     `SecurityContext` every operation is asked in, the actions asked about (`ActionType`), the
     access policy (`AccessPolicy`, `OwnershipPolicy`), the policy of confidentiality

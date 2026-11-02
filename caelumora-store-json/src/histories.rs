@@ -16,10 +16,11 @@ use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_domain::history::{
+    History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
+};
 use caelumora_domain::message::{Message, MessageId};
-use caelumora_domain::store::history::HistoryField;
-use caelumora_domain::store::query::Filter;
+use caelumora_domain::query::Filter;
 use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_store::history::{
     answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,

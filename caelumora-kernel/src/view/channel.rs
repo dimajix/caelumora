@@ -22,16 +22,15 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::confidentiality::{Place, Reading};
 use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::digest::Digest;
-use caelumora_domain::history::{HistoryEntry, HistoryPage, Reader};
+use caelumora_domain::history::{HistoryEntry, HistoryField, HistoryPage, Reader};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::note::Note;
+use caelumora_domain::query::Filter;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::session::ChannelId;
 use caelumora_domain::snapshot::{
     ChannelParticipantSnapshot, ChannelSnapshot, Detail, PublishedNotes, Unread,
 };
-use caelumora_domain::store::history::HistoryField;
-use caelumora_domain::store::query::Filter;
 use caelumora_domain::store::{StoreError, StoreResultExt};
 use caelumora_domain::tool::ToolSet;
 use caelumora_domain::value::language::Language;

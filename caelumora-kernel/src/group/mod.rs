@@ -197,11 +197,11 @@ mod tests {
     use caelumora_domain::channel::ChannelId;
     use caelumora_domain::group::GroupField;
     use caelumora_domain::project::Project;
+    use caelumora_domain::query::{Page, Query};
     use caelumora_domain::removal::{Removal, RemovalId};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::{Grant, SecurityAttributes};
     use caelumora_domain::session::SessionId;
-    use caelumora_domain::store::query::{Page, Query};
     use caelumora_domain::store::Stored;
     use caelumora_domain::value::name::ScopedName;
     use caelumora_security::{AllowAllPolicy, Policies};

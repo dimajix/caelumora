@@ -8,7 +8,7 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ChannelId, HistoryAccess, HistoryStart};
 use caelumora_domain::history::{HistoryEntry, Reader};
 use caelumora_domain::message::{Message, MessageId};
-use caelumora_domain::store::query::Filter;
+use caelumora_domain::query::Filter;
 use caelumora_domain::store::StoreResult;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};

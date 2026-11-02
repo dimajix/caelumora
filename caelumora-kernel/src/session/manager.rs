@@ -27,12 +27,12 @@ use caelumora_domain::channel::{Channel, ChannelField};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::{Scope, ScopeField};
 use caelumora_domain::security::{SecurityAttributes, Subject};
 use caelumora_domain::session;
 use caelumora_domain::session::{ChannelId, Session, SessionId};
-use caelumora_domain::store::query::{Filter, Query};
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::template::{
     ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate,
@@ -1148,6 +1148,7 @@ mod tests {
     use caelumora_domain::event::EntityChange;
     use caelumora_domain::group::GroupId;
     use caelumora_domain::project::Project;
+    use caelumora_domain::query::Query;
     use caelumora_domain::removal::Removal;
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::{Grant, Secured, SecurityAttributes, Subject};
@@ -1155,7 +1156,6 @@ mod tests {
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::ChannelId;
     use caelumora_domain::session::Session;
-    use caelumora_domain::store::query::Query;
     use caelumora_domain::store::{StoreError, Stored};
     use caelumora_domain::template::testing::{make_channel_template, make_template};
     use caelumora_domain::template::{

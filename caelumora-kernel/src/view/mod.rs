@@ -63,6 +63,7 @@ use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
+use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{AclEntry, SecurityAttributes, Subject};
@@ -70,7 +71,6 @@ use caelumora_domain::session::{ChannelId, SessionField, SessionId};
 use caelumora_domain::snapshot::{
     AccessSnapshot, DeletedSnapshot, PersonalitySnapshot, ScopeSnapshot,
 };
-use caelumora_domain::store::query::{Filter, Query};
 use caelumora_domain::store::{StoreResult, StoreResultExt, Stored};
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};

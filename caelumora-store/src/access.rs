@@ -263,12 +263,12 @@ mod tests {
     use crate::{EntityStores, Persistence};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::query::Query;
     use caelumora_domain::removal::Removal;
     use caelumora_domain::role::RoleId;
     use caelumora_domain::security::{SecurityAttributes, Subject};
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::{Session, SessionId};
-    use caelumora_domain::store::query::Query;
     use caelumora_domain::store::{StoreError, Stored};
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;

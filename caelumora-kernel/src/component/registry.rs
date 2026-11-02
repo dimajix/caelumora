@@ -761,10 +761,10 @@ mod tests {
     use caelumora_api::component::Params;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
+    use caelumora_domain::query::{Page, Query};
     use caelumora_domain::removal::{Removal, RemovalId};
     use caelumora_domain::scope::ScopeField;
     use caelumora_domain::security::SecurityAttributes;
-    use caelumora_domain::store::query::{Page, Query};
     use caelumora_domain::store::{StoreError, StoreResult};
     use caelumora_domain::user::UserId;
     use caelumora_security::Policies;

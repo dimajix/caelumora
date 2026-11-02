@@ -45,10 +45,10 @@ mod tests {
     use caelumora_domain::config::AppConfig;
     use caelumora_domain::define_id;
     use caelumora_domain::group::Group;
+    use caelumora_domain::query::NoField;
     use caelumora_domain::removal::Removal;
     use caelumora_domain::secret::SecretResult;
     use caelumora_domain::security::{Secured, SecurityAttributes};
-    use caelumora_domain::store::query::NoField;
     use caelumora_domain::store::{
         EntityKind, NoEntity, Revision, StoreError, StoreResult, Stored,
     };

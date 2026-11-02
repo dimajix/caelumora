@@ -24,11 +24,11 @@
 use crate::actor::ActorId;
 use crate::channel::{Channel, Participant};
 use crate::project::{Project, ProjectId};
+use crate::query::{Field, FieldValue, Filter};
 use crate::removal::Removal;
 use crate::scope::{Scope, Scoped, ScopedField};
 use crate::security::{Grant, Secured, SecurityAttributes, Subject};
 use crate::session::{ChannelId, Session, SessionId};
-use crate::store::query::{Field, FieldValue, Filter};
 use crate::store::{EntityKind, NoEntity, Revision, Stored};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
