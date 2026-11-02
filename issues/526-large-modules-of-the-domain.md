@@ -79,3 +79,8 @@ concepts each file is to hold, not yet every item.
 - **2026-11-02** — Step `query` done: `query/mod.rs` (`Query`, `Cursor`, `Page`, `ordered_after`),
   `field.rs` (`Field`, `FieldPath`, `NoField`, `FieldValue`), `filter.rs` (`Filter`, `meeting`);
   the paths are as before.
+- **2026-11-02** — Step `confidentiality` done: `classification.rs` (the scale, the compartments,
+  `Classification` and the flow rule), `label.rs` (`LabelCauses`, apart from the classification,
+  since it reads messages and the model's profile), `clearance.rs`, `reading.rs`,
+  `visibility.rs`, `testing.rs`; `Clearance` reads a classification by its getters now that it
+  lies in another file. The paths are as before.
