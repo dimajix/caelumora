@@ -559,6 +559,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [517](517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md) | done | A library links the model, and the model still holds the `SecurityContext`, the policies, the secret manager, the user providers and the traits of the stores, so the compiler lets a library name what only the kernel may decide by, and only a script finds it; the plan draws two crates out of the model, `caelumora-security` and `caelumora-store`. |
 | [519](519-an-erased-value-forgets-its-type.md) | open | `ErasedArc` forgets the type of the value it holds, so every call that hands one on takes the key of the type beside it, and where the two disagree the value is never found again and reads as a service nobody offered. |
 | [520](520-the-kernel-sees-no-model-call.md) | open | A language model is called by the library that brings it, from inside the agent, so no call of a model passes the kernel: it does not know who calls which model in whose name, and cannot count, limit or refuse a call. |
+| [521](521-a-registration-made-again-replaces-the-first.md) | open | A component kind registered under a name that is taken, and a single declared again, replace the registration before without a word, so that a library registered after a plugin can change what every agent of the program is built of - its model among it. |
 
 ## Integrations
 
