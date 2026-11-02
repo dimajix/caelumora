@@ -63,12 +63,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [378](378-resource-management-epic.md) | open | medium | epic | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
-## Code structure
-
-| No. | Status | Priority | Type | Issue |
-|---|---|---|---|---|
-| [520](520-the-kernel-sees-no-model-call.md) | open | medium | refactoring | A language model is called by the library that brings it, from inside the agent, so no call of a model passes the kernel: it does not know who calls which model in whose name, and cannot count, limit or refuse a call. |
-
 ## Low priority
 
 | No. | Status | Priority | Type | Issue |

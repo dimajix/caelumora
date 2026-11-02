@@ -394,7 +394,6 @@ dependencies = [
 name = "caelumora-agents"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
  "anyhow",
  "async-trait",
  "caelumora-agents",
@@ -454,6 +453,7 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-models",
  "caelumora-ollama",
  "caelumora-open-terminal",
  "caelumora-rest-server",
@@ -660,28 +660,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "caelumora-api",
+ "caelumora-kernel",
+ "caelumora-model",
+ "caelumora-security",
+ "futures",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "caelumora-ollama"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "async-stream",
  "async-trait",
  "axum",
  "base64 0.22.1",
  "bytes",
- "caelumora-agents",
  "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
- "caelumora-security",
- "caelumora-store",
+ "caelumora-models",
  "chrono",
  "dashmap",
  "futures",
  "reqwest",
  "serde",
  "serde_json",
- "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
@@ -872,6 +888,7 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-models",
  "caelumora-ollama",
  "caelumora-open-terminal",
  "caelumora-skills",

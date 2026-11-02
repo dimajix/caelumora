@@ -9,9 +9,10 @@
 )]
 
 use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::prompt::{PromptPosition, PromptProvider};
 use caelumora_agents::testing::{
-    self as agent_testing, activities_until_the_turn_ends, register_scripted, saying, TestAgents,
+    self as agent_testing, activities_until_the_turn_ends, register_scripted, saying,
 };
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
@@ -62,7 +63,7 @@ use std::sync::Arc;
 
 /// The world with skills.
 async fn world() -> World {
-    World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |_| {}).await
+    World::with(&[&SkillsPlugin], &[&AgentsLibrary, &SkillsLibrary], |_| {}).await
 }
 
 /// The one writer of skills of `world`.
@@ -415,7 +416,7 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
     ];
     let world = World::with(
         &[&SkillsPlugin],
-        &[&TestAgents, &SkillsLibrary, &CompactionLibrary],
+        &[&AgentsLibrary, &SkillsLibrary, &CompactionLibrary],
         |registry| register_scripted(registry, "scripted", script),
     )
     .await;
@@ -659,7 +660,7 @@ async fn the_skills_of_a_seed_are_the_systems_and_seeded_once() {
 /// channel; and how bob's stream shows him what comes of his commands.
 async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId, ChannelWatch)
 {
-    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&AgentsLibrary, &SkillsLibrary], |registry| {
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
@@ -809,7 +810,7 @@ async fn with_a_writing_agent(
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = World::with(&[&SkillsPlugin], &[&TestAgents, &SkillsLibrary], |registry| {
+    let world = World::with(&[&SkillsPlugin], &[&AgentsLibrary, &SkillsLibrary], |registry| {
         register_scripted(registry, "writing", vec![call])
     })
     .await;

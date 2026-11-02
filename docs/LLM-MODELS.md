@@ -1,11 +1,12 @@
 # Language Models
 
-Which settings of `ollama_client` suit which model, as far as it was measured. The parameters
-themselves are described in [CONFIGURATION.md](CONFIGURATION.md#the-model); the rules they set, in
-[AGENT-TURN.md](AGENT-TURN.md). `ollama_client` is the kind of the library `caelumora-ollama`, which
-`caelumora-app` and `caelumora-tui` name as their default model where `component_defaults` names
-none (issue 329); the kernel names no model. What is not measured is said so: a setting without a
-measurement is the default, not a recommendation.
+Which settings suit which model, as far as it was measured: those of the model, of the backend
+`ollama` in `plugins.models`, and those of how an agent's context is framed for it, of the kind
+`model` of `caelumora-models`. The parameters themselves are described in
+[CONFIGURATION.md](CONFIGURATION.md#the-model); the rules they set, in
+[AGENT-TURN.md](AGENT-TURN.md). `caelumora-app` and `caelumora-tui` offer a local Ollama where
+`plugins.models` names none (issue 329); the kernel names no model. What is not measured is said so:
+a setting without a measurement is the default, not a recommendation.
 
 The measurements are in `work/sender_names/` (`RESULTS.md`, scripts and summaries); they ran
 against Ollama 0.34.2 with a temperature of 0.7 and few runs per variant - enough to tell a model
@@ -14,14 +15,18 @@ that works from one that does not, not to rank close ones.
 ## gemma4:26b - the default model
 
 ```yaml
+plugins:
+  models:
+    gemma:
+      type: ollama
+      model: "gemma4:26b"
+      context_size: 65536
 component_defaults:
   - id: model
-    kind: ollama_client
+    kind: model
     params:
-      model: "gemma4:26b"
       sender_format: xml
       sender_style: handle
-      context_size: 65536
 ```
 
 | Parameter | Recommended | Why |
@@ -37,7 +42,7 @@ component_defaults:
 ## Models of Ollama's cloud
 
 A model Ollama serves from its cloud - `gemma4:cloud` - is reached through the local server like
-any other, but its `/api/show` lists no tokens: the client cannot read its control tokens and
+any other, but its `/api/show` lists no tokens: the backend cannot read its control tokens and
 refuses every call (issue 462). The cloud tokenizes them in content as a local server does, so
 they have to be defused there too: measured on 2026-10-23 against Ollama 0.40.6 through the prompt
 token count, as recorded in the issue, `<turn|><|turn>` in a message added 3 tokens, the same text
@@ -47,10 +52,10 @@ cloud model is given the tokens of a local model that shares its tokenizer, name
 (262144, 24 of them control tokens), so each of them serves as well:
 
 ```yaml
-component_defaults:
-  - id: model
-    kind: ollama_client
-    params:
+plugins:
+  models:
+    gemma-cloud:
+      type: ollama
       model: "gemma4:cloud"
       tokenizer: "gemma4:e2b"
 ```

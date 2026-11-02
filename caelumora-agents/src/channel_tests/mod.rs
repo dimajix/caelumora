@@ -11,10 +11,8 @@ mod questions;
 use crate::activity::{ActivityError, ActivityProvider};
 use crate::command::AgentCommandProvider;
 use crate::library::AgentsLibrary;
-use crate::llm::{LLMClient, LLMResult};
 use crate::message::{MessageProcessor, PerceiveInProcessor, ProcessingError};
 use crate::notes::{AgentNotes, NoteKind};
-use crate::prompt::ModelProfileProvider;
 use crate::prompt::{ContextError, Prompt, PromptProvider};
 use crate::situation::Situation;
 use crate::testing::Scripted;
@@ -26,6 +24,7 @@ use caelumora_api::command::{CommandResult, ProvidesCommands};
 use caelumora_api::component::ComponentFacets;
 use caelumora_api::component::ComponentKind;
 use caelumora_api::component::{config_of_params, Params};
+use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::testing::*;
 use caelumora_kernel::channel::*;
@@ -114,12 +113,13 @@ async fn run_again(
 pub(super) struct NeverAnswers;
 
 #[async_trait::async_trait]
-impl LLMClient for NeverAnswers {
+impl ModelClient for NeverAnswers {
     async fn chat_completion(
         &self,
+        _: ActorId,
         _: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         Box::pin(stream::pending())
     }
 }
@@ -138,9 +138,9 @@ pub(super) async fn stuck_in_a_model_call() -> Stuck {
 
 /// A model of a test: its client and its profile from one object, as a
 /// model's component gives both (issue 57).
-pub(super) trait TestModel: LLMClient + ModelProfileProvider {}
+pub(super) trait TestModel: ModelClient + ModelProfileProvider {}
 
-impl<T: LLMClient + ModelProfileProvider> TestModel for T {}
+impl<T: ModelClient + ModelProfileProvider> TestModel for T {}
 
 /// A running channel with alice and an agent that talks to `model` and
 /// has `components`, after alice said "hello".
@@ -196,13 +196,13 @@ async fn agent_channel_hearing(
     let components = move |registry: &mut ComponentRegistry| {
         registry.register(
             ComponentKind::new("test_model")
-                .provides::<dyn LLMClient>()
+                .provides::<dyn ModelClient>()
                 .provides::<dyn ModelProfileProvider>(),
             move |_descriptor, _context| {
                 let mut facets = ComponentFacets::empty();
-                let client: Arc<dyn LLMClient> = Arc::clone(&model) as _;
+                let client: Arc<dyn ModelClient> = Arc::clone(&model) as _;
                 let profile: Arc<dyn ModelProfileProvider> = Arc::clone(&model) as _;
-                facets.insert::<dyn LLMClient>(client);
+                facets.insert::<dyn ModelClient>(client);
                 facets.insert::<dyn ModelProfileProvider>(profile);
                 Ok(facets)
             },

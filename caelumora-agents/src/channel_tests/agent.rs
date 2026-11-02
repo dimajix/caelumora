@@ -3,16 +3,15 @@
 
 use super::*;
 use crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND;
-use crate::llm::{LLMClient, LLMError, LLMResult};
 use crate::message::testing::given_up_turns;
 use crate::prompt::request_reason_prompt_provider::REQUEST_REASON_PROMPT_PROVIDER_KIND;
-use crate::prompt::ModelProfileProvider;
 use crate::testing::{activities_until_the_turn_ends, saying};
 use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
 use crate::tool::sleep_tool::SLEEP_TOOL_KIND;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
 use crate::turn::MAX_MODEL_CALLS;
 use anyhow::Result;
+use caelumora_api::model::{ModelClient, ModelError, ModelProfileProvider, ModelResult};
 use caelumora_model::agent::{
     AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused,
 };
@@ -458,12 +457,13 @@ impl Gated {
 }
 
 #[async_trait::async_trait]
-impl LLMClient for Gated {
+impl ModelClient for Gated {
     async fn chat_completion(
         &self,
+        _: ActorId,
         messages: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         self.seen.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
         let Some(answer) = self.answers.lock().unwrap().pop_front() else {
             return Box::pin(stream::pending());
@@ -1640,15 +1640,16 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
 struct FailsWhere(Mutex<VecDeque<Option<Message>>>);
 
 #[async_trait::async_trait]
-impl LLMClient for FailsWhere {
+impl ModelClient for FailsWhere {
     async fn chat_completion(
         &self,
+        _: ActorId,
         _: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         match self.0.lock().unwrap().pop_front() {
             Some(Some(answer)) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),
-            Some(None) => Box::pin(stream::iter([Err(LLMError::Backend {
+            Some(None) => Box::pin(stream::iter([Err(ModelError::Backend {
                 endpoint: "test".to_string(),
                 model: "test".to_string(),
                 message: "gone".to_string(),
@@ -1821,15 +1822,16 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
 struct FailsAfter(Mutex<VecDeque<Message>>);
 
 #[async_trait::async_trait]
-impl LLMClient for FailsAfter {
+impl ModelClient for FailsAfter {
     async fn chat_completion(
         &self,
+        _: ActorId,
         _: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         match self.0.lock().unwrap().pop_front() {
             Some(answer) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),
-            None => Box::pin(stream::iter([Err(LLMError::Backend {
+            None => Box::pin(stream::iter([Err(ModelError::Backend {
                 endpoint: "test".to_string(),
                 model: "test".to_string(),
                 message: "gone".to_string(),

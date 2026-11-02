@@ -87,10 +87,6 @@ pub struct ComponentRegistry {
     /// The singles a library declared (`LibraryComponents::single`), which may be none the kernel
     /// builds in its own name (issue 516).
     singles_of_libraries: Vec<TypeKey>,
-    /// The default kinds of singles the program named (`set_default_kind`), in place of those they
-    /// were declared with - kept apart, so that a plugin or a library that declares a single after
-    /// the program named its default does not undo the program's choice.
-    chosen: HashMap<TypeId, String>,
     /// The configuration's defaults for singles (`AppConfig::component_defaults`),
     /// by the single they provide.
     defaults: HashMap<TypeId, ComponentDescriptor>,
@@ -114,7 +110,6 @@ impl ComponentRegistry {
             kinds: HashMap::new(),
             singles: HashMap::new(),
             singles_of_libraries: Vec::new(),
-            chosen: HashMap::new(),
             defaults: HashMap::new(),
             bundles,
         }
@@ -243,9 +238,8 @@ impl ComponentRegistry {
     /// (`set_defaults`) - if no component of the container provides it. With
     /// no default, a container that is asked for `T` and provides none fails
     /// to build it (issue 179: a remote agent has no default). Declared
-    /// again - by a plugin or a library registered into a registry the program prepared,
-    /// say - the declaration replaces the one before, not the default kind
-    /// the program named (`set_default_kind`).
+    /// again - by a test that builds components without a kernel, say - the
+    /// declaration replaces the one before.
     pub fn single<T: ?Sized + 'static>(&mut self, default_kind: Option<&str>) {
         self.single_of(TypeKey::of::<T>(), default_kind);
     }
@@ -255,34 +249,9 @@ impl ComponentRegistry {
             .insert(facet.id, Single { facet, default_kind: default_kind.map(str::to_string) });
     }
 
-    /// Makes `kind` the default kind of the single `T`, in place of the one
-    /// it was declared with - for the program, which knows which kinds its
-    /// libraries brought (issue 329: the model). The configuration's defaults
-    /// (`set_defaults`) still replace it.
-    ///
-    /// # Errors `ComponentError::InvalidConfig` if `T` is no facet of which there is one, or `kind`
-    /// is not registered or does not provide `T`.
-    pub fn set_default_kind<T: ?Sized + 'static>(&mut self, kind: &str) -> ComponentResult<()> {
-        let facet = TypeKey::of::<T>();
-        if !self.provides(kind).is_some_and(|facets| facets.iter().any(|f| f.id == facet.id)) {
-            return Err(ComponentError::InvalidConfig(format!(
-                "the default kind '{kind}' of {} is not registered as providing it",
-                facet.name()
-            )));
-        }
-        if !self.singles.contains_key(&facet.id) {
-            return Err(ComponentError::InvalidConfig(format!(
-                "{} is not a facet of which there is one",
-                facet.name()
-            )));
-        }
-        self.chosen.insert(facet.id, kind.to_string());
-        Ok(())
-    }
-
     /// Takes the configuration's defaults (`AppConfig::component_defaults`):
     /// each of its components replaces the default kind of the singles it
-    /// provides, for every container - a model, of its `LLMClient` and of
+    /// provides, for every container - a model, of its `ModelClient` and of
     /// its profile alike, built once for both.
     ///
     /// # Errors
@@ -413,15 +382,13 @@ impl ComponentRegistry {
     }
 
     /// What is built for the single `facet` if no component of a container
-    /// provides it: the configuration's default, or else the default kind
-    /// the program named, or else the one it was declared with, if it has
-    /// one.
+    /// provides it: the configuration's default, or else the kind it was
+    /// declared with, if it has one.
     fn default_of(&self, facet: TypeId) -> Option<ComponentDescriptor> {
         if let Some(descriptor) = self.defaults.get(&facet) {
             return Some(descriptor.clone());
         }
-        let declared = self.singles.get(&facet)?.default_kind.as_deref();
-        let kind = self.chosen.get(&facet).map(String::as_str).or(declared)?;
+        let kind = self.singles.get(&facet)?.default_kind.as_deref()?;
         Some(ComponentDescriptor::new(kind, kind))
     }
 
@@ -1638,58 +1605,9 @@ mod tests {
         );
     }
 
-    /// The program names the default kind of a single (issue 329), and the
-    /// configuration's default still replaces it.
-    #[tokio::test]
-    async fn the_program_names_the_default_kind_of_a_single() {
-        let (mut registry, built) = choices();
-        registry.set_default_kind::<dyn Choice>("other").expect("provides Choice");
-        for (kind, expected) in [
-            ("missing", "the default kind 'missing' of Choice is not registered as providing it"),
-            ("part", "the default kind 'part' of Choice is not registered as providing it"),
-        ] {
-            let message =
-                registry.set_default_kind::<dyn Choice>(kind).expect_err(expected).to_string();
-            assert!(message.contains(expected), "{message}");
-        }
-        let message =
-            registry.set_default_kind::<dyn Named>("part").expect_err("not a single").to_string();
-        assert!(message.contains("Named is not a facet of which there is one"), "{message}");
-        assert_eq!(
-            registry.kind_of::<dyn Choice>(&config(&[])).as_deref(),
-            Some("other"),
-            "the program's, kept when refused"
-        );
-
-        let shared = Arc::new(registry);
-        let container = shared.build(&config(&[]), ASKED, &test_context()).await.unwrap();
-        assert_eq!(container.one::<dyn Choice>().await.unwrap().id, "other");
-        assert_eq!(built.load(Ordering::SeqCst), 0, "the declared default is not built");
-
-        let (mut registry, _) = choices();
-        registry.set_default_kind::<dyn Choice>("other").unwrap();
-        registry.set_defaults(&config(&[("configured", "declared")])).unwrap();
-        assert_eq!(
-            registry.kind_of::<dyn Choice>(&config(&[])).as_deref(),
-            Some("declared"),
-            "the configuration's comes first"
-        );
-    }
-
-    /// A single declared again - by a library registered after the program
-    /// named its default, as the agents' library is in a test's registry
-    /// (issue 370) - keeps the program's choice.
+    /// A single declared again replaces the declaration before, its default kind with it.
     #[test]
-    fn a_single_declared_again_keeps_the_default_the_program_named() {
-        let (mut registry, _) = choices();
-        registry.set_default_kind::<dyn Choice>("other").unwrap();
-        registry.single::<dyn Choice>(None);
-        assert_eq!(
-            registry.kind_of::<dyn Choice>(&config(&[])).as_deref(),
-            Some("other"),
-            "the program's"
-        );
-
+    fn a_single_declared_again_replaces_its_declaration() {
         let (mut registry, _) = choices();
         registry.single::<dyn Choice>(None);
         assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])), None, "the declaration replaced");

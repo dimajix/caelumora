@@ -3,9 +3,9 @@
 
 use crate::{CompactionError, CompactionStrategy, Replacement, NAMESPACE, PROMPTS};
 use async_trait::async_trait;
-use caelumora_agents::llm::unlabelled_message;
 use caelumora_agents::testing;
 use caelumora_agents::turn::Turn;
+use caelumora_api::model::unlabelled_message;
 use caelumora_model::actor::ActorId;
 use caelumora_model::agent::AgentId;
 use caelumora_model::confidentiality::Classification;

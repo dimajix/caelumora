@@ -4,7 +4,7 @@ use crate::component::ComponentConfig;
 use crate::confidentiality::Compartments;
 use crate::role::Roles;
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use serde_saphyr::Options;
 use std::collections::BTreeMap;
@@ -52,7 +52,7 @@ impl Default for PersistenceConfig {
 /// for it - the kernel's or a plugin's -, and its parameters, written beside the type and read by
 /// that factory. A type no factory is registered for, or parameters it cannot read, are refused
 /// when the kernel is built.
-#[derive(Debug, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BackendConfig {
     #[serde(rename = "type")]
     pub kind: String,

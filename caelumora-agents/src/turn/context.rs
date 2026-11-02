@@ -170,7 +170,7 @@ mod tests {
     /// message says fails the call.
     #[tokio::test]
     async fn the_model_is_given_along_what_its_profile_says_and_the_turn_sees_it() {
-        use crate::testing::TestAgents;
+        use crate::library::AgentsLibrary;
         use caelumora_kernel::session::testing::detached_participant_in;
         use caelumora_kernel::testing::TestKernel;
         use caelumora_model::channel::testing::bare_channel;
@@ -193,7 +193,7 @@ mod tests {
         };
         let kernel = TestKernel {
             config: AppConfig { content, ..Default::default() },
-            libraries: vec![&TestAgents],
+            libraries: vec![&AgentsLibrary],
             ..Default::default()
         }
         .build();

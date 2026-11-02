@@ -1,13 +1,12 @@
 //! What a person is told of an error of the agents' logic (issue 370): the error types of its
-//! facets - the model's (`LLMError`), an external agent's (`ExternalAgentError`), a tool's
-//! (`ToolError`), a context's (`ContextError`), a message stage's (`ProcessingError`) and an
-//! activity's (`ActivityError`) - which the plugins that serve those facets answer in (PLUGINS.md),
-//! judged here, by whoever defines them; everything else as the kernel judges it
+//! facets - an external agent's (`ExternalAgentError`), a tool's (`ToolError`), a context's
+//! (`ContextError`), a message stage's (`ProcessingError`) and an activity's (`ActivityError`) -
+//! which the plugins that serve those facets answer in (PLUGINS.md), judged here, by whoever
+//! defines them; everything else - a model's error among it - as the kernel judges it
 //! (`caelumora_api::error::user_message_with`).
 
 use crate::activity::ActivityError;
 use crate::external::ExternalAgentError;
-use crate::llm::LLMError;
 use crate::message::ProcessingError;
 use crate::prompt::ContextError;
 use crate::tool::ToolError;
@@ -32,9 +31,7 @@ pub(crate) fn failure_message(error: &anyhow::Error) -> String {
 /// What is shown of `e`, if it is of a type of the agents' logic that may be
 /// shown.
 fn judged(e: &(dyn Error + 'static)) -> Option<String> {
-    if let Some(e) = e.downcast_ref::<LLMError>() {
-        Some(e.to_string())
-    } else if let Some(e) = e.downcast_ref::<ExternalAgentError>() {
+    if let Some(e) = e.downcast_ref::<ExternalAgentError>() {
         Some(e.to_string())
     } else if let Some(e) = e.downcast_ref::<ToolError>() {
         Some(e.to_string())
@@ -75,20 +72,6 @@ mod tests {
     use anyhow::Error;
     use caelumora_api::component::ComponentError;
     use caelumora_model::store::StoreError;
-
-    #[test]
-    fn finds_the_disclosable_error_inside_a_context_chain() {
-        let error = Error::new(LLMError::Connection {
-            endpoint: "http://localhost:11434".to_string(),
-            reason: "connection refused".to_string(),
-        })
-        .context("Error during LLM stream");
-
-        assert_eq!(
-            user_message(&error).as_deref(),
-            Some("cannot reach LLM backend at http://localhost:11434: connection refused")
-        );
-    }
 
     #[test]
     fn a_prompt_part_that_failed_names_its_component_before_what_it_says() {

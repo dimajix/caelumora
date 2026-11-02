@@ -197,7 +197,7 @@ impl ReasoningHistory {
 }
 
 /// How a model is to be given its context: a property of the model,
-/// declared by the agent's `LLMClient` and applied where the model's input
+/// declared by the agent's `ModelClient` and applied where the model's input
 /// is resolved (`ContextResolver`), so that a backend gets only what its
 /// model is to see. A closed set of rules, as data, so that it can be
 /// recorded with every message and applied again when what the model saw

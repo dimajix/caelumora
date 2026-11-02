@@ -1,25 +1,18 @@
-//! The `ollama_client` component: the language model an agent talks to,
-//! served by Ollama (issue 130). It provides the `LLMClient` facet, of
-//! which an agent has exactly one: its personality's, the one
-//! `AppConfig::component_defaults` names, or the default kind the program
-//! names (issue 329) - which, where it is this one, is built with its
-//! defaults: a local Ollama and the model `DEFAULT_MODEL`.
+//! The backend `ollama`: a language model the platform offers, served by Ollama (issues 130, 520),
+//! one entry of the section `plugins.models`, which an agent's model names (the kind `model` of
+//! `caelumora-models`) - or the one a program offers where none is configured
+//! (`plugin::with_local_model`, issue 329): a local Ollama and the model `DEFAULT_MODEL`.
 //!
 //! Parameters: `endpoint` (the Ollama server: its `url`, and its `timeout_secs`, how long a request
 //! may take to be answered - a streamed one until its stream begins; without it, as long as it
 //! takes), `model`, `tokenizer` - the model whose tokens are read for `model`'s control tokens, one
 //! that shares its tokenizer; left out, `model` itself (issue 462) -, `think` - whether the model
-//! is asked to reason; left out, Ollama's default for the model applies - `reasoning_history`,
-//! which reasoning of earlier messages the model is given back (`never`, `current_turn` - the
-//! default - or `always`, issue 63), and `system_messages`, where the model keeps system messages
-//! (`only_at_start` - the default - or `anywhere`, issue 49), `sender_format` and `sender_style`,
-//! how the model is told who wrote a message of another participant (`none`, `prefix` - the
-//! default - or `xml`; by `handle` - the default - or `name`, issue 135), `message_times`, whether
-//! the marker says when the message was written, in the session's time zone (`true` - the default -
-//! or `false`, issue 424), `context_size`, how many tokens the model's context holds - sent as
-//! `num_ctx`; left out, Ollama's default applies (issue 209) -, and `vision`, whether the model
-//! sees images - left out, asked of `/api/show` as the component is built (issue 282). An unknown
-//! parameter is refused, so that a misspelt one does not silently fall back to its default.
+//! is asked to reason; left out, Ollama's default for the model applies -, `context_size`, how many
+//! tokens the model's context holds - sent as `num_ctx`; left out, Ollama's default applies (issue
+//! 209) -, and `vision`, whether the model sees images - left out, asked of `/api/show` once, as
+//! the first agent's model is built (issue 282). An unknown parameter is refused, so that a
+//! misspelt one does not silently fall back to its default. How an agent's context is framed for
+//! the model is the agent's model's to say, not the backend's.
 //!
 //! Every complete message carries the size of the context it was produced
 //! in (`Message::context_size`): the configured one, or else the one Ollama
@@ -37,27 +30,22 @@
 //! one Ollama serves from its cloud, which tokenizes content the same way
 //! (measured, issue 462) - is given the `tokenizer` of a model that does.
 
+use crate::control_tokens::ControlTokens;
 use async_stream::stream;
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use bytes::Buf;
-use caelumora_agents::llm::control_tokens::ControlTokens;
-use caelumora_agents::llm::{unlabelled_message, LLMClient, LLMError, LLMResult};
-use caelumora_agents::prompt::ModelProfileProvider;
-use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
-use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
+use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
 use caelumora_api::remote::{describe_chain, describe_request_error};
+use caelumora_kernel::backend::Backends;
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentRef;
-use caelumora_model::context::{
-    message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle,
-    SystemMessages,
-};
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
+use caelumora_models::ModelProvider;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::{BoxStream, StreamExt};
@@ -389,7 +377,7 @@ impl ControlTokenCache {
         endpoint: &RemoteEndpoint,
         model: &str,
         tokenizer: Option<&str>,
-    ) -> LLMResult<Arc<ControlTokens>> {
+    ) -> ModelResult<Arc<ControlTokens>> {
         let cell = self
             .models
             .entry((endpoint.url.clone(), tokenizer.unwrap_or(model).to_string()))
@@ -410,21 +398,21 @@ async fn show(
     model: &str,
     verbose: bool,
     what: &str,
-) -> LLMResult<OllamaShowResponse> {
+) -> ModelResult<OllamaShowResponse> {
     let endpoint = remote.shown();
     let request = serde_json::json!({ "model": model, "verbose": verbose });
     let response = send(http.post(api_url(remote, "show")?).json(&request), remote).await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(LLMError::Rejected {
+        return Err(ModelError::Rejected {
             endpoint,
             model: model.to_string(),
             status: status.as_u16(),
             message: backend_error_message(&body),
         });
     }
-    response.json().await.map_err(|e| LLMError::InvalidResponse {
+    response.json().await.map_err(|e| ModelError::InvalidResponse {
         endpoint,
         reason: format!("cannot read {what}: {}", describe_request_error(e)),
     })
@@ -437,13 +425,13 @@ async fn read_control_tokens(
     remote: &RemoteEndpoint,
     model: &str,
     tokenizer: Option<&str>,
-) -> LLMResult<Arc<ControlTokens>> {
+) -> ModelResult<Arc<ControlTokens>> {
     let endpoint = remote.shown();
     let shown = tokenizer.unwrap_or(model);
     let show = show(http, remote, shown, true, "the model's tokens").await.map_err(|e| {
         match (e, tokenizer) {
-            (LLMError::Rejected { endpoint, model: asked, status, message }, Some(_)) => {
-                LLMError::Rejected {
+            (ModelError::Rejected { endpoint, model: asked, status, message }, Some(_)) => {
+                ModelError::Rejected {
                     endpoint,
                     model: asked,
                     status,
@@ -463,7 +451,7 @@ async fn read_control_tokens(
             None => format!("the model '{model}' does not list its tokens and their types, so its control tokens cannot be kept out of messages; \
                 a model that shares its tokenizer and lists them can be named as its 'tokenizer'"),
         };
-        return Err(LLMError::InvalidResponse { endpoint, reason });
+        return Err(ModelError::InvalidResponse { endpoint, reason });
     }
     let control = info
         .tokens
@@ -471,7 +459,7 @@ async fn read_control_tokens(
         .zip(info.token_types)
         .filter(|(_, kind)| *kind == CONTROL_TOKEN_TYPE || *kind == USER_DEFINED_TOKEN_TYPE)
         .map(|(token, _)| token);
-    let tokens = ControlTokens::new(control).map_err(|e| LLMError::InvalidResponse {
+    let tokens = ControlTokens::new(control).map_err(|e| ModelError::InvalidResponse {
         endpoint,
         reason: format!("cannot search for the model's control tokens: {e}"),
     })?;
@@ -484,15 +472,15 @@ async fn read_control_tokens(
     Ok(Arc::new(tokens))
 }
 
-/// How long the server is given to say whether a model sees, asked as the
-/// component is built (issue 282): what builds it - a channel starting -
+/// How long the server is given to say whether a model sees, asked as an
+/// agent's model is built (issue 282): what builds it - a channel starting -
 /// waits for the answer, whether or not the endpoint has a timeout.
 const VISION_ASKED_WITHIN: Duration = Duration::from_secs(10);
 
-/// Whether the models the clients of one registry are built for see images
-/// (issue 282), as their `/api/show` says, per Ollama server and model: read
-/// once, as the first of them is built, as the control tokens are. A read
-/// that fails is not kept: the next client built asks again.
+/// Whether the models of the backend see images (issue 282), as their
+/// `/api/show` says, per Ollama server and model: read once, as the first
+/// agent's model is built, as the control tokens are. A read that fails is
+/// not kept: the next one asks again.
 #[derive(Default)]
 struct ModelVision {
     models: DashMap<(String, String), Arc<OnceCell<bool>>>,
@@ -519,11 +507,11 @@ impl ModelVision {
                     show(http, endpoint, model, false, "what the model can take"),
                 )
                 .await
-                .map_err(|_| LLMError::Connection {
+                .map_err(|_| ModelError::Connection {
                     endpoint: endpoint.shown(),
                     reason: format!("no answer within {} s", VISION_ASKED_WITHIN.as_secs()),
                 })??;
-                Ok::<_, LLMError>(
+                Ok::<_, ModelError>(
                     shown.capabilities.iter().any(|capability| capability == "vision"),
                 )
             })
@@ -558,7 +546,7 @@ struct OllamaRunningModel {
     context_length: Option<u64>,
 }
 
-/// The context sizes of the models the clients of one registry have asked,
+/// The context sizes of the models of the backend that have been asked,
 /// as Ollama loaded them - `None` for a model that was not loaded - each
 /// with when it was read, per Ollama server and model.
 #[derive(Default)]
@@ -601,20 +589,20 @@ async fn read_running_context_size(
     http: &Client,
     remote: &RemoteEndpoint,
     model: &str,
-) -> LLMResult<Option<u64>> {
+) -> ModelResult<Option<u64>> {
     let endpoint = remote.shown();
     let response = send(http.get(api_url(remote, "ps")?), remote).await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(LLMError::Rejected {
+        return Err(ModelError::Rejected {
             endpoint,
             model: model.to_string(),
             status: status.as_u16(),
             message: backend_error_message(&body),
         });
     }
-    let ps: OllamaPsResponse = response.json().await.map_err(|e| LLMError::InvalidResponse {
+    let ps: OllamaPsResponse = response.json().await.map_err(|e| ModelError::InvalidResponse {
         endpoint,
         reason: format!("cannot read the models loaded: {}", describe_request_error(e)),
     })?;
@@ -651,17 +639,18 @@ fn backend_error_message(body: &str) -> String {
     }
 }
 
-pub const OLLAMA_CLIENT_KIND: &str = "ollama_client";
+/// The type of the backend.
+pub const OLLAMA_BACKEND: &str = "ollama";
 
 /// The Ollama server asked unless `endpoint` names another.
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
 /// The model asked unless `model` names another.
 pub const DEFAULT_MODEL: &str = "gemma4:26b";
 
-/// The parameters of an `ollama_client` component.
+/// The parameters of a model served by Ollama.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct OllamaClientConfig {
+struct OllamaModelConfig {
     #[serde(default = "default_endpoint")]
     endpoint: RemoteEndpoint,
     #[serde(default = "default_model")]
@@ -674,28 +663,13 @@ struct OllamaClientConfig {
     #[serde(default)]
     think: Option<bool>,
     #[serde(default)]
-    reasoning_history: ReasoningHistory,
-    #[serde(default)]
-    system_messages: SystemMessages,
-    #[serde(default = "SenderFormat::configured_default")]
-    sender_format: SenderFormat,
-    #[serde(default)]
-    sender_style: SenderStyle,
-    #[serde(default = "message_times_by_default")]
-    message_times: bool,
-    /// The variant of the texts its model is given (issue 57); the default
-    /// unless configured.
-    #[serde(default)]
-    prompt_texts: Option<PromptVariant>,
-    #[serde(default)]
     context_size: Option<u64>,
-    /// Whether the model sees images (issue 282); asked of the server as the
-    /// component is built unless configured.
+    /// Whether the model sees images (issue 282); asked of the server unless configured.
     #[serde(default)]
     vision: Option<bool>,
 }
 
-impl Params for OllamaClientConfig {
+impl Params for OllamaModelConfig {
     /// # Errors
     /// `InvalidConfig` if a parameter is not supported: `endpoint.auth`, or a `context_size` of 0.
     fn check(&self) -> ComponentResult<()> {
@@ -724,8 +698,8 @@ fn default_endpoint() -> RemoteEndpoint {
 ///
 /// # Errors
 /// `Connection` for an endpoint that is no URL.
-fn api_url(endpoint: &RemoteEndpoint, path: &str) -> LLMResult<Url> {
-    endpoint.url_of(&["api", path]).ok_or_else(|| LLMError::Connection {
+fn api_url(endpoint: &RemoteEndpoint, path: &str) -> ModelResult<Url> {
+    endpoint.url_of(&["api", path]).ok_or_else(|| ModelError::Connection {
         endpoint: endpoint.shown(),
         reason: "the endpoint is no URL".to_string(),
     })
@@ -733,18 +707,18 @@ fn api_url(endpoint: &RemoteEndpoint, path: &str) -> LLMResult<Url> {
 
 /// `request` sent to `endpoint`, answered within its timeout if it has one -
 /// a streamed answer with its beginning.
-async fn send(request: RequestBuilder, endpoint: &RemoteEndpoint) -> LLMResult<Response> {
+async fn send(request: RequestBuilder, endpoint: &RemoteEndpoint) -> ModelResult<Response> {
     let sent = request.send();
     let response = match endpoint.timeout_secs {
         Some(secs) => time::timeout(Duration::from_secs(secs), sent).await.map_err(|_| {
-            LLMError::Connection {
+            ModelError::Connection {
                 endpoint: endpoint.shown(),
                 reason: format!("no answer within {secs} s"),
             }
         })?,
         None => sent.await,
     };
-    response.map_err(|e| LLMError::Connection {
+    response.map_err(|e| ModelError::Connection {
         endpoint: endpoint.shown(),
         reason: describe_request_error(e),
     })
@@ -754,8 +728,9 @@ fn default_model() -> String {
     DEFAULT_MODEL.to_string()
 }
 
+/// A model served by Ollama, as the section `plugins.models` names it.
 #[derive(Debug, Clone)]
-pub struct OllamaClient {
+pub(crate) struct OllamaModel {
     http: Client,
     endpoint: RemoteEndpoint,
     model: String,
@@ -765,44 +740,37 @@ pub struct OllamaClient {
     /// Whether to request thinking/reasoning output from the model.
     /// `None` leaves the decision to Ollama's per-model default.
     think: Option<bool>,
-    /// How the model is given its context (issue 63).
-    profile: ModelProfile,
     /// The context size Ollama is asked for (issue 209); `None` leaves it
     /// to Ollama, and the size is read as it loaded the model.
     context_size: Option<u64>,
-    /// The model's control tokens, shared with the other clients of the
-    /// registry (issue 149).
-    control_tokens: Arc<ControlTokenCache>,
-    /// The context sizes Ollama loaded models with, shared likewise.
-    running_context_sizes: Arc<RunningContextSizes>,
+    /// Whether the model sees images, as configured; asked of the server where `None`.
+    vision: Option<bool>,
+    /// What is read of the server once, shared with the other models of the backend.
+    known: Arc<Known>,
 }
 
-impl OllamaClient {
-    /// The client `config` describes, given images if `images` - whether its model sees them.
-    fn new(
-        config: OllamaClientConfig,
-        images: bool,
-        control_tokens: Arc<ControlTokenCache>,
-        running_context_sizes: Arc<RunningContextSizes>,
-    ) -> Self {
+/// What is read of an Ollama server once per model and kept, shared by every model of the backend:
+/// the control tokens (issue 149), whether a model sees (issue 282), the context sizes it loaded
+/// models with (issue 209).
+#[derive(Debug, Default)]
+struct Known {
+    control_tokens: ControlTokenCache,
+    vision: ModelVision,
+    running_context_sizes: RunningContextSizes,
+}
+
+impl OllamaModel {
+    /// The model `config` describes, with what is `known` of the servers.
+    fn new(config: OllamaModelConfig, known: Arc<Known>) -> Self {
         Self {
             http: Client::new(),
             endpoint: config.endpoint,
             model: config.model,
             tokenizer: config.tokenizer,
             think: config.think,
-            profile: ModelProfile {
-                reasoning_history: config.reasoning_history,
-                system_messages: config.system_messages,
-                sender_format: config.sender_format,
-                sender_style: config.sender_style,
-                message_times: config.message_times,
-                prompt_texts: config.prompt_texts,
-                images,
-            },
             context_size: config.context_size,
-            control_tokens,
-            running_context_sizes,
+            vision: config.vision,
+            known,
         }
     }
 }
@@ -814,7 +782,7 @@ fn answer_of<S, D, E>(
     bytes: S,
     endpoint: String,
     model: String,
-) -> impl Stream<Item = LLMResult<MessageEvent>> + Send + 'static
+) -> impl Stream<Item = ModelResult<MessageEvent>> + Send + 'static
 where
     S: Stream<Item = Result<D, E>> + Send + 'static,
     D: Buf + Send + 'static,
@@ -834,11 +802,11 @@ where
             let line = match line {
                 Ok(line) => line,
                 Err(LinesCodecError::Io(e)) if e.kind() == ErrorKind::InvalidData => {
-                    yield Err(LLMError::InvalidResponse { endpoint, reason: e.to_string() });
+                    yield Err(ModelError::InvalidResponse { endpoint, reason: e.to_string() });
                     return;
                 }
                 Err(e) => {
-                    yield Err(LLMError::Connection { endpoint, reason: describe_chain(&e) });
+                    yield Err(ModelError::Connection { endpoint, reason: describe_chain(&e) });
                     return;
                 }
             };
@@ -847,7 +815,7 @@ where
             }
             // Ollama reports errors that occur mid-stream as `{"error": ...}`.
             if let Ok(OllamaErrorResponse { error }) = serde_json::from_str::<OllamaErrorResponse>(&line) {
-                yield Err(LLMError::Backend { endpoint, model, message: error });
+                yield Err(ModelError::Backend { endpoint, model, message: error });
                 return;
             }
             match serde_json::from_str::<OllamaChatResponse>(&line) {
@@ -923,17 +891,24 @@ where
                 }
             }
         }
-        yield Err(LLMError::InvalidResponse { endpoint, reason: "the response ended without a final message".to_string() });
+        yield Err(ModelError::InvalidResponse { endpoint, reason: "the response ended without a final message".to_string() });
     }
 }
 
 #[async_trait]
-impl LLMClient for OllamaClient {
+impl ModelProvider for OllamaModel {
+    async fn sees_images(&self) -> bool {
+        match self.vision {
+            Some(sees) => sees,
+            None => self.known.vision.get(&self.http, &self.endpoint, &self.model).await,
+        }
+    }
+
     async fn chat_completion(
         &self,
         context: &[Message],
         tools: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         let url = api_url(&self.endpoint, "chat");
         let message_count = context.len();
 
@@ -962,13 +937,12 @@ impl LLMClient for OllamaClient {
         let model = self.model.clone();
         let remote = self.endpoint.clone();
         let endpoint = remote.shown();
-        let control_tokens = Arc::clone(&self.control_tokens);
+        let known = Arc::clone(&self.known);
         let tokenizer = self.tokenizer.clone();
         let context_size = self.context_size;
-        let running_context_sizes = Arc::clone(&self.running_context_sizes);
 
         let output = stream! {
-            match control_tokens.get(&http, &remote, &model, tokenizer.as_deref()).await {
+            match known.control_tokens.get(&http, &remote, &model, tokenizer.as_deref()).await {
                 Ok(tokens) => request.defuse(&tokens),
                 Err(e) => {
                     yield Err(e);
@@ -998,7 +972,7 @@ impl LLMClient for OllamaClient {
             let status = response.status();
             if !status.is_success() {
                 let body = response.text().await.unwrap_or_default();
-                yield Err(LLMError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
+                yield Err(ModelError::Rejected { endpoint, model, status: status.as_u16(), message: backend_error_message(&body) });
                 return;
             }
             let mut answer = std::pin::pin!(answer_of(response.bytes_stream().map(|chunk| chunk.map_err(reqwest::Error::without_url)), endpoint, model.clone()));
@@ -1007,7 +981,7 @@ impl LLMClient for OllamaClient {
                     Ok(MessageEvent::Complete(mut message)) => {
                         message.context_size = match context_size {
                             Some(size) => Some(size),
-                            None => running_context_sizes.get(&http, &remote, &model).await,
+                            None => known.running_context_sizes.get(&http, &remote, &model).await,
                         };
                         yield Ok(MessageEvent::Complete(message));
                     }
@@ -1020,47 +994,12 @@ impl LLMClient for OllamaClient {
     }
 }
 
-/// How the model is given its context, as the component is configured.
-impl ModelProfileProvider for OllamaClient {
-    fn profile(&self) -> ModelProfile {
-        self.profile
-    }
-}
-
-/// Registers the kind `ollama_client` with `registry`.
-pub fn register(registry: &mut LibraryComponents<'_>) {
-    let control_tokens = Arc::new(ControlTokenCache::default());
-    let running_context_sizes = Arc::new(RunningContextSizes::default());
-    let vision = Arc::new(ModelVision::default());
-    registry.register_async(
-        ComponentKind::new(OLLAMA_CLIENT_KIND)
-            .params::<OllamaClientConfig>()
-            .provides::<dyn LLMClient>()
-            .provides::<dyn ModelProfileProvider>()
-            .uses::<PromptCatalogue>(),
-        move |descriptor, context| {
-            let control_tokens = Arc::clone(&control_tokens);
-            let running_context_sizes = Arc::clone(&running_context_sizes);
-            let vision = Arc::clone(&vision);
-            async move {
-                let config = config_of_params::<OllamaClientConfig>(&descriptor.params)?;
-                context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
-                let images = match config.vision {
-                    Some(sees) => sees,
-                    None => vision.get(&Client::new(), &config.endpoint, &config.model).await,
-                };
-                let client = Arc::new(OllamaClient::new(
-                    config,
-                    images,
-                    control_tokens,
-                    running_context_sizes,
-                ));
-                let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn LLMClient>(Arc::<OllamaClient>::clone(&client));
-                facets.insert::<dyn ModelProfileProvider>(client);
-                Ok(facets)
-            }
-        },
+/// Registers the backend `ollama` with `backends`: its models share what is read of their servers.
+pub(crate) fn register_backend(backends: &mut Backends) {
+    let known = Arc::new(Known::default());
+    backends.register::<dyn ModelProvider, OllamaModelConfig, _>(
+        OLLAMA_BACKEND,
+        move |_, config, _| Ok(Arc::new(OllamaModel::new(config, Arc::clone(&known)))),
     );
 }
 
@@ -1068,16 +1007,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use caelumora_api::component::Services;
-    use caelumora_kernel::component::BuildContext;
-    use caelumora_kernel::component::ComponentRegistry;
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_api::component::config_of_params;
     use caelumora_model::confidentiality::Classification;
     use caelumora_model::message::{Message, MessageRole};
     use caelumora_model::tool::ToolCall;
-    use caelumora_model::type_map::TypeKey;
-    use caelumora_security::{Policies, SecurityContext};
-    use caelumora_store::{EntityStores, Persistence};
     use futures::stream as futures_stream;
     use serde_json::json;
     use std::io::Error;
@@ -1181,43 +1114,29 @@ mod tests {
 
     #[test]
     fn parameters_default_to_a_local_ollama() {
-        let config: OllamaClientConfig = serde_json::from_value(json!({})).unwrap();
+        let config: OllamaModelConfig = serde_json::from_value(json!({})).unwrap();
         assert_eq!(config.endpoint, RemoteEndpoint::new(DEFAULT_BASE_URL));
         assert_eq!(config.model, DEFAULT_MODEL);
         assert_eq!(config.think, None);
-        assert_eq!(config.reasoning_history, ReasoningHistory::CurrentTurn);
-        assert_eq!(config.system_messages, SystemMessages::OnlyAtStart);
-        assert_eq!(
-            (config.sender_format, config.sender_style),
-            (SenderFormat::Prefix, SenderStyle::Handle),
-            "told who said what (issue 135)"
-        );
-        assert!(config.message_times, "and when (issue 424)");
 
-        let config: OllamaClientConfig = serde_json::from_value(json!({ "model": "qwen3:8b", "think": true, "reasoning_history": "never", "system_messages": "anywhere", "sender_format": "xml", "sender_style": "name", "message_times": false })).unwrap();
-        assert!(!config.message_times);
+        let config: OllamaModelConfig =
+            serde_json::from_value(json!({ "model": "qwen3:8b", "think": true })).unwrap();
         assert_eq!((config.model.as_str(), config.think), ("qwen3:8b", Some(true)));
-        assert_eq!(config.reasoning_history, ReasoningHistory::Never);
-        assert_eq!(config.system_messages, SystemMessages::Anywhere);
-        assert_eq!(
-            (config.sender_format, config.sender_style),
-            (SenderFormat::Xml, SenderStyle::Name)
-        );
         assert!(
-            config_of_params::<OllamaClientConfig>(&json!({ "sender_format": "header" })).is_err(),
-            "only the formats there are"
+            config_of_params::<OllamaModelConfig>(&json!({ "sender_format": "xml" })).is_err(),
+            "how the context is framed is the agent's model's, not the backend's"
         );
     }
 
     #[test]
     fn a_misspelt_parameter_is_refused() {
-        assert!(config_of_params::<OllamaClientConfig>(&json!({ "modle": "qwen3:8b" })).is_err());
+        assert!(config_of_params::<OllamaModelConfig>(&json!({ "modle": "qwen3:8b" })).is_err());
         assert!(
-            config_of_params::<OllamaClientConfig>(&json!({ "base_url": DEFAULT_BASE_URL }))
+            config_of_params::<OllamaModelConfig>(&json!({ "base_url": DEFAULT_BASE_URL }))
                 .is_err(),
             "the server is the endpoint's url"
         );
-        assert!(config_of_params::<OllamaClientConfig>(
+        assert!(config_of_params::<OllamaModelConfig>(
             &json!({ "endpoint": { "url": DEFAULT_BASE_URL, "timeout": 5 } })
         )
         .is_err());
@@ -1225,7 +1144,7 @@ mod tests {
 
     #[test]
     fn the_server_is_reached_as_the_endpoint_says_but_without_authentication() {
-        let config = config_of_params::<OllamaClientConfig>(
+        let config = config_of_params::<OllamaModelConfig>(
             &json!({ "endpoint": { "url": "http://gpu:11434", "timeout_secs": 5 } }),
         )
         .unwrap();
@@ -1233,7 +1152,7 @@ mod tests {
             (config.endpoint.url.as_str(), config.endpoint.timeout_secs),
             ("http://gpu:11434", Some(5))
         );
-        let refused = config_of_params::<OllamaClientConfig>(
+        let refused = config_of_params::<OllamaModelConfig>(
             &json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "TOKEN" } } }),
         );
         assert!(refused.is_err_and(|e| e.to_string().contains("not supported")));
@@ -1321,22 +1240,16 @@ mod tests {
         format!("http://{address}")
     }
 
-    fn client(base_url: &str) -> OllamaClient {
+    fn client(base_url: &str) -> OllamaModel {
         client_with(json!({ "endpoint": { "url": base_url }, "model": "qwen3:8b" }))
     }
 
-    fn client_with(params: Value) -> OllamaClient {
-        let config = config_of_params::<OllamaClientConfig>(&params).unwrap();
-        OllamaClient::new(
-            config,
-            false,
-            Arc::new(ControlTokenCache::default()),
-            Arc::new(RunningContextSizes::default()),
-        )
+    fn client_with(params: Value) -> OllamaModel {
+        OllamaModel::new(config_of_params(&params).unwrap(), Arc::new(Known::default()))
     }
 
     /// The context size of the complete message of a call of `client`.
-    async fn context_size_of_an_answer(client: &OllamaClient) -> Option<u64> {
+    async fn context_size_of_an_answer(client: &OllamaModel) -> Option<u64> {
         let events: Vec<_> = client.chat_completion(&[], &[]).await.collect().await;
         match events.last() {
             Some(Ok(MessageEvent::Complete(message))) => message.context_size,
@@ -1389,114 +1302,31 @@ mod tests {
         assert!(!same_model("qwen3:8b", "qwen3:14b"));
     }
 
-    /// Issue 57: the model is given the variant of the texts its component
-    /// names, and a component that names one not configured is not built.
-    #[tokio::test]
-    async fn the_model_is_given_the_variant_of_the_texts_its_component_names() {
-        let mut prompts = PromptCatalogue::new();
-        let gemma = tempfile::tempdir().unwrap();
-        prompts.add_variant("gemma4", gemma.path()).unwrap();
-        let mut registry = ComponentRegistry::new(
-            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
-                .unwrap()
-                .component_bundles,
-        );
-        // As the agents' library declares it.
-        registry.single::<dyn ModelProfileProvider>(None);
-        register(&mut registry.library_components());
-        let registry = Arc::new(registry);
-        let context = BuildContext::new(
-            SecurityContext::default(),
-            Services::empty().with(Arc::new(prompts)),
-        );
-        let profile_of = |params: Value| {
-            let (registry, context) = (Arc::clone(&registry), context.clone());
-            async move {
-                let config = ComponentConfig {
-                    component_nodes: vec![ComponentDescriptor {
-                        params,
-                        ..ComponentDescriptor::new("model", OLLAMA_CLIENT_KIND)
-                    }],
-                };
-                let container = registry
-                    .build(&config, &[TypeKey::of::<dyn ModelProfileProvider>()], &context)
-                    .await?;
-                Ok::<_, ComponentError>(
-                    container.one::<dyn ModelProfileProvider>().await?.profile(),
-                )
-            }
-        };
-        // Told whether it sees, so that no server is asked.
-        assert_eq!(
-            profile_of(json!({ "prompt_texts": "gemma4", "vision": false }))
-                .await
-                .unwrap()
-                .prompt_texts,
-            Some(PromptVariant::new("gemma4").unwrap())
-        );
-        assert_eq!(
-            profile_of(json!({ "vision": false })).await.unwrap().prompt_texts,
-            None,
-            "the default unless configured"
-        );
-        let refused = profile_of(json!({ "prompt_texts": "llama", "vision": false }))
-            .await
-            .expect_err("not configured")
-            .to_string();
-        assert!(refused.contains("no variant 'llama'"), "{refused}");
-        assert!(
-            profile_of(json!({ "prompt_texts": "Gemma 4", "vision": false })).await.is_err(),
-            "no name of a variant"
-        );
-    }
-
-    /// Issue 282: whether the model sees is asked of the server as the component is built, once
-    /// per model, unless configured; a server that cannot say gives none.
+    /// Issue 282: whether the model sees is asked of the server, once per model of the backend,
+    /// unless configured; a server that cannot say gives none.
     #[tokio::test]
     async fn whether_the_model_sees_is_asked_unless_configured() {
         let fake = FakeOllama { seeing: Some("gemma4:26b"), ..FakeOllama::default() };
         let url = serve(fake.clone()).await;
-        let mut registry = ComponentRegistry::new(
-            EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
-                .unwrap()
-                .component_bundles,
-        );
-        registry.single::<dyn ModelProfileProvider>(None);
-        register(&mut registry.library_components());
-        let registry = Arc::new(registry);
-        let context = BuildContext::new(
-            SecurityContext::default(),
-            Services::empty().with(Arc::new(PromptCatalogue::new())),
-        );
-        let sees = |params: Value| {
-            let (registry, context) = (Arc::clone(&registry), context.clone());
-            async move {
-                let config = ComponentConfig {
-                    component_nodes: vec![ComponentDescriptor {
-                        params,
-                        ..ComponentDescriptor::new("model", OLLAMA_CLIENT_KIND)
-                    }],
-                };
-                let container = registry
-                    .build(&config, &[TypeKey::of::<dyn ModelProfileProvider>()], &context)
-                    .await
-                    .unwrap();
-                container.one::<dyn ModelProfileProvider>().await.unwrap().profile().images
-            }
+        let known = Arc::new(Known::default());
+        let model = |params: Value| {
+            OllamaModel::new(config_of_params(&params).unwrap(), Arc::clone(&known))
         };
-        assert!(
-            sees(json!({ "endpoint": { "url": url }, "model": "gemma4:26b" })).await,
-            "as its capabilities say"
-        );
-        assert!(sees(json!({ "endpoint": { "url": url }, "model": "gemma4:26b" })).await);
+        let gemma = json!({ "endpoint": { "url": url }, "model": "gemma4:26b" });
+        assert!(model(gemma.clone()).sees_images().await, "as its capabilities say");
+        assert!(model(gemma).sees_images().await);
         assert_eq!(fake.shown_models.lock().unwrap().len(), 1, "asked once");
-        assert!(!sees(json!({ "endpoint": { "url": url }, "model": "qwen3:8b" })).await);
+        let qwen = json!({ "endpoint": { "url": url }, "model": "qwen3:8b" });
+        assert!(!model(qwen).sees_images().await);
         assert!(
-            sees(json!({ "endpoint": { "url": url }, "model": "qwen3:8b", "vision": true })).await,
+            model(json!({ "endpoint": { "url": url }, "model": "qwen3:8b", "vision": true }))
+                .sees_images()
+                .await,
             "configured, not asked"
         );
         assert!(
-            !sees(json!({ "endpoint": { "url": "http://127.0.0.1:9" }, "model": "gemma4:26b" }))
+            !model(json!({ "endpoint": { "url": "http://127.0.0.1:9" }, "model": "gemma4:26b" }))
+                .sees_images()
                 .await,
             "a server that cannot say: none"
         );
@@ -1560,9 +1390,9 @@ mod tests {
 
     #[test]
     fn a_context_size_of_nothing_is_refused() {
-        assert!(config_of_params::<OllamaClientConfig>(&json!({ "context_size": 0 })).is_err());
+        assert!(config_of_params::<OllamaModelConfig>(&json!({ "context_size": 0 })).is_err());
         assert_eq!(
-            config_of_params::<OllamaClientConfig>(&json!({ "context_size": 65536 }))
+            config_of_params::<OllamaModelConfig>(&json!({ "context_size": 65536 }))
                 .unwrap()
                 .context_size,
             Some(65536)
@@ -1652,7 +1482,7 @@ mod tests {
         let alone = client_with(json!({ "endpoint": { "url": url }, "model": "qwen3:cloud" }));
         let events: Vec<_> = alone.chat_completion(&context, &[]).await.collect().await;
         assert!(
-            matches!(events.as_slice(), [Err(LLMError::InvalidResponse { reason, .. })] if reason.contains("'tokenizer'")),
+            matches!(events.as_slice(), [Err(ModelError::InvalidResponse { reason, .. })] if reason.contains("'tokenizer'")),
             "{events:?}"
         );
         assert!(fake.sent.lock().unwrap().is_empty(), "nothing sent unprotected");
@@ -1678,7 +1508,7 @@ mod tests {
         );
         let events: Vec<_> = listless.chat_completion(&context, &[]).await.collect().await;
         assert!(
-            matches!(events.as_slice(), [Err(LLMError::InvalidResponse { reason, .. })] if reason.contains("'qwen3:cloud', the 'tokenizer' of 'qwen3:other'")),
+            matches!(events.as_slice(), [Err(ModelError::InvalidResponse { reason, .. })] if reason.contains("'qwen3:cloud', the 'tokenizer' of 'qwen3:other'")),
             "names the tokenizer as such: {events:?}"
         );
     }
@@ -1733,7 +1563,7 @@ mod tests {
         for _ in 0..2 {
             let events: Vec<_> = client.chat_completion(&context, &[]).await.collect().await;
             assert!(
-                matches!(events.as_slice(), [Err(LLMError::Rejected { status: 404, .. })]),
+                matches!(events.as_slice(), [Err(ModelError::Rejected { status: 404, .. })]),
                 "{events:?}"
             );
         }

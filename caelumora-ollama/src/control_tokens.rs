@@ -17,7 +17,7 @@ const BREAK: char = '\u{200B}';
 
 /// The control tokens of one model, ready to be searched for.
 #[derive(Debug)]
-pub struct ControlTokens {
+pub(crate) struct ControlTokens {
     /// `None` if the model has none.
     matcher: Option<AhoCorasick>,
     count: usize,
@@ -30,7 +30,7 @@ impl ControlTokens {
     ///
     /// # Errors
     /// If the tokens cannot be searched for - too many of them.
-    pub fn new(tokens: impl IntoIterator<Item = String>) -> Result<Self, BuildError> {
+    pub(crate) fn new(tokens: impl IntoIterator<Item = String>) -> Result<Self, BuildError> {
         let mut kept = Vec::new();
         let mut left_out = 0;
         for token in tokens {
@@ -53,13 +53,8 @@ impl ControlTokens {
     }
 
     /// How many tokens are defused.
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.count
-    }
-
-    /// Whether there is nothing to defuse.
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
     }
 
     /// `text` with every control token in it broken by a zero-width space
@@ -69,7 +64,7 @@ impl ControlTokens {
     /// so the text is searched again until none is found. That ends: no
     /// token contains `BREAK`, so every occurrence found is one that was in
     /// `text`, and each round breaks at least one for good.
-    pub fn defuse<'a>(&self, text: &'a str) -> Cow<'a, str> {
+    pub(crate) fn defuse<'a>(&self, text: &'a str) -> Cow<'a, str> {
         let Some(matcher) = &self.matcher else {
             return Cow::Borrowed(text);
         };
@@ -94,14 +89,14 @@ impl ControlTokens {
     }
 
     /// Defuses `text` where it stands.
-    pub fn defuse_in_place(&self, text: &mut String) {
+    pub(crate) fn defuse_in_place(&self, text: &mut String) {
         if let Cow::Owned(defused) = self.defuse(text) {
             *text = defused;
         }
     }
 
     /// Defuses every string in `value`, and every key of its objects.
-    pub fn defuse_json(&self, value: &mut Value) {
+    pub(crate) fn defuse_json(&self, value: &mut Value) {
         match value {
             Value::String(text) => self.defuse_in_place(text),
             Value::Array(items) => items.iter_mut().for_each(|item| self.defuse_json(item)),
@@ -160,7 +155,7 @@ mod tests {
         let tokens = tokens(&["x", "", "<a\u{200B}b>", "<eos>"]);
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens.defuse("x<eos>"), "x<\u{200B}eos>");
-        assert!(ControlTokens::new(Vec::new()).unwrap().is_empty());
+        assert_eq!(ControlTokens::new(Vec::new()).unwrap().len(), 0);
     }
 
     #[test]

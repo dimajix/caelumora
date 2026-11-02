@@ -1,10 +1,12 @@
 //! `ParticipantRuntime`: what the actor of a participant runs with in its channel (issue 69), made
 //! by the kernel of the participant, and asking the kernel in its name.
 
-use super::{ChannelRuntime, Kernel};
+#[cfg(any(test, feature = "test-support"))]
+use super::ActingKind;
+use super::{Acting, ChannelRuntime, Kernel};
 use crate::actor::ActorManager;
 use crate::attachment::AttachmentManager;
-use crate::channel::{ChannelLoop, ResolvedParticipant};
+use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::controller::{ChannelController, SessionController};
 use crate::event::EventSubscription;
@@ -37,37 +39,12 @@ pub struct ParticipantRuntime {
     pub(super) acting: Acting,
 }
 
-/// How the context an actor's runtime acts in is built, at every call that asks the kernel
-/// (`ParticipantRuntime::acting_for`, issue 516).
-#[derive(Debug, Clone)]
-pub(crate) enum Acting {
-    /// A participant of the channel, as the channel resolved it: its context as the controllers
-    /// hold it now - a user's own, an agent's with its owner's rights and roles, limited by its
-    /// personality, the approver's answered for by the channel's owner.
-    Participant(ResolvedParticipant),
-    /// In a test, an actor that takes part in nothing: in its own name, without roles.
-    #[cfg(any(test, feature = "test-support"))]
-    Itself,
-    /// In a test, the context it gives (`ParticipantRuntime::acting_as`).
-    #[cfg(any(test, feature = "test-support"))]
-    Fixed(SecurityContext),
-}
-
 impl ParticipantRuntime {
     /// The context the actor acts in now, for `initiator` - who began the chain it answers, for the
     /// record, never for rights (issue 516): built by the kernel at every call, from what it holds
     /// of the actor (`Acting`), never handed in by the actor.
     pub(crate) fn acting_for(&self, initiator: ActorId) -> SecurityContext {
-        match &self.acting {
-            Acting::Participant(participant) => participant.context_in(&self.channel(), initiator),
-            #[cfg(any(test, feature = "test-support"))]
-            Acting::Itself => SecurityContext {
-                initiator_id: initiator,
-                ..SecurityContext::new(self.actor, self.session_id, self.channel_id)
-            },
-            #[cfg(any(test, feature = "test-support"))]
-            Acting::Fixed(context) => context.clone(),
-        }
+        self.acting.context_for(initiator)
     }
 
     /// This runtime, acting in `context` whatever its actor and its initiator are: for a test
@@ -75,7 +52,7 @@ impl ParticipantRuntime {
     /// (issue 516).
     #[cfg(any(test, feature = "test-support"))]
     pub fn acting_as(self, context: SecurityContext) -> Self {
-        Self { acting: Acting::Fixed(context), ..self }
+        Self { acting: Acting(ActingKind::Given(context)), ..self }
     }
 
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by

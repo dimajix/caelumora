@@ -10,7 +10,7 @@ use super::intake::TakenIn;
 use super::run_control::RunControl;
 use crate::command::AgentCommandProvider;
 use crate::message::PerceiveInProcessor;
-use crate::prompt::{ContextProvider, ModelProfileProvider};
+use crate::prompt::ContextProvider;
 use crate::situation::Situation;
 use crate::turn::Turn;
 use anyhow::{Context, Result};
@@ -18,6 +18,7 @@ use caelumora_api::actor::Answering;
 use caelumora_api::command::CommandSet;
 use caelumora_api::component::ComponentContainer;
 use caelumora_api::component::ComponentImpl;
+use caelumora_api::model::ModelProfileProvider;
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_model::actor::{

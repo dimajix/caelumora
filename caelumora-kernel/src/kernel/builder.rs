@@ -27,7 +27,7 @@ use crate::workspace::reaper::CommandReaper;
 use crate::workspace::{UsableWorkspace, WorkspaceManager, WorkspaceUse};
 use anyhow::{bail, Context, Result};
 use caelumora_api::component::Face;
-use caelumora_api::component::Services;
+use caelumora_api::component::{ComponentResult, Services};
 use caelumora_api::library::Library;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::approval::ApprovalRule;
@@ -75,6 +75,10 @@ pub struct KernelBuilder {
     /// The storages of content (issue 282), which their owners - a
     /// plugin's manager - are made with.
     content_storages: Arc<NamedBackends<dyn ContentStorage>>,
+    /// The backends the kernel and the plugins registered, which make what a plugin's service is
+    /// served by (`make_named`, issue 520), with the services they may ask for.
+    backends: Backends,
+    backend_services: Services,
     attachments: Arc<AttachmentManager>,
     groups: Arc<GroupManager>,
     agents: Arc<AgentManager>,
@@ -184,7 +188,8 @@ impl KernelBuilder {
     /// (`ComponentRegistry::built_in`), resolving the bundles in the builder's stores; a plugin
     /// adds its own, and a test stand-ins, such as a model of its own (issue 130), through
     /// `components`. `backends` makes the storages and the user providers `config` names (issue
-    /// 324): `Backends::with_plugins` of the plugins registered afterwards.
+    /// 324), and what the services of the plugins are served by (`make_named`):
+    /// `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
     /// If a store of the kernel's kinds cannot be opened, or a storage of workspaces or of content
@@ -310,6 +315,8 @@ impl KernelBuilder {
             workspaces,
             command_reaper,
             content_storages,
+            backends,
+            backend_services,
             attachments,
             groups,
             agents,
@@ -458,6 +465,21 @@ impl KernelBuilder {
     /// make the owner of what is kept there with.
     pub fn content_storages(&self) -> &Arc<NamedBackends<dyn ContentStorage>> {
         &self.content_storages
+    }
+
+    /// The backends of `T` that `configs` - a plugin's section - names, by their names, made by the
+    /// factories the kernel and the plugins registered (`Plugin::backends`), as the kernel makes
+    /// its own: for a plugin whose service is served by backends other plugins bring - the models
+    /// (issue 520). `what` names one of them in messages.
+    ///
+    /// # Errors
+    /// `ComponentError::Backend` naming the first that cannot be made.
+    pub fn make_named<T: ?Sized + 'static>(
+        &self,
+        what: &str,
+        configs: &BTreeMap<String, BackendConfig>,
+    ) -> ComponentResult<NamedBackends<T>> {
+        self.backends.make_named(what, configs, &self.backend_services)
     }
 
     /// The component kinds, to register a plugin's own with.
@@ -667,6 +689,7 @@ mod tests {
     use crate::user_provider::Credential;
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
+    use caelumora_api::model::ModelClient;
     use caelumora_model::prompt_catalogue::PromptVariant;
     use caelumora_security::AllowAllPolicy;
     use std::fs;
@@ -742,6 +765,8 @@ mod tests {
 
         built(&Brings(|c| brought(c, |kind| kind.uses::<Workflows>().uses::<PromptCatalogue>())))
             .expect("its own service and the texts");
+        built(&Brings(|c| brought(c, |kind| kind.provides::<dyn ModelClient>())))
+            .expect("a model of its own, the agent's affair (issue 520)");
         let refusing: [(Brings, &str); 6] = [
             (Brings(|c| brought(c, |kind| kind.provides::<dyn Moderator>())), "provides Moderator"),
             (

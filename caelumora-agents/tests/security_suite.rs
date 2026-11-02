@@ -24,11 +24,10 @@ use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
 use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage,
 };
-use caelumora_agents::llm::{LLMClient, LLMResult};
-use caelumora_agents::prompt::ModelProfileProvider;
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing as agent_testing;
 use caelumora_agents::testing::{
-    about_agent_commands, calling, register_scripted, TestAgents, ONCE_MODEL_KIND,
+    about_agent_commands, calling, register_scripted, ONCE_MODEL_KIND,
 };
 use caelumora_agents::tool::echo_tool::ECHO_TOOL_KIND;
 use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
@@ -36,6 +35,7 @@ use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::reader::ViewError;
 use caelumora_api::workspace::WorkspaceError;
 use caelumora_kernel::actor::user::ChannelWatch;
@@ -232,7 +232,7 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
         content: Some("an answer".to_string()),
         ..Message::new(Classification::PUBLIC)
     };
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "answering", vec![answer])
     })
     .await;
@@ -293,7 +293,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
         reasoning: Some("weighing".to_string()),
         ..Message::new(Classification::PUBLIC)
     };
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "answering", vec![answer])
     })
     .await;
@@ -736,7 +736,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
         content: Some("an answer".to_string()),
         ..Message::new(Classification::PUBLIC)
     };
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "answering", vec![answer])
     })
     .await;
@@ -832,7 +832,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
 /// (`an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked`).
 #[tokio::test]
 async fn nudging_an_agent_is_for_whoever_takes_part_and_it_responds_on_their_word() {
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)])
     })
     .await;
@@ -1107,7 +1107,7 @@ async fn with_a_call_of(
     call: Message,
     tool: ComponentDescriptor,
 ) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(ComponentKind::new("commands").provides::<dyn ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
@@ -1213,7 +1213,7 @@ async fn with_a_call_asking_whom(
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(
             ComponentKind::new("asking").provides::<dyn ToolProvider>(),
@@ -1935,7 +1935,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(ComponentKind::new("outward").provides::<dyn ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
@@ -2052,7 +2052,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         }],
         ..Message::new(internal)
     };
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "relaying", vec![relayed]);
         register_scripted(registry, "calling", vec![call]);
     })
@@ -2142,7 +2142,7 @@ async fn with_a_reader_of(
         }],
         ..Message::new(Classification::PUBLIC)
     };
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "reading", vec![call])
     })
     .await;
@@ -2336,12 +2336,13 @@ struct Held {
 }
 
 #[async_trait]
-impl LLMClient for Held {
+impl ModelClient for Held {
     async fn chat_completion(
         &self,
+        _: ActorId,
         messages: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         self.given
             .lock()
             .unwrap()
@@ -2395,15 +2396,15 @@ async fn bob_speaks_while_alices_turn_works(
         gate: Arc::new(Semaphore::new(0)),
         given: Default::default(),
     });
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         let model = Arc::clone(&model);
         registry.register(
             ComponentKind::new("held")
-                .provides::<dyn LLMClient>()
+                .provides::<dyn ModelClient>()
                 .provides::<dyn ModelProfileProvider>(),
             move |_, _| {
                 let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn LLMClient>(Arc::<Held>::clone(&model));
+                facets.insert::<dyn ModelClient>(Arc::<Held>::clone(&model));
                 facets.insert::<dyn ModelProfileProvider>(Arc::<Held>::clone(&model));
                 Ok(facets)
             },
@@ -2668,7 +2669,7 @@ async fn with_remote(
     gate: Option<Arc<Semaphore>>,
 ) -> World {
     let calls = Arc::clone(calls);
-    World::with(&[], &[&TestAgents], |registry| {
+    World::with(&[], &[&AgentsLibrary], |registry| {
         registry.register(
             ComponentKind::new("remote_at_work")
                 .provides::<dyn ExternalAgent>()
@@ -3713,7 +3714,7 @@ impl AgentCommandProvider for Commanded {
 async fn with_a_commanded_agent(
 ) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, Arc<Mutex<Vec<ActorId>>>, ChannelWatch) {
     let seen = Arc::new(Mutex::new(Vec::new()));
-    let world = World::with(&[], &[&TestAgents], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)]);
         let seen = Arc::clone(&seen);
         registry.register(
@@ -3896,7 +3897,7 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
     use serde_json::json;
     use tokio_util::bytes::Bytes;
 
-    let world = World::with(&[], &[&TestAgents], |_| {}).await;
+    let world = World::with(&[], &[&AgentsLibrary], |_| {}).await;
     let personality = world.personality("plain", None, &[]).await;
     let helper = world.agent("helper", world.alice, &personality).await;
     let alice = World::as_user(world.alice);

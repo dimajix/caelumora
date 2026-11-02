@@ -14,10 +14,12 @@
 mod scripted_agent;
 #[cfg(test)]
 mod stand_in;
+mod unasked_model;
 
 pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
 #[cfg(test)]
 pub(crate) use stand_in::StandIn;
+pub use unasked_model::with_unasked_model;
 
 use crate::actor::user::ChannelWatch;
 use crate::agent::AgentError;
@@ -262,9 +264,10 @@ pub struct TestKernel<'a> {
     pub access_policy: Arc<dyn AccessPolicy>,
     /// The default rules.
     pub confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// The default configuration.
     pub config: AppConfig,
-    /// Registers the component kinds of the test beside the built-in ones, before the plugins
-    /// register theirs; none.
+    /// Registers the component kinds of the test beside the built-in ones and a model that is not
+    /// to be asked (`with_unasked_model`), before the plugins register theirs; none.
     pub components: Box<dyn FnOnce(&mut ComponentRegistry) + 'a>,
     /// None.
     pub plugins: Vec<&'a dyn Plugin>,
@@ -310,6 +313,7 @@ impl TestKernel<'_> {
             &self.config,
             Backends::with_plugins(&self.plugins),
         )?;
+        with_unasked_model(builder.components());
         (self.components)(builder.components());
         for plugin in self.plugins {
             builder.plugin(plugin)?;
@@ -367,7 +371,7 @@ impl World {
 
     /// The world with `plugins` (issue 323) and `libraries` (issue 516), and the component kinds
     /// `register` adds besides the built-in ones. It runs no agent unless a library brings them:
-    /// in the agents' tests, `caelumora_agents::testing::TestAgents` does (issues 370, 373).
+    /// in the agents' tests, `caelumora_agents::library::AgentsLibrary` does (issues 370, 373).
     pub async fn with(
         plugins: &[&dyn Plugin],
         libraries: &[&dyn Library],

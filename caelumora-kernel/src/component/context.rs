@@ -1,23 +1,36 @@
 //! The environment a configuration of components is built in (`BuildContext`).
 
+use crate::kernel::{Acting, ActingKind};
 use caelumora_api::component::Services;
 use caelumora_security::SecurityContext;
+use std::sync::Arc;
 
-/// The environment a configuration of components is built in (issues 321, 516): the name of its
-/// owner - an agent's own, a channel's owner's -, in which every `ref` is resolved and the graph
-/// keeps, and the services of the kernel, of which each component is given those its kind uses
+/// The environment a configuration of components is built in (issues 321, 516): in whose name - an
+/// agent's own, a channel's owner's -, in which every `ref` is resolved and the graph keeps, and
+/// the services of the kernel, of which each component is given those its kind uses
 /// (`ComponentContext`). A component does not keep the name: what it does later it does in the
-/// context of the act it serves, as a tool does in its turn's.
+/// context of the act it serves, as a tool does in its turn's. The one exception is a plugin's
+/// model (`caelumora-models`, issue 520), which is given the `Acting` as a service and keeps it - a
+/// handle that builds the context of each call when it is made, never a context, and one no library
+/// can name.
 #[derive(Debug, Clone)]
 pub struct BuildContext {
-    pub(crate) security_context: SecurityContext,
+    pub(super) acting: Acting,
     pub(super) services: Services,
 }
 
 impl BuildContext {
-    /// The environment of a graph built in `security_context`'s name, with `services`.
+    /// The environment of a graph built in `security_context`'s name, given once, with `services`.
     pub fn new(security_context: SecurityContext, services: Services) -> Self {
-        Self { security_context, services }
+        Self::acting_as(Acting(ActingKind::Given(security_context)), services)
+    }
+
+    /// The environment of a graph built in the name of `acting` - an agent's -, as the kernel holds
+    /// it when the graph is planned, with `services`.
+    pub(crate) fn acting_as(acting: Acting, services: Services) -> Self {
+        // A kind that acts in that name later - a plugin's model - takes it as a service.
+        let services = services.with(Arc::new(acting.clone()));
+        Self { acting, services }
     }
 }
 

@@ -22,6 +22,8 @@ flowchart TD
 
     subgraph plugins["Plugins"]
         decision["caelumora-decision"]
+        models["caelumora-models"]
+        ollama["caelumora-ollama"]
         open_terminal["caelumora-open-terminal"]
         store_json["caelumora-store-json"]
         store_postgres["caelumora-store-postgres"]
@@ -31,7 +33,6 @@ flowchart TD
         agents["caelumora-agents"]
         mcp["caelumora-mcp"]
         a2a["caelumora-a2a"]
-        ollama["caelumora-ollama"]
         comfyui["caelumora-comfyui"]
         workspace_tools["caelumora-workspace-tools"]
         compaction["caelumora-compaction"]
@@ -59,15 +60,15 @@ flowchart TD
     plugins --> api
     plugins --> kernel
     plugins --> model
-    plugins --> security
-    a2a & comfyui & compaction & mcp & ollama & workspace_tools --> agents
+    ollama --> models
+    decision & kernel & open_terminal & rest_server & store & store_json & store_postgres --> security
+    a2a & comfyui & compaction & mcp & workspace_tools --> agents
     libraries --> api
     agents -. "test-support" .-> kernel
     libraries --> model
     agents -. "test-support" .-> store
     api & kernel & logging & rest_api & rest_server & security & store --> model
     kernel & rest_server --> api
-    kernel & rest_server & store --> security
     kernel & rest_server & store_json & store_postgres --> store
     rest_server --> kernel
     rest_server --> rest_api
@@ -107,8 +108,10 @@ The graph is not only what has grown, but holds rules of the design:
     and the stores only with `test-support`, the feature its tests and those of other libraries
     build the kernel's world with.
 *   A plugin links the kernel, which it extends (see [PLUGINS.md](PLUGINS.md)).
-*   Nothing but the programs depends on a plugin, and only the crates that are a plugin and a
-    library at once, with `server`, on `caelumora-rest-server`.
+*   Nothing but the programs depends on a plugin - but a plugin that brings a backend of another
+    plugin's service, as `caelumora-ollama` brings one of the models of `caelumora-models` (issue
+    520) -, and only the crates that are a plugin and a library at once, with `server`, on
+    `caelumora-rest-server`.
 
 ## How the graph is written
 

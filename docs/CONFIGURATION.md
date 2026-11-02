@@ -18,9 +18,9 @@ than taken for a switch.
 
 ### Backends
 
-Where a service is served by one of a choice of backends - a storage of workspaces or of content,
-a secret provider, a user provider, a store - the backend is named by its `type`, with its
-parameters beside it (`BackendConfig`, issues 324, 446):
+Where a service is served by one of a choice of backends - a storage of workspaces or of content, a
+language model, a secret provider, a user provider, a store - the backend is named by its `type`,
+with its parameters beside it (`BackendConfig`, issues 324, 446):
 
 ```yaml
 workspaces:
@@ -55,9 +55,10 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
 | `plugins.artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
+| `plugins.models` | The section of the plugin `caelumora-models` (issue 520): the language models the platform offers, each a [backend](#backends) by its name - see [The model](#the-model). | none - the program offers one |
 | `libraries.comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
-| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LLMClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults, and the program's model ([The model](#the-model)) |
+| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`ModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults - for the model, the kind `model` ([The model](#the-model)) |
 
 The approval rules and the compartments are checked when the configuration is read; the backends,
 `component_defaults`, the sections of the plugins and of the libraries, each among its own, and the
@@ -110,7 +111,7 @@ or only the entries that differ. What a file leaves out, and a namespace without
 they are; other files than `.yaml` ones are not read. A variant falls back to `default`, `default`
 to the texts compiled in. A variant's name is lower case letters, digits, `_` and `-`; a path is
 read as `seed` is, from where the program runs. Which variant a model is given, its component
-names (`prompt_texts` of `ollama_client`, `a2a_agent` and `decision_policy`): one that is not
+names (`prompt_texts` of `model`, `a2a_agent` and `decision_policy`): one that is not
 configured keeps the component from being built. The example configuration names one, `gemma4`
 in `examples/prompts/gemma4`, which the model of Sassy in the example seed is given.
 
@@ -156,12 +157,43 @@ ComfyUI's template of that name.
 
 ## The model
 
-The language model an agent talks to is a component: the `LLMClient` facet, of which an agent has
-exactly one. A personality may configure its own; every other agent gets the one
-`component_defaults` names, or else the default model of the program: `ollama_client` with its
-defaults in `caelumora-app` and `caelumora-tui`, which list its library `caelumora-ollama` and name
-it (issue 329) - the kernel names no model. There is no separate section for it, and no environment
-variable.
+The language models the platform offers are a plugin's, `caelumora-models` (issue 520): its section
+`plugins.models` names each by its name and a [backend](#backends), and every call of one passes the
+plugin. Without the section, the program offers one - `caelumora-app` and `caelumora-tui` a local
+Ollama with the defaults of the backend `ollama`, of the plugin `caelumora-ollama` (issue 329); the
+kernel names no model. There is no environment variable for it.
+
+```yaml
+plugins:
+  models:
+    gemma:
+      type: ollama
+      endpoint:
+        url: "http://127.0.0.1:11434"
+      model: "gemma4:26b"
+      context_size: 65536
+```
+
+| Parameter of `ollama` | Meaning | Default |
+|---|---|---|
+| `endpoint` | The Ollama server: its `url`, and its `timeout_secs` - how long a request may take to be answered, a streamed one until its stream begins. Ollama is reached without authentication: an `auth` is refused (see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)) | `url: http://127.0.0.1:11434`, no timeout |
+| `model` | The model | `gemma4:26b` |
+| `tokenizer` | The model whose tokens are read for the model's control tokens: one on the same server that shares its tokenizer and lists them - for a model that lists none, as one Ollama serves from its cloud (see [LLM-MODELS.md](LLM-MODELS.md#models-of-ollamas-cloud)). Whether the two share it is not checked | `model` itself |
+| `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
+| `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
+| `vision` | Whether the model sees images, which it is then given along with their messages (see [AGENT-TURN.md](AGENT-TURN.md#attachments)); left out, it is asked of the server's `/api/show` as the first agent of it is built - one that cannot say gives none, with a warning | left out |
+
+Before the first call to a model, the backend reads the model's control tokens from the server and
+keeps them from being produced by any text it sends; if they cannot be read, the call fails
+(`control_tokens` of `caelumora-ollama`). They are read of the model's `tokenizer`, if one is
+configured.
+
+An agent is given its model as a component: the kind `model` of `caelumora-models`, which provides
+the `ModelClient` facet, of which an agent has exactly one, and how the agent's context is framed
+for the model (`ModelProfileProvider`). A personality may configure its own; every other agent gets
+the one `component_defaults` names, or else the kind `model` without parameters - the one model
+there is. A library may bring a model of its own; what it costs is then the agent's affair, and its
+credentials only the secrets the kernel lets it read.
 
 A personality's own model replaces the default whole. One that is to differ in a few parameters
 builds on the default instead, by its `id`, and names only those (`kind: default`, issue 445, see
@@ -172,42 +204,29 @@ example seed builds on `model`.
 ```yaml
 component_defaults:
   - id: model
-    kind: ollama_client
+    kind: model
     params:
-      endpoint:
-        url: "http://127.0.0.1:11434"
-      model: "gemma4:26b"
-      think: true
+      name: gemma
       reasoning_history: current_turn
       system_messages: only_at_start
       sender_format: prefix
       sender_style: handle
-      context_size: 65536
 ```
 
-| Parameter of `ollama_client` | Meaning | Default |
+| Parameter of `model` | Meaning | Default |
 |---|---|---|
-| `endpoint` | The Ollama server: its `url`, and its `timeout_secs` - how long a request may take to be answered, a streamed one until its stream begins. Ollama is reached without authentication: an `auth` is refused (see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)) | `url: http://127.0.0.1:11434`, no timeout |
-| `model` | The model | `gemma4:26b` |
-| `tokenizer` | The model whose tokens are read for the model's control tokens: one on the same server that shares its tokenizer and lists them - for a model that lists none, as one Ollama serves from its cloud (see [LLM-MODELS.md](LLM-MODELS.md#models-of-ollamas-cloud)). Whether the two share it is not checked | `model` itself |
-| `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
+| `name` | The model of `plugins.models`; one not configured keeps the agent from being built | the one there is - needed where there are several |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
 | `system_messages` | Where the model keeps system messages: `only_at_start` - any later one is given as a user message - or `anywhere` (see [AGENT-TURN.md](AGENT-TURN.md#system-messages)) | `only_at_start` |
 | `sender_format` | How the model is told who wrote a message of another participant: `none`, `prefix` or `xml` (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 | `message_times` | Whether the marker says when the message was written, in the session's time zone (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `true` |
 | `prompt_texts` | Which variant of the texts the model is given (see [The texts given to models](#the-texts-given-to-models)); one not configured keeps the agent from being built | the default |
-| `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
-| `vision` | Whether the model sees images, which it is then given along with their messages (see [AGENT-TURN.md](AGENT-TURN.md#attachments)); left out, it is asked of the server's `/api/show` as the agent is built - one that cannot say gives none, with a warning | left out |
 
-An unknown parameter is refused: in `component_defaults`, the kernel does not start; in a
-personality, a request that writes it is refused, and one stored before is not built - its agent
+An unknown parameter is refused: of a model or in `component_defaults`, the kernel does not start;
+in a personality, a request that writes it is refused, and one stored before is not built: its agent
 does not start. Which values suit which model, as far as measured, is in
 [LLM-MODELS.md](LLM-MODELS.md).
-
-Before the first call to a model, the client reads the model's control tokens from the server and
-keeps them from being produced by any text it sends; if they cannot be read, the call fails
-(`llm::control_tokens`). They are read of the model's `tokenizer`, if one is configured.
 
 A channel may choose who answers by asking a decision model (`decision_policy`, see
 [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). Only an operator configures it: in a

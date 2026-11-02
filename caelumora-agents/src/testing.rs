@@ -9,15 +9,13 @@
 )]
 
 use crate::library::{register_components, AgentsLibrary};
-use crate::llm::{LLMClient, LLMError, LLMResult};
-use crate::prompt::ModelProfileProvider;
 use crate::prompt::{NAMESPACE, PROMPTS};
 use crate::tool::ToolProvider;
 use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_api::library::{Library, LibraryBuilder};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
+use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_kernel::agent::state::AgentStateHandle;
 use caelumora_kernel::component::ComponentRegistry;
@@ -25,7 +23,9 @@ use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
 use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::TestKernel;
-use caelumora_kernel::testing::{participant_runtime_in, test_registry as runtime_registry, World};
+use caelumora_kernel::testing::{
+    participant_runtime_in, test_registry as runtime_registry, with_unasked_model, World,
+};
 use caelumora_kernel::workspace::testing::WithWorkspace;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
@@ -56,29 +56,9 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::{sleep, timeout};
 
-/// The agents in the world of a test, as a library (issues 373, 516): the agents' library
-/// (`AgentsLibrary`) and a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
-/// default of the model's facets. A test gives it to the kernel's `World` with its own plugins and
-/// libraries. Naming the default model is the program's (issue 329); the tests have no program that
-/// names one, so this library declares it.
-#[derive(Debug, Default)]
-pub struct TestAgents;
-
-impl Library for TestAgents {
-    fn name(&self) -> &'static str {
-        AgentsLibrary.name()
-    }
-
-    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
-        AgentsLibrary.register(library)?;
-        with_unasked_model(&mut library.components());
-        Ok(())
-    }
-}
-
-/// The world with the agents (`TestAgents`) and nothing else.
+/// The world with the agents (`AgentsLibrary`) and nothing else.
 pub async fn world() -> World {
-    World::with(&[], &[&TestAgents], |_| {}).await
+    World::with(&[], &[&AgentsLibrary], |_| {}).await
 }
 
 /// A turn of `agent`, of `owner`, in the first channel of `session`,
@@ -188,36 +168,6 @@ pub async fn asked_for_a_call(
     asked
 }
 
-/// The kind of the model the agents of a test talk to unless they name one
-/// (`TestAgents`, `with_agent_kinds`).
-pub const UNASKED_MODEL_KIND: &str = "unasked_model";
-
-/// The model of a test that asks none: a call fails, as one to a model
-/// that cannot be reached.
-#[derive(Debug)]
-struct Unasked;
-
-#[async_trait]
-impl LLMClient for Unasked {
-    async fn chat_completion(
-        &self,
-        _: &[Message],
-        _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
-        let refused = LLMError::Connection {
-            endpoint: UNASKED_MODEL_KIND.to_string(),
-            reason: "the model of a test is not to be asked".to_string(),
-        };
-        stream::iter([Err(refused)]).boxed()
-    }
-}
-
-impl ModelProfileProvider for Unasked {
-    fn profile(&self) -> ModelProfile {
-        Default::default()
-    }
-}
-
 /// The runtime of the agent `agent` in a channel of no running session, never attached, with a
 /// state of its own (`agent_runtime`): of the participant `detached_participant` makes.
 pub fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
@@ -231,7 +181,7 @@ pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     let session = bare_session(SessionId::new());
     let channel = bare_channel(session.id);
     detached_participant_in(
-        TestKernel { libraries: vec![&TestAgents], ..Default::default() }.build(),
+        TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build(),
         session,
         channel,
         ActorId::Agent(agent),
@@ -291,31 +241,10 @@ pub fn test_registry(store: &Persistence) -> ComponentRegistry {
 
 /// Registers with `registry` the kinds of an agent's components (`register_components`) and a model
 /// that is not to be asked as the default (`with_unasked_model`) - for tests that build components
-/// without a kernel; a kernel gets them from `TestAgents`.
+/// without a kernel, with the model a test's kernel gives its agents.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
-    let mut components = registry.library_components();
-    register_components(&mut components);
-    with_unasked_model(&mut components);
-}
-
-/// Registers with `components` a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
-/// default of the model's facets - the kernel names none, each program names its own (issue 329),
-/// and the tests declare this one.
-fn with_unasked_model(components: &mut LibraryComponents<'_>) {
-    components.register(
-        ComponentKind::new(UNASKED_MODEL_KIND)
-            .provides::<dyn LLMClient>()
-            .provides::<dyn ModelProfileProvider>(),
-        |_, _| {
-            let model = Arc::new(Unasked);
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Unasked>::clone(&model));
-            facets.insert::<dyn ModelProfileProvider>(model);
-            Ok(facets)
-        },
-    );
-    components.single::<dyn LLMClient>(Some(UNASKED_MODEL_KIND));
-    components.single::<dyn ModelProfileProvider>(Some(UNASKED_MODEL_KIND));
+    register_components(&mut registry.library_components());
+    with_unasked_model(registry);
 }
 
 /// A model that gives the answers it was given, one per call, and then
@@ -324,12 +253,13 @@ fn with_unasked_model(components: &mut LibraryComponents<'_>) {
 pub struct Scripted(pub Mutex<VecDeque<Message>>);
 
 #[async_trait]
-impl LLMClient for Scripted {
+impl ModelClient for Scripted {
     async fn chat_completion(
         &self,
+        _: ActorId,
         _: &[Message],
         _: &[Tool],
-    ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         match self.0.lock().unwrap().pop_front() {
             Some(answer) => stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),
             None => stream::pending().boxed(),
@@ -457,10 +387,12 @@ pub fn asked_as_a_call_on_the_workspace(asked: &[String]) {
 pub fn register_scripted(registry: &mut ComponentRegistry, kind: &str, answers: Vec<Message>) {
     let model = Arc::new(Scripted(Mutex::new(answers.into())));
     registry.register(
-        ComponentKind::new(kind).provides::<dyn LLMClient>().provides::<dyn ModelProfileProvider>(),
+        ComponentKind::new(kind)
+            .provides::<dyn ModelClient>()
+            .provides::<dyn ModelProfileProvider>(),
         move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn LLMClient>(Arc::<Scripted>::clone(&model));
+            facets.insert::<dyn ModelClient>(Arc::<Scripted>::clone(&model));
             facets.insert::<dyn ModelProfileProvider>(Arc::<Scripted>::clone(&model));
             Ok(facets)
         },

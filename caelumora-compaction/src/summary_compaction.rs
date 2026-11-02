@@ -12,10 +12,10 @@
 use crate::NAMESPACE;
 use crate::{CompactionError, CompactionStrategy, Replacement};
 use async_trait::async_trait;
-use caelumora_agents::llm::LLMClient;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::turn::Turn;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::model::ModelClient;
 use caelumora_model::actor::ActorId;
 use caelumora_model::message::{Message, MessageEvent, MessageRole};
 use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -31,7 +31,7 @@ const NONE: &str = "none";
 #[derive(Debug)]
 pub struct SummaryCompaction {
     /// The agent's own model, which writes the summary.
-    llm_client: Arc<dyn LLMClient>,
+    model_client: Arc<dyn ModelClient>,
     /// What its model is asked, and how the summary is titled (issue 57).
     prompts: PromptTexts,
 }
@@ -67,7 +67,8 @@ impl SummaryCompaction {
         turn: &Turn<'_>,
         context: &[Message],
     ) -> Result<Option<(String, Message)>, CompactionError> {
-        let mut stream = self.llm_client.chat_completion(context, &[]).await;
+        let mut stream =
+            self.model_client.chat_completion(turn.situation().initiator(), context, &[]).await;
         let mut answered: Vec<Message> = Vec::new();
         while let Some(event) = stream.next().await {
             match event {
@@ -187,15 +188,15 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         writing_for_the_model(
             ComponentKind::new(SUMMARY_COMPACTION_KIND)
                 .provides::<dyn CompactionStrategy>()
-                .needs::<dyn LLMClient>(),
+                .needs::<dyn ModelClient>(),
         ),
         |_descriptor, context| async move {
             let prompts = texts_of(&context).await?;
             // The agent's own model writes the summary.
-            let llm_client = context.one::<dyn LLMClient>().await?.facet;
+            let model_client = context.one::<dyn ModelClient>().await?.facet;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction {
-                llm_client,
+                model_client,
                 prompts,
             }));
             Ok(facets)
@@ -207,8 +208,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing::prompts;
-    use caelumora_agents::llm::{unlabelled_message, LLMError, LLMResult};
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_model::agent::AgentChannelState;
     use caelumora_model::confidentiality::Classification;
@@ -243,12 +244,13 @@ mod tests {
     }
 
     #[async_trait]
-    impl LLMClient for Summariser {
+    impl ModelClient for Summariser {
         async fn chat_completion(
             &self,
+            _: ActorId,
             context: &[Message],
             _: &[Tool],
-        ) -> BoxStream<'static, LLMResult<MessageEvent>> {
+        ) -> BoxStream<'static, ModelResult<MessageEvent>> {
             self.asked.lock().unwrap().push(context.to_vec());
             let answer = self.answers.lock().unwrap().pop_front().expect("an answer left");
             let event = match answer {
@@ -259,7 +261,7 @@ mod tests {
                     completion_tokens: Some(8),
                     ..unlabelled_message()
                 })),
-                None => Err(LLMError::Connection {
+                None => Err(ModelError::Connection {
                     endpoint: "http://model".to_string(),
                     reason: "gone".to_string(),
                 }),
@@ -269,7 +271,7 @@ mod tests {
     }
 
     fn strategy(model: &Arc<Summariser>) -> SummaryCompaction {
-        SummaryCompaction { llm_client: Arc::<Summariser>::clone(model), prompts: prompts() }
+        SummaryCompaction { model_client: Arc::<Summariser>::clone(model), prompts: prompts() }
     }
 
     fn heard(text: &str) -> Message {

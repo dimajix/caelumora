@@ -6,7 +6,8 @@
 )]
 
 use axum::Router;
-use caelumora_agents::testing::{agent_runtime, offered_anywhere, TestAgents};
+use caelumora_agents::library::AgentsLibrary;
+use caelumora_agents::testing::{agent_runtime, offered_anywhere};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::component::ComponentContainer;
@@ -467,7 +468,7 @@ async fn a_server_gone_leaves_the_tools_discovered_before() {
 /// for alice's agent, asked by bob, as its turn begins.
 #[tokio::test]
 async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
-    let world = World::with(&[], &[&TestAgents, &McpLibrary], |_| {}).await;
+    let world = World::with(&[], &[&AgentsLibrary, &McpLibrary], |_| {}).await;
     let mcp = ComponentDescriptor {
         params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "MCP_TOKEN" } } }),
         ..ComponentDescriptor::new("tools", MCP_TOOL_KIND)
