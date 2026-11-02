@@ -4,19 +4,19 @@
 //! only: a skill tells the model how to do something with the tools it has,
 //! and brings none of its own. One classification holds for the whole of it.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::define_id;
-use caelumora_model::digest::{Digest, Encoder};
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::{Scope, ScopeField, Scoped};
-use caelumora_model::security::{Secured, SecurityAttributes};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::ScopeSnapshot;
-use caelumora_model::store::{EntityKind, NoEntity, Revision, Stored};
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::text::{Description, Text, TextRule};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::define_id;
+use caelumora_domain::digest::{Digest, Encoder};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::{Scope, ScopeField, Scoped};
+use caelumora_domain::security::{Secured, SecurityAttributes};
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot::ScopeSnapshot;
+use caelumora_domain::store::{EntityKind, NoEntity, Revision, Stored};
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::text::{Description, Text, TextRule};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::ops::Not;
@@ -234,9 +234,9 @@ pub struct SkillSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::session::{ChannelId, SessionId};
-    use caelumora_model::user::UserId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::session::{ChannelId, SessionId};
+    use caelumora_domain::user::UserId;
 
     fn skill(scope: Scope, owner: ActorId) -> Skill {
         Skill::new(

@@ -3,11 +3,11 @@
 
 use crate::channel::ResolvedParticipant;
 use crate::controller::ChannelController;
-use caelumora_model::actor::ActorId;
+use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::channel::ChannelId;
+use caelumora_domain::channel::ChannelId;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::session::SessionId;
+use caelumora_domain::session::SessionId;
 use caelumora_security::SecurityContext;
 use std::sync::Arc;
 

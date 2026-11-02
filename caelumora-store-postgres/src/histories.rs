@@ -8,7 +8,7 @@
 //! taken further by the stores' rule (`StandingItems`) and written back. A
 //! page asks the database for the items its reader is given
 //! (`Filter::seen_by`, issue 451) that meet its filter, as far as SQL can
-//! judge it (`Condition`); in which form the reader sees each the model
+//! judge it (`Condition`); in which form the reader sees each the domain
 //! decides (`Recorded::as_seen_by`, asked by `seen`).
 
 use crate::chains::{failed, position, seq, Chains, Entry, BATCH};
@@ -16,14 +16,14 @@ use crate::connection::sql;
 use crate::filter::Condition;
 use crate::PostgresStore;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::chain::{Node, Position};
-use caelumora_model::channel::ChannelId;
-use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::{HistoryField, KeptItem};
-use caelumora_model::store::query::Filter;
-use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::chain::{Node, Position};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::store::history::{HistoryField, KeptItem};
+use caelumora_domain::store::query::Filter;
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_store::history::{
     answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,
 };

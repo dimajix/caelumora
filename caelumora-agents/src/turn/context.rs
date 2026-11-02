@@ -5,14 +5,14 @@
 
 use super::Turn;
 use anyhow::{Context, Result};
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{
     ContextItem, ContextRef, ContextResolver, FrameRef, KnowledgeRef, PromptPart, PromptRef,
 };
-use caelumora_model::digest::Digest;
-use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::tool::{Tool, ToolSet};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::tool::{Tool, ToolSet};
 
 impl Turn<'_> {
     /// What the model is given for the next step - its messages and the
@@ -157,12 +157,12 @@ mod tests {
     use super::*;
     use crate::testing::{self, agent_runtime};
     use crate::turn::tests::seen;
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::work::Work;
     use caelumora_kernel::testing::Discard;
-    use caelumora_model::actor::EventContext;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
-    use caelumora_model::message::MessageId;
-    use caelumora_model::work::Work;
     use futures::executor;
 
     /// Issue 282: the model is given along what its profile says - an image, to a model that
@@ -171,16 +171,16 @@ mod tests {
     #[tokio::test]
     async fn the_model_is_given_along_what_its_profile_says_and_the_turn_sees_it() {
         use crate::library::AgentsLibrary;
+        use caelumora_domain::channel::testing::bare_channel;
+        use caelumora_domain::confidentiality::Confidentiality;
+        use caelumora_domain::config::{AppConfig, BackendConfig, ContentConfig};
+        use caelumora_domain::content::testing::make_content_ref;
+        use caelumora_domain::content::{self, ContentId, ContentRef};
+        use caelumora_domain::digest;
+        use caelumora_domain::session::testing::bare_session;
+        use caelumora_domain::session::SessionId;
         use caelumora_kernel::session::testing::detached_participant_in;
         use caelumora_kernel::testing::TestKernel;
-        use caelumora_model::channel::testing::bare_channel;
-        use caelumora_model::confidentiality::Confidentiality;
-        use caelumora_model::config::{AppConfig, BackendConfig, ContentConfig};
-        use caelumora_model::content::testing::make_content_ref;
-        use caelumora_model::content::{self, ContentId, ContentRef};
-        use caelumora_model::digest;
-        use caelumora_model::session::testing::bare_session;
-        use caelumora_model::session::SessionId;
         use std::fs;
         use std::sync::Arc;
         let files = tempfile::tempdir().unwrap();
@@ -267,7 +267,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_model_is_given_reasoning_as_its_rule_says_and_that_is_recorded() {
-        use caelumora_model::context::ReasoningHistory;
+        use caelumora_domain::context::ReasoningHistory;
 
         let agent = AgentId::new();
         let thought = |sender: ActorId, content: &str| Message {
@@ -450,7 +450,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_tools_a_turn_began_with_are_offered_and_recorded_for_each_message() {
-        use caelumora_model::tool::ToolParameters;
+        use caelumora_domain::tool::ToolParameters;
         let agent = AgentId::new();
         let tool = |name: &str, requires_approval| Tool {
             name: name.to_string(),

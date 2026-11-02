@@ -27,7 +27,7 @@ library = ["api", "dep:caelumora-agents", "dep:anyhow", "dep:serde_json"]
 server = ["kernel", "dep:caelumora-rest-server", "dep:axum"]
 
 [dependencies]
-caelumora-model.workspace = true
+caelumora-domain.workspace = true
 caelumora-rest-api.workspace = true
 serde.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }

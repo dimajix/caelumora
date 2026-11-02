@@ -11,17 +11,17 @@ use caelumora_api::component::{ComponentError, ComponentResult};
 use caelumora_api::error::ContentError;
 use caelumora_api::error::{AttachmentError, AttachmentResult};
 use caelumora_api::terminal::ByteStream;
-use caelumora_model::actor::ActorId;
-use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::config::AttachmentsConfig;
-use caelumora_model::content::{self, ContentId, ContentRef};
-use caelumora_model::context::ModelProfile;
-use caelumora_model::digest;
-use caelumora_model::message::Message;
-use caelumora_model::session::ChannelId;
-use caelumora_model::tool::ToolMedia;
-use caelumora_model::value::text::FileName;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::Channel;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::config::AttachmentsConfig;
+use caelumora_domain::content::{self, ContentId, ContentRef};
+use caelumora_domain::context::ModelProfile;
+use caelumora_domain::digest;
+use caelumora_domain::message::Message;
+use caelumora_domain::session::ChannelId;
+use caelumora_domain::tool::ToolMedia;
+use caelumora_domain::value::text::FileName;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_security::SecurityContext;
 use futures::{stream, StreamExt};
@@ -544,10 +544,10 @@ mod tests {
     use crate::session::SessionLoop;
     use crate::testing::World;
     use bytes::Bytes;
-    use caelumora_model::confidentiality::{Compartment, Confidentiality};
-    use caelumora_model::digest;
-    use caelumora_model::tool::{ToolCall, ToolCallResult};
-    use caelumora_model::user::UserId;
+    use caelumora_domain::confidentiality::{Compartment, Confidentiality};
+    use caelumora_domain::digest;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult};
+    use caelumora_domain::user::UserId;
     use caelumora_security::SecurityContext;
     use serde_json::Value;
     use std::fs;
@@ -815,7 +815,7 @@ mod tests {
 
     #[tokio::test]
     async fn what_a_model_is_given_along_is_loaded_checked_and_held() {
-        use caelumora_model::context::ModelProfile;
+        use caelumora_domain::context::ModelProfile;
         let world = World::new().await;
         let session = world.shared_session(&[], &[]).await;
         let main = main_of(&session);

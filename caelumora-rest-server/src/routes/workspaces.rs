@@ -21,11 +21,11 @@ use axum::response::{IntoResponse, Response};
 use caelumora_api::terminal::{
     CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
 };
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::security::Grant;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::controller::WorkspaceController;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::Grant;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::workspace::WorkspaceId;
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};

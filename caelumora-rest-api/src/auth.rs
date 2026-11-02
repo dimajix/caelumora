@@ -1,6 +1,6 @@
 //! Logging in (issue 10): what a user logs in with, and who they are then.
 
-use caelumora_model::user::UserId;
+use caelumora_domain::user::UserId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]

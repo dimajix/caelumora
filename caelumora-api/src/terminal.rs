@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use caelumora_model::workspace::CommandStatus;
+use caelumora_domain::workspace::CommandStatus;
 use chrono::{DateTime, Utc};
 use futures::Stream;
 use std::fmt::Debug;

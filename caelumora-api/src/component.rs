@@ -8,10 +8,10 @@
 
 use crate::remote::describe_chain;
 use async_trait::async_trait;
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
-use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::store::StoreError;
-use caelumora_model::type_map::{TypeKey, TypeMap};
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
+use caelumora_domain::prompt_catalogue::PromptError;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::type_map::{TypeKey, TypeMap};
 use futures::future::BoxFuture;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;

@@ -6,21 +6,21 @@ use crate::kept_chain::KeptChain;
 use crate::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::{PersistenceBackend, Presence, StateStore};
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
-use caelumora_model::chain::{Node, Position};
-use caelumora_model::channel::{ChannelId, ChannelState};
-use caelumora_model::context::FrameRef;
-use caelumora_model::digest::Digest;
-use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::HistoryField;
-use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
-use caelumora_model::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
-use caelumora_model::tool::ToolSet;
-use caelumora_model::transcript::{known, Transcript, TranscriptEntry};
-use caelumora_model::user::{UserChannelState, UserId};
-use caelumora_model::value::name::ScopedName;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::chain::{Node, Position};
+use caelumora_domain::channel::{ChannelId, ChannelState};
+use caelumora_domain::context::FrameRef;
+use caelumora_domain::digest::Digest;
+use caelumora_domain::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::store::history::HistoryField;
+use caelumora_domain::store::query::{ordered_after, FieldPath, Filter};
+use caelumora_domain::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
+use caelumora_domain::tool::ToolSet;
+use caelumora_domain::transcript::{known, Transcript, TranscriptEntry};
+use caelumora_domain::user::{UserChannelState, UserId};
+use caelumora_domain::value::name::ScopedName;
 use caelumora_security::Admission;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -687,10 +687,10 @@ mod tests {
     use super::*;
     use crate::suite;
     use crate::{EntityStores, Persistence};
-    use caelumora_model::group::GroupId;
-    use caelumora_model::security::{Grant, SecurityAttributes, Subject};
-    use caelumora_model::store::query::Query;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::group::GroupId;
+    use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
+    use caelumora_domain::store::query::Query;
+    use caelumora_domain::user::UserId;
     use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
 
     /// The stores of a memory store, permitting everything.
@@ -793,10 +793,10 @@ mod tests {
     /// asked as the list is read, and a page is filled from further on.
     #[tokio::test]
     async fn a_limit_counts_what_the_caller_may_read() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::Classification;
-        use caelumora_model::scope::Scope;
-        use caelumora_model::workspace::Workspace;
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::confidentiality::Classification;
+        use caelumora_domain::scope::Scope;
+        use caelumora_domain::workspace::Workspace;
         let store = owners().workspaces;
         let (alice, bob) = (UserId::new(), UserId::new());
         let mut hers = Vec::new();

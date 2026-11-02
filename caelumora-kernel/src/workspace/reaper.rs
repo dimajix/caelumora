@@ -14,15 +14,15 @@ use crate::event::EventBus;
 use crate::terminal::{CommandKey, TerminalProvider};
 use caelumora_api::component::{ComponentError, ComponentResult};
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::Agent;
-use caelumora_model::channel::{self, Participant};
-use caelumora_model::event::{EntityChange, GlobalEvent};
-use caelumora_model::security::Grant;
-use caelumora_model::session::{Channel, ChannelId, Session};
-use caelumora_model::store::{StoreResultExt, Stored};
-use caelumora_model::user::User;
-use caelumora_model::workspace::Workspace;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::Agent;
+use caelumora_domain::channel::{self, Participant};
+use caelumora_domain::event::{EntityChange, GlobalEvent};
+use caelumora_domain::security::Grant;
+use caelumora_domain::session::{Channel, ChannelId, Session};
+use caelumora_domain::store::{StoreResultExt, Stored};
+use caelumora_domain::user::User;
+use caelumora_domain::workspace::Workspace;
 use caelumora_security::SecurityContext;
 use caelumora_store::{EntityStore, EntityStores};
 use futures::future::join_all;
@@ -270,8 +270,8 @@ mod tests {
     use super::*;
     use crate::workspace::testing::{session_with_workspace, shell_in, WithWorkspace};
     use caelumora_api::terminal::Shell;
-    use caelumora_model::channel::ChannelUpdateEvent;
-    use caelumora_model::workspace::CommandStatus;
+    use caelumora_domain::channel::ChannelUpdateEvent;
+    use caelumora_domain::workspace::CommandStatus;
 
     /// A command started by the agent in the session's channel, still
     /// running, with its shell.

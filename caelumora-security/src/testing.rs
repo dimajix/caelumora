@@ -27,18 +27,18 @@ impl Policies {
 /// the groups they belong to, and what the ownership policy answers.
 #[cfg(test)]
 mod fixtures {
-    pub(crate) use caelumora_model::security::testing::{shared, user};
+    pub(crate) use caelumora_domain::security::testing::{shared, user};
 
     use crate::{AccessPolicy, ActionType, Memberships, OwnershipPolicy, SecurityContext};
     use async_trait::async_trait;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::channel::ChannelId;
-    use caelumora_model::group::{Group, GroupId};
-    use caelumora_model::removal::Removal;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::group::{Group, GroupId};
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::ScopedName;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     pub(crate) fn context(actor: ActorId) -> SecurityContext {

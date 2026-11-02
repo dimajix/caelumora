@@ -1,7 +1,7 @@
 //! `Memberships`: what a policy is told of the groups an access list names.
 
 use async_trait::async_trait;
-use caelumora_model::group::{Group, GroupId};
+use caelumora_domain::group::{Group, GroupId};
 use std::fmt::Debug;
 
 /// What a policy needs to know of actors that the attributes it is handed

@@ -2,12 +2,12 @@
 //! channel sees them, and how they are kept.
 
 use crate::artifact::{ArtifactId, ArtifactSnapshot};
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::digest::Digest;
-use caelumora_model::project::ProjectId;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::value::text::Description;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::digest::Digest;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::value::text::Description;
 use caelumora_rest_api::access::AccessEntry;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

@@ -5,10 +5,10 @@
 //! that no node is there past what its head was written with.
 
 use crate::connection::sql;
-use caelumora_model::chain::{Chain, Node, Position, Stored};
-use caelumora_model::digest::Digest;
-use caelumora_model::message::MessageId;
-use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_domain::chain::{Chain, Node, Position, Stored};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::message::MessageId;
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_store::kept_chain::{fits, follow_back, followed};
 use serde::de::DeserializeOwned;
 use serde::Serialize;

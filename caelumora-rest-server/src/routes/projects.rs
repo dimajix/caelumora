@@ -12,10 +12,10 @@ use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::session::SessionId;
+use caelumora_domain::user::UserId;
 use caelumora_kernel::controller::ProjectController;
-use caelumora_model::project::ProjectId;
-use caelumora_model::session::SessionId;
-use caelumora_model::user::UserId;
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::project::{

@@ -9,9 +9,9 @@
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use serde::{Deserialize, Serialize};
 
-// Unlike every other kind constant, these live in the model, not next to their component in the
+// Unlike every other kind constant, these live in the domain, not next to their component in the
 // kernel: `default_commands` - the serde default of `AppConfig::commands` - names them, and the
-// model does not know the kernel (issue 101).
+// domain does not know the kernel (issue 101).
 
 /// Component kind of the built-in `/help` command.
 pub const HELP_COMMAND_KIND: &str = "help_command";

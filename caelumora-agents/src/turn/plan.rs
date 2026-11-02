@@ -4,11 +4,11 @@
 
 use super::Turn;
 use crate::prompt::NAMESPACE;
-use caelumora_model::actor::ActorEvent;
-use caelumora_model::digest::{prompt, Digest};
-use caelumora_model::message::MessageRole;
-use caelumora_model::plan::{Plan, PlanProgress, PlanState, PlanStep};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::actor::ActorEvent;
+use caelumora_domain::digest::{prompt, Digest};
+use caelumora_domain::message::MessageRole;
+use caelumora_domain::plan::{Plan, PlanProgress, PlanState, PlanStep};
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::HashSet;
@@ -270,17 +270,17 @@ fn plan_texts(prompts: &PromptTexts, plan: &Plan) -> Result<Vec<String>, PromptE
 mod tests {
     use super::*;
     use crate::turn::tests::{message, seen};
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::context::ModelProfile;
+    use caelumora_domain::context::{ContextItem, PromptPart};
+    use caelumora_domain::message::Message;
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::plan::PlanId;
+    use caelumora_domain::work::Work;
     use caelumora_kernel::testing::Discard;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::actor::EventContext;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::context::ModelProfile;
-    use caelumora_model::context::{ContextItem, PromptPart};
-    use caelumora_model::message::Message;
-    use caelumora_model::message::MessageId;
-    use caelumora_model::plan::PlanId;
-    use caelumora_model::work::Work;
     use futures::executor;
 
     fn make_plan_state() -> PlanState {
@@ -399,7 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn plan_instructions_are_given_where_they_were_placed_and_not_kept_for_later_turns() {
-        use caelumora_model::context::SystemMessages;
+        use caelumora_domain::context::SystemMessages;
         let agent = AgentId::new();
         let text = |role: MessageRole, content: &str| Message {
             id: MessageId::new(),

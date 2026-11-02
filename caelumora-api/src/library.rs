@@ -9,9 +9,9 @@
 use crate::actor::AgentFactory;
 use crate::component::LibraryComponents;
 use anyhow::{Context, Result};
-use caelumora_model::agent::PersonalityKind;
-use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::type_map::{ErasedArc, TypeKey};
+use caelumora_domain::agent::PersonalityKind;
+use caelumora_domain::prompt_catalogue::PromptError;
+use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::sync::Arc;

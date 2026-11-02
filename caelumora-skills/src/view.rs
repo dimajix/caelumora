@@ -8,13 +8,13 @@ use crate::extension::{SkillError, SkillReader, SkillResult, SkillWriter};
 use crate::manager::SkillManager;
 use crate::skill::{Skill, SkillBody, SkillId, SkillSnapshot};
 use async_trait::async_trait;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::scope::{found_from, Scope};
+use caelumora_domain::snapshot::DeletedSnapshot;
+use caelumora_domain::store::query::{Filter, Query};
+use caelumora_domain::store::StoreResultExt;
+use caelumora_domain::value::name::Name;
 use caelumora_kernel::view::Views;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::scope::{found_from, Scope};
-use caelumora_model::snapshot::DeletedSnapshot;
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::StoreResultExt;
-use caelumora_model::value::name::Name;
 use std::sync::Arc;
 
 /// The skills the views reach (issue 323): what the kernel's `Views` offer of skills, from the

@@ -16,8 +16,8 @@ pub mod plugin;
 
 use async_trait::async_trait;
 use caelumora_api::model::ModelResult;
-use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::tool::Tool;
+use caelumora_domain::message::{Message, MessageEvent};
+use caelumora_domain::tool::Tool;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 

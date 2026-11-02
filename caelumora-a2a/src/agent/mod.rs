@@ -31,12 +31,14 @@ use caelumora_agents::external::{
 use caelumora_api::component::{config_of_params, ComponentError, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::model::ModelProfileProvider;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{message_times_by_default, ModelProfile, SenderFormat, SenderStyle};
-use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
-use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::Secrets;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{
+    message_times_by_default, ModelProfile, SenderFormat, SenderStyle,
+};
+use caelumora_domain::external_agent::{ConversationId, TaskId};
+use caelumora_domain::prompt_catalogue::{PromptCatalogue, PromptVariant};
+use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::secret::Secrets;
 use futures::stream::once;
 use futures::StreamExt;
 use serde::de::IgnoredAny;
@@ -309,7 +311,7 @@ mod tests {
     use axum::routing::{get, post};
     use axum::{Json, Router};
     use caelumora_agents::external::{ExternalEvent, Said};
-    use caelumora_model::secret::SecretResult;
+    use caelumora_domain::secret::SecretResult;
     use caelumora_security::secret::SecretManager;
     use caelumora_security::secret::SecretProvider;
     use caelumora_security::AllowAllPolicy;

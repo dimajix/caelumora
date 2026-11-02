@@ -3,8 +3,8 @@
 //! channel keeps while the channel is stopped, and which the actor of the
 //! next run shows to again.
 
-use caelumora_model::actor::{ActorId, Envelope};
-use caelumora_model::channel::ChannelId;
+use caelumora_domain::actor::{ActorId, Envelope};
+use caelumora_domain::channel::ChannelId;
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 use tokio::sync::broadcast;
@@ -65,7 +65,7 @@ impl ActorManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::user::UserId;
 
     #[test]
     fn an_outbox_is_shared_while_held_and_gone_after() {

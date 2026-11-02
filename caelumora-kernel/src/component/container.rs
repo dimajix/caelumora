@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use caelumora_api::component::{
     BuiltComponent, ComponentContainer, ComponentError, ComponentGraph, ComponentResult,
 };
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::type_map::TypeKey;
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_domain::type_map::TypeKey;
 use futures::future::BoxFuture;
 use std::any::TypeId;
 use std::collections::HashMap;

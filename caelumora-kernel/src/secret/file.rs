@@ -3,7 +3,7 @@
 use crate::backend::Backends;
 use async_trait::async_trait;
 use caelumora_api::component::Params;
-use caelumora_model::secret::{SecretError, SecretResult};
+use caelumora_domain::secret::{SecretError, SecretResult};
 use caelumora_security::secret::SecretProvider;
 use serde::Deserialize;
 use std::collections::HashMap;

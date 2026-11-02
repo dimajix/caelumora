@@ -8,26 +8,26 @@ use crate::session::{ChannelRun, Found, SessionLoop};
 use anyhow::Error;
 use caelumora_api::reader::PrivateNotesElsewhere;
 use caelumora_api::reader::{ViewError, ViewResult};
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::channel::{Channel, ChannelField, Participant};
-use caelumora_model::confidentiality::{Place, Reading};
-use caelumora_model::digest::Digest;
-use caelumora_model::note::Note;
-use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::project::ProjectId;
-use caelumora_model::scope::ScopeField;
-use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::snapshot::{
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::channel::{Channel, ChannelField, Participant};
+use caelumora_domain::confidentiality::{Place, Reading};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::note::Note;
+use caelumora_domain::privacy::SessionPrivacy;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::scope::ScopeField;
+use caelumora_domain::session::{ChannelId, Session, SessionId};
+use caelumora_domain::snapshot::{
     CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot,
     SessionSnapshot,
 };
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreError, Stored};
-use caelumora_model::user::UserField;
-use caelumora_model::value::language::Language;
-use caelumora_model::value::text::{Briefing, Summary};
-use caelumora_model::value::time_zone::TimeZone;
+use caelumora_domain::store::query::{Filter, Query};
+use caelumora_domain::store::{StoreError, Stored};
+use caelumora_domain::user::UserField;
+use caelumora_domain::value::language::Language;
+use caelumora_domain::value::text::{Briefing, Summary};
+use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::{AccessQuestions, ActionType, SecurityContext};
 use std::sync::Arc;
 use tracing::warn;

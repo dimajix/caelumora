@@ -2,9 +2,9 @@
 //! project (issue 467).
 
 use crate::scope::{ScopeKind, ScopeResponse};
-use caelumora_model::actor::ActorId;
-use caelumora_model::group::GroupId;
-use caelumora_model::snapshot;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::group::GroupId;
+use caelumora_domain::snapshot;
 use serde::{Deserialize, Serialize};
 
 /// A group (issue 286) as whoever may read it sees it: a team, the

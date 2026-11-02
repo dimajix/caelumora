@@ -38,9 +38,9 @@ pub use manager::WorkspaceManager;
 
 use crate::terminal::TerminalProvider;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::store::{StoreError, Stored};
-use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::store::{StoreError, Stored};
+use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext, WRITE};
 

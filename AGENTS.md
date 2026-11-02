@@ -92,8 +92,8 @@ under `## History`), and numbers are never reused.
     module, the first sentence of its module docs; if the description of a change needs an "and
     also", something is on the wrong object. Logic that belongs together by subject lives together -
     its data, rules and checks in one place - and is not spread over crates because its callers
-    happen to be there: `caelumora-model` holds data and rules, `caelumora-security` what decides in
-    whose name, `caelumora-store` the stores, `caelumora-kernel` where everything runs,
+    happen to be there: `caelumora-domain` holds data and rules, `caelumora-security` what decides
+    in whose name, `caelumora-store` the stores, `caelumora-kernel` where everything runs,
     `caelumora-api` what the agent side is given of it, `caelumora-agents` what an agent does there,
     `caelumora-rest-server` only maps HTTP to the kernel (see
     [ARCHITECTURE.md](docs/ARCHITECTURE.md)). When a caller needs something an owner does not offer,

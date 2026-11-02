@@ -4,14 +4,14 @@
 
 use crate::{ActionType, Admission, SecurityContext, Verb, WRITE};
 use async_trait::async_trait;
-use caelumora_model::agent::Agent;
-use caelumora_model::channel::Channel;
-use caelumora_model::group::Group;
-use caelumora_model::project::Project;
-use caelumora_model::security::{Refused, SecurityAttributes};
-use caelumora_model::session::Session;
-use caelumora_model::store::{EntityKind, Stored};
-use caelumora_model::workspace::Workspace;
+use caelumora_domain::agent::Agent;
+use caelumora_domain::channel::Channel;
+use caelumora_domain::group::Group;
+use caelumora_domain::project::Project;
+use caelumora_domain::security::{Refused, SecurityAttributes};
+use caelumora_domain::session::Session;
+use caelumora_domain::store::{EntityKind, Stored};
+use caelumora_domain::workspace::Workspace;
 use std::fmt::Debug;
 
 /// Decides what is done in someone's name (issues 11, 23): one per process.

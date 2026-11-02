@@ -2,7 +2,7 @@
 //! (`EntityStore`), opened from a backend (`Persistence`), and the state, the histories and the
 //! transcripts of what runs (`StateStore`). A stored entity is deleted by a mark (`Removal`, issue
 //! 164), which the store hands out with what was deleted (`Deleted`). What an entity is to be
-//! stored, and how a store fails, are the model's words (`caelumora_model::store`).
+//! stored, and how a store fails, are the domain's words (`caelumora_domain::store`).
 
 pub(crate) mod access;
 pub mod documents;
@@ -21,20 +21,20 @@ use crate::history::HistoryStore;
 use crate::memory::MemoryStore;
 use crate::transcript::TranscriptStore;
 use async_trait::async_trait;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
-use caelumora_model::channel::{Channel, ChannelId, ChannelState};
-use caelumora_model::component::ComponentBundle;
-use caelumora_model::group::Group;
-use caelumora_model::project::Project;
-use caelumora_model::removal::{Removal, RemovalId};
-use caelumora_model::session::Session;
-use caelumora_model::store::query::{Page, Query};
-use caelumora_model::store::{EntityKind, StoreError, StoreResult, Stored};
-use caelumora_model::template::SessionTemplate;
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::user::{User, UserChannelState, UserId, UserProfile};
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::workspace::Workspace;
+use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
+use caelumora_domain::channel::{Channel, ChannelId, ChannelState};
+use caelumora_domain::component::ComponentBundle;
+use caelumora_domain::group::Group;
+use caelumora_domain::project::Project;
+use caelumora_domain::removal::{Removal, RemovalId};
+use caelumora_domain::session::Session;
+use caelumora_domain::store::query::{Page, Query};
+use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
+use caelumora_domain::template::SessionTemplate;
+use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::user::{User, UserChannelState, UserId, UserProfile};
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::workspace::Workspace;
 use caelumora_security::{Policies, SecurityContext, Verb};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -492,15 +492,15 @@ pub trait StateStore: Debug + Sync + Send {
 mod tests {
     use super::*;
     use crate::memory::MemoryStore;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::define_id;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::security::{Secured, SecurityAttributes};
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::store::query::NoField;
-    use caelumora_model::store::{NoEntity, Revision};
-    use caelumora_model::value::name::Name;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::define_id;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::security::{Secured, SecurityAttributes};
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::store::query::NoField;
+    use caelumora_domain::store::{NoEntity, Revision};
+    use caelumora_domain::value::name::Name;
     use caelumora_security::{OwnershipPolicy, SecurityContext};
     use serde::{Deserialize, Serialize};
     use std::ops::Not;

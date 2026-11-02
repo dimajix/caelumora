@@ -7,9 +7,9 @@
 //! files of its own beside these.
 
 use super::{read_json_opt, to_backend_error, write_json_atomic};
-use caelumora_model::chain::{Chain, Node, Position, Stored};
-use caelumora_model::digest::Digest;
-use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_domain::chain::{Chain, Node, Position, Stored};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_store::kept_chain::{fits, follow_back, followed, place};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

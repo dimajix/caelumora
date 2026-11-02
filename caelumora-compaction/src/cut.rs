@@ -6,14 +6,14 @@
 //! there in the part kept is what is given again; whose the replacement is and how it is classified
 //! follows from what it replaces.
 
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::KnowledgeSource;
-use caelumora_model::digest::Digest;
-use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::store::EntityKind;
-use caelumora_model::transcript::{as_they_stand, Transcript, TranscriptEntry};
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::work::TurnId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::KnowledgeSource;
+use caelumora_domain::digest::Digest;
+use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::store::EntityKind;
+use caelumora_domain::transcript::{as_they_stand, Transcript, TranscriptEntry};
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::work::TurnId;
 use std::collections::HashSet;
 use uuid::Uuid;
 
@@ -195,7 +195,7 @@ fn given_in(entries: &[Entry]) -> Vec<Given> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::digest;
+    use caelumora_domain::digest;
     use chrono::Utc;
 
     fn entry(content: &str, role: MessageRole, turn: Option<TurnId>) -> Entry {

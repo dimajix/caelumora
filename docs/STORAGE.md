@@ -150,7 +150,7 @@ over one pool.
     state stored once the transaction is committed; so a crash leaves nothing to repair.
 *   **A chain a row per node** (`chains`), every branch, by its position: `history_entries` and
     `transcript_entries`, a node changed in its place written over, the heads in `histories` and
-    `transcripts`. A chain is read backwards in batches where the model's rules follow it back - a
+    `transcripts`. A chain is read backwards in batches where the domain's rules follow it back - a
     path to a digest, the answer of a turn.
 
 Its tests run against a database: `test/docker-compose.yml` starts one, and the variable
@@ -274,13 +274,13 @@ when a document is read, so that a stored document that does not fit fails to lo
 reported as `StoreError::Invalid`). A value is checked, never changed: it is kept exactly as
 written, and what identifies something is compared by a key made from it. A `Name` is compared by
 its ASCII form, regardless of case and of how whitespace runs, so "Zoë" and "zoe" are one name; none
-of these types derefs to `str`, which would bypass that. Above the model - loops, controllers,
-events, REST requests - such a text is a string as given; the model makes the value where it is
+of these types derefs to `str`, which would bypass that. Above the domain - loops, controllers,
+events, REST requests - such a text is a string as given; the domain makes the value where it is
 assigned.
 
 ### Queries
 
-Every list of the entity store takes a query (`caelumora_model::store::query`) and answers a page:
+Every list of the entity store takes a query (`caelumora_domain::store::query`) and answers a page:
 
 *   **A filter**, purely declarative, so that a database could push it into a `WHERE` clause. It
     names fields of the kind, each a path into the document as serialized. Values take the forms
@@ -507,7 +507,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
     keeps of it - its sender, its recipients, whether anything of it is published, its position -
     and the reader's ranges: the channel everything; a participant what it sent, and what went to it
     by name or to every member of its kind while it was one; an outsider what went to every user.
-    The model gives the same rule as data (`Filter::seen_by`, issue
+    The domain gives the same rule as data (`Filter::seen_by`, issue
     [451](../issues/451-history-reader-judged-after-reading.md)), over an item as it is kept
     (`KeptItem`: the item as recorded, its position, whether it is published), which a test holds
     to `seen_by`; a database adds it to the `WHERE` of a page. A page counts what its reader sees.
@@ -547,7 +547,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
     as `StandingItems` does and writes them back. A page reads the items backwards in batches,
     asking the database for those its reader is given (`Filter::seen_by`, issue
     [451](../issues/451-history-reader-judged-after-reading.md)) that meet its filter, as far as SQL
-    can judge it; in which form the reader sees each the model decides (`Recorded::as_seen_by`,
+    can judge it; in which form the reader sees each the domain decides (`Recorded::as_seen_by`,
     asked by `seen`).
 
 ### Transcripts
@@ -671,7 +671,7 @@ state in every channel. It is never a side effect of the `EntityStore`.
 The live state of the entities of a running session is held by controllers
 (`caelumora_kernel::controller`): `SessionController`, `ChannelController`, `AgentController`,
 `PersonalityController`, `UserController` and `WorkspaceController`, made by the
-`ControllerManager`. The model only defines the documents; keeping them live, writing them and
+`ControllerManager`. The domain only defines the documents; keeping them live, writing them and
 announcing changes is the kernel's. What a controller changes and what its entity's manager does is
 in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
 
@@ -686,7 +686,7 @@ in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
     take over changes announced elsewhere.
 *   **One shape.** Every controller holds its document as a `LiveDocument` (issue 358), which does
     all of the above alike for every kind: a change told by the kind's update event
-    (`Updatable::apply`, in the model) is applied, stored with when it was changed
+    (`Updatable::apply`, in the domain) is applied, stored with when it was changed
     (`Updatable::touch`, `updated_at` where a kind keeps it) without the entries of its access lists
     naming a group that is gone (see [SECURITY.md](SECURITY.md#access-lists)), taken over,
     announced - to who reached the document as it was classified and as it is - and logged, once, by
@@ -726,7 +726,7 @@ user, a workspace or a project into its live controller, once per instance - the
 made in other instances will arrive (see [Several instances](#several-instances)). An event carries
 the resulting value, so taking over an instance's own change again changes nothing; a workspace and
 a project are read again as stored instead, since the announcement of a new access list does not
-carry it. A text in it that does not fit the model's value is left out and logged. Changes whose
+carry it. A text in it that does not fit the domain's value is left out and logged. Changes whose
 announcements it lost it makes up for by reading every live controller again as stored (issue
 502). Reading again holds the lock of a change, so that a change of this instance under way is not
 set back by what was read before it.

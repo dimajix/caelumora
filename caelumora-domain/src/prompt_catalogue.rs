@@ -38,7 +38,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::OnceLock;
 
-/// The namespace of the kernel's texts: what `caelumora-model` writes for a model - the notices of
+/// The namespace of the kernel's texts: what `caelumora-domain` writes for a model - the notices of
 /// a context as it is resolved, the explanation of how messages are marked.
 pub const KERNEL: &str = "kernel";
 

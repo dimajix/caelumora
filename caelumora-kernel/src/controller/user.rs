@@ -3,16 +3,16 @@
 
 use super::document::{log_changed, take_over};
 use arc_swap::{ArcSwap, Guard};
-use caelumora_model::actor::ActorId;
-use caelumora_model::approval::{ApprovalRule, ApprovalRuleId};
-use caelumora_model::channel::Channel;
-use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::history::Reader;
-use caelumora_model::message::MessageId;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::{StoreError, StoreResult, StoreResultExt};
-use caelumora_model::user::{ReadMark, User, UserId, UserProfile};
-use caelumora_model::value::language::Language;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId};
+use caelumora_domain::channel::Channel;
+use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_domain::history::Reader;
+use caelumora_domain::message::MessageId;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
+use caelumora_domain::user::{ReadMark, User, UserId, UserProfile};
+use caelumora_domain::value::language::Language;
 use caelumora_security::SecurityContext;
 use caelumora_store::history::HistoryStore;
 use caelumora_store::{EntityStore, EntityStores, StateStore};
@@ -331,13 +331,13 @@ impl UserController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::approval::{Reach, RuleDecision, ToolMatcher};
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::role::RoleId;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserUpdateEvent;
-    use caelumora_model::value::text::Introduction;
+    use caelumora_domain::approval::{Reach, RuleDecision, ToolMatcher};
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::role::RoleId;
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserUpdateEvent;
+    use caelumora_domain::value::text::Introduction;
     use caelumora_security::{OwnershipPolicy, Policies};
     use caelumora_store::Persistence;
     use std::slice;

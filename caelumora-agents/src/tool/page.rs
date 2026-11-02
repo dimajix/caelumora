@@ -2,7 +2,7 @@
 //! an attachment - gives its model of it at once, and where it reads on.
 
 use super::{result_text, ToolError, ToolResult};
-use caelumora_model::prompt_catalogue::{context, PromptTexts};
+use caelumora_domain::prompt_catalogue::{context, PromptTexts};
 use serde_json::{json, Value};
 use tracing::error;
 

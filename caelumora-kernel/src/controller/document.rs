@@ -3,11 +3,11 @@
 
 use crate::group::prune_gone_groups;
 use arc_swap::{ArcSwap, Guard};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::group::Group;
-use caelumora_model::security::{AclEntry, SecuredMut, Subject};
-use caelumora_model::store::{Address, StoreResult, StoreResultExt, Stored, Updatable};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_domain::group::Group;
+use caelumora_domain::security::{AclEntry, SecuredMut, Subject};
+use caelumora_domain::store::{Address, StoreResult, StoreResultExt, Stored, Updatable};
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use chrono::Utc;
@@ -333,13 +333,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{Agent, PersonalityId};
-    use caelumora_model::group::GroupId;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::Grant;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::{Agent, PersonalityId};
+    use caelumora_domain::group::GroupId;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::security::Grant;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::ScopedName;
     use caelumora_security::Policies;
     use caelumora_store::{EntityStores, Persistence};
     use std::time::Duration;

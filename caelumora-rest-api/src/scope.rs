@@ -1,11 +1,11 @@
 //! Where something lies that is kept in a scope: a workspace, a skill, a group, an agent, a
 //! personality, a project (issue 467).
 
-use caelumora_model::project::ProjectId;
-use caelumora_model::scope::Scope;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::ScopeSnapshot;
-use caelumora_model::user::UserId;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot::ScopeSnapshot;
+use caelumora_domain::user::UserId;
 use serde::{Deserialize, Serialize};
 
 /// The kind of a scope, as a request names it and `ScopeResponse` answers it: where a workspace
@@ -127,7 +127,7 @@ pub struct ItemDescriptionRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::group::GroupId;
+    use caelumora_domain::group::GroupId;
 
     /// `scope` as shown to a viewer who knows no name of its user.
     fn unnamed(scope: Scope) -> ScopeSnapshot {

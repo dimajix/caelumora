@@ -1,14 +1,14 @@
 //! Access lists as they are written and shown (issue 23): whom an entry grants what.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::group::GroupId;
-use caelumora_model::project::ProjectId;
-use caelumora_model::role::RoleId;
-use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, Grant, Subject};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot;
-use caelumora_model::user::UserId;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::group::GroupId;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::role::RoleId;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{AclEntry, Grant, Subject};
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot;
+use caelumora_domain::user::UserId;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -101,7 +101,7 @@ impl AccessEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::project::ProjectId;
+    use caelumora_domain::project::ProjectId;
 
     /// Issue 467: the members of a project are named by the project, as the participants of a
     /// session are by the session.

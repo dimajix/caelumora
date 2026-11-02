@@ -28,12 +28,12 @@ use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents
 use caelumora_api::error::ContentError;
 use caelumora_api::terminal::WorkspacePath;
 use caelumora_api::workspace::WorkspaceReader;
-use caelumora_model::prompt_catalogue::PromptTexts;
-use caelumora_model::question::Answers;
-use caelumora_model::scope::Scope;
-use caelumora_model::store::StoreError;
-use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
-use caelumora_model::value::name::ScopedName;
+use caelumora_domain::prompt_catalogue::PromptTexts;
+use caelumora_domain::question::Answers;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::value::name::ScopedName;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

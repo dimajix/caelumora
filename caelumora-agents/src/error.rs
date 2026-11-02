@@ -71,7 +71,7 @@ mod tests {
     use super::*;
     use anyhow::Error;
     use caelumora_api::component::ComponentError;
-    use caelumora_model::store::StoreError;
+    use caelumora_domain::store::StoreError;
 
     #[test]
     fn a_prompt_part_that_failed_names_its_component_before_what_it_says() {

@@ -48,8 +48,8 @@ impl Library for ComfyUiLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::config::AppConfig;
     use caelumora_kernel::testing::TestKernel;
-    use caelumora_model::config::AppConfig;
     use serde_json::{json, Value};
     use std::path::Path;
 

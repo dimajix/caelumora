@@ -1,7 +1,7 @@
 //! What was deleted and is kept until it is purged (issue 164).
 
-use caelumora_model::removal::Removal;
-use caelumora_model::snapshot;
+use caelumora_domain::removal::Removal;
+use caelumora_domain::snapshot;
 use serde::{Deserialize, Serialize};
 
 /// Whether a listing lists what is there or what was deleted (issue 164).
@@ -38,11 +38,11 @@ impl<I> From<snapshot::DeletedSnapshot<I>> for DeletedResponse<I> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::snapshot;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::snapshot;
+    use caelumora_domain::user::UserId;
 
     #[test]
     fn something_deleted_is_answered_with_who_deleted_it_and_what_may_be_done() {

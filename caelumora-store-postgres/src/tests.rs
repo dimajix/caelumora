@@ -8,30 +8,30 @@ use crate::connection::{quoted, sql};
 use crate::filter::Condition;
 use crate::plugin::PostgresStorePlugin;
 use caelumora_api::component::Services;
+use caelumora_domain::actor::{ActorId, ActorState, EventContext};
+use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::approval::ApproverId;
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::{ChannelId, ChannelState};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::config::{AppConfig, BackendConfig};
+use caelumora_domain::digest;
+use caelumora_domain::group::Group;
+use caelumora_domain::history::{Audience, HistoryEntry, Reader, Recorded};
+use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::removal::RemovalId;
+use caelumora_domain::role::RoleId;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
+use caelumora_domain::store::query::{FieldPath, FieldValue, Filter};
+use caelumora_domain::store::{Revision, StoreError};
+use caelumora_domain::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::work::Work;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::secret::env::EnvSecretProvider;
-use caelumora_model::actor::{ActorId, ActorState, EventContext};
-use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
-use caelumora_model::approval::ApproverId;
-use caelumora_model::chain::Position;
-use caelumora_model::channel::{ChannelId, ChannelState};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::config::{AppConfig, BackendConfig};
-use caelumora_model::digest;
-use caelumora_model::group::Group;
-use caelumora_model::history::{Audience, HistoryEntry, Reader, Recorded};
-use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::removal::RemovalId;
-use caelumora_model::role::RoleId;
-use caelumora_model::scope::Scope;
-use caelumora_model::security::{Grant, SecurityAttributes, Subject};
-use caelumora_model::store::query::{FieldPath, FieldValue, Filter};
-use caelumora_model::store::{Revision, StoreError};
-use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
-use caelumora_model::user::UserId;
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::work::Work;
 use caelumora_security::secret::SecretManager;
 use caelumora_security::{Admission, AllowAllPolicy, OwnershipPolicy, Policies, SecurityContext};
 use caelumora_store::documents::Document;
@@ -401,7 +401,7 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     database.drop().await;
 }
 
-/// The database gives a reader of a history what the model gives them
+/// The database gives a reader of a history what the domain gives them
 /// (issue 451): what they sent, what went to them by name, what went to
 /// every member while they were one, an approver what went to the
 /// approvers, an outsider what went to every user - each only if anything

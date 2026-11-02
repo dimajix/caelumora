@@ -6,7 +6,7 @@
 //! and the destination come from `AppConfig::logging`.
 
 use anyhow::{Context, Result};
-use caelumora_model::config::{LogFormat, LoggingConfig};
+use caelumora_domain::config::{LogFormat, LoggingConfig};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io;
@@ -63,7 +63,7 @@ pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &
 mod tests {
     use super::*;
     use caelumora_api::logging::envelope_span;
-    use caelumora_model::actor::{ActorId, EventContext};
+    use caelumora_domain::actor::{ActorId, EventContext};
     use serde_json::Value;
     use std::env;
     use tracing::info;

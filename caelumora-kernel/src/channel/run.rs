@@ -10,14 +10,14 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_api::actor::Answering;
 use caelumora_api::logging::envelope_span;
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
-use caelumora_model::chain::Position;
-use caelumora_model::channel::ChannelState;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::history::{Audience, Heard, Reader, Recorded};
-use caelumora_model::message::Message;
-use caelumora_model::store::StoreResult;
-use caelumora_model::value::name::Name;
+use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Rejection, RetryTarget};
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::ChannelState;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::history::{Audience, Heard, Reader, Recorded};
+use caelumora_domain::message::Message;
+use caelumora_domain::store::StoreResult;
+use caelumora_domain::value::name::Name;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use std::collections::HashMap;
@@ -998,21 +998,21 @@ mod tests {
     use caelumora_api::actor::Actor;
     use caelumora_api::component::ComponentImpl;
     use caelumora_api::transport::{EventReceiver, EventSender};
-    use caelumora_model::actor::{
+    use caelumora_domain::actor::{
         ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RequestReason,
         RetryTarget,
     };
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::content::ContentRef;
-    use caelumora_model::history::{HistoryEntry, Recipients};
-    use caelumora_model::message::{Message, MessageId, MessageRole};
-    use caelumora_model::session::ChannelId;
-    use caelumora_model::tool::{ToolCall, ToolCallResult, ToolMedia};
-    use caelumora_model::turn::GivenUpReason;
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
-    use caelumora_model::work::TurnId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::confidentiality::{Classification, Confidentiality};
+    use caelumora_domain::content::ContentRef;
+    use caelumora_domain::history::{HistoryEntry, Recipients};
+    use caelumora_domain::message::{Message, MessageId, MessageRole};
+    use caelumora_domain::session::ChannelId;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolMedia};
+    use caelumora_domain::turn::GivenUpReason;
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::work::TurnId;
     use caelumora_security::AllowAllPolicy;
     use caelumora_security::SecurityContext;
     use chrono::Utc;
@@ -1447,7 +1447,7 @@ mod tests {
     /// asked of it.
     #[tokio::test]
     async fn an_answer_to_an_approval_says_its_senders_part_alone() {
-        use caelumora_model::approval::{ApprovalDecision, ApprovalResponse};
+        use caelumora_domain::approval::{ApprovalDecision, ApprovalResponse};
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let (her, bob) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
@@ -1820,7 +1820,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_channel_keeps_the_end_of_its_history_and_reads_the_rest_from_the_store() {
-        use caelumora_model::history::WINDOW;
+        use caelumora_domain::history::WINDOW;
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let alice_id = ActorId::User(alice.id);
@@ -2619,8 +2619,8 @@ mod tests {
     /// of which nothing is left to show is recorded as gone to nobody.
     #[tokio::test]
     async fn what_only_its_owner_sees_is_recorded_and_given_to_nobody_else() {
-        use caelumora_model::confidentiality::Visibility;
-        use caelumora_model::tool::ToolVisibility;
+        use caelumora_domain::confidentiality::Visibility;
+        use caelumora_domain::tool::ToolVisibility;
         /// Asks nobody, and keeps what it was given.
         #[derive(Debug, Default)]
         struct Told(Mutex<Vec<Envelope>>);
@@ -2729,7 +2729,7 @@ mod tests {
     async fn what_others_hear_is_announced_once_it_is_stored() {
         use crate::session::testing::{running_session_of_a_user, spec, test_kernel};
         use crate::session::SessionManager;
-        use caelumora_model::channel::{Channel, SAID};
+        use caelumora_domain::channel::{Channel, SAID};
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, _) = running_session_of_a_user(&manager).await;

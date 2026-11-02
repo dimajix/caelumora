@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use caelumora_agents::testing;
 use caelumora_agents::turn::Turn;
 use caelumora_api::model::unlabelled_message;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::prompt_catalogue::PromptTexts;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::prompt_catalogue::PromptTexts;
 use std::sync::Mutex;
 
 /// The texts of the kernel, of the agents and of compaction, as the kernel and the plugins add

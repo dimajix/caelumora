@@ -8,12 +8,12 @@ pub mod plugin;
 mod transcripts;
 
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
-use caelumora_model::channel::{ChannelId, ChannelState};
-use caelumora_model::store::query::{ordered_after, FieldPath, Filter};
-use caelumora_model::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
-use caelumora_model::user::{UserChannelState, UserId};
-use caelumora_model::value::name::ScopedName;
+use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::channel::{ChannelId, ChannelState};
+use caelumora_domain::store::query::{ordered_after, FieldPath, Filter};
+use caelumora_domain::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
+use caelumora_domain::user::{UserChannelState, UserId};
+use caelumora_domain::value::name::ScopedName;
 use caelumora_security::Admission;
 use caelumora_store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
@@ -782,21 +782,21 @@ impl StateStore for JsonFileStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::ActorState;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::chain::Position;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::history::Reader;
-    use caelumora_model::message::testing::{id, make_message};
-    use caelumora_model::note::{NoteChange, NoteId};
-    use caelumora_model::removal::Removal;
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::query::Query;
-    use caelumora_model::store::{StoreError, Stored};
-    use caelumora_model::turn::TurnState;
-    use caelumora_model::value::name::Name;
-    use caelumora_model::value::text::Description;
+    use caelumora_domain::actor::ActorState;
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::chain::Position;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::history::Reader;
+    use caelumora_domain::message::testing::{id, make_message};
+    use caelumora_domain::note::{NoteChange, NoteId};
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::session::{Session, SessionId};
+    use caelumora_domain::store::query::Query;
+    use caelumora_domain::store::{StoreError, Stored};
+    use caelumora_domain::turn::TurnState;
+    use caelumora_domain::value::name::Name;
+    use caelumora_domain::value::text::Description;
     use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
     use caelumora_store::{suite, EntityStore, EntityStores, Persistence};
     use tempfile::tempdir;
@@ -980,7 +980,7 @@ mod tests {
     async fn concurrent_writes_of_one_file_all_succeed_and_leave_no_temporary_files() {
         // Entities may be written at the same time - by two requests that
         // change one (issue 62); a state has one writer (issue 215).
-        use caelumora_model::agent::Personality;
+        use caelumora_domain::agent::Personality;
         let dir = tempdir().unwrap();
         let personalities = of_kind::<Personality>(dir.path());
         let system = SecurityContext::system();
@@ -1033,8 +1033,8 @@ mod tests {
     async fn of_concurrent_writes_under_one_name_one_takes_it() {
         // Checked and written under the kind's lock (issue 250): nothing
         // writes between another's check and its write.
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::agent::Agent;
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::agent::Agent;
         let dir = tempdir().unwrap();
         let agents = of_kind::<Agent>(dir.path());
         let system = SecurityContext::system();
@@ -1070,7 +1070,7 @@ mod tests {
     #[tokio::test]
     async fn deleting_a_session_marks_its_file_and_purging_removes_it_leaving_its_state_to_the_state_store(
     ) {
-        use caelumora_model::channel::testing::make_channel;
+        use caelumora_domain::channel::testing::make_channel;
 
         let dir = tempdir().unwrap();
         let store = store(dir.path());

@@ -2,11 +2,11 @@
 //! the personalities they are made of.
 
 use crate::scope::{ScopeKind, ScopeResponse};
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentId, PersonalityId, PersonalityKind};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot;
-use caelumora_model::value::text::Description;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{AgentId, PersonalityId, PersonalityKind};
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot;
+use caelumora_domain::value::text::Description;
 use serde::{Deserialize, Serialize};
 
 /// An agent the requesting user may read (issues 164, 227), with what they

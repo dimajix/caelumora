@@ -5,24 +5,24 @@
 //! the one its first version was published with. Its content lies in the storage the artifact
 //! names, configured, not stored, one piece per version; the document holds what is known of them.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::content::ContentId;
-use caelumora_model::define_id;
-use caelumora_model::digest::Digest;
-use caelumora_model::project::ProjectId;
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::{Scope, Scoped, ScopedField};
-use caelumora_model::security::{
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::content::ContentId;
+use caelumora_domain::define_id;
+use caelumora_domain::digest::Digest;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::{Scope, Scoped, ScopedField};
+use caelumora_domain::security::{
     AclEntry, Grant, Secured, SecuredMut, SecurityAttributes, Subject,
 };
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::AccessSnapshot;
-use caelumora_model::store::query::Field;
-use caelumora_model::store::{EntityKind, NoEntity, Revision, Stored};
-use caelumora_model::user::UserId;
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::text::Description;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot::AccessSnapshot;
+use caelumora_domain::store::query::Field;
+use caelumora_domain::store::{EntityKind, NoEntity, Revision, Stored};
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::text::Description;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -380,9 +380,9 @@ pub struct PublicationSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::digest;
-    use caelumora_model::group::GroupId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::digest;
+    use caelumora_domain::group::GroupId;
 
     /// A version of `content`, published in a channel of `session_id`.
     fn version(content: &[u8], session_id: SessionId) -> ArtifactVersion {

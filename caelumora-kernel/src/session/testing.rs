@@ -1,8 +1,8 @@
 //! What tests of the kernel need to build it as a binary does, and the fixtures the tests of
 //! sessions, channels and the views share: one of each, for building a kernel, recording users,
 //! storing and starting a session, and the views an actor of a running session navigates (issue
-//! 315). The documents of a session, its channels and its users are the model's
-//! (`caelumora_model::session::testing`, `channel::testing`, `user::testing`).
+//! 315). The documents of a session, its channels and its users are the domain's
+//! (`caelumora_domain::session::testing`, `channel::testing`, `user::testing`).
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -18,17 +18,17 @@ use crate::session::{ChannelSpec, SessionLoop, SessionManager};
 use crate::testing::TestKernel;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::actor::{ActorEvent, Rejection};
-use caelumora_model::channel::testing::main_channel;
-use caelumora_model::channel::Channel;
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::session::testing::make_session;
-use caelumora_model::session::Session;
-use caelumora_model::store::query::{FieldPath, Filter};
-use caelumora_model::store::{EntityKind, Revision, StoreError, StoreResult};
-use caelumora_model::user::testing::make_user;
-use caelumora_model::value::name::ScopedName;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::actor::{ActorEvent, Rejection};
+use caelumora_domain::channel::testing::main_channel;
+use caelumora_domain::channel::Channel;
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::session::testing::make_session;
+use caelumora_domain::session::Session;
+use caelumora_domain::store::query::{FieldPath, Filter};
+use caelumora_domain::store::{EntityKind, Revision, StoreError, StoreResult};
+use caelumora_domain::user::testing::make_user;
+use caelumora_domain::value::name::ScopedName;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use caelumora_security::SecurityContext;
 use caelumora_security::{AccessPolicy, Admission, OwnershipPolicy};
@@ -99,7 +99,7 @@ pub async fn create(
 /// Stores `session` with `channels` on behalf of `ctx` as the kernel stores a brand-new one
 /// (`SessionManager::persist`) - with a project of its own -, without announcing or starting it:
 /// the session as stored, and `channels` then as stored, too. The channels keep the participants
-/// they name, without their joins in their histories (the model's `channel::testing::founded`).
+/// they name, without their joins in their histories (the domain's `channel::testing::founded`).
 pub async fn persist(
     manager: &SessionManager,
     ctx: &SecurityContext,

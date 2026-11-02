@@ -189,8 +189,8 @@ mod tests {
     use super::*;
     use axum::body;
     use axum::response::{IntoResponse, Sse};
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::user::UserId;
     use caelumora_security::SecurityContext;
     use chrono::Utc;
     use tokio::time::Instant;

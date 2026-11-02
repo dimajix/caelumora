@@ -1,4 +1,4 @@
-//! Finding or making what a session template names (issue 88): the model
+//! Finding or making what a session template names (issue 88): the domain
 //! says what each participant is for a session (`ParticipantTemplate::
 //! request`); this resolves the requests against the store, on behalf of
 //! whoever creates the session. `SessionManager::create_from_template` is
@@ -12,17 +12,17 @@ use crate::session::{SessionError, SessionLoop};
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use caelumora_api::workspace::WorkspaceError;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId, PersonalityId};
-use caelumora_model::channel::Participant;
-use caelumora_model::session::SessionId;
-use caelumora_model::store::{StoreError, StoreResultExt};
-use caelumora_model::template::{
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{Agent, AgentId, PersonalityId};
+use caelumora_domain::channel::Participant;
+use caelumora_domain::session::SessionId;
+use caelumora_domain::store::{StoreError, StoreResultExt};
+use caelumora_domain::template::{
     ParticipantRequest, SessionTemplate, TemplateError, TemplateResult, WorkspaceTemplate,
 };
-use caelumora_model::user::UserId;
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::SecurityContext;
 use caelumora_store::{EntityStore, EntityStores};
 
@@ -235,19 +235,19 @@ mod tests {
     use super::*;
     use crate::event::EventBus;
     use crate::scoped::ScopeHolders;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::Personality;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::Session;
-    use caelumora_model::store::query::Query;
-    use caelumora_model::store::Stored;
-    use caelumora_model::template::testing::make_template;
-    use caelumora_model::template::{ParticipantTemplate, ScopeTemplate, TemplateError};
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::User;
-    use caelumora_model::value::name::{Name, ScopedName};
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::Personality;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::session::Session;
+    use caelumora_domain::store::query::Query;
+    use caelumora_domain::store::Stored;
+    use caelumora_domain::template::testing::make_template;
+    use caelumora_domain::template::{ParticipantTemplate, ScopeTemplate, TemplateError};
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::User;
+    use caelumora_domain::value::name::{Name, ScopedName};
     use caelumora_security::{AccessPolicy, ActionType, Policies, Verb};
     use caelumora_store::memory::MemoryStore;
     use caelumora_store::Persistence;

@@ -10,7 +10,7 @@ use crate::state::AppState;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use caelumora_model::agent::AgentId;
+use caelumora_domain::agent::AgentId;
 use caelumora_rest_api::agent::{
     AgentChannelResponse, AgentResponse, CreateAgentRequest, PersonalityResponse,
     RenameAgentRequest,
@@ -168,8 +168,8 @@ mod tests {
     use axum::http::header::{CONTENT_TYPE, COOKIE};
     use axum::http::{Method, Request, StatusCode};
     use axum::Router;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::AgentId;
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::AgentId;
     use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use std::sync::Arc;

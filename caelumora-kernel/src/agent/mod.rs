@@ -16,10 +16,10 @@ pub mod state;
 
 pub use manager::AgentManager;
 
-use caelumora_model::agent::AgentId;
-use caelumora_model::store::StoreError;
-use caelumora_model::value::name::Name;
-use caelumora_model::value::ValueError;
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::value::ValueError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentError {

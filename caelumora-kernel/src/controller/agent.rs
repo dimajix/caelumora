@@ -3,11 +3,11 @@
 use super::document::LiveDocument;
 use super::UserController;
 use arc_swap::Guard;
-use caelumora_model::agent::{Agent, AgentId, AgentUpdateEvent};
-use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::role::RoleId;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::store::StoreResult;
+use caelumora_domain::agent::{Agent, AgentId, AgentUpdateEvent};
+use caelumora_domain::event::{EventPublisher, GlobalEvent};
+use caelumora_domain::role::RoleId;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::store::StoreResult;
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStores;
 use std::sync::Arc;
@@ -100,13 +100,13 @@ impl AgentController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::Personality;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::Personality;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::ScopedName;
     use caelumora_security::Policies;
     use caelumora_store::Persistence;
 
@@ -135,9 +135,9 @@ mod tests {
     /// to those its personality names.
     #[tokio::test]
     async fn an_agent_acts_with_its_owners_roles_as_they_are_now_and_its_limit() {
-        use caelumora_model::event::GlobalEvent;
-        use caelumora_model::role::RoleId;
-        use caelumora_model::user::{User, UserProfile, UserUpdateEvent};
+        use caelumora_domain::event::GlobalEvent;
+        use caelumora_domain::role::RoleId;
+        use caelumora_domain::user::{User, UserProfile, UserUpdateEvent};
         let (staff, hr) = (RoleId::new(), RoleId::new());
         let alice = User { roles: vec![staff], ..make_user("alice") };
         let store = Persistence::in_memory();

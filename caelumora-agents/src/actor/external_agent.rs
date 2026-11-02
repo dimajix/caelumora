@@ -40,22 +40,22 @@ use caelumora_api::logging::envelope_span;
 use caelumora_api::model::ModelProfileProvider;
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::{EventReceiver, EventSender};
-use caelumora_model::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::agent::AgentChannelState;
-use caelumora_model::agent::RetryRefused;
-use caelumora_model::command::Command;
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::PromptPart;
-use caelumora_model::digest;
-use caelumora_model::external_agent::{OpenTaskState, TaskId};
-use caelumora_model::history::Heard;
-use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::transcript::TranscriptEntry;
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::value::name::Name;
-use caelumora_model::work::{TurnId, Work};
+use caelumora_domain::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_domain::agent::AgentChannelState;
+use caelumora_domain::agent::RetryRefused;
+use caelumora_domain::command::Command;
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::PromptPart;
+use caelumora_domain::digest;
+use caelumora_domain::external_agent::{OpenTaskState, TaskId};
+use caelumora_domain::history::Heard;
+use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::transcript::TranscriptEntry;
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::work::{TurnId, Work};
 use chrono::{DateTime, Utc};
 use futures::future::BoxFuture;
 use futures::stream;
@@ -1119,9 +1119,9 @@ impl Actor for ExternalAgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::channel::ChannelId;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::user::UserId;
     use caelumora_store::memory::MemoryStore;
     use caelumora_store::transcript::TranscriptStore;
     use caelumora_store::StateStore;
@@ -1158,7 +1158,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_change_of_a_message_given_is_told_by_a_notice_once_until_it_is_given() {
-        use caelumora_model::external_agent::ConversationId;
+        use caelumora_domain::external_agent::ConversationId;
         let alice = ActorId::User(UserId::new());
         let (first, second) = (said(alice, "alice", "first"), said(alice, "alice", "second"));
         let at = Utc::now();
@@ -1238,7 +1238,7 @@ mod tests {
 
     #[test]
     fn a_notice_names_the_message_by_what_it_said_shortened_and_is_classified_as_both() {
-        use caelumora_model::confidentiality::{Compartment, Confidentiality};
+        use caelumora_domain::confidentiality::{Compartment, Confidentiality};
         let alice = ActorId::User(UserId::new());
         let at = Utc::now();
         let long = said(alice, "alice", &"ä".repeat(NOTICE_QUOTE + 1));

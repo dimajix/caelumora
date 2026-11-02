@@ -12,7 +12,7 @@
 //! the kernel's do (issue 327).
 
 use caelumora_api::terminal::{TerminalError, TerminalResult};
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_domain::workspace::WorkspaceId;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};

@@ -2,7 +2,7 @@ use crate::auth::AuthenticatedUser;
 use crate::error::{ApiError, Json};
 use crate::state::AppState;
 use axum::extract::State;
-use caelumora_model::store::query::Query;
+use caelumora_domain::store::query::Query;
 use caelumora_rest_api::template::TemplateResponse;
 use std::sync::Arc;
 

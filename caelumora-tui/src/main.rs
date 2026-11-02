@@ -10,6 +10,20 @@ use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
+use caelumora_domain::actor::{ActorEvent, ActorId};
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::approval::{ApprovalId, ApprovalResponse};
+use caelumora_domain::command::{parse_input, UserInput};
+use caelumora_domain::config::AppConfig;
+use caelumora_domain::mention::{is_group_handle, mention_spans};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::question::{Question, QuestionId, QuestionRequest, Response};
+use caelumora_domain::store::query::Query;
+use caelumora_domain::store::StoreResultExt;
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::language::Language;
+use caelumora_domain::work::TurnId;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::kernel::KernelBuilder;
@@ -19,20 +33,6 @@ use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
-use caelumora_model::actor::{ActorEvent, ActorId};
-use caelumora_model::agent::AgentId;
-use caelumora_model::approval::{ApprovalId, ApprovalResponse};
-use caelumora_model::command::{parse_input, UserInput};
-use caelumora_model::config::AppConfig;
-use caelumora_model::mention::{is_group_handle, mention_spans};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::question::{Question, QuestionId, QuestionRequest, Response};
-use caelumora_model::store::query::Query;
-use caelumora_model::store::StoreResultExt;
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::user::UserId;
-use caelumora_model::value::language::Language;
-use caelumora_model::work::TurnId;
 use caelumora_models::plugin::ModelsPlugin;
 use caelumora_ollama::plugin::{with_local_model, OllamaPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
@@ -686,7 +686,7 @@ async fn signalled() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::question::Choice;
+    use caelumora_domain::question::Choice;
 
     fn question(choices: &[&str], multi_select: bool) -> Question {
         Question {
@@ -702,8 +702,8 @@ mod tests {
 
     #[test]
     fn a_message_is_printed_with_what_it_carries() {
-        use caelumora_model::confidentiality::Classification;
-        use caelumora_model::content::testing::make_content_ref;
+        use caelumora_domain::confidentiality::Classification;
+        use caelumora_domain::content::testing::make_content_ref;
         let message = |content: Option<&str>, attachments| Message {
             content: content.map(str::to_string),
             attachments,

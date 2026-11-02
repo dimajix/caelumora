@@ -42,8 +42,8 @@ use caelumora_api::terminal::{
     ByteStream, CommandState, FileEntry, Shell, Terminal, TerminalError, TerminalReader,
     TerminalResult, WorkspacePath,
 };
+use caelumora_domain::workspace::{CommandStatus, WorkspaceId};
 use caelumora_kernel::terminal::{CommandKey, Commands, Kept};
-use caelumora_model::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, TryStreamExt};
 use reqwest::multipart::{Form, Part};

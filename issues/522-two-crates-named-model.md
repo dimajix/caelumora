@@ -126,3 +126,5 @@ issues, `work/` and the record in CRATES.md.
 - **2026-11-02** — Opened at the maintainer's request, after issue
   [520](520-the-kernel-sees-no-model-call.md) brought `caelumora-models` beside `caelumora-model`.
 - **2026-11-02** — Plan of two steps made, on the branch `issue-522-crate-names`.
+- **2026-11-02** — Step 1 done: `caelumora-model` is `caelumora-domain`, and where the documents,
+  the module docs and the scripts meant the crate by "the model", they say "the domain".

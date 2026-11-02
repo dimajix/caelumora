@@ -1,5 +1,5 @@
 //! Session templates: what a session is made of - its participants and channels - before there is
-//! one. The model builds a session from a template and the participants it names; finding or
+//! one. The domain builds a session from a template and the participants it names; finding or
 //! creating those participants in the store is the kernel's
 //! (`SessionManager::create_from_template`, issue 88), so nothing here touches a store.
 

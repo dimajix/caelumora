@@ -6,18 +6,18 @@ use super::{
     ResolvedParticipant, LEAVE_GRACE,
 };
 use anyhow::Result;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::chain::Position;
-use caelumora_model::channel::Channel;
-use caelumora_model::channel::HistoryAccess;
-use caelumora_model::channel::Participant;
-use caelumora_model::command::Command;
-use caelumora_model::mention::{handle_of, MentionDirectory};
-use caelumora_model::question::{QuestionError, Questions};
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::store::Stored;
-use caelumora_model::value::name::Name;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::Channel;
+use caelumora_domain::channel::HistoryAccess;
+use caelumora_domain::channel::Participant;
+use caelumora_domain::command::Command;
+use caelumora_domain::mention::{handle_of, MentionDirectory};
+use caelumora_domain::question::{QuestionError, Questions};
+use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::store::Stored;
+use caelumora_domain::value::name::Name;
 use caelumora_security::{ActionType, SecurityContext};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -532,17 +532,17 @@ mod tests {
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_api::actor::Actor;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::actor::Envelope;
-    use caelumora_model::chain::Position;
-    use caelumora_model::channel::{Channel, HistoryAccess, JOINED, LEFT};
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::history::HistoryEntry;
-    use caelumora_model::security::{Grant, Subject};
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::session::ChannelId;
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::actor::Envelope;
+    use caelumora_domain::chain::Position;
+    use caelumora_domain::channel::{Channel, HistoryAccess, JOINED, LEFT};
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::history::HistoryEntry;
+    use caelumora_domain::security::{Grant, Subject};
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::ChannelId;
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use std::collections::HashSet;
@@ -614,11 +614,11 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn only_who_is_cleared_takes_part_in_or_reads_a_channel() {
         use crate::channel::ChannelError;
-        use caelumora_model::confidentiality::{
+        use caelumora_domain::confidentiality::{
             Clearance, Compartment, Compartments, Confidentiality,
         };
-        use caelumora_model::role::{RoleId, Roles};
-        use caelumora_model::user::User;
+        use caelumora_domain::role::{RoleId, Roles};
+        use caelumora_domain::user::User;
         use caelumora_security::confidentiality::ConfidentialityRules;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
@@ -833,7 +833,7 @@ mod tests {
 
     #[tokio::test]
     async fn who_joins_or_leaves_is_recorded_where_it_happened_and_shown_also_to_who_made_it() {
-        use caelumora_model::actor::ActorEvent;
+        use caelumora_domain::actor::ActorEvent;
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
@@ -955,9 +955,9 @@ mod tests {
     #[tokio::test]
     async fn a_removed_participant_is_kept_as_a_former_one_and_announced_but_the_approver_stays() {
         use crate::channel::ChannelError;
-        use caelumora_model::approval::ApprovalStrategy;
-        use caelumora_model::channel::InternalActor;
-        use caelumora_model::template::InternalActorTemplate;
+        use caelumora_domain::approval::ApprovalStrategy;
+        use caelumora_domain::channel::InternalActor;
+        use caelumora_domain::template::InternalActorTemplate;
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;

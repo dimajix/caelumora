@@ -4,9 +4,9 @@
 use super::*;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
 use caelumora_api::command::CommandError;
+use caelumora_domain::chain::Node;
+use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_kernel::command::{CommandContext, CommandReply};
-use caelumora_model::chain::Node;
-use caelumora_model::transcript::TranscriptEntry;
 use std::sync::Mutex;
 
 /// A running channel with alice and an agent, `helper`, that carries
@@ -18,9 +18,9 @@ async fn with_a_marking_agent(asleep: bool) -> Stuck {
 
 /// `with_a_marking_agent`, under `access_policy`.
 async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep: bool) -> Stuck {
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::message::MessageRole;
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
     let stop = ToolCall {
         id: Some("1".to_string()),
         function_name: "stop".to_string(),
@@ -118,7 +118,7 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
 /// her alone that it was not let in. The agent hears nothing of it.
 #[tokio::test]
 async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
-    use caelumora_model::actor::Rejection;
+    use caelumora_domain::actor::Rejection;
     let seen_not_asked = Policy(|action| !matches!(action, ActionType::ExecuteAgentCommand { .. }));
     let Stuck { channel, context, agent, running, .. } =
         with_a_marking_agent_under(Arc::new(seen_not_asked), false).await;

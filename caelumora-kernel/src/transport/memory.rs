@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use caelumora_api::transport::{
     EventPick, EventPredicate, EventReceiver, EventSender, TransportError, TransportResult,
 };
-use caelumora_model::actor::{ActorId, Envelope, Pick};
-use caelumora_model::history::Heard;
+use caelumora_domain::actor::{ActorId, Envelope, Pick};
+use caelumora_domain::history::Heard;
 use std::collections::VecDeque;
 use tokio::sync::mpsc;
 
@@ -162,9 +162,9 @@ impl EventSender for OriginEventSender {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::{ActorEvent, EventContext, RequestReason};
-    use caelumora_model::chain::Position;
-    use caelumora_model::work::TurnId;
+    use caelumora_domain::actor::{ActorEvent, EventContext, RequestReason};
+    use caelumora_domain::chain::Position;
+    use caelumora_domain::work::TurnId;
 
     fn envelope(event: ActorEvent) -> Envelope {
         Envelope::new(EventContext::default(), event)
@@ -301,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_actor_s_sender_passes_on_only_what_speaks_as_the_actor() {
-        use caelumora_model::agent::AgentId;
+        use caelumora_domain::agent::AgentId;
         let (tx, mut rx) = mpsc::channel(4);
         let agent = ActorId::Agent(AgentId::new());
         let sender = OriginEventSender::new(agent, Box::new(InMemoryEventSender::new(tx)));

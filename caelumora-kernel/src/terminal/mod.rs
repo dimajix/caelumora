@@ -36,9 +36,9 @@ use crate::backend::Backends;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentError, ComponentResult};
 use caelumora_api::terminal::{Shell, Terminal, TerminalResult};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::config::DEFAULT_MAX_FILE_BYTES;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::config::DEFAULT_MAX_FILE_BYTES;
+use caelumora_domain::workspace::WorkspaceId;
 use std::fmt::Debug;
 use std::sync::Arc;
 

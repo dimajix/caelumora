@@ -38,6 +38,40 @@ use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::reader::ViewError;
 use caelumora_api::workspace::WorkspaceError;
+use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Rejection};
+use caelumora_domain::agent::{
+    Agent, AgentId, HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind,
+};
+use caelumora_domain::approval::{
+    ApprovalDecision, ApprovalRequest, ApprovalRule, ApprovalRuleId, ArgumentMatcher, Reach,
+    RuleDecision, ToolMatcher,
+};
+use caelumora_domain::channel::HistoryAccess;
+use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
+use caelumora_domain::confidentiality::{Classification, Confidentiality, Visibility};
+use caelumora_domain::context::ModelProfile;
+use caelumora_domain::external_agent::{ConversationId, TaskId};
+use caelumora_domain::group::GroupId;
+use caelumora_domain::message::{Message, MessageEvent};
+use caelumora_domain::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::secret::Secrets;
+use caelumora_domain::security::{AclEntry, Grant, Secured, Subject};
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot::PersonalitySnapshot;
+use caelumora_domain::store::query::Query;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::template::{
+    ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate,
+};
+use caelumora_domain::tool::{Tool, ToolParameters};
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::name::{Name, ScopedName};
+use caelumora_domain::work::TurnId;
+use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
 use caelumora_kernel::component::BUNDLE_REF_KIND;
@@ -46,40 +80,6 @@ use caelumora_kernel::testing::{
     asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF,
 };
 use caelumora_kernel::view::{ChannelView, Viewer};
-use caelumora_model::actor::{ActorEvent, ActorId, Envelope, Rejection};
-use caelumora_model::agent::{
-    Agent, AgentId, HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind,
-};
-use caelumora_model::approval::{
-    ApprovalDecision, ApprovalRequest, ApprovalRule, ApprovalRuleId, ArgumentMatcher, Reach,
-    RuleDecision, ToolMatcher,
-};
-use caelumora_model::channel::HistoryAccess;
-use caelumora_model::command::{Command, CommandOutput};
-use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
-use caelumora_model::confidentiality::{Classification, Confidentiality, Visibility};
-use caelumora_model::context::ModelProfile;
-use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::group::GroupId;
-use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::Scope;
-use caelumora_model::secret::Secrets;
-use caelumora_model::security::{AclEntry, Grant, Secured, Subject};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::PersonalitySnapshot;
-use caelumora_model::store::query::Query;
-use caelumora_model::store::StoreError;
-use caelumora_model::template::{
-    ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate,
-};
-use caelumora_model::tool::{Tool, ToolParameters};
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::user::UserId;
-use caelumora_model::value::name::{Name, ScopedName};
-use caelumora_model::work::TurnId;
-use caelumora_model::workspace::WorkspaceChoice;
 use futures::stream;
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -226,7 +226,7 @@ async fn an_agent_whose_personality_is_gone_is_left_out_of_its_channel() {
 /// agent of it being added -, not as it was when the agent's actor was built.
 #[tokio::test]
 async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_taken_in() {
-    use caelumora_model::message::MessageRole;
+    use caelumora_domain::message::MessageRole;
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("an answer".to_string()),
@@ -285,8 +285,8 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
-    use caelumora_model::history::{HistoryEntry, Reader};
-    use caelumora_model::message::MessageRole;
+    use caelumora_domain::history::{HistoryEntry, Reader};
+    use caelumora_domain::message::MessageRole;
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("an answer".to_string()),
@@ -729,8 +729,8 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
 /// It is offered of an agent by the same question (issue 242).
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
-    use caelumora_model::actor::ActorEvent;
-    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::message::{Message, MessageRole};
     let answer = Message {
         role: MessageRole::Assistant,
         content: Some("an answer".to_string()),
@@ -1167,7 +1167,7 @@ impl ToolProvider for Asking {
         Ok(serde_json::json!({ "answered": answers.is_some() }).into())
     }
     fn questions(&self, _: &str, _: &Value) -> ToolResult<Option<Questions>> {
-        use caelumora_model::question::{Question, Questions};
+        use caelumora_domain::question::{Question, Questions};
         Ok(Some(Questions {
             questions: vec![Question {
                 header: "Name".to_string(),
@@ -1199,8 +1199,8 @@ async fn with_a_call_asking_whom(
     sensitive: bool,
     asker: fn(&World) -> UserId,
 ) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, QuestionRequest, ChannelWatch) {
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
         role: MessageRole::Assistant,
@@ -1261,7 +1261,7 @@ async fn questions_shown(
     main: ChannelId,
     user: UserId,
 ) -> Vec<QuestionId> {
-    use caelumora_model::snapshot::Detail;
+    use caelumora_domain::snapshot::Detail;
     let view = world
         .manager
         .views(Viewer::new(World::as_user(user)))
@@ -1287,7 +1287,7 @@ async fn questions_shown(
 /// is refused by his actor, which asks nothing; alice answers.
 #[tokio::test]
 async fn questions_are_answered_by_whom_they_are_put_to() {
-    use caelumora_model::question::{QuestionError, Response};
+    use caelumora_domain::question::{QuestionError, Response};
     let (world, session, main, request, _) = with_a_call_asking(false, |world| world.alice).await;
     assert_eq!(request.questions.asked(), [ActorId::User(world.alice)], "the agent's owner");
     assert_eq!(
@@ -1332,7 +1332,7 @@ async fn questions_are_answered_by_whom_they_are_put_to() {
 /// snapshot, and cannot answer them.
 #[tokio::test]
 async fn sensitive_questions_reach_only_whom_they_are_put_to() {
-    use caelumora_model::question::{QuestionError, Response};
+    use caelumora_domain::question::{QuestionError, Response};
     let (world, session, main, request, mut his) =
         with_a_call_asking(true, |world| world.alice).await;
     assert_eq!(questions_shown(&world, session.id(), main.id(), world.alice).await, [request.id]);
@@ -1421,7 +1421,7 @@ struct Asked {
 }
 
 async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
-    use caelumora_model::actor::ActorEvent;
+    use caelumora_domain::actor::ActorEvent;
     let mut watch = main.user_actor(user).expect("they take part").watch();
     main.user_actor(world.alice)
         .unwrap()
@@ -1747,8 +1747,8 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
-    use caelumora_model::actor::ActorEvent;
-    use caelumora_model::approval::ApprovalResponse;
+    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::approval::ApprovalResponse;
 
     let (world, session, main, helper) = with_a_call_to_approve().await;
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
@@ -1921,8 +1921,8 @@ impl ToolProvider for Outward {
 /// its tools are not called by name.
 #[tokio::test]
 async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_there() {
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolResultStatus, ToolVisibility};
+    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::{ToolCall, ToolResultStatus, ToolVisibility};
 
     let call = Message {
         role: MessageRole::Assistant,
@@ -2032,8 +2032,8 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
 /// one agent mentioning another does not delegate to it.
 #[tokio::test]
 async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let internal = Classification::general(Confidentiality::Internal);
     let relayed = Message {
@@ -2128,8 +2128,8 @@ async fn with_a_reader_of(
     owner: fn(&World) -> UserId,
     in_side: bool,
 ) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>) {
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
         role: MessageRole::Assistant,
@@ -2376,7 +2376,7 @@ async fn bob_speaks_while_alices_turn_works(
     alice_again: Option<&str>,
 ) -> (Vec<Vec<String>>, Vec<String>) {
     use caelumora_agents::testing::calling;
-    use caelumora_model::message::MessageRole;
+    use caelumora_domain::message::MessageRole;
 
     let said = |text: &str| Message {
         role: MessageRole::Assistant,
@@ -3806,7 +3806,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
 /// agent's owner, taking part - finds nothing of it on hers.
 #[tokio::test]
 async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
-    use caelumora_model::history::HistoryEntry;
+    use caelumora_domain::history::HistoryEntry;
     let (world, session, main, _, mut his) = with_a_commanded_agent().await;
     main.user_actor(world.bob)
         .unwrap()
@@ -3891,9 +3891,9 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
         AttachmentTool, ATTACH, COPY_ATTACHMENT, READ_ATTACHMENT,
     };
     use caelumora_agents::tool::ToolProvider;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::history::HistoryEntry;
-    use caelumora_model::message::{Message, MessageRole};
+    use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::history::HistoryEntry;
+    use caelumora_domain::message::{Message, MessageRole};
     use serde_json::json;
     use tokio_util::bytes::Bytes;
 

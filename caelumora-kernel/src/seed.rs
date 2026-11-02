@@ -8,11 +8,11 @@
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
-use caelumora_model::agent::Personality;
-use caelumora_model::component::ComponentBundle;
-use caelumora_model::config::parse_yaml;
-use caelumora_model::store::{StoreResult, StoreResultExt, Stored};
-use caelumora_model::template::SessionTemplate;
+use caelumora_domain::agent::Personality;
+use caelumora_domain::component::ComponentBundle;
+use caelumora_domain::config::parse_yaml;
+use caelumora_domain::store::{StoreResult, StoreResultExt, Stored};
+use caelumora_domain::template::SessionTemplate;
 use caelumora_security::confidentiality::ConfidentialityPolicy;
 use caelumora_security::SecurityContext;
 use caelumora_store::{EntityStore, EntityStores};
@@ -186,8 +186,8 @@ pub async fn load(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::config::AppConfig;
-    use caelumora_model::store::query::Query;
+    use caelumora_domain::config::AppConfig;
+    use caelumora_domain::store::query::Query;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::Policies;
     use caelumora_store::Persistence;

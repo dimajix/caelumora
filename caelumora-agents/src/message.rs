@@ -9,9 +9,9 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::reader::ViewError;
-use caelumora_model::component::ComponentFailPolicy;
-use caelumora_model::message::Message;
-use caelumora_model::store::StoreError;
+use caelumora_domain::component::ComponentFailPolicy;
+use caelumora_domain::message::Message;
+use caelumora_domain::store::StoreError;
 use std::fmt::Debug;
 
 #[async_trait]
@@ -73,10 +73,10 @@ where
 #[cfg(test)]
 pub(crate) mod testing {
     use super::*;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::transcript::{as_they_stand, TranscriptEntry};
-    use caelumora_model::turn::GivenUpReason;
-    use caelumora_model::work::TurnId;
+    use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::transcript::{as_they_stand, TranscriptEntry};
+    use caelumora_domain::turn::GivenUpReason;
+    use caelumora_domain::work::TurnId;
 
     /// The turns the agent of `state` gave up, as its transcript records
     /// them on its active path (issue 258): each with why, and the messages
@@ -129,8 +129,8 @@ pub(crate) mod testing {
 mod tests {
     use super::testing::Without;
     use super::*;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::message::MessageRole;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::MessageRole;
     use std::sync::Arc;
 
     fn stage(

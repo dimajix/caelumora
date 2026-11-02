@@ -17,8 +17,8 @@ use caelumora_api::terminal::{
     ByteStream, FileEntry, Shell, Terminal, TerminalError, TerminalReader, TerminalResult,
     WorkspacePath,
 };
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::workspace::WorkspaceId;
 use futures::future::join_all;
 use futures::StreamExt;
 use serde::Deserialize;
@@ -418,8 +418,8 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use caelumora_api::component::Services;
-    use caelumora_model::config::BackendConfig;
-    use caelumora_model::workspace::CommandStatus;
+    use caelumora_domain::config::BackendConfig;
+    use caelumora_domain::workspace::CommandStatus;
     use futures::stream;
     use serde_json::{json, Value};
     use std::fs as std_fs;

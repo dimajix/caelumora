@@ -9,16 +9,16 @@
 //! until they are stored.
 
 use async_trait::async_trait;
-use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::chain::Node;
-use caelumora_model::channel::ChannelId;
-use caelumora_model::context::{ContextRef, FrameRef};
-use caelumora_model::digest::Digest;
-use caelumora_model::kept::Kept;
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::StoreResult;
-use caelumora_model::tool::ToolSet;
-use caelumora_model::transcript::TranscriptEntry;
+use caelumora_domain::agent::{AgentChannelState, AgentId};
+use caelumora_domain::chain::Node;
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::context::{ContextRef, FrameRef};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::kept::Kept;
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::store::StoreResult;
+use caelumora_domain::tool::ToolSet;
+use caelumora_domain::transcript::TranscriptEntry;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Debug;
 

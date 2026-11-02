@@ -23,15 +23,15 @@ use crate::tool::{
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::note::{Note, NoteId};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::Answers;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::PublishedNotes;
-use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::note::{Note, NoteId};
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::question::Answers;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot::PublishedNotes;
+use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -414,16 +414,16 @@ mod tests {
     use super::*;
     use crate::library::AgentsLibrary;
     use crate::testing::{self, agent_runtime};
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::testing::bare_channel;
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::work::Work;
     use caelumora_kernel::kernel::ParticipantRuntime;
     use caelumora_kernel::session::testing::detached_participant_in;
     use caelumora_kernel::testing::Discard;
     use caelumora_kernel::testing::TestKernel;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::channel::testing::bare_channel;
-    use caelumora_model::message::MessageId;
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::work::Work;
     use caelumora_security::OwnershipPolicy;
     use chrono::Utc;
     use std::iter;
@@ -501,7 +501,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_note_is_reclassified_as_the_policy_allows_also_in_the_turn_it_was_noted() {
-        use caelumora_model::confidentiality::{Classification, Confidentiality};
+        use caelumora_domain::confidentiality::{Classification, Confidentiality};
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
         let tools = NotesComponent::new(testing::prompts()).unwrap();
@@ -625,7 +625,7 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_updated_note_keeps_its_number_and_is_classified_as_the_turn_that_updated_it() {
-        use caelumora_model::confidentiality::{Classification, Confidentiality};
+        use caelumora_domain::confidentiality::{Classification, Confidentiality};
         let mut state = AgentChannelState::default();
         let tools = NotesComponent::new(testing::prompts()).unwrap();
         let texts = |state: &AgentChannelState| {

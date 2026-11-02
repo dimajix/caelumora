@@ -23,7 +23,7 @@ itself.
 ### Recognised by the frontend
 
 The client decides whether a line is a command and sends it as one rather than as a message; the
-message API stays plain text. The rule is `caelumora_model::command::parse_input`, mirrored in the
+message API stays plain text. The rule is `caelumora_domain::command::parse_input`, mirrored in the
 web UI: a leading `/` starts a command, whose name runs to the first whitespace; the rest of the
 line is handed to the command unparsed; `//` sends a literal `/`. Only this lexical rule is repeated
 per frontend. What a command means, who may run it and what it answers is decided in one place.

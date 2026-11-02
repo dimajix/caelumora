@@ -11,10 +11,10 @@ use caelumora_api::component::{
     ComponentKind, ComponentKinds, Face, LibraryComponents, Services,
 };
 use caelumora_api::component::{ComponentError, ComponentResult};
-use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
-use caelumora_model::scope::Scope;
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
+use caelumora_domain::scope::Scope;
+use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use futures::future::BoxFuture;
@@ -759,14 +759,14 @@ mod tests {
     use async_trait::async_trait;
     use caelumora_api::component::ComponentContainer;
     use caelumora_api::component::Params;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
-    use caelumora_model::removal::{Removal, RemovalId};
-    use caelumora_model::scope::ScopeField;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::store::query::{Page, Query};
-    use caelumora_model::store::{StoreError, StoreResult};
-    use caelumora_model::user::UserId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::component::{ComponentBundle, ComponentBundleId, ComponentFailPolicy};
+    use caelumora_domain::removal::{Removal, RemovalId};
+    use caelumora_domain::scope::ScopeField;
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::store::query::{Page, Query};
+    use caelumora_domain::store::{StoreError, StoreResult};
+    use caelumora_domain::user::UserId;
     use caelumora_security::Policies;
     use caelumora_store::{Deleted, EntityStores, Persistence};
     use serde_json::json;

@@ -5,7 +5,7 @@ use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_model::command::{Command, CommandOutput, HELP_COMMAND_KIND};
+use caelumora_domain::command::{Command, CommandOutput, HELP_COMMAND_KIND};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

@@ -28,22 +28,22 @@ use anyhow::{Error, Result};
 use arc_swap::ArcSwap;
 use caelumora_api::actor::Actor;
 use caelumora_api::component::{ComponentError, ComponentImpl};
-use caelumora_model::actor::ActorId;
+use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::actor::Envelope;
-use caelumora_model::chain::Position;
-use caelumora_model::channel::{Channel, ChannelId, ChannelState, Participant};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::mention::MentionDirectory;
-use caelumora_model::message::MessageId;
-use caelumora_model::question::{QuestionError, QuestionId};
-use caelumora_model::security::{Refused, SecurityAttributes};
-use caelumora_model::session::SessionId;
-use caelumora_model::store::StoreError;
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::user::UserId;
-use caelumora_model::value::name::Name;
-use caelumora_model::work::TurnId;
+use caelumora_domain::actor::Envelope;
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::{Channel, ChannelId, ChannelState, Participant};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::mention::MentionDirectory;
+use caelumora_domain::message::MessageId;
+use caelumora_domain::question::{QuestionError, QuestionId};
+use caelumora_domain::security::{Refused, SecurityAttributes};
+use caelumora_domain::session::SessionId;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::work::TurnId;
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::StateStore;
@@ -66,7 +66,7 @@ use tracing::{info, warn};
 pub struct ChannelParticipant {
     pub id: ActorId,
     pub name: Name,
-    /// The handle the participant is mentioned by (see `caelumora_model::mention`),
+    /// The handle the participant is mentioned by (see `caelumora_domain::mention`),
     /// or `None` if it cannot be mentioned - approvers, and names that yield
     /// no handle.
     pub handle: Option<String>,

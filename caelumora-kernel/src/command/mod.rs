@@ -23,9 +23,9 @@ use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
 use caelumora_api::component::{ComponentImpl, ComponentResult};
-use caelumora_model::command::{Command, CommandOutput, CommandVisibility};
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::type_map::TypeKey;
+use caelumora_domain::command::{Command, CommandOutput, CommandVisibility};
+use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::type_map::TypeKey;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -238,7 +238,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::component::ComponentFailPolicy;
+    use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_security::AllowAllPolicy;
 
     #[derive(Debug)]

@@ -1,9 +1,9 @@
 //! The logged-in user's profile (issue 176) and their answers given in advance (issue 13).
 
-use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
-use caelumora_model::user::UserProfile;
-use caelumora_model::value::language::Language;
-use caelumora_model::value::text::Introduction;
+use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
+use caelumora_domain::user::UserProfile;
+use caelumora_domain::value::language::Language;
+use caelumora_domain::value::text::Introduction;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

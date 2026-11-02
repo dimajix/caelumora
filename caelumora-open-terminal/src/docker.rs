@@ -36,14 +36,14 @@ use bollard::query_parameters::{
 use bollard::Docker;
 use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::terminal::{Shell, Terminal, TerminalError, TerminalResult};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::terminal::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
     CommandKey, TerminalProvider,
 };
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::workspace::WorkspaceId;
 use futures::StreamExt;
 use reqwest::Method;
 use serde::Deserialize;
@@ -630,9 +630,9 @@ mod tests {
     use caelumora_api::component::config_of_params;
     use caelumora_api::component::Services;
     use caelumora_api::terminal::{ByteStream, WorkspacePath};
+    use caelumora_domain::config::BackendConfig;
+    use caelumora_domain::workspace::CommandStatus;
     use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
-    use caelumora_model::config::BackendConfig;
-    use caelumora_model::workspace::CommandStatus;
     use futures::stream;
     use serde_json::json;
     use std::env;

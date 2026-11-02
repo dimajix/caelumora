@@ -365,7 +365,7 @@ file of its own and a line in its module's `register_all`; `components` holds co
 They follow one convention:
 
 *   **Kind constant:** the kind in capitals with `_KIND` (`CALCULATOR_TOOL_KIND`). Only the command
-    kinds live in the model, because `AppConfig`'s default names them.
+    kinds live in the domain, because `AppConfig`'s default names them.
 *   **Struct:** the kind in CamelCase, with `Provider` for a `_tool` or `_command` kind
     (`CalculatorToolProvider`) and `Component` for a feature (`NotesComponent`).
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).

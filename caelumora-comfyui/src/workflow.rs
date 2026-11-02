@@ -9,8 +9,8 @@
 //! told by a server - whether a node is one ComfyUI has, whether the one named gives images.
 
 use caelumora_agents::tool::{ToolError, ToolResult};
-use caelumora_model::config::parse_yaml;
-use caelumora_model::value::identifier::Identifier;
+use caelumora_domain::config::parse_yaml;
+use caelumora_domain::value::identifier::Identifier;
 use serde::de;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};

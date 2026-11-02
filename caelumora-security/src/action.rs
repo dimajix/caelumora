@@ -1,11 +1,11 @@
 //! What the `AccessPolicy` is asked about (issue 323): the actions, among
 //! them the verbs on stored entities.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::command::Command;
-use caelumora_model::security::{Grant, Refused, SecurityAttributes};
-use caelumora_model::store::EntityKind;
-use caelumora_model::tool::ToolCall;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::command::Command;
+use caelumora_domain::security::{Grant, Refused, SecurityAttributes};
+use caelumora_domain::store::EntityKind;
+use caelumora_domain::tool::ToolCall;
 use std::fmt::Debug;
 
 /// Everything the `AccessPolicy` is asked about.
@@ -353,8 +353,8 @@ pub enum Reclassified<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::session::Session;
-    use caelumora_model::store::Stored;
+    use caelumora_domain::session::Session;
+    use caelumora_domain::store::Stored;
 
     #[test]
     fn an_action_is_described_without_its_content() {

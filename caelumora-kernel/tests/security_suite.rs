@@ -13,6 +13,31 @@ use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::reader::ViewError;
 use caelumora_api::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_api::workspace::WorkspaceError;
+use caelumora_domain::actor::{ActorId, Rejection};
+use caelumora_domain::agent::{Agent, AgentId, Personality};
+use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
+use caelumora_domain::channel::{Channel, HistoryAccess, LEFT};
+use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
+use caelumora_domain::confidentiality::{Classification, Confidentiality};
+use caelumora_domain::content::ContentRef;
+use caelumora_domain::event::GlobalEvent;
+use caelumora_domain::group::{Group, GroupId, GroupUpdateEvent};
+use caelumora_domain::privacy::PrivacyConfig;
+use caelumora_domain::project::{Project, ProjectId, ProjectUpdateEvent};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::role::RoleId;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{AclEntry, Grant, SecurityAttributes, Subject};
+use caelumora_domain::session::testing::make_session;
+use caelumora_domain::session::{ChannelId, Session, SessionId};
+use caelumora_domain::snapshot::Detail;
+use caelumora_domain::store::query::Query;
+use caelumora_domain::store::{EntityKind, StoreError, Stored};
+use caelumora_domain::user::testing::make_user;
+use caelumora_domain::user::{UserId, UserProfile};
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::text::{Description, Introduction};
+use caelumora_domain::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::agent::AgentError;
 use caelumora_kernel::channel::ChannelError;
@@ -30,31 +55,6 @@ use caelumora_kernel::testing::{
 };
 use caelumora_kernel::view::Viewer;
 use caelumora_kernel::workspace::testing::{reader_in, shell_in, terminal_in};
-use caelumora_model::actor::{ActorId, Rejection};
-use caelumora_model::agent::{Agent, AgentId, Personality};
-use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
-use caelumora_model::channel::{Channel, HistoryAccess, LEFT};
-use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
-use caelumora_model::confidentiality::{Classification, Confidentiality};
-use caelumora_model::content::ContentRef;
-use caelumora_model::event::GlobalEvent;
-use caelumora_model::group::{Group, GroupId, GroupUpdateEvent};
-use caelumora_model::privacy::PrivacyConfig;
-use caelumora_model::project::{Project, ProjectId, ProjectUpdateEvent};
-use caelumora_model::removal::Removal;
-use caelumora_model::role::RoleId;
-use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, Grant, SecurityAttributes, Subject};
-use caelumora_model::session::testing::make_session;
-use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::snapshot::Detail;
-use caelumora_model::store::query::Query;
-use caelumora_model::store::{EntityKind, StoreError, Stored};
-use caelumora_model::user::testing::make_user;
-use caelumora_model::user::{UserId, UserProfile};
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::text::{Description, Introduction};
-use caelumora_model::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_security::SecurityContext;
 use caelumora_store::testing::record_users;
 use serde_json::json;
@@ -441,8 +441,8 @@ async fn the_owner_changes_and_ends_the_session() {
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_goes() {
-    use caelumora_model::actor::ActorEvent;
-    use caelumora_model::history::HistoryEntry;
+    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::history::HistoryEntry;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
@@ -580,8 +580,8 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
-    use caelumora_model::actor::ActorEvent;
-    use caelumora_model::message::MessageId;
+    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::message::MessageId;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
@@ -695,7 +695,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
 /// not reach it.
 #[tokio::test]
 async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs_or_not() {
-    use caelumora_model::actor::ActorEvent;
+    use caelumora_domain::actor::ActorEvent;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -916,7 +916,7 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
 /// is missing.
 #[tokio::test]
 async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
-    use caelumora_model::snapshot::CandidateRefusal;
+    use caelumora_domain::snapshot::CandidateRefusal;
     let world = World::new().await;
     let dave = make_user("dave");
     record_users(world.kernel.entity_stores(), &[&dave]).await;
@@ -966,7 +966,7 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
 /// hears of it.
 #[tokio::test]
 async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
-    use caelumora_model::actor::ActorEvent;
+    use caelumora_domain::actor::ActorEvent;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1022,7 +1022,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
 /// nothing.
 #[tokio::test]
 async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
-    use caelumora_model::actor::ActorEvent;
+    use caelumora_domain::actor::ActorEvent;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1085,7 +1085,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
 /// why (`MessageRejected`).
 #[tokio::test]
 async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
-    use caelumora_model::actor::ActorEvent;
+    use caelumora_domain::actor::ActorEvent;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
@@ -1169,9 +1169,9 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     use caelumora_api::error::AttachmentError;
-    use caelumora_model::actor::ActorEvent;
-    use caelumora_model::message::{Message, MessageId, MessageRole};
-    use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
+    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::message::{Message, MessageId, MessageRole};
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolVisibility};
     use futures::StreamExt;
     use serde_json::Value;
     use std::slice;
@@ -1346,7 +1346,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
 async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     use bytes::Bytes;
     use caelumora_api::error::AttachmentError;
-    use caelumora_model::tool::ToolMedia;
+    use caelumora_domain::tool::ToolMedia;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);

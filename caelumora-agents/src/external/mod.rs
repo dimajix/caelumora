@@ -11,9 +11,9 @@
 
 use async_trait::async_trait;
 use caelumora_api::component::LibraryComponents;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::external_agent::{ConversationId, TaskId};
-use caelumora_model::secret::{SecretError, Secrets};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::external_agent::{ConversationId, TaskId};
+use caelumora_domain::secret::{SecretError, Secrets};
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -82,7 +82,7 @@ impl ExternalEvent {
 
 /// A failure talking to the remote agent - not the remote agent failing a
 /// task, which is `ExternalEvent::Failed`. Every variant names the endpoint,
-/// with any credentials stripped from it (`caelumora_model::remote::redact_endpoint`), so
+/// with any credentials stripped from it (`caelumora_domain::remote::redact_endpoint`), so
 /// that the message is actionable on its own; it is shown to users when a
 /// response fails (issue 02).
 #[derive(Debug, thiserror::Error)]
@@ -163,7 +163,7 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 pub(crate) mod testing {
     use super::*;
     use caelumora_api::model::ModelProfileProvider;
-    use caelumora_model::context::ModelProfile;
+    use caelumora_domain::context::ModelProfile;
     use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
     use futures::stream;
     use futures::StreamExt;

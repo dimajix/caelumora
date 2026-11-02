@@ -1,4 +1,4 @@
-// `@`-mentions (issue 29). Mirrors `caelumora_model::mention`: the server
+// `@`-mentions (issue 29). Mirrors `caelumora_domain::mention`: the server
 // resolves mentions and stores them in `Message.mentions`; the UI only needs
 // to find them in the text again to highlight the resolved ones, and to
 // derive handles for completion.
@@ -58,7 +58,7 @@ export function mentionSpans(text: string): MentionSpan[] {
 
 /**
  * The handles that address every participant at once (issue 401), as
- * `caelumora_model::mention::GROUP_HANDLES`: `@all` and its synonym `@channel`.
+ * `caelumora_domain::mention::GROUP_HANDLES`: `@all` and its synonym `@channel`.
  */
 export const GROUP_HANDLES = ['all', 'channel'] as const;
 

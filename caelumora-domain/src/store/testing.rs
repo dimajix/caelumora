@@ -1,4 +1,4 @@
-//! What the model's tests check a journaled state (`Journaled`) by: as a store holds it
+//! What the domain's tests check a journaled state (`Journaled`) by: as a store holds it
 //! (`stored`), and what its changes replay onto (`replayed`).
 
 use crate::store::Journaled;

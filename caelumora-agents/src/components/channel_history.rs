@@ -16,16 +16,16 @@ use crate::tool::{
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::chain::Position;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::history::HistoryEntry;
-use caelumora_model::message::Message;
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::Answers;
-use caelumora_model::store::history::HistoryField;
-use caelumora_model::store::query::Filter;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::chain::Position;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::history::HistoryEntry;
+use caelumora_domain::message::Message;
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::question::Answers;
+use caelumora_domain::store::history::HistoryField;
+use caelumora_domain::store::query::Filter;
+use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -198,10 +198,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::content::testing::make_content_ref;
-    use caelumora_model::history::{Audience, Recorded};
-    use caelumora_model::message::MessageId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::content::testing::make_content_ref;
+    use caelumora_domain::history::{Audience, Recorded};
+    use caelumora_domain::message::MessageId;
 
     /// A message saying `content`, recorded as the store keeps it.
     fn said(content: &str) -> Value {

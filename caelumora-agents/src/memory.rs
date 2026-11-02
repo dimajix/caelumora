@@ -19,12 +19,12 @@ use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
 use caelumora_api::reader::SessionReader;
 use caelumora_api::runtime::OwnRecord;
-use caelumora_model::confidentiality::{Classification, Place};
-use caelumora_model::digest::Digest;
-use caelumora_model::ledger::Staged;
-use caelumora_model::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
-use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::session::SessionId;
+use caelumora_domain::confidentiality::{Classification, Place};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::ledger::Staged;
+use caelumora_domain::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
+use caelumora_domain::privacy::SessionPrivacy;
+use caelumora_domain::session::SessionId;
 use tracing::warn;
 
 /// An agent's memory as a turn sees it: every function takes the turn.

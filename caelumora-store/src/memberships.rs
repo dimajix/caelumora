@@ -3,8 +3,8 @@
 
 use crate::EntityStore;
 use async_trait::async_trait;
-use caelumora_model::group::{Group, GroupId};
-use caelumora_model::store::{StoreResult, StoreResultExt};
+use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::store::{StoreResult, StoreResultExt};
 use caelumora_security::{Memberships, SecurityContext};
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -74,10 +74,10 @@ impl Memberships for StoreMemberships {
 mod tests {
     use super::*;
     use crate::{EntityStores, Persistence};
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::ScopedName;
     use caelumora_security::Policies;
 
     #[tokio::test]

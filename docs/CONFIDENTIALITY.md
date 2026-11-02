@@ -9,7 +9,7 @@ produces only its owner sees. Who may do what is a separate question, answered i
 ## Classification
 
 What may flow from one channel to another is decided by classifications
-(`caelumora_model::confidentiality`), not by who takes part in the channels. A channel is a
+(`caelumora_domain::confidentiality`), not by who takes part in the channels. A channel is a
 construct of a certain trustworthiness, and the decision must not change when someone joins or
 leaves.
 

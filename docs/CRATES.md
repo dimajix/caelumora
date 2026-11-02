@@ -39,9 +39,9 @@ flowchart TD
     end
 
     api["caelumora-api"]
+    domain["caelumora-domain"]
     kernel["caelumora-kernel"]
     logging["caelumora-logging"]
-    model["caelumora-model"]
     rest_api["caelumora-rest-api"]
     rest_client["caelumora-rest-client"]
     rest_server["caelumora-rest-server"]
@@ -51,23 +51,23 @@ flowchart TD
     both -. "library" .-> agents
     both -. "api" .-> api
     skills -. "library" .-> compaction
+    both --> domain
     both -. "kernel" .-> kernel
-    both --> model
     both --> rest_api
     both -. "server" .-> rest_server
     both -. "kernel" .-> security
     both -. "kernel" .-> store
     plugins --> api
+    plugins --> domain
     plugins --> kernel
-    plugins --> model
     ollama --> models
     decision & kernel & open_terminal & rest_server & store & store_json & store_postgres --> security
     a2a & comfyui & compaction & mcp & workspace_tools --> agents
     libraries --> api
+    libraries --> domain
     agents -. "test-support" .-> kernel
-    libraries --> model
     agents -. "test-support" .-> store
-    api & kernel & logging & rest_api & rest_server & security & store --> model
+    api & kernel & logging & rest_api & rest_server & security & store --> domain
     kernel & rest_server --> api
     kernel & rest_server & store_json & store_postgres --> store
     rest_server --> kernel
@@ -97,10 +97,10 @@ client of the REST interface. `caelumora-web-ui` is no crate, but the browser fr
 
 The graph is not only what has grown, but holds rules of the design:
 
-*   `caelumora-model` depends on no crate of the workspace, `caelumora-api` and
-    `caelumora-rest-api` on the model alone: the API is what the agent side is given of the kernel,
+*   `caelumora-domain` depends on no crate of the workspace, `caelumora-api` and
+    `caelumora-rest-api` on the domain alone: the API is what the agent side is given of the kernel,
     the wire of the REST API is read without the server.
-*   A library links the API, the model and other libraries, never the kernel, `caelumora-security`
+*   A library links the API, the domain and other libraries, never the kernel, `caelumora-security`
     or `caelumora-store` (issues 516, 517): it reaches the kernel through the API alone, and nothing
     that decides is there for it to name. `scripts/library-deps.sh` checks it, from the pre-commit
     hook, for the libraries and for the library side of the crates that are a plugin and a library

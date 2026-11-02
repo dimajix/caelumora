@@ -6,9 +6,9 @@ use anyhow::Result;
 use caelumora_api::actor::AgentFactory;
 use caelumora_api::component::LibraryComponents;
 use caelumora_api::library::LibraryBuilder;
-use caelumora_model::agent::PersonalityKind;
-use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::type_map::{ErasedArc, TypeKey};
+use caelumora_domain::agent::PersonalityKind;
+use caelumora_domain::prompt_catalogue::PromptError;
+use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use serde_json::Value;
 
 /// The part of the `KernelBuilder` a library registers with.

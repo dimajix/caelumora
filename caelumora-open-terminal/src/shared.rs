@@ -12,14 +12,14 @@ use async_trait::async_trait;
 use caelumora_api::component::service_of;
 use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::terminal::{Shell, Terminal, TerminalError, TerminalResult, WorkspacePath};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::terminal::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
     CommandKey, TerminalProvider,
 };
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::workspace::WorkspaceId;
 use caelumora_security::secret::SecretManager;
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
@@ -228,11 +228,11 @@ mod tests {
     use bytes::Bytes;
     use caelumora_api::component::config_of_params;
     use caelumora_api::terminal::{ByteStream, TerminalReader};
+    use caelumora_domain::remote::RemoteAuthConfig;
+    use caelumora_domain::secret::SecretResult;
+    use caelumora_domain::workspace::CommandStatus;
     use caelumora_kernel::secret::file::FileSecretProvider;
     use caelumora_kernel::terminal::DEFAULT_MAX_RUN_SECS;
-    use caelumora_model::remote::RemoteAuthConfig;
-    use caelumora_model::secret::SecretResult;
-    use caelumora_model::workspace::CommandStatus;
     use caelumora_security::secret::SecretProvider;
     use caelumora_security::AllowAllPolicy;
     use futures::stream;

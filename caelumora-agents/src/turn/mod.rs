@@ -46,21 +46,21 @@ use caelumora_api::actor::Answering;
 use caelumora_api::error::AttachmentResult;
 use caelumora_api::runtime::{ActorRuntime, OwnRecord};
 use caelumora_api::transport::EventSender;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState};
-use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::content::ContentRef;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::digest::Digest;
-use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
-use caelumora_model::message::{Message, MessageRole};
-use caelumora_model::note::NoteChange;
-use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::tool::Tool;
-use caelumora_model::turn::TurnState;
-use caelumora_model::work::TurnId;
+use caelumora_domain::actor::{ActorEvent, ActorId, ActorState};
+use caelumora_domain::agent::{AgentChannelState, AgentId};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::content::ContentRef;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::memory::{MemoryChange, MemoryId, MemoryOrigin};
+use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::note::NoteChange;
+use caelumora_domain::prompt_catalogue::PromptError;
+use caelumora_domain::tool::Tool;
+use caelumora_domain::turn::TurnState;
+use caelumora_domain::work::TurnId;
 #[cfg(test)]
-use caelumora_model::work::Work;
+use caelumora_domain::work::Work;
 use std::sync::{Arc, LazyLock};
 use tool_calls::ToolCalls;
 
@@ -445,12 +445,12 @@ fn event_for(message: Message, partial: bool) -> ActorEvent {
 mod tests {
     use super::*;
     use crate::testing;
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::context::{ContextItem, ContextResolver, PromptPart};
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::message::MessageRole;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
-    use caelumora_model::actor::EventContext;
-    use caelumora_model::confidentiality::Confidentiality;
-    use caelumora_model::context::{ContextItem, ContextResolver, PromptPart};
-    use caelumora_model::message::MessageId;
-    use caelumora_model::message::MessageRole;
     use tokio::sync::mpsc;
 
     pub(super) fn message(content: &str) -> Message {
@@ -518,9 +518,9 @@ mod tests {
     /// not with a step of a plan, one without words or a tool message.
     #[tokio::test]
     async fn what_is_put_aside_goes_with_the_next_answer() {
+        use caelumora_domain::content::testing::make_content_ref;
+        use caelumora_domain::tool::{ToolCall, ToolVisibility};
         use caelumora_kernel::testing::Discard;
-        use caelumora_model::content::testing::make_content_ref;
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             Default::default(),
@@ -566,8 +566,8 @@ mod tests {
     /// else what they may see of it -, and the agent keeps it in full.
     #[tokio::test]
     async fn events_leave_the_agent_as_they_are_and_its_context_keeps_the_full_call() {
-        use caelumora_model::confidentiality::Visibility;
-        use caelumora_model::tool::{ToolCall, ToolVisibility};
+        use caelumora_domain::confidentiality::Visibility;
+        use caelumora_domain::tool::{ToolCall, ToolVisibility};
         let (tx, mut rx) = mpsc::channel(4);
         let output = InMemoryEventSender::new(tx);
         let mut state = AgentChannelState::default();

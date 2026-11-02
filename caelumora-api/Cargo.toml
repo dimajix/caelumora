@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 # The kernel's API (issue 516): what a library is given and declares, which the
-# kernel implements. It depends on the model and on no other crate of Caelumora.
+# kernel implements. It depends on the domain and on no other crate of Caelumora.
 [dependencies]
-caelumora-model.workspace = true
+caelumora-domain.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 async-trait.workspace = true

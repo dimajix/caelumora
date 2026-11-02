@@ -8,13 +8,13 @@ use crate::routes::{change_error, ensure_session, session_response, views};
 use crate::state::AppState;
 use axum::response::{IntoResponse, Response};
 use axum::{extract::State, http::StatusCode};
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::approval::ApprovalRule;
+use caelumora_domain::session::SessionId;
+use caelumora_domain::snapshot::Detail;
+use caelumora_domain::template::SessionTemplateId;
 use caelumora_kernel::session::SessionSpec;
 use caelumora_kernel::view::SessionView;
-use caelumora_model::agent::AgentId;
-use caelumora_model::approval::ApprovalRule;
-use caelumora_model::session::SessionId;
-use caelumora_model::snapshot::Detail;
-use caelumora_model::template::SessionTemplateId;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::session::{
     AddSessionParticipantRequest, CandidateResponse, CandidatesQuery, CreateSessionRequest,

@@ -179,12 +179,12 @@ while a turn is under way, and only then: between turns the actor works on the s
 taking a turn over or giving it up uses the handle up.
 
 What a turn does to the state - beginning, saying something, finishing, giving up - is a rule of the
-state, kept with it in the model (`AgentChannelState::begin_turn`, `offer_tools`, `said`,
+state, kept with it in the domain (`AgentChannelState::begin_turn`, `offer_tools`, `said`,
 `finish_turn`, `give_up_turn`). `Turn` calls these and does what runs around them.
 
 The working state of a turn is one value, `AgentChannelState::turn`, `None` between turns. Its
 `Work` is what every piece of work of an agent has, a turn as much as an external agent's exchange
-with its remote agent (`caelumora_model::work`):
+with its remote agent (`caelumora_domain::work`):
 
 *   which turn it is (`TurnId`),
 *   the envelope it answers, why it was asked to (see [Why the agent was
@@ -341,7 +341,7 @@ calls and internal steps, and what others said as it received them. The `History
 was offered to the agent and what it said, with how its turns ended. The history is informational:
 it is the record of what was said and what it was produced from, for people to read, and it is never
 read to build what the model is given - that is built from the transcript alone (issue 387). Both
-are a `caelumora_model::chain::Chain` of entries, each with a `Digest` over its content and the
+are a `caelumora_domain::chain::Chain` of entries, each with a `Digest` over its content and the
 digest before it, so one digest names everything up to that point by content. What a message's
 digest covers is what the model sees of it, not what only describes it afterwards
 (`digest::message_chain`). A message does not name its predecessor: the same message is in several
@@ -668,12 +668,12 @@ written.
 ### The prompt catalogue
 
 What the prompt parts say is kept apart from the code that fills them in, in the prompt catalogue
-(`PromptCatalogue` in `caelumora-model`, issue 57), so that a text can be tuned without a change of
+(`PromptCatalogue` in `caelumora-domain`, issue 57), so that a text can be tuned without a change of
 code. Every crate brings its texts in a YAML file it compiles in - the agents'
 `caelumora-agents/src/prompts.yaml` - and adds them under its namespace when its plugin or library
 registers (`KernelBuilder::prompts`, `LibraryBuilder::add_prompts`): `agents.channel_participants`
 is the roster. The catalogue is a service of the kernel. The kernel's texts are the namespace
-`kernel` (`caelumora-model/src/prompts.yaml`): what the `ContextResolver` tells the model as it
+`kernel` (`caelumora-domain/src/prompts.yaml`): what the `ContextResolver` tells the model as it
 resolves a context - a turn given up, who joined or left - and how the messages of others are marked
 (`ModelProfile::framing_explanation`).
 
@@ -831,7 +831,7 @@ its place and the prompt cache. Where a model keeps them is part of its profile
 
 ### The turn's context and the resolver
 
-What the model is given is not stored; it is resolved from what is (`caelumora_model::context`):
+What the model is given is not stored; it is resolved from what is (`caelumora_domain::context`):
 
 *   **The turn's context** is the `ContextRef` of its next message: references only, the turn keeps
     no copy of the transcript.

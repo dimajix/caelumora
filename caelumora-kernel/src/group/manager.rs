@@ -4,16 +4,16 @@
 
 use super::{store_error, GroupError, GroupResult};
 use crate::event::EventBus;
-use caelumora_model::actor::ActorId;
-use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::group::{Group, GroupField, GroupId, GroupUpdateEvent};
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::Scope;
-use caelumora_model::security::Subject;
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreError, StoreResult, StoreResultExt, Stored};
-use caelumora_model::user::{User, UserId};
-use caelumora_model::value::name::ScopedName;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::event::{Announcing, GlobalEvent};
+use caelumora_domain::group::{Group, GroupField, GroupId, GroupUpdateEvent};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::Subject;
+use caelumora_domain::store::query::{Filter, Query};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_domain::user::{User, UserId};
+use caelumora_domain::value::name::ScopedName;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use caelumora_store::{Deleted, EntityStore, EntityStores};
 use chrono::Utc;

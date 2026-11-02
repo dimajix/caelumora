@@ -12,8 +12,8 @@
 //! channel into the agent's turn. Note that the `span_id` of an envelope chain
 //! is unrelated to `tracing`'s own spans, which only structure the log.
 
-use caelumora_model::actor::{ActorState, EventContext};
-use caelumora_model::agent::AgentId;
+use caelumora_domain::actor::{ActorState, EventContext};
+use caelumora_domain::agent::AgentId;
 use tracing::Span;
 
 /// The span for handling one envelope in a channel: which channel, who sent

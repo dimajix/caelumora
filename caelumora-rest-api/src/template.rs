@@ -1,9 +1,9 @@
 //! Session templates (issue 106), as a client offers them for a new session.
 
 use crate::scope::ScopeKind;
-use caelumora_model::template::{ScopeTemplate, SessionTemplate, SessionTemplateId};
-use caelumora_model::value::language::Language;
-use caelumora_model::value::time_zone::TimeZone;
+use caelumora_domain::template::{ScopeTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_domain::value::language::Language;
+use caelumora_domain::value::time_zone::TimeZone;
 use serde::Serialize;
 
 /// A session template, as a client offers it for a new session - its id,

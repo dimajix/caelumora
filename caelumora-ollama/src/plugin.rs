@@ -5,10 +5,10 @@
 use crate::client;
 use crate::client::OLLAMA_BACKEND;
 use anyhow::Result;
+use caelumora_domain::config::{AppConfig, BackendConfig};
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
-use caelumora_model::config::{AppConfig, BackendConfig};
 use caelumora_models::plugin::with_default_model;
 use serde_json::Value;
 

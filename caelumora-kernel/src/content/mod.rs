@@ -17,8 +17,8 @@ use crate::backend::Backends;
 use async_trait::async_trait;
 use caelumora_api::error::ContentError;
 use caelumora_api::terminal::ByteStream;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::digest::{ContentDigest, Digest};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::digest::{ContentDigest, Digest};
 use futures::StreamExt;
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -100,7 +100,7 @@ pub(crate) fn register_backends(backends: &mut Backends) {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use caelumora_model::digest;
+    use caelumora_domain::digest;
     use futures::stream;
     use local::LocalContentStorage;
 

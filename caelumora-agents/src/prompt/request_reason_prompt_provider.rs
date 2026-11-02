@@ -21,9 +21,9 @@ use crate::situation::Situation;
 use crate::tool::stop_tool::SILENCE_TOOL_NAME;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::actor::RequestReason;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptTexts};
+use caelumora_domain::actor::RequestReason;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::prompt_catalogue::{context, PromptTexts};
 use std::sync::Arc;
 
 pub const REQUEST_REASON_PROMPT_PROVIDER_KIND: &str = "request_reason_prompt_provider";
@@ -88,9 +88,9 @@ mod tests {
     use super::*;
     use crate::testing;
     use crate::testing::detached_actor_runtime;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
-    use caelumora_model::work::Work;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
+    use caelumora_domain::work::Work;
 
     /// What the provider tells in work asked for as `asked`, offered the
     /// tools named `tools`.

@@ -41,16 +41,18 @@ mod tests {
     use caelumora_api::component::service_of;
     use caelumora_api::component::{ComponentFacets, ComponentKind};
     use caelumora_api::component::{NoParams, Params};
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::config::AppConfig;
-    use caelumora_model::define_id;
-    use caelumora_model::group::Group;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::secret::SecretResult;
-    use caelumora_model::security::{Secured, SecurityAttributes};
-    use caelumora_model::store::query::NoField;
-    use caelumora_model::store::{EntityKind, NoEntity, Revision, StoreError, StoreResult, Stored};
-    use caelumora_model::type_map::TypeKey;
+    use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_domain::config::AppConfig;
+    use caelumora_domain::define_id;
+    use caelumora_domain::group::Group;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::secret::SecretResult;
+    use caelumora_domain::security::{Secured, SecurityAttributes};
+    use caelumora_domain::store::query::NoField;
+    use caelumora_domain::store::{
+        EntityKind, NoEntity, Revision, StoreError, StoreResult, Stored,
+    };
+    use caelumora_domain::type_map::TypeKey;
     use caelumora_security::secret::{SecretManager, SecretProvider};
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::documents::{DocumentOf, DocumentStorage};

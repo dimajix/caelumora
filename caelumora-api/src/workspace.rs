@@ -7,12 +7,12 @@
 use crate::error::StorageGone;
 use crate::terminal::{Shell, Terminal, TerminalError, TerminalReader};
 use async_trait::async_trait;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::Refused;
-use caelumora_model::store::StoreError;
-use caelumora_model::value::text::Description;
-use caelumora_model::value::ValueError;
-use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::security::Refused;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::value::text::Description;
+use caelumora_domain::value::ValueError;
+use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]

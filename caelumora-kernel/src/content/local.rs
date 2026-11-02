@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use caelumora_api::component::Params;
 use caelumora_api::error::ContentError;
 use caelumora_api::terminal::ByteStream;
-use caelumora_model::confidentiality::Classification;
+use caelumora_domain::confidentiality::Classification;
 use serde::Deserialize;
 use std::io::ErrorKind;
 use std::path::PathBuf;

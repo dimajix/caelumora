@@ -1,17 +1,17 @@
 //! The flow decisions (issues 133, 304): whether information may go where an act takes it, and
 //! whether someone is cleared for it (`ConfidentialityPolicy`, asked as
 //! `ConfidentialityQuestions`), and the rules Caelumora applies (`ConfidentialityRules`). What a
-//! classification is, and the one flow rule over classifications, are the model's
-//! (`caelumora_model::confidentiality`).
+//! classification is, and the one flow rule over classifications, are the domain's
+//! (`caelumora_domain::confidentiality`).
 
 use crate::privacy::PrivacyPolicy;
 use crate::{ActionType, Policies, SecurityContext};
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{Classification, Compartments, Place, Reading};
-use caelumora_model::config::AppConfig;
-use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::role::{RoleId, Roles};
-use caelumora_model::session::ChannelId;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::{Classification, Compartments, Place, Reading};
+use caelumora_domain::config::AppConfig;
+use caelumora_domain::privacy::SessionPrivacy;
+use caelumora_domain::role::{RoleId, Roles};
+use caelumora_domain::session::ChannelId;
 use std::fmt;
 
 /// The flow decisions (issues 133, 304): whether information may go where
@@ -427,14 +427,14 @@ impl ConfidentialityPolicy for ConfidentialityRules {
 mod tests {
     use super::*;
     use crate::OwnershipPolicy;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::confidentiality::testing::{classified, compartment, organisation};
-    use caelumora_model::confidentiality::Clearance;
-    use caelumora_model::confidentiality::Confidentiality::{self, *};
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::Stored;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::confidentiality::testing::{classified, compartment, organisation};
+    use caelumora_domain::confidentiality::Clearance;
+    use caelumora_domain::confidentiality::Confidentiality::{self, *};
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::session::{Session, SessionId};
+    use caelumora_domain::store::Stored;
+    use caelumora_domain::user::UserId;
     use std::sync::Arc;
 
     #[test]
@@ -642,7 +642,7 @@ mod tests {
 
     #[test]
     fn a_channel_reads_another_session_only_where_that_session_permits_it() {
-        use caelumora_model::privacy::PrivacyConfig;
+        use caelumora_domain::privacy::PrivacyConfig;
         let (alice, bob) = (UserId::new(), UserId::new());
         let hers = |policy, others: &[UserId]| SessionPrivacy {
             id: SessionId::new(),

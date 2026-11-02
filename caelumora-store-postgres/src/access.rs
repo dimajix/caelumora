@@ -2,9 +2,9 @@
 //! each document, and an admission as a condition of SQL over them.
 
 use crate::filter::Condition;
-use caelumora_model::actor::ActorId;
-use caelumora_model::security::{Grant, SecurityAttributes, Subject};
-use caelumora_model::store::query::Filter;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
+use caelumora_domain::store::query::Filter;
 use caelumora_security::Admission;
 use sqlx::postgres::PgArguments;
 use sqlx::query::QueryAs;
@@ -138,9 +138,9 @@ impl Admitted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::group::GroupId;
-    use caelumora_model::role::RoleId;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::group::GroupId;
+    use caelumora_domain::role::RoleId;
+    use caelumora_domain::user::UserId;
 
     #[test]
     fn a_document_is_entered_by_its_owner_and_each_entry_of_its_list() {

@@ -30,12 +30,14 @@ use caelumora_api::component::Face;
 use caelumora_api::component::{ComponentResult, Services};
 use caelumora_api::library::Library;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
-use caelumora_model::approval::ApprovalRule;
-use caelumora_model::component::ComponentConfig;
-use caelumora_model::config::{AppConfig, BackendConfig};
-use caelumora_model::prompt_catalogue::{PromptCatalogue, DEFAULT_VARIANT, KERNEL, KERNEL_PROMPTS};
-use caelumora_model::store::{StoreResult, Stored};
-use caelumora_model::type_map::{ErasedArc, TypeKey};
+use caelumora_domain::approval::ApprovalRule;
+use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::config::{AppConfig, BackendConfig};
+use caelumora_domain::prompt_catalogue::{
+    PromptCatalogue, DEFAULT_VARIANT, KERNEL, KERNEL_PROMPTS,
+};
+use caelumora_domain::store::{StoreResult, Stored};
+use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_security::confidentiality::ConfidentialityPolicy;
 use caelumora_security::secret::{SecretManager, SecretProvider};
 use caelumora_security::{AccessPolicy, Policies};
@@ -690,7 +692,7 @@ mod tests {
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
     use caelumora_api::model::ModelClient;
-    use caelumora_model::prompt_catalogue::PromptVariant;
+    use caelumora_domain::prompt_catalogue::PromptVariant;
     use caelumora_security::AllowAllPolicy;
     use std::fs;
 

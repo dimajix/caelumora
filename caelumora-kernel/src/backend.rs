@@ -25,8 +25,8 @@ use caelumora_api::component::{
     config_of_params, ComponentError, ComponentResult, NoParams, Params,
 };
 use caelumora_api::error::StorageGone;
-use caelumora_model::config::BackendConfig;
-use caelumora_model::type_map::TypeKey;
+use caelumora_domain::config::BackendConfig;
+use caelumora_domain::type_map::TypeKey;
 use caelumora_store::memory::MemoryStore;
 use caelumora_store::PersistenceBackend;
 use serde_json::Value;
@@ -273,8 +273,8 @@ impl Backends {
 mod tests {
     use super::*;
     use crate::user_provider::{Credential, UserManager, UserProvider};
-    use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::user::{User, UserId};
+    use caelumora_domain::role::{RoleId, Roles};
+    use caelumora_domain::user::{User, UserId};
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_security::secret::{SecretManager, SecretProvider};
     use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};

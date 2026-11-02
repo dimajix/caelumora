@@ -32,10 +32,10 @@ use caelumora_api::component::{
     config_of_params, ComponentError, ComponentImpl, ComponentResult, Params,
 };
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_model::actor::{
+use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason,
 };
-use caelumora_model::message::Message;
+use caelumora_domain::message::Message;
 use caelumora_security::SecurityContext;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -551,16 +551,16 @@ mod tests {
     };
     use crate::testing::test_registry;
     use crate::testing::StandIn;
-    use caelumora_model::actor::EventContext;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::approval::ApprovalRequest;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::history::Audience;
-    use caelumora_model::message::{MessageId, MessageRole};
-    use caelumora_model::tool::ToolCall;
-    use caelumora_model::turn::GivenUpReason;
-    use caelumora_model::user::UserId;
-    use caelumora_model::work::TurnId;
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::ApprovalRequest;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::history::Audience;
+    use caelumora_domain::message::{MessageId, MessageRole};
+    use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::turn::GivenUpReason;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::work::TurnId;
     use caelumora_security::SecurityContext;
     use caelumora_store::Persistence;
     use chrono::Utc;
@@ -831,7 +831,7 @@ mod tests {
     /// channel builds it (issue 174).
     async fn built(config: &[(&str, &str)]) -> Arc<dyn Moderator> {
         use caelumora_api::component::Services;
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
         let context = BuildContext::new(SecurityContext::default(), Services::empty());
@@ -1243,7 +1243,7 @@ mod tests {
     #[tokio::test]
     async fn the_limit_of_hops_is_a_parameter_of_the_moderator() {
         use caelumora_api::component::Services;
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
         let context = BuildContext::new(SecurityContext::default(), Services::empty());
@@ -1328,7 +1328,7 @@ mod tests {
     #[tokio::test]
     async fn the_bound_on_span_depth_is_a_parameter_of_the_moderator() {
         use caelumora_api::component::Services;
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
         let store = Persistence::in_memory();
         let registry = Arc::new(test_registry(&store));
         let context = BuildContext::new(SecurityContext::default(), Services::empty());
@@ -1650,7 +1650,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_answer_of_nothing_to_hear_asks_nobody() {
-        use caelumora_model::tool::{ToolCallResult, ToolVisibility};
+        use caelumora_domain::tool::{ToolCallResult, ToolVisibility};
         let classified = Classification::CHANNEL_DEFAULT;
         let call = ToolCall {
             id: Some("1".to_string()),

@@ -11,11 +11,11 @@
 use crate::access::Access;
 use crate::{Deleted, EntityStore, Presence};
 use async_trait::async_trait;
-use caelumora_model::removal::{Removal, RemovalId};
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::store::query::{Cursor, FieldPath, Filter, Page, Query};
-use caelumora_model::store::{Revision, StoreError, StoreResult, StoreResultExt, Stored};
-use caelumora_model::value::name::ScopedName;
+use caelumora_domain::removal::{Removal, RemovalId};
+use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::store::query::{Cursor, FieldPath, Filter, Page, Query};
+use caelumora_domain::store::{Revision, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_domain::value::name::ScopedName;
 use caelumora_security::{ActionType, Admission, Policies, SecurityContext};
 use serde_json::Value;
 use std::fmt::{self, Debug, Display};
@@ -439,11 +439,11 @@ mod tests {
     use super::*;
     use crate::testing::ContendedStore;
     use crate::EntityStores;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::group::{Group, GroupField};
-    use caelumora_model::scope::Scope;
-    use caelumora_model::store::query::ordered_after;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::group::{Group, GroupField};
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::store::query::ordered_after;
+    use caelumora_domain::user::UserId;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 

@@ -3,8 +3,8 @@
 
 use super::{ChannelActor, ChannelError, ChannelLoop};
 use anyhow::Result;
-use caelumora_model::approval::ApprovalRule;
-use caelumora_model::confidentiality::Classification;
+use caelumora_domain::approval::ApprovalRule;
+use caelumora_domain::confidentiality::Classification;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Reclassified, SecurityContext};
 use tracing::info;
@@ -155,13 +155,13 @@ mod tests {
     use crate::error::is_forbidden;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionManager};
-    use caelumora_model::actor::Rejection;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::message::{Message, MessageId};
-    use caelumora_model::security::{Grant, Subject};
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_domain::actor::Rejection;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::{Message, MessageId};
+    use caelumora_domain::security::{Grant, Subject};
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::store::StoreError;
+    use caelumora_domain::user::testing::make_user;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use std::sync::Arc;
@@ -199,8 +199,8 @@ mod tests {
     #[tokio::test]
     async fn a_channel_and_its_messages_are_reclassified_by_who_may() {
         use crate::channel::ChannelError;
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_security::confidentiality::ConfidentialityRules;
 
         let compartments = Compartments::new([
@@ -299,7 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn renaming_a_channel_is_stored_and_only_the_owner_may() {
-        use caelumora_model::actor::ActorId;
+        use caelumora_domain::actor::ActorId;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();

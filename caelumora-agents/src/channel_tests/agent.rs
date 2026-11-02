@@ -12,19 +12,19 @@ use crate::tool::stop_tool::STOP_TOOL_KIND;
 use crate::turn::MAX_MODEL_CALLS;
 use anyhow::Result;
 use caelumora_api::model::{ModelClient, ModelError, ModelProfileProvider, ModelResult};
-use caelumora_model::agent::{
+use caelumora_domain::agent::{
     AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused,
 };
-use caelumora_model::approval::{ApprovalRequest, ApprovalResponse};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::ModelProfile;
-use caelumora_model::history::HistoryEntry;
-use caelumora_model::message::{MessageEvent, MessageRole};
-use caelumora_model::tool::{Tool, ToolResultStatus};
-use caelumora_model::transcript::TranscriptEntry;
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::work::TurnId;
+use caelumora_domain::approval::{ApprovalRequest, ApprovalResponse};
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::ModelProfile;
+use caelumora_domain::history::HistoryEntry;
+use caelumora_domain::message::{MessageEvent, MessageRole};
+use caelumora_domain::tool::{Tool, ToolResultStatus};
+use caelumora_domain::transcript::TranscriptEntry;
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::work::TurnId;
 use caelumora_security::AllowAllPolicy;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -546,7 +546,7 @@ async fn what_a_user_says_during_a_turn_is_answered_after_it() {
 /// stands, and carries the command out where it came.
 #[tokio::test]
 async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
-    use caelumora_model::component::ComponentDescriptor;
+    use caelumora_domain::component::ComponentDescriptor;
     const SAID: usize = 200;
     let model = Arc::new(Gated::saying(&["first", "second"], 0));
     let components = ComponentConfig {
@@ -1116,7 +1116,7 @@ async fn an_agent_asked_several_times_during_a_turn_answers_once_after_it() {
 
 #[tokio::test]
 async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let answer = |text: &str, tool_calls| Message {
         role: MessageRole::Assistant,
@@ -1168,7 +1168,7 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
 
 #[tokio::test]
 async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     // One answer only: a second call of the model would never return.
     let bye = Message {
@@ -1216,7 +1216,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
 /// which sends it no message, it tells them so too.
 #[tokio::test]
 async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let bye = Message {
         role: MessageRole::Assistant,
@@ -1287,7 +1287,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
 
 #[tokio::test]
 async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     // Two steps, each calling a tool more than half as often as a turn may
     // call its model (issue 412).
@@ -1364,7 +1364,7 @@ async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_answer() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let said = |content: &str| Message {
         role: MessageRole::Assistant,
@@ -1490,7 +1490,7 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
 
 #[tokio::test]
 async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     // A plan: a call, its result, the steps' internal answers and the
     // final one - every kind of message a turn produces.
@@ -1582,7 +1582,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
 
 #[tokio::test]
 async fn a_turn_is_stored_with_the_step_that_comes_next() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     // The model calls a tool that needs no approval, and then never
     // answers again: the agent waits in `Planning` with the result.
@@ -1848,7 +1848,7 @@ impl ModelProfileProvider for FailsAfter {
 
 #[tokio::test]
 async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_told() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     // The model calls a tool that needs no approval, and fails when
     // asked about its result.
@@ -1923,7 +1923,7 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
 
 #[tokio::test]
 async fn an_agent_removed_during_a_turn_gives_it_up() {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     // The model calls a tool, and never answers again.
     let calculate = Message {
@@ -1987,7 +1987,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
 /// its transcript as it stands, resolved as a turn's context is.
 fn given_next(stored: &AgentChannelState, agent: AgentId) -> Vec<Message> {
     use crate::testing::catalogue;
-    use caelumora_model::context::{ContextItem, ContextRef, ContextResolver};
+    use caelumora_domain::context::{ContextItem, ContextRef, ContextResolver};
     let reference = ContextRef { transcript: stored.transcript.digest(), ..ContextRef::default() };
     ContextResolver::of(stored, &catalogue())
         .resolve(&reference, TurnId::new(), ActorId::Agent(agent))
@@ -2003,7 +2003,7 @@ fn given_next(stored: &AgentChannelState, agent: AgentId) -> Vec<Message> {
 }
 
 fn calculator() -> (Message, ComponentConfig) {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
     let calculate = Message {
         id: MessageId::new(),
         role: MessageRole::Assistant,
@@ -2030,7 +2030,7 @@ fn calculator() -> (Message, ComponentConfig) {
 
 #[tokio::test]
 async fn lowering_the_channel_gives_up_a_running_turn() {
-    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_domain::confidentiality::Confidentiality;
 
     // The model calls a tool, and then is asked about its result for
     // ever.
@@ -2105,7 +2105,7 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
 
 #[tokio::test]
 async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
-    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_domain::confidentiality::Confidentiality;
 
     // Nobody approves the call.
     let (call, components) = a_call_needing_approval();
@@ -2129,7 +2129,7 @@ async fn lowering_the_channel_ends_a_turn_waiting_for_approval_at_once() {
 
 #[tokio::test]
 async fn raising_the_channel_lets_a_running_turn_go_on() {
-    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_domain::confidentiality::Confidentiality;
     let stuck = with_an_agent_under(
         Arc::new(AllowAllPolicy::new()),
         Arc::new(NeverAnswers),
@@ -2197,7 +2197,7 @@ async fn a_cancel_ends_a_turn_waiting_for_approval_at_once() {
 /// A call of `sleep` that needs approval, and the component that gives
 /// it, for an agent to wait for its approval.
 fn a_call_needing_approval() -> (Message, ComponentConfig) {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
         role: MessageRole::Assistant,
@@ -2224,7 +2224,7 @@ fn a_call_needing_approval() -> (Message, ComponentConfig) {
 
 #[tokio::test]
 async fn a_rule_of_the_channel_asks_for_a_call_its_tool_would_run() {
-    use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
+    use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 
     let (call, mut components) = a_call_needing_approval();
     components.component_nodes[0].params = serde_json::json!({ "requires_approval": false });
@@ -2336,7 +2336,7 @@ async fn with_an_agent_in_a_long_tool() -> (Stuck, Arc<Scripted>) {
 /// An agent whose model calls a tool that sleeps a minute, once for
 /// each of `calls`, by their ids, and then answers "never given".
 async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
         role: MessageRole::Assistant,
@@ -2759,8 +2759,8 @@ async fn an_agent_removed_while_waiting_for_approval_gives_up_its_turn() {
 
 #[tokio::test]
 async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
-    use caelumora_model::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     // A rule asks for every `create_plan` (issue 13); this call's
     // arguments are no plan.
@@ -2939,8 +2939,8 @@ async fn a_removed_agent_gives_its_turn_up_says_so_and_leaves_an_idle_state_behi
 
 #[tokio::test]
 async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_the_tool_traffic() {
-    use caelumora_model::message::MessageId;
-    use caelumora_model::tool::{ToolCall, ToolCallResult, ToolVisibility};
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolVisibility};
     let (channel, _, agent, _) =
         agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default())
             .await;
@@ -2999,7 +2999,7 @@ async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_t
 
 #[tokio::test]
 async fn an_agent_that_starts_takes_in_what_it_missed_as_what_it_hears() {
-    use caelumora_model::message::MessageId;
+    use caelumora_domain::message::MessageId;
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor::new("filter", "test_no_secrets")],
     };
@@ -3078,7 +3078,7 @@ async fn all_an_agent_was_offered_is_in_its_channels_history_and_what_passes_its
 /// which it answers by calling the sleep tool, and then by `afterwards`,
 /// one answer a call.
 async fn asked_to_nap(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>) -> Stuck {
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let nap = ToolCall {
         id: Some("1".to_string()),

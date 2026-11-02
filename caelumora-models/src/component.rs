@@ -18,13 +18,13 @@
 use crate::manager::ModelManager;
 use caelumora_api::component::{config_of_params, ComponentFacets, ComponentKind, Params};
 use caelumora_api::model::{ModelClient, ModelProfileProvider};
-use caelumora_kernel::component::ComponentRegistry;
-use caelumora_kernel::kernel::Acting;
-use caelumora_model::context::{
+use caelumora_domain::context::{
     message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle,
     SystemMessages,
 };
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptVariant};
+use caelumora_domain::prompt_catalogue::{PromptCatalogue, PromptVariant};
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::kernel::Acting;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -109,17 +109,17 @@ mod tests {
     use async_trait::async_trait;
     use caelumora_api::component::{ComponentContainer, ComponentError, ComponentResult};
     use caelumora_api::model::{unlabelled_message, ModelResult};
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_domain::config::{AppConfig, BackendConfig};
+    use caelumora_domain::message::{Message, MessageEvent};
+    use caelumora_domain::tool::Tool;
+    use caelumora_domain::type_map::TypeKey;
     use caelumora_kernel::backend::Backends;
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::kernel::{Kernel, KernelBuilder};
     use caelumora_kernel::plugin::Plugin;
     use caelumora_kernel::testing::TestKernel;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-    use caelumora_model::config::{AppConfig, BackendConfig};
-    use caelumora_model::message::{Message, MessageEvent};
-    use caelumora_model::tool::Tool;
-    use caelumora_model::type_map::TypeKey;
     use caelumora_security::SecurityContext;
     use futures::stream::{self, BoxStream, StreamExt};
     use serde_json::{json, Value};

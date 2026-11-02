@@ -7,10 +7,10 @@ use argon2::password_hash::Error as HashError;
 use argon2::{Algorithm, Argon2, PasswordHash, PasswordVerifier};
 use async_trait::async_trait;
 use caelumora_api::component::{service_of, ComponentError, Params};
-use caelumora_model::config::parse_yaml;
-use caelumora_model::role::Roles;
-use caelumora_model::user::{User, UserId};
-use caelumora_model::value::name::Name;
+use caelumora_domain::config::parse_yaml;
+use caelumora_domain::role::Roles;
+use caelumora_domain::user::{User, UserId};
+use caelumora_domain::value::name::Name;
 use caelumora_security::confidentiality::ConfidentialityPolicy;
 use serde::Deserialize;
 use std::collections::HashSet;
@@ -287,8 +287,8 @@ fn exposed(mode: u32) -> bool {
 mod tests {
     use super::*;
     use argon2::{PasswordHasher, Version};
-    use caelumora_model::config::AppConfig;
-    use caelumora_model::role::{RoleError, RoleId};
+    use caelumora_domain::config::AppConfig;
+    use caelumora_domain::role::{RoleError, RoleId};
     use tempfile::TempDir;
 
     /// The hash of `password`, made cheaply - a real one takes long on purpose.

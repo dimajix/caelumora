@@ -7,8 +7,8 @@ use axum::{
     extract::State,
     response::sse::{Event, Sse},
 };
+use caelumora_domain::snapshot::Detail;
 use caelumora_kernel::event::SubscriptionTopic;
-use caelumora_model::snapshot::Detail;
 use caelumora_rest_api::stream::{GlobalSnapshot, StreamOptions};
 use futures::stream::Stream;
 use std::convert::Infallible;

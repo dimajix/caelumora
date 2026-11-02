@@ -14,25 +14,25 @@ use caelumora_api::component::Face;
 use caelumora_api::error::AttachmentResult;
 use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
 use caelumora_api::runtime::{ActorRuntime, CallPermit, OwnRecord};
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentChannelState, AgentState, Personality};
-use caelumora_model::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
-use caelumora_model::channel::{self, Channel, ChannelId};
-use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::{Classification, Place};
-use caelumora_model::content::ContentRef;
-use caelumora_model::context::ModelProfile;
-use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::prompt_catalogue::PromptCatalogue;
-use caelumora_model::question::{QuestionError, Questions};
-use caelumora_model::secret::Secrets;
-use caelumora_model::session::SessionId;
-use caelumora_model::store::StoreResult;
-use caelumora_model::tool::{ToolCall, ToolMedia};
-use caelumora_model::type_map::{ErasedArc, TypeKey};
-use caelumora_model::value::time_zone::TimeZone;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{Agent, AgentChannelState, AgentState, Personality};
+use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
+use caelumora_domain::channel::{self, Channel, ChannelId};
+use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::confidentiality::{Classification, Place};
+use caelumora_domain::content::ContentRef;
+use caelumora_domain::context::ModelProfile;
+use caelumora_domain::event::{Announcing, GlobalEvent};
+use caelumora_domain::memory::{MemoryChange, MemoryId, MemoryOrigin};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::prompt_catalogue::PromptCatalogue;
+use caelumora_domain::question::{QuestionError, Questions};
+use caelumora_domain::secret::Secrets;
+use caelumora_domain::session::SessionId;
+use caelumora_domain::store::StoreResult;
+use caelumora_domain::tool::{ToolCall, ToolMedia};
+use caelumora_domain::type_map::{ErasedArc, TypeKey};
+use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use chrono::Utc;
@@ -158,10 +158,10 @@ impl AgentRuntime {
     fn made_up(
         participant: &ParticipantRuntime,
     ) -> (Arc<AgentController>, Arc<PersonalityController>) {
-        use caelumora_model::agent::testing::make_personality;
-        use caelumora_model::scope::Scope;
-        use caelumora_model::user::UserId;
-        use caelumora_model::value::name::ScopedName;
+        use caelumora_domain::agent::testing::make_personality;
+        use caelumora_domain::scope::Scope;
+        use caelumora_domain::user::UserId;
+        use caelumora_domain::value::name::ScopedName;
         let id = participant.actor.as_agent_id().expect("the runtime of an agent");
         let personality = make_personality("plain");
         let name =
@@ -411,10 +411,10 @@ mod tests {
     use super::*;
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
-    use caelumora_model::actor::ActorState;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::channel::testing::bare_channel;
-    use caelumora_model::session::testing::bare_session;
+    use caelumora_domain::actor::ActorState;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::testing::bare_channel;
+    use caelumora_domain::session::testing::bare_session;
 
     /// What an agent keeps in its channel it keeps under its own id, and reads back; another
     /// agent of the channel reads its own.

@@ -5,11 +5,11 @@ use caelumora_agents::turn::Turn;
 use caelumora_api::component::{config_of_params, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::remote::ExpiringCache;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::question::Answers;
-use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::secret::{SecretError, Secrets};
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::question::Answers;
+use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::secret::{SecretError, Secrets};
+use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
 use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -417,8 +417,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::Confidentiality;
-    use caelumora_model::remote::RemoteAuthConfig;
+    use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::remote::RemoteAuthConfig;
     use serde_json::json;
 
     #[tokio::test]

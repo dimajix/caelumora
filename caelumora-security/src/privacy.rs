@@ -1,14 +1,14 @@
 //! The policies of privacy between sessions (issue 134): whom a session lets read what was said in
 //! it (`PrivacyPolicy`), one for each policy a session may choose (`PrivacyConfig`). What a session
-//! is to privacy is the model's (`caelumora_model::privacy`).
+//! is to privacy is the domain's (`caelumora_domain::privacy`).
 //!
 //! A policy has to be transitive: what it lets another session read, that session passes on by its
 //! own policy, and together they must not break the first one's promise. `SameOwner` and
 //! `SharedAudience` are, also mixed; a grant to a session named by the owner would not be - that
 //! session's owner could pass it on to anyone.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::privacy::{PrivacyConfig, SessionPrivacy};
 use std::fmt::Debug;
 
 /// Whom a session lets read what was said in it. Asked only across
@@ -64,9 +64,9 @@ impl PrivacyPolicy for SharedAudience {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::user::UserId;
 
     /// Whether `reader` may read what was said in `source`, as `source`'s policy decides.
     fn permits(source: &SessionPrivacy, reader: &SessionPrivacy) -> bool {

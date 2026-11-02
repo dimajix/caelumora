@@ -13,16 +13,16 @@
 
 use crate::extension::{SkillError, SkillResult};
 use crate::skill::{Skill, SkillBody, SkillId, SkillUpdateEvent};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::store::{StoreError, StoreResultExt};
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::text::Description;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::scoped::{ScopeHolders, ScopeMember};
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::Scope;
-use caelumora_model::store::{StoreError, StoreResultExt};
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::text::Description;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;

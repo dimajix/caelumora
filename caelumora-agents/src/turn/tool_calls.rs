@@ -13,15 +13,15 @@ use crate::tool::{
     abandoned_result, declined_result, denied_result, skipped_result, timed_out_result,
     unanswered_result, TurnEnd,
 };
-use caelumora_model::actor::{ActorEvent, ActorId};
-use caelumora_model::approval::{ApprovalDecision, ApprovalId, ApprovalStatus};
-use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::prompt_catalogue::PromptTexts;
-use caelumora_model::question::{Answers, QuestionError, QuestionId, Response};
-use caelumora_model::tool::{
+use caelumora_domain::actor::{ActorEvent, ActorId};
+use caelumora_domain::approval::{ApprovalDecision, ApprovalId, ApprovalStatus};
+use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::prompt_catalogue::PromptTexts;
+use caelumora_domain::question::{Answers, QuestionError, QuestionId, Response};
+use caelumora_domain::tool::{
     ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus,
 };
-use caelumora_model::turn::TurnState;
+use caelumora_domain::turn::TurnState;
 use chrono::Utc;
 use std::mem;
 
@@ -354,12 +354,12 @@ fn finish(call: &mut ToolCallState, mut result: ToolCallResult) {
 mod tests {
     use super::*;
     use crate::testing;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::approval::ToolMatcher;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::question::{Addressee, Question, Questions};
-    use caelumora_model::tool::ToolVisibility;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::ToolMatcher;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::question::{Addressee, Question, Questions};
+    use caelumora_domain::tool::ToolVisibility;
+    use caelumora_domain::user::UserId;
 
     fn call(name: &str) -> ToolCall {
         ToolCall {

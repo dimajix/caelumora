@@ -11,8 +11,8 @@ pub use kinds::AgentKinds;
 pub use manager::{ActorManager, Shown};
 
 use caelumora_api::actor::Answering;
-use caelumora_model::actor::EventContext;
-use caelumora_model::session::{ChannelId, SessionId};
+use caelumora_domain::actor::EventContext;
+use caelumora_domain::session::{ChannelId, SessionId};
 use caelumora_security::SecurityContext;
 use uuid::Uuid;
 
@@ -71,7 +71,7 @@ impl ChannelAnswering for Answering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::{ActorEvent, ActorId};
+    use caelumora_domain::actor::{ActorEvent, ActorId};
 
     /// What the channel says of an event in its own name: in its place,
     /// whatever its context names, in the span of the event and answering

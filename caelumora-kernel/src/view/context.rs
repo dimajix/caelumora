@@ -6,21 +6,21 @@
 //! its answers is what the remote agent was given in the call that produced
 //! it (issue 205).
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelState, AgentId};
-use caelumora_model::chain::Position;
-use caelumora_model::channel::ChannelId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{ContextResolver, ResolvedContext};
-use caelumora_model::digest::Digest;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{AgentChannelState, AgentId};
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{ContextResolver, ResolvedContext};
+use caelumora_domain::digest::Digest;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::history::History;
-use caelumora_model::history::{HistoryPage, Reader};
-use caelumora_model::message::MessageId;
-use caelumora_model::note::Note;
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptError};
-use caelumora_model::store::StoreError;
-use caelumora_model::transcript::Transcript;
+use caelumora_domain::history::History;
+use caelumora_domain::history::{HistoryPage, Reader};
+use caelumora_domain::message::MessageId;
+use caelumora_domain::note::Note;
+use caelumora_domain::prompt_catalogue::{PromptCatalogue, PromptError};
+use caelumora_domain::store::StoreError;
+use caelumora_domain::transcript::Transcript;
 use caelumora_store::history::HistoryStore;
 use caelumora_store::transcript::TranscriptStore;
 use std::collections::HashSet;
@@ -60,9 +60,9 @@ impl AgentContextView {
         reason = "test code: what fails here fails the test that runs it"
     )]
     pub async fn of_state(actor: ActorId, mut state: AgentChannelState, history: History) -> Self {
-        use caelumora_model::channel::ChannelState;
-        use caelumora_model::history::{Audience, HistoryEntry, Recorded};
-        use caelumora_model::prompt_catalogue::{KERNEL, KERNEL_PROMPTS};
+        use caelumora_domain::channel::ChannelState;
+        use caelumora_domain::history::{Audience, HistoryEntry, Recorded};
+        use caelumora_domain::prompt_catalogue::{KERNEL, KERNEL_PROMPTS};
         use caelumora_store::memory::MemoryStore;
         use caelumora_store::StateStore;
         use chrono::Utc;
@@ -289,15 +289,15 @@ pub enum AgentContextError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::confidentiality::Confidentiality;
-    use caelumora_model::context::{ContextItem, FrameRef, PromptRef};
-    use caelumora_model::digest::{self, prompt};
-    use caelumora_model::history::HistoryEntry;
-    use caelumora_model::message::Message;
-    use caelumora_model::message::MessageRole;
-    use caelumora_model::work::TurnId;
-    use caelumora_model::work::Work;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::context::{ContextItem, FrameRef, PromptRef};
+    use caelumora_domain::digest::{self, prompt};
+    use caelumora_domain::history::HistoryEntry;
+    use caelumora_domain::message::Message;
+    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::work::TurnId;
+    use caelumora_domain::work::Work;
 
     /// The items of the agent's history as the view reads them.
     async fn items_of(view: &AgentContextView) -> Vec<HistoryEntry> {
@@ -493,7 +493,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_context_of_a_message_on_a_branch_the_state_does_not_hold_is_read_from_the_store() {
-        use caelumora_model::channel::ChannelState;
+        use caelumora_domain::channel::ChannelState;
         use caelumora_store::memory::MemoryStore;
         use caelumora_store::StateStore;
         let agent = AgentId::new();

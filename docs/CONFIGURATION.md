@@ -1,7 +1,7 @@
 # Configuration
 
 Both programs - `caelumora-app` and the TUI - read one YAML file, given with `--config`
-(`AppConfig`, `caelumora_model::config`). `examples/config.yaml` is the configuration for local
+(`AppConfig`, `caelumora_domain::config`). `examples/config.yaml` is the configuration for local
 development, with every section and its default in comments.
 
 Every section may be left out and then takes its default. A key the configuration does not know is
@@ -94,7 +94,7 @@ the host.**
 What the kernel tells a model in prose - its prompt parts, the descriptions of its tools, what it is
 told of a tool call - are the texts of the prompt catalogue (issue 57, see
 [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), compiled in, one file per namespace: the
-kernel's (`caelumora-model/src/prompts.yaml`), the agents' (`caelumora-agents/src/prompts.yaml`),
+kernel's (`caelumora-domain/src/prompts.yaml`), the agents' (`caelumora-agents/src/prompts.yaml`),
 and those of the plugins and libraries (`skills`, `compaction`, `workspace_tools`, `artifacts`,
 `decision`, each in its `src/prompts.yaml`). `prompts` names variants of them:
 

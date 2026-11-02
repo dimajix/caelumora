@@ -14,8 +14,8 @@ use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::context::{KnowledgeRef, PromptPart};
-use caelumora_model::message::MessageRole;
+use caelumora_domain::context::{KnowledgeRef, PromptPart};
+use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
 pub const EXTERNAL_CONTEXT_PROVIDER_KIND: &str = "external_context_provider";
@@ -78,10 +78,10 @@ mod tests {
     use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
     use crate::prompt::PromptPosition;
     use crate::testing::detached_actor_runtime;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::component::ComponentFailPolicy;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::work::Work;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::component::ComponentFailPolicy;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::work::Work;
 
     fn fixed(
         id: &str,

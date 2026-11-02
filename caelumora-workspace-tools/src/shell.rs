@@ -14,9 +14,9 @@
 use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
 use caelumora_api::terminal::{CommandState, Shell};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation};
-use caelumora_model::workspace::CommandStatus;
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation};
+use caelumora_domain::workspace::CommandStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::mem;
@@ -228,10 +228,10 @@ mod tests {
     use crate::terminal_tool::TerminalTool;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
+    use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::approval::ArgumentMatcher;
+    use caelumora_domain::prompt_catalogue::PromptCatalogue;
     use caelumora_kernel::workspace::testing::session_with_workspace;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::approval::ArgumentMatcher;
-    use caelumora_model::prompt_catalogue::PromptCatalogue;
     use std::collections::BTreeMap;
 
     fn the_tool() -> TerminalTool {

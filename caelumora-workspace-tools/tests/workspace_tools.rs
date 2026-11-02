@@ -8,16 +8,16 @@ use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
     asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_scripted, ONCE_MODEL_KIND,
 };
+use caelumora_domain::actor::{ActorEvent, ActorId};
+use caelumora_domain::agent::Personality;
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_domain::confidentiality::{Classification, Confidentiality};
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::Grant;
+use caelumora_domain::tool::ToolResultStatus;
+use caelumora_domain::user::UserId;
 use caelumora_kernel::testing::World;
 use caelumora_kernel::view::Viewer;
-use caelumora_model::actor::{ActorEvent, ActorId};
-use caelumora_model::agent::Personality;
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::confidentiality::{Classification, Confidentiality};
-use caelumora_model::scope::Scope;
-use caelumora_model::security::Grant;
-use caelumora_model::tool::ToolResultStatus;
-use caelumora_model::user::UserId;
 use caelumora_workspace_tools::library::WorkspaceToolsLibrary;
 use caelumora_workspace_tools::terminal_tool::TERMINAL_TOOL_KIND;
 use serde_json::Value;

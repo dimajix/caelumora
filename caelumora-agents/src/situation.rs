@@ -3,7 +3,7 @@
 //! and bound by what, what it has seen so far, the agent's states,
 //! and its session to navigate. A piece of work is a turn of an agent run
 //! here or an external agent's exchange with its remote agent - both a
-//! `Work` in the model; a [`Situation`] is what both kinds have. What only a
+//! `Work` in the domain; a [`Situation`] is what both kinds have. What only a
 //! turn has - staged changes, tool calls, the plan, what it says and does in
 //! its channel - is `Turn`'s, which reads through its situation
 //! (`Turn::situation`) and passes none of it on.
@@ -14,16 +14,16 @@
 
 use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
 use caelumora_api::runtime::ActorRuntime;
-use caelumora_model::actor::{ActorId, RequestReason};
-use caelumora_model::agent::{AgentChannelState, AgentId, AgentState};
-use caelumora_model::confidentiality::{Classification, Place};
-use caelumora_model::context::{ContextResolver, ModelProfile};
-use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_model::secret::Secrets;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::tool::ToolSet;
-use caelumora_model::value::time_zone::TimeZone;
-use caelumora_model::work::Work;
+use caelumora_domain::actor::{ActorId, RequestReason};
+use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::confidentiality::{Classification, Place};
+use caelumora_domain::context::{ContextResolver, ModelProfile};
+use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
+use caelumora_domain::secret::Secrets;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::tool::ToolSet;
+use caelumora_domain::value::time_zone::TimeZone;
+use caelumora_domain::work::Work;
 use std::sync::Arc;
 
 /// The situation of the work under way of an agent in its channel, to

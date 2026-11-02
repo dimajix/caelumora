@@ -10,12 +10,12 @@ use crate::channel::ChannelLoop;
 use crate::command::CommandExecutor;
 use crate::controller::{ChannelController, SessionController};
 use crate::event::EventSubscription;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::channel::{Channel, ChannelId};
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::session::SessionId;
-use caelumora_model::store::StoreResult;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::channel::{Channel, ChannelId};
+use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::session::SessionId;
+use caelumora_domain::store::StoreResult;
 use caelumora_security::{AccessPolicy, SecurityContext};
 use std::sync::Arc;
 

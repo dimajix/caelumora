@@ -9,10 +9,10 @@
 
 use crate::skill::{Skill, SkillId};
 use async_trait::async_trait;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::scope::Scope;
-use caelumora_model::store::StoreError;
-use caelumora_model::value::ValueError;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::value::ValueError;
 
 /// The skills an agent's work may load where it reads from.
 #[async_trait]

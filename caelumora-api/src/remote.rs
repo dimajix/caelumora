@@ -1,7 +1,7 @@
 //! What every component that talks to a remote system over HTTP shares besides its endpoint
-//! (`caelumora_model::remote`): how its errors are described, without the URL a client crate writes
-//! into them (issue 188), and how what it reads of its remote side is kept (`ExpiringCache`, issue
-//! 126). Public for the component kinds outside the kernel, such as `a2a_agent` (issue 326).
+//! (`caelumora_domain::remote`): how its errors are described, without the URL a client crate
+//! writes into them (issue 188), and how what it reads of its remote side is kept (`ExpiringCache`,
+//! issue 126). Public for the component kinds outside the kernel, such as `a2a_agent` (issue 326).
 
 use arc_swap::ArcSwapOption;
 use reqwest::Error;

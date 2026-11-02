@@ -6,16 +6,16 @@ use crate::controller::WorkspaceController;
 use crate::project;
 use crate::scoped::purge_for_good;
 use anyhow::{Error, Result};
-use caelumora_model::approval::ApprovalRule;
-use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::group::GroupId;
-use caelumora_model::privacy::PrivacyConfig;
-use caelumora_model::project::{Project, ProjectId};
-use caelumora_model::scope::Scope;
-use caelumora_model::security::{Grant, Subject};
-use caelumora_model::session::Session;
-use caelumora_model::store::{StoreError, StoreResultExt, Stored};
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_domain::approval::ApprovalRule;
+use caelumora_domain::event::{Announcing, GlobalEvent};
+use caelumora_domain::group::GroupId;
+use caelumora_domain::privacy::PrivacyConfig;
+use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{Grant, Subject};
+use caelumora_domain::session::Session;
+use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
+use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::{ActionType, Enforcement, SecurityContext};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -315,21 +315,21 @@ mod tests {
 
     use crate::session::testing::*;
     use crate::view::Viewer;
-    use caelumora_model::security::{Grant, Subject};
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::session::Session;
-    use caelumora_model::store::StoreError;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_domain::security::{Grant, Subject};
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::Session;
+    use caelumora_domain::store::StoreError;
+    use caelumora_domain::user::testing::make_user;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use std::sync::Arc;
 
     #[tokio::test]
     async fn only_the_owner_changes_a_sessions_privacy_and_everyone_in_it_sees_it() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::privacy::PrivacyConfig;
-        use caelumora_model::session::SessionUpdateEvent;
-        use caelumora_model::user::UserId;
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::privacy::PrivacyConfig;
+        use caelumora_domain::session::SessionUpdateEvent;
+        use caelumora_domain::user::UserId;
 
         let (_, manager) = owned_kernel(Default::default());
         let kernel = Arc::clone(manager.kernel());

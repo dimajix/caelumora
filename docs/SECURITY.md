@@ -334,10 +334,10 @@ lose theirs.
 
 ### Groups
 
-A group (`caelumora_model::group::Group`) is a list of actors that access lists name as one subject,
-so that what is shared with a team or with a session's participants follows who belongs to it,
-without a copy of the members in every list. There are three kinds, told apart by where a group
-lies:
+A group (`caelumora_domain::group::Group`) is a list of actors that access lists name as one
+subject, so that what is shared with a team or with a session's participants follows who belongs
+to it, without a copy of the members in every list. There are three kinds, told apart by where a
+group lies:
 
 *   **A team** is made by a user and lies in the global scope or its owner's; it holds users only
     (an agent is reached through its owner). Its one writer is the `GroupManager`, which leaves
@@ -632,11 +632,11 @@ same navigation serves running and stopped sessions alike, and reaching a sessio
 Names are read in the kernel's name. Among what makes a name known: whoever may read something of a
 user's scope learns whose it is, by name (`Views::scope_snapshot`, issue 475).
 
-A node answers with a **snapshot** (`caelumora_model::snapshot`) for a client that lists and offers,
-with flags such as `can_change` and `can_read_context` decided for the viewer. What else it holds
-the caller chooses as `Detail` flags, combined freely, so that what reads every agent's state is
-paid only where it is shown. A detail that cannot be read is left out, and the rest is answered. The
-REST server only maps snapshots to responses and asks the `AccessPolicy` nothing. A frontend
+A node answers with a **snapshot** (`caelumora_domain::snapshot`) for a client that lists and
+offers, with flags such as `can_change` and `can_read_context` decided for the viewer. What else it
+holds the caller chooses as `Detail` flags, combined freely, so that what reads every agent's state
+is paid only where it is shown. A detail that cannot be read is left out, and the rest is answered.
+The REST server only maps snapshots to responses and asks the `AccessPolicy` nothing. A frontend
 never asks the access questions itself.
 
 A node is data the viewer was allowed to reach; it decides nothing, and it does nothing: a view is

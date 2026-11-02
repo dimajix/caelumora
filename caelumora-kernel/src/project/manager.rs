@@ -8,17 +8,17 @@ use crate::group::{keep_participants, GroupManager};
 use crate::lock::LocksById;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
-use caelumora_model::actor::ActorId;
-use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::group::{Group, GroupId};
-use caelumora_model::project::{Project, ProjectId};
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::Scope;
-use caelumora_model::session::{Session, SessionField};
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreResultExt, Stored};
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::text::Description;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::event::{Announcing, GlobalEvent};
+use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::session::{Session, SessionField};
+use caelumora_domain::store::query::{Filter, Query};
+use caelumora_domain::store::{StoreResultExt, Stored};
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::text::Description;
 use caelumora_security::SecurityContext;
 use caelumora_store::{purge_behind, Deleted, EntityStores};
 use std::fmt;
@@ -311,11 +311,11 @@ fn in_project(id: ProjectId) -> Query<SessionField> {
 mod tests {
     use super::*;
     use crate::session::testing::{create, failing_kernel};
-    use caelumora_model::channel::Channel;
-    use caelumora_model::component::ComponentBundle;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::channel::Channel;
+    use caelumora_domain::component::ComponentBundle;
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::user::UserId;
     use std::sync::atomic::Ordering;
 
     /// Issue 469: a project whose members' group cannot come back stays deleted, marked as it was,

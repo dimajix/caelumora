@@ -20,8 +20,8 @@ use crate::prompt::{
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptTexts};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::prompt_catalogue::{context, PromptTexts};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -88,9 +88,9 @@ mod tests {
     use super::*;
     use crate::testing;
     use crate::testing::detached_actor_runtime;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::value::time_zone::TimeZone;
-    use caelumora_model::work::Work;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::value::time_zone::TimeZone;
+    use caelumora_domain::work::Work;
     use chrono::TimeZone as _;
 
     fn sunday() -> DateTime<Utc> {

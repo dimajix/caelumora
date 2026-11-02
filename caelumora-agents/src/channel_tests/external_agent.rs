@@ -9,6 +9,26 @@ use crate::prompt::PromptProvider;
 use anyhow::Result;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::model::ModelProfileProvider;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::actor::{ActorEvent, Envelope};
+use caelumora_domain::agent::testing::make_personality;
+use caelumora_domain::agent::{
+    AgentChannelState, AgentId, Personality, PersonalityKind, RetryRefused,
+};
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::testing::{founded, make_channel};
+use caelumora_domain::channel::{Channel, HistoryAccess};
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::ContextItem;
+use caelumora_domain::digest;
+use caelumora_domain::external_agent::{OpenTaskState, TaskId};
+use caelumora_domain::history::Heard;
+use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::session::testing::{bare_session, make_session};
+use caelumora_domain::session::{ChannelId, Participant, SessionId};
+use caelumora_domain::user::testing::make_user;
+use caelumora_domain::work::Work;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::ComponentRegistry;
@@ -16,26 +36,6 @@ use caelumora_kernel::kernel::ChannelRuntime;
 use caelumora_kernel::session::testing::*;
 use caelumora_kernel::session::SessionManager;
 use caelumora_kernel::testing::TestKernel;
-use caelumora_model::actor::ActorId;
-use caelumora_model::actor::{ActorEvent, Envelope};
-use caelumora_model::agent::testing::make_personality;
-use caelumora_model::agent::{
-    AgentChannelState, AgentId, Personality, PersonalityKind, RetryRefused,
-};
-use caelumora_model::chain::Position;
-use caelumora_model::channel::testing::{founded, make_channel};
-use caelumora_model::channel::{Channel, HistoryAccess};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::ContextItem;
-use caelumora_model::digest;
-use caelumora_model::external_agent::{OpenTaskState, TaskId};
-use caelumora_model::history::Heard;
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::session::testing::{bare_session, make_session};
-use caelumora_model::session::{ChannelId, Participant, SessionId};
-use caelumora_model::user::testing::make_user;
-use caelumora_model::work::Work;
 use caelumora_security::SecurityContext;
 use caelumora_store::testing::record_users;
 use caelumora_store::testing::stored_agent;
@@ -159,7 +159,7 @@ fn register_heard(registry: &mut ComponentRegistry) {
 /// its channel's history, as what it hears - without what it said itself.
 #[tokio::test]
 async fn an_external_agent_that_starts_takes_in_what_it_missed_without_its_own() {
-    use caelumora_model::message::{MessageId, MessageRole};
+    use caelumora_domain::message::{MessageId, MessageRole};
     let remote = Arc::new(ScriptedExternalAgent::default());
     let (channel, context, agent, _) =
         external_channel(remote, external_components(), |_| None).await.unwrap();
@@ -313,8 +313,8 @@ async fn given_for(channel: &ChannelLoop, agent: AgentId, answer: &Message) -> V
 async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_answers_in_the_channel(
 ) {
     use crate::external::{ExternalEvent, Said};
-    use caelumora_model::context::{ModelProfile, SenderFormat};
-    use caelumora_model::external_agent::ConversationId;
+    use caelumora_domain::context::{ModelProfile, SenderFormat};
+    use caelumora_domain::external_agent::ConversationId;
 
     let conversation = ConversationId("c-1".to_string());
     // Told who said what, by the handle (issue 135).
@@ -415,8 +415,8 @@ async fn an_external_agent_is_given_what_was_said_since_it_was_last_asked_and_an
 #[tokio::test]
 async fn an_agent_is_given_the_times_of_messages_in_its_sessions_time_zone_as_its_turn_began() {
     use crate::external::{ExternalEvent, Said};
-    use caelumora_model::context::{ModelProfile, SenderFormat};
-    use caelumora_model::value::time_zone::TimeZone;
+    use caelumora_domain::context::{ModelProfile, SenderFormat};
+    use caelumora_domain::value::time_zone::TimeZone;
 
     let marking = ModelProfile {
         sender_format: SenderFormat::Prefix,
@@ -492,8 +492,8 @@ async fn an_agent_is_given_the_times_of_messages_in_its_sessions_time_zone_as_it
 async fn an_external_agent_tells_its_remote_agent_of_a_message_it_was_given_that_was_modified_or_taken_back(
 ) {
     use crate::external::{ExternalEvent, Said};
-    use caelumora_model::context::{ModelProfile, SenderFormat};
-    use caelumora_model::external_agent::ConversationId;
+    use caelumora_domain::context::{ModelProfile, SenderFormat};
+    use caelumora_domain::external_agent::ConversationId;
 
     let marking = ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
     let answer = |text: &str| {
@@ -889,7 +889,7 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
 #[tokio::test]
 async fn after_a_restart_an_external_agent_is_given_only_the_prompt_parts_it_was_not_given() {
     use crate::external::ExternalEvent;
-    use caelumora_model::external_agent::ConversationId;
+    use caelumora_domain::external_agent::ConversationId;
 
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![
         Ok(ExternalEvent::Message("Hello again.".to_string())),
@@ -951,7 +951,7 @@ async fn the_prompt_parts_an_external_agent_could_not_send_are_sent_with_its_nex
 #[tokio::test]
 async fn after_a_restart_an_external_agent_sends_what_it_heard_but_had_not_sent() {
     use crate::external::ExternalEvent;
-    use caelumora_model::message::MessageRole;
+    use caelumora_domain::message::MessageRole;
 
     let said = |text: &str| Message {
         role: MessageRole::User,
@@ -1017,7 +1017,7 @@ async fn a_cancel_ends_the_answer_of_an_external_agent_and_its_remote_task() {
 #[tokio::test]
 async fn an_external_agent_removed_while_it_answers_cancels_its_task_and_gives_its_answer_up() {
     use crate::external::ExternalEvent;
-    use caelumora_model::turn::GivenUpReason;
+    use caelumora_domain::turn::GivenUpReason;
 
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![Ok(
         ExternalEvent::Started(task("t-1")),
@@ -1548,7 +1548,7 @@ async fn a_task_is_stored_as_soon_as_it_is_begun() {
 #[tokio::test]
 async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_waits() {
     use crate::external::ExternalEvent;
-    use caelumora_model::external_agent::{OpenTask, RemoteState};
+    use caelumora_domain::external_agent::{OpenTask, RemoteState};
 
     let stored = AgentChannelState {
         remote: RemoteState {
@@ -1626,7 +1626,7 @@ async fn after_a_restart_an_open_task_is_followed_again_and_one_that_asked_back_
 #[tokio::test]
 async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_that_began_it() {
     use crate::external::ExternalEvent;
-    use caelumora_model::external_agent::{OpenTask, RemoteState};
+    use caelumora_domain::external_agent::{OpenTask, RemoteState};
 
     let bob = ActorId::User(UserId::new());
     // Bob's request, answered by the agent - continued in its name.
@@ -1690,8 +1690,8 @@ async fn an_open_task_is_followed_and_told_of_in_the_contexts_of_the_request_tha
 /// begun while its channel was confidential - above the channel as it is
 /// now - in its own name.
 fn begun_above(agent: AgentId, open: &str, standing: OpenTaskState) -> AgentChannelState {
-    use caelumora_model::confidentiality::Confidentiality;
-    use caelumora_model::external_agent::{OpenTask, RemoteState};
+    use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::external_agent::{OpenTask, RemoteState};
     let own = ActorId::Agent(agent);
     let work = Work::new(
         EventContext::default().next(own, "hermes".to_string()),
@@ -1717,7 +1717,7 @@ fn begun_above(agent: AgentId, open: &str, standing: OpenTaskState) -> AgentChan
 #[tokio::test]
 async fn lowering_the_channel_gives_up_an_external_agents_answer_under_way() {
     use crate::external::ExternalEvent;
-    use caelumora_model::confidentiality::Confidentiality;
+    use caelumora_domain::confidentiality::Confidentiality;
 
     let remote = Arc::new(ScriptedExternalAgent::answering(vec![vec![
         Ok(ExternalEvent::Started(task("t-1"))),
@@ -1805,7 +1805,7 @@ async fn a_task_that_asked_back_before_its_channel_was_lowered_is_not_taken_up()
 /// The state of an external agent with one task working, as a restart
 /// finds it.
 fn working_on(open: &str) -> AgentChannelState {
-    use caelumora_model::external_agent::{OpenTask, RemoteState};
+    use caelumora_domain::external_agent::{OpenTask, RemoteState};
     AgentChannelState {
         remote: RemoteState {
             open_tasks: vec![OpenTask {

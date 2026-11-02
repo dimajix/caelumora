@@ -3,7 +3,7 @@
 
 use crate::PostgresStoreConfig;
 use crate::{DEFAULT_MAX_CONNECTIONS, DEFAULT_SCHEMA};
-use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_security::secret::SecretManager;
 use caelumora_security::SecurityContext;
 use sqlx::migrate::Migrator;

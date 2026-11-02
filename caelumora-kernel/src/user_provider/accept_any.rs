@@ -5,11 +5,11 @@ use crate::backend::Backends;
 use crate::user_provider::{AuthError, AuthResult, Credential, UserProvider};
 use async_trait::async_trait;
 use caelumora_api::component::{service_of, ComponentError, Params};
-use caelumora_model::role::{RoleError, RoleId, Roles};
-use caelumora_model::scope::Scope;
-use caelumora_model::store::{StoreError, StoreResultExt};
-use caelumora_model::user::{User, UserId};
-use caelumora_model::value::name::{Name, ScopedName};
+use caelumora_domain::role::{RoleError, RoleId, Roles};
+use caelumora_domain::scope::Scope;
+use caelumora_domain::store::{StoreError, StoreResultExt};
+use caelumora_domain::user::{User, UserId};
+use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_security::confidentiality::ConfidentialityPolicy;
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
@@ -187,7 +187,7 @@ impl UserProvider for AcceptAnyUserProvider {
 mod tests {
     use super::*;
     use crate::user_provider::UserManager;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_domain::user::testing::make_user;
     use caelumora_security::Policies;
     use caelumora_store::{EntityStores, Persistence};
 

@@ -10,7 +10,7 @@ use anyhow::Result;
 use caelumora_api::actor::{agent_factory, Actor};
 use caelumora_api::component::LibraryComponents;
 use caelumora_api::library::{Library, LibraryBuilder};
-use caelumora_model::agent::PersonalityKind;
+use caelumora_domain::agent::PersonalityKind;
 
 /// Registers the kinds of an agent's components with `registry` (issue 370): its context
 /// (`prompt`), its tools (`tool`), its memory and notes (`components`) and the facet an agent that
@@ -62,16 +62,16 @@ mod tests {
     use crate::testing::{self, test_registry};
     use crate::tool::echo_tool::ECHO_TOOL_KIND;
     use caelumora_api::component::Services;
+    use caelumora_domain::agent::PersonalityKind;
+    use caelumora_domain::component::ComponentConfig;
+    use caelumora_domain::config::AppConfig;
+    use caelumora_domain::type_map::TypeKey;
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::component::testing::config;
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::moderator::policy_moderator::POLICY_MODERATOR_KIND;
     use caelumora_kernel::moderator::round_robin_policy::ROUND_ROBIN_POLICY_KIND;
     use caelumora_kernel::testing::TestKernel;
-    use caelumora_model::agent::PersonalityKind;
-    use caelumora_model::component::ComponentConfig;
-    use caelumora_model::config::AppConfig;
-    use caelumora_model::type_map::TypeKey;
     use caelumora_security::SecurityContext;
     use caelumora_store::Persistence;
     use serde_json::Value;

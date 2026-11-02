@@ -15,7 +15,7 @@ pub use manager::UserManager;
 
 use crate::backend::Backends;
 use async_trait::async_trait;
-use caelumora_model::user::{User, UserId};
+use caelumora_domain::user::{User, UserId};
 use std::fmt;
 use std::fmt::Debug;
 

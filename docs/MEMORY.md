@@ -14,7 +14,7 @@ All three kinds of memory work alike:
 *   **Ledgers that are only appended to.** Each is a chain of changes - an entry added, updated,
     removed or reclassified - on the generic `Chain` type (see
     [AGENT-TURN.md](AGENT-TURN.md#the-transcript-as-a-chain)), one type for both,
-    `caelumora_model::ledger::Ledger`. What stands now is the active branch read from start to end.
+    `caelumora_domain::ledger::Ledger`. What stands now is the active branch read from start to end.
     A number, once given, is not given again on any branch, and an entry updated keeps its own.
     Notes branch with the conversation, agent memory does not.
 *   **Only the author changes them.** An agent notes, updates, revokes, remembers and forgets only

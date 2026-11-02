@@ -11,11 +11,11 @@ use async_trait::async_trait;
 use caelumora_api::error::ContentError;
 use caelumora_api::error::StorageGone;
 use caelumora_api::terminal::ByteStream;
-use caelumora_model::channel::Channel;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::store::{Address, StoreError};
-use caelumora_model::value::name::ScopedName;
-use caelumora_model::value::ValueError;
+use caelumora_domain::channel::Channel;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::store::{Address, StoreError};
+use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::ValueError;
 
 /// Publishes artifacts as the work it is bound to reads: in its name, for its initiator.
 #[async_trait]

@@ -7,7 +7,7 @@ use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_model::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
+use caelumora_domain::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
 use std::sync::Arc;
 
 pub const WAKEUP_COMMAND_NAME: &str = "wakeup";

@@ -3,11 +3,11 @@
 //! store can apply to a whole list as well as to one entity.
 
 use crate::Memberships;
-use caelumora_model::actor::ActorId;
-use caelumora_model::group::GroupId;
-use caelumora_model::role::RoleId;
-use caelumora_model::security::{Grant, SecurityAttributes, Subject};
-use caelumora_model::store::Stored;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::group::GroupId;
+use caelumora_domain::role::RoleId;
+use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
+use caelumora_domain::store::Stored;
 
 /// Which entities a context may do one verb with, in the words of
 /// `SecurityAttributes`: whom an owner or an entry has to name, and what an

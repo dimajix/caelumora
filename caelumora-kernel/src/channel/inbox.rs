@@ -14,9 +14,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_api::transport::{EventPick, EventPredicate, EventReceiver};
-use caelumora_model::actor::{ActorId, Envelope, Pick};
-use caelumora_model::chain::Position;
-use caelumora_model::history::Heard;
+use caelumora_domain::actor::{ActorId, Envelope, Pick};
+use caelumora_domain::chain::Position;
+use caelumora_domain::history::Heard;
 use std::collections::VecDeque;
 use std::mem;
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
@@ -411,12 +411,12 @@ impl EventReceiver for InboxReceiver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::{ActorEvent, EventContext, RequestReason};
-    use caelumora_model::approval::ApprovalResponse;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::message::Message;
-    use caelumora_model::question::QuestionId;
-    use caelumora_model::work::TurnId;
+    use caelumora_domain::actor::{ActorEvent, EventContext, RequestReason};
+    use caelumora_domain::approval::ApprovalResponse;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::Message;
+    use caelumora_domain::question::QuestionId;
+    use caelumora_domain::work::TurnId;
     use std::ops::Range;
     use std::time::Duration;
     use tokio::time;

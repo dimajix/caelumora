@@ -7,7 +7,7 @@ use crate::error::user_message;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_model::command::{Command, CommandOutput, NUDGE_COMMAND_KIND};
+use caelumora_domain::command::{Command, CommandOutput, NUDGE_COMMAND_KIND};
 use std::sync::Arc;
 
 pub const NUDGE_COMMAND_NAME: &str = "nudge";

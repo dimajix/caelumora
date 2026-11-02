@@ -3,11 +3,11 @@
 
 use crate::access::AccessEntry;
 use crate::scope::{ScopeKind, ScopeResponse};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::security::Grant;
-use caelumora_model::snapshot;
-use caelumora_model::value::text::Description;
-use caelumora_model::workspace::{CommandStatus, WorkspaceId};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::security::Grant;
+use caelumora_domain::snapshot;
+use caelumora_domain::value::text::Description;
+use caelumora_domain::workspace::{CommandStatus, WorkspaceId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

@@ -11,13 +11,13 @@ use crate::component::ComponentRegistry;
 use crate::controller::{ChannelController, ControllerManager, SessionController};
 use crate::session::SessionLoop;
 use caelumora_api::component::Services;
-use caelumora_model::actor::ActorId;
+use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::channel::Channel;
+use caelumora_domain::channel::Channel;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::prompt_catalogue::PromptCatalogue;
+use caelumora_domain::prompt_catalogue::PromptCatalogue;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::session::Session;
+use caelumora_domain::session::Session;
 use caelumora_security::Policies;
 use caelumora_store::history::HistoryStore;
 #[cfg(any(test, feature = "test-support"))]
@@ -200,7 +200,7 @@ impl ChannelRuntime {
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
     /// A runtime for `channel` of `session`, which is not running - in
-    /// tests: it has no loop and no user commands (the model's
+    /// tests: it has no loop and no user commands (the domain's
     /// `session::testing::bare_session` and `channel::testing::bare_channel`
     /// for ones that hold nothing but their ids).
     pub fn outside_a_session(kernel: Arc<Kernel>, session: Session, channel: Channel) -> Self {

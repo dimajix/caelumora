@@ -28,8 +28,8 @@ use caelumora_api::component::{config_of_params, ComponentError, ComponentResult
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::terminal::{TerminalError, WorkspacePath};
 use caelumora_api::workspace::WorkspaceReader;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use futures::future;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -204,8 +204,8 @@ mod tests {
     use super::*;
     use crate::prompts;
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_domain::agent::AgentChannelState;
     use caelumora_kernel::workspace::testing::session_with_workspace;
-    use caelumora_model::agent::AgentChannelState;
     use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use std::fs;

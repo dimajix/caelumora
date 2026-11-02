@@ -3,10 +3,10 @@
 
 use crate::access::AccessEntry;
 use crate::scope::{ScopeKind, ScopeResponse};
-use caelumora_model::project::ProjectId;
-use caelumora_model::snapshot;
-use caelumora_model::user::UserId;
-use caelumora_model::value::text::Description;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::snapshot;
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::text::Description;
 use serde::{Deserialize, Serialize};
 
 /// A project as whoever may read it sees it: a shared one they own, work on or are shared, or a

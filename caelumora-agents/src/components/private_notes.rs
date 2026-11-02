@@ -36,12 +36,12 @@ use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::reader::PrivateNotesElsewhere;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::note::{Note, NoteId};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::Answers;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::note::{Note, NoteId};
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::question::Answers;
+use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -311,10 +311,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::session::ChannelId;
     use caelumora_kernel::testing::Discard;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::message::MessageId;
-    use caelumora_model::session::ChannelId;
     use chrono::Utc;
 
     fn note(id: u32, text: &str) -> Note {

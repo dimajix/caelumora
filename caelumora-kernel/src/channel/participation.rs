@@ -6,16 +6,16 @@ use crate::controller::{
     AgentController, ControllerManager, PersonalityController, UserController,
 };
 use anyhow::Result;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId, Personality};
-use caelumora_model::approval::Approver;
-use caelumora_model::channel::{Channel, ChannelId, InternalActor, Participant};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::role::RoleId;
-use caelumora_model::scope::Scope;
-use caelumora_model::security::{Refused, SecurityAttributes};
-use caelumora_model::session::SessionId;
-use caelumora_model::store::{EntityKind, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{Agent, AgentId, Personality};
+use caelumora_domain::approval::Approver;
+use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::role::RoleId;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{Refused, SecurityAttributes};
+use caelumora_domain::session::SessionId;
+use caelumora_domain::store::{EntityKind, StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext, JOIN};
 use caelumora_store::EntityStore;
@@ -268,7 +268,7 @@ impl ResolvedParticipant {
     /// only looks up.
     #[cfg(test)]
     pub(crate) fn approver(session_id: SessionId, channel_id: ChannelId) -> Self {
-        use caelumora_model::approval::ApprovalStrategy;
+        use caelumora_domain::approval::ApprovalStrategy;
         Self::internal(
             &InternalActor::Approver(Approver::new(ApprovalStrategy::default())),
             session_id,
@@ -359,20 +359,20 @@ impl ResolvedParticipant {
 mod tests {
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionManager};
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::Agent;
-    use caelumora_model::channel::testing::main_channel;
-    use caelumora_model::channel::{Channel, HistoryAccess, Participant};
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Grant, Subject};
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::session::{ChannelId, SessionId};
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::Name;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::Agent;
+    use caelumora_domain::channel::testing::main_channel;
+    use caelumora_domain::channel::{Channel, HistoryAccess, Participant};
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::security::{Grant, Subject};
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::{ChannelId, SessionId};
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::Name;
+    use caelumora_domain::value::name::ScopedName;
     use caelumora_security::SecurityContext;
     use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
@@ -382,12 +382,12 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_agent_is_cleared_only_as_far_as_its_owner_and_its_personality_are() {
         use crate::channel::ChannelError;
-        use caelumora_model::agent::{Personality, PersonalityKind};
-        use caelumora_model::confidentiality::{
+        use caelumora_domain::agent::{Personality, PersonalityKind};
+        use caelumora_domain::confidentiality::{
             Clearance, Compartment, Compartments, Confidentiality,
         };
-        use caelumora_model::role::{RoleId, Roles};
-        use caelumora_model::user::User;
+        use caelumora_domain::role::{RoleId, Roles};
+        use caelumora_domain::user::User;
         use caelumora_security::confidentiality::ConfidentialityRules;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();

@@ -43,9 +43,9 @@
 //! except filtering a list, which is a question.
 
 use crate::Presence;
-use caelumora_model::removal::Removal;
-use caelumora_model::security::Refused;
-use caelumora_model::store::{StoreError, StoreResult, Stored};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::security::Refused;
+use caelumora_domain::store::{StoreError, StoreResult, Stored};
 use caelumora_security::confidentiality::{may_reach, ConfidentialityQuestions};
 use caelumora_security::{ActionType, Admission, Enforcement, Policies, SecurityContext};
 use std::slice;
@@ -261,19 +261,19 @@ fn valid<T: Stored>(value: &T) -> StoreResult<()> {
 #[cfg(test)]
 mod tests {
     use crate::{EntityStores, Persistence};
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::channel::ChannelId;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::role::RoleId;
-    use caelumora_model::security::{SecurityAttributes, Subject};
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::query::Query;
-    use caelumora_model::store::{StoreError, Stored};
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
-    use caelumora_model::user::UserProfile;
-    use caelumora_model::value::text::Introduction;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::role::RoleId;
+    use caelumora_domain::security::{SecurityAttributes, Subject};
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::session::{Session, SessionId};
+    use caelumora_domain::store::query::Query;
+    use caelumora_domain::store::{StoreError, Stored};
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::user::UserProfile;
+    use caelumora_domain::value::text::Introduction;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::{
         AccessPolicy, ActionType, OwnershipPolicy, Policies, SecurityContext, Verb,
@@ -321,13 +321,13 @@ mod tests {
     /// restore or purge - the deleted alike, so that both lists agree.
     #[tokio::test]
     async fn what_the_caller_is_not_cleared_for_does_not_exist_for_them() {
-        use caelumora_model::confidentiality::{
+        use caelumora_domain::confidentiality::{
             Classification, Clearance, Compartments, Confidentiality,
         };
-        use caelumora_model::role::Roles;
-        use caelumora_model::scope::Scope;
-        use caelumora_model::value::name::ScopedName;
-        use caelumora_model::workspace::Workspace;
+        use caelumora_domain::role::Roles;
+        use caelumora_domain::scope::Scope;
+        use caelumora_domain::value::name::ScopedName;
+        use caelumora_domain::workspace::Workspace;
         use caelumora_security::AllowAllPolicy;
         let staff = RoleId::new();
         let roles = Roles::new([(
@@ -601,9 +601,9 @@ mod tests {
 
     #[tokio::test]
     async fn users_are_read_by_everybody_and_changed_by_the_system_alone() {
-        use caelumora_model::scope::Scope;
-        use caelumora_model::user::User;
-        use caelumora_model::value::name::ScopedName;
+        use caelumora_domain::scope::Scope;
+        use caelumora_domain::user::User;
+        use caelumora_domain::value::name::ScopedName;
 
         let store = EntityStores::open(
             &Persistence::in_memory(),

@@ -3,25 +3,25 @@
 
 use crate::history::{HistoryPageItem, HistoryPageResponse};
 use crate::session::{ParticipantKind, UNKNOWN};
-use caelumora_model::actor::{ActorId, ActorState};
-use caelumora_model::agent::PersonalityKind;
-use caelumora_model::approval::{ApprovalRequest, ApprovalRule};
-use caelumora_model::chain::Position;
-use caelumora_model::channel::HistoryAccess;
-use caelumora_model::command::Command;
-use caelumora_model::confidentiality::{Classification, Confidentiality};
-use caelumora_model::content::ContentId;
-use caelumora_model::message::{Message, MessageId, TokenUsage};
-use caelumora_model::note::Note;
-use caelumora_model::question::{QuestionRequest, Response};
-use caelumora_model::removal::Removal;
-use caelumora_model::session::ChannelId;
-use caelumora_model::snapshot;
-use caelumora_model::template::InternalActorTemplate;
-use caelumora_model::value::language::Language;
-use caelumora_model::value::text::{Briefing, Summary};
-use caelumora_model::work::TurnId;
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_domain::actor::{ActorId, ActorState};
+use caelumora_domain::agent::PersonalityKind;
+use caelumora_domain::approval::{ApprovalRequest, ApprovalRule};
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::HistoryAccess;
+use caelumora_domain::command::Command;
+use caelumora_domain::confidentiality::{Classification, Confidentiality};
+use caelumora_domain::content::ContentId;
+use caelumora_domain::message::{Message, MessageId, TokenUsage};
+use caelumora_domain::note::Note;
+use caelumora_domain::question::{QuestionRequest, Response};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::session::ChannelId;
+use caelumora_domain::snapshot;
+use caelumora_domain::template::InternalActorTemplate;
+use caelumora_domain::value::language::Language;
+use caelumora_domain::value::text::{Briefing, Summary};
+use caelumora_domain::work::TurnId;
+use caelumora_domain::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use std::mem;
 use uuid::Uuid;
@@ -459,9 +459,9 @@ pub struct CommandReplyResponse {
 mod tests {
     use super::*;
     use crate::session::DescriptionRequest;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::approval::ApproverId;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::ApproverId;
+    use caelumora_domain::user::UserId;
     use chrono::Utc;
 
     #[test]
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn a_stream_lists_its_agents_notes_and_approvals_beside_the_channel() {
-        use caelumora_model::note::{Note, NoteId};
+        use caelumora_domain::note::{Note, NoteId};
         let (alice, helper) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
         let note = Note {
             id: NoteId(1),

@@ -3,8 +3,8 @@
 use super::{stopped, ChannelActor, ChannelError, ChannelLoop};
 use anyhow::Result;
 use caelumora_api::actor::Actor;
-use caelumora_model::actor::{ActorId, ActorState};
-use caelumora_model::work::TurnId;
+use caelumora_domain::actor::{ActorId, ActorState};
+use caelumora_domain::work::TurnId;
 use caelumora_security::{ActionType, SecurityContext};
 use std::sync::atomic::Ordering;
 use tokio_util::task::TaskTracker;
@@ -197,9 +197,9 @@ impl ChannelLoop {
 mod tests {
     use crate::channel::tests::*;
     use crate::error::is_forbidden;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::user::testing::make_user;
     use caelumora_security::AllowAllPolicy;
     use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
     use std::sync::Arc;

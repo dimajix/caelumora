@@ -6,10 +6,10 @@ use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, Too
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::actor::ActorState;
-use caelumora_model::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_model::question::Answers;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::actor::ActorState;
+use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
+use caelumora_domain::question::Answers;
+use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
@@ -118,7 +118,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 
     #[tokio::test]

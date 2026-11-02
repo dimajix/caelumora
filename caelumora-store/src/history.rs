@@ -7,22 +7,22 @@
 //! history without holding it - always as a reader, who is given what of
 //! each entry they may see (`Recorded::as_seen_by`, issue 417): a predicate
 //! over what the store keeps of an entry and the reader's ranges, which the
-//! model gives as data too (`Filter::seen_by`, issue 451), so that a
+//! domain gives as data too (`Filter::seen_by`, issue 451), so that a
 //! database answers it as a `WHERE`. What else a page keeps - the messages
 //! of one sender, those heard, those of a classification the reader may
 //! copy - is a condition as data as well (`Filter<HistoryField>`, issue
 //! 421). Both are judged on an item as it is kept (`KeptItem`).
 
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::chain::{Node, Position};
-use caelumora_model::channel::ChannelId;
-use caelumora_model::digest::Digest;
-use caelumora_model::history::{HistoryEntry, HistoryPage, Reader, Recorded};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::{HistoryField, KeptItem};
-use caelumora_model::store::query::{meeting, Filter};
-use caelumora_model::store::StoreResult;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::chain::{Node, Position};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::digest::Digest;
+use caelumora_domain::history::{HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::store::history::{HistoryField, KeptItem};
+use caelumora_domain::store::query::{meeting, Filter};
+use caelumora_domain::store::StoreResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -405,16 +405,16 @@ pub fn page_of(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::RequestReason;
-    use caelumora_model::confidentiality::{
+    use caelumora_domain::actor::RequestReason;
+    use caelumora_domain::confidentiality::{
         Classification, Compartment, Compartments, Confidentiality, Reading,
     };
-    use caelumora_model::content::testing::make_content_ref;
-    use caelumora_model::history::testing::items_of;
-    use caelumora_model::history::{Audience, History};
-    use caelumora_model::message::testing::{id, make_message};
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::user::UserId;
+    use caelumora_domain::content::testing::make_content_ref;
+    use caelumora_domain::history::testing::items_of;
+    use caelumora_domain::history::{Audience, History};
+    use caelumora_domain::message::testing::{id, make_message};
+    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::user::UserId;
     use chrono::Utc;
 
     fn label(item: &HistoryEntry) -> String {
@@ -692,10 +692,10 @@ mod tests {
     /// ranges or out of them.
     #[test]
     fn what_a_reader_is_given_is_the_same_as_a_filter() {
-        use caelumora_model::actor::EventContext;
-        use caelumora_model::agent::AgentId;
-        use caelumora_model::approval::ApproverId;
-        use caelumora_model::history::Recipients;
+        use caelumora_domain::actor::EventContext;
+        use caelumora_domain::agent::AgentId;
+        use caelumora_domain::approval::ApproverId;
+        use caelumora_domain::history::Recipients;
         let alice = ActorId::User(UserId::new());
         let bob = ActorId::User(UserId::new());
         let agent = ActorId::Agent(AgentId::new());
@@ -789,7 +789,7 @@ mod tests {
     /// sent, regardless.
     #[test]
     fn what_went_to_every_member_is_given_to_who_was_one_then() {
-        use caelumora_model::user::UserId;
+        use caelumora_domain::user::UserId;
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let joined = |participant| HistoryEntry::ParticipantJoined {
             participant,

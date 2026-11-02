@@ -9,7 +9,7 @@
 
 use bytes::Bytes;
 use caelumora_api::remote::describe_request_error;
-use caelumora_model::remote::RemoteEndpoint;
+use caelumora_domain::remote::RemoteEndpoint;
 use regex::Regex;
 use reqwest::{Client, Error, RequestBuilder, Response, Url};
 use serde::Deserialize;

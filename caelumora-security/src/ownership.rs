@@ -7,10 +7,10 @@ use crate::{
     SecurityContext, Verb,
 };
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::group::{Group, GroupId};
-use caelumora_model::security::{Grant, SecurityAttributes};
-use caelumora_model::store::EntityKind;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::security::{Grant, SecurityAttributes};
+use caelumora_domain::store::EntityKind;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -313,18 +313,18 @@ mod tests {
     use super::*;
     use crate::testing::*;
     use crate::{AllowAllPolicy, CustomVerb, JOIN, WRITE};
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::channel::{Channel, ChannelId};
-    use caelumora_model::command::Command;
-    use caelumora_model::group::{Group, GroupId};
-    use caelumora_model::role::RoleId;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::Subject;
-    use caelumora_model::session::{Session, SessionId};
-    use caelumora_model::store::{EntityKind, Stored};
-    use caelumora_model::template::SessionTemplate;
-    use caelumora_model::value::name::ScopedName;
-    use caelumora_model::workspace::Workspace;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::{Channel, ChannelId};
+    use caelumora_domain::command::Command;
+    use caelumora_domain::group::{Group, GroupId};
+    use caelumora_domain::role::RoleId;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::security::Subject;
+    use caelumora_domain::session::{Session, SessionId};
+    use caelumora_domain::store::{EntityKind, Stored};
+    use caelumora_domain::template::SessionTemplate;
+    use caelumora_domain::value::name::ScopedName;
+    use caelumora_domain::workspace::Workspace;
 
     /// A plugin's kind (issue 323), as skills are.
     const SKILL: EntityKind = EntityKind::new("skill");

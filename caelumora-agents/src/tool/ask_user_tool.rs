@@ -14,11 +14,11 @@ use crate::tool::{
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::{
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::question::{
     Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS,
 };
-use caelumora_model::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -159,9 +159,9 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::question::Response;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::question::Response;
 
     #[test]
     fn its_arguments_are_its_questions_put_to_the_handles_named() {

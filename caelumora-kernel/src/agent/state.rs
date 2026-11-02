@@ -14,13 +14,13 @@
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
-use caelumora_model::agent;
-use caelumora_model::agent::{Agent, AgentId, AgentState};
-use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::memory::{MemoryChange, MemoryId, MemoryOrigin};
-use caelumora_model::message::MessageId;
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::store::StoreResult;
+use caelumora_domain::agent;
+use caelumora_domain::agent::{Agent, AgentId, AgentState};
+use caelumora_domain::event::{EventPublisher, GlobalEvent};
+use caelumora_domain::memory::{MemoryChange, MemoryId, MemoryOrigin};
+use caelumora_domain::message::MessageId;
+use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::store::StoreResult;
 use caelumora_store::StateStore;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -72,8 +72,8 @@ impl AgentStateHandle {
     /// announced to nobody - for turns in tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn detached() -> Arc<Self> {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::user::UserId;
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::user::UserId;
         use caelumora_store::memory::MemoryStore;
         let state_store = Arc::new(MemoryStore::new());
         Arc::new(Self::new(
@@ -179,11 +179,11 @@ impl AgentStates {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::event::EntityChange;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::event::EntityChange;
+    use caelumora_domain::user::UserId;
     use caelumora_store::memory::MemoryStore;
     use std::sync::Mutex;
 

@@ -7,8 +7,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::transport::{EventReceiver, EventSender};
-use caelumora_model::actor::{ActorId, ActorState, Envelope};
-use caelumora_model::value::name::Name;
+use caelumora_domain::actor::{ActorId, ActorState, Envelope};
+use caelumora_domain::value::name::Name;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// An actor that does nothing: in the state it is put in until it is woken,

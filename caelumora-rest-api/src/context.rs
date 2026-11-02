@@ -1,15 +1,15 @@
 //! What an agent saw and has (issues 06, 47, 194, 270): the context of a message, the
 //! knowledge it was produced with, its tools and components.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::chain::Position;
-use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::{Classification, LabelCauses};
-use caelumora_model::context::{ContextItem, ModelProfile};
-use caelumora_model::digest::Digest;
-use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::tool::ToolSet;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::chain::Position;
+use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::confidentiality::{Classification, LabelCauses};
+use caelumora_domain::context::{ContextItem, ModelProfile};
+use caelumora_domain::digest::Digest;
+use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::tool::ToolSet;
 use serde::Serialize;
 use uuid::Uuid;
 

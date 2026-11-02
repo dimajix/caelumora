@@ -26,7 +26,7 @@
 #   `scripts/crates.sh` is part of a commit, `scripts/library-deps.sh` must find neither a library
 #   nor the library side of a crate that stands on both levels with `caelumora-kernel`,
 #   `caelumora-security` or `caelumora-store` among its normal dependencies, nor `caelumora-api`
-#   with a crate of Caelumora but the model.
+#   with a crate of Caelumora but the domain.
 # - The crates that stand on both levels stay cut (issue 516): whenever Rust code, a Cargo manifest
 #   or `scripts/crates.sh` is part of a commit, the crates of `scripts/crates.sh` that stand on
 #   both levels must build without features - what a client reads -, with the feature `library`

@@ -4,8 +4,8 @@
 //! `RunControl`). Held by its body (`AgentBody`).
 
 use crate::tool::Interruption;
-use caelumora_model::actor::{ActorState, ProcessingStateHolder};
-use caelumora_model::work::TurnId;
+use caelumora_domain::actor::{ActorState, ProcessingStateHolder};
+use caelumora_domain::work::TurnId;
 use std::collections::HashMap;
 use std::future::pending;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};

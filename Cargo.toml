@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "caelumora-model",
+    "caelumora-domain",
     "caelumora-security",
     "caelumora-store",
     "caelumora-api",
@@ -90,7 +90,7 @@ url = "2.5"
 uuid = "1.26"
 
 # The crates of the workspace.
-caelumora-model = { path = "caelumora-model" }
+caelumora-domain = { path = "caelumora-domain" }
 caelumora-security = { path = "caelumora-security" }
 caelumora-store = { path = "caelumora-store" }
 caelumora-api = { path = "caelumora-api" }

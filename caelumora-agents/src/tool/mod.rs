@@ -28,16 +28,16 @@ use caelumora_api::reader::ViewError;
 use caelumora_api::runtime::{ActorRuntime, CallPermit};
 use caelumora_api::terminal::TerminalError;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult, WorkspaceWriter};
-use caelumora_model::approval::ToolMatcher;
-use caelumora_model::confidentiality::{Classification, Compartment, Confidentiality};
-use caelumora_model::content::ContentRef;
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::{Answers, Questions};
-use caelumora_model::tool::{
+use caelumora_domain::approval::ToolMatcher;
+use caelumora_domain::confidentiality::{Classification, Compartment, Confidentiality};
+use caelumora_domain::content::ContentRef;
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::question::{Answers, Questions};
+use caelumora_domain::tool::{
     Tool, ToolCall, ToolCallResult, ToolCallState, ToolMedia, ToolParameters, ToolResultStatus,
     ToolSet, ToolVisibility,
 };
-use caelumora_model::turn::GivenUpReason;
+use caelumora_domain::turn::GivenUpReason;
 use chrono::Utc;
 use providers::ToolProviders;
 use serde::de::DeserializeOwned;
@@ -1059,25 +1059,25 @@ mod tests {
     use super::*;
     use crate::library::AgentsLibrary;
     use crate::testing::{self, agent_runtime};
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::approval::{ApprovalRule, RuleDecision};
+    use caelumora_domain::channel::Channel;
+    use caelumora_domain::config::{AppConfig, ApprovalsConfig};
+    use caelumora_domain::content::testing::make_content_ref;
+    use caelumora_domain::content::ContentId;
+    use caelumora_domain::context::{ContextRef, FrameRef};
+    use caelumora_domain::event::GlobalEvent;
+    use caelumora_domain::note::NoteId;
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
+    use caelumora_domain::tool::{ToolCallStatus, ToolResultStatus};
+    use caelumora_domain::turn::TurnState;
+    use caelumora_domain::value::name::Name;
+    use caelumora_domain::work::Work;
     use caelumora_kernel::controller::SessionController;
     use caelumora_kernel::kernel::ChannelRuntime;
     use caelumora_kernel::testing::{participant_runtime_in, TestKernel, World};
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::approval::{ApprovalRule, RuleDecision};
-    use caelumora_model::channel::Channel;
-    use caelumora_model::config::{AppConfig, ApprovalsConfig};
-    use caelumora_model::content::testing::make_content_ref;
-    use caelumora_model::content::ContentId;
-    use caelumora_model::context::{ContextRef, FrameRef};
-    use caelumora_model::event::GlobalEvent;
-    use caelumora_model::note::NoteId;
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::{Session, SessionId, SessionUpdateEvent};
-    use caelumora_model::tool::{ToolCallStatus, ToolResultStatus};
-    use caelumora_model::turn::TurnState;
-    use caelumora_model::value::name::Name;
-    use caelumora_model::work::Work;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_security::{
         AccessPolicy, ActionType, AllowAllPolicy, OwnershipPolicy, SecurityContext,
@@ -1521,7 +1521,7 @@ mod tests {
     /// with a value too long even to be compared by equality, none.
     #[tokio::test]
     async fn a_call_is_offered_a_rule_only_where_one_can_be_kept() {
-        use caelumora_model::approval::{ArgumentMatcher, MAX_EQUALS_CHARS, MAX_PATTERN_CHARS};
+        use caelumora_domain::approval::{ArgumentMatcher, MAX_EQUALS_CHARS, MAX_PATTERN_CHARS};
 
         let asking = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&asking).await;
@@ -1611,7 +1611,7 @@ mod tests {
     #[tokio::test]
     async fn a_set_whose_remote_side_the_channel_may_not_flow_to_is_withheld_and_its_tools_not_called(
     ) {
-        use caelumora_model::confidentiality::Confidentiality;
+        use caelumora_domain::confidentiality::Confidentiality;
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
         let outward: Arc<dyn ToolProvider> =
             Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
@@ -1741,7 +1741,7 @@ mod tests {
     /// An executor whose flow knows the compartment "hr", and which lets
     /// every action (issue 304: the flow is the policy's apart).
     fn with_hr() -> ToolExecutor {
-        use caelumora_model::confidentiality::{Compartment, Compartments};
+        use caelumora_domain::confidentiality::{Compartment, Compartments};
         use caelumora_security::confidentiality::ConfidentialityRules;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let tools: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: true });

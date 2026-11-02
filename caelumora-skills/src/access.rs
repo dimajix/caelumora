@@ -6,8 +6,8 @@
 
 use crate::skill::Skill;
 use async_trait::async_trait;
-use caelumora_model::security::{Grant, SecurityAttributes};
-use caelumora_model::store::Stored;
+use caelumora_domain::security::{Grant, SecurityAttributes};
+use caelumora_domain::store::Stored;
 use caelumora_security::{AccessPolicy, ActionType, CustomVerb, Requirement, SecurityContext};
 
 /// Loading a skill into a turn (issue 22): what the agent then follows,

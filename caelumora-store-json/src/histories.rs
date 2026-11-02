@@ -13,14 +13,14 @@
 use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
 use super::{delete_if_exists, read_json_opt, write_json_atomic, JsonFileStore};
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::chain::{Node, Position};
-use caelumora_model::channel::ChannelId;
-use caelumora_model::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::history::HistoryField;
-use caelumora_model::store::query::Filter;
-use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::chain::{Node, Position};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::store::history::HistoryField;
+use caelumora_domain::store::query::Filter;
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_store::history::{
     answer_of, page_of, seen, seen_nodes, HistoryStore, Memberships, StandingItems,
 };

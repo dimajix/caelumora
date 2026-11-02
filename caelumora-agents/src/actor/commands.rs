@@ -6,10 +6,10 @@
 use super::body::AgentBody;
 use caelumora_api::command::CommandError;
 use caelumora_api::transport::EventSender;
-use caelumora_model::actor::{ActorEvent, Envelope};
-use caelumora_model::agent::AgentChannelState;
-use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::turn::CommandRequest;
+use caelumora_domain::actor::{ActorEvent, Envelope};
+use caelumora_domain::agent::AgentChannelState;
+use caelumora_domain::command::{Command, CommandVisibility};
+use caelumora_domain::turn::CommandRequest;
 use tracing::{debug, info, warn};
 
 impl AgentBody {

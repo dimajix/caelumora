@@ -39,12 +39,12 @@ use bytes::Buf;
 use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
 use caelumora_api::remote::{describe_chain, describe_request_error};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::content::ContentRef;
+use caelumora_domain::message::{Message, MessageEvent, MessageId, MessageRole};
+use caelumora_domain::remote::RemoteEndpoint;
+use caelumora_domain::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
 use caelumora_kernel::backend::Backends;
-use caelumora_model::actor::ActorId;
-use caelumora_model::content::ContentRef;
-use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
-use caelumora_model::remote::RemoteEndpoint;
-use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
 use caelumora_models::ModelProvider;
 use chrono::Utc;
 use dashmap::DashMap;
@@ -1008,9 +1008,9 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use caelumora_api::component::config_of_params;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::message::{Message, MessageRole};
-    use caelumora_model::tool::ToolCall;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::ToolCall;
     use futures::stream as futures_stream;
     use serde_json::json;
     use std::io::Error;
@@ -1335,8 +1335,8 @@ mod tests {
     /// Issue 282: what the model is given along is sent as Ollama's `images`, base64.
     #[tokio::test]
     async fn an_image_given_along_is_sent_with_its_message() {
-        use caelumora_model::content::testing::make_content_ref;
-        use caelumora_model::tool::ToolCallResult;
+        use caelumora_domain::content::testing::make_content_ref;
+        use caelumora_domain::tool::ToolCallResult;
         let fake = FakeOllama::default();
         let client = client(&serve(fake.clone()).await);
         let attachment = make_content_ref("a.png", b"png");

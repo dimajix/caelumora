@@ -3,13 +3,13 @@
 //! pages from its end only as far back as is needed.
 
 use super::ChannelLoop;
-use caelumora_model::actor::ActorId;
-use caelumora_model::chain::Position;
-use caelumora_model::channel::{ChannelId, HistoryAccess, HistoryStart};
-use caelumora_model::history::{HistoryEntry, Reader};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::store::query::Filter;
-use caelumora_model::store::StoreResult;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::chain::Position;
+use caelumora_domain::channel::{ChannelId, HistoryAccess, HistoryStart};
+use caelumora_domain::history::{HistoryEntry, Reader};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::store::query::Filter;
+use caelumora_domain::store::StoreResult;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
 use tracing::warn;

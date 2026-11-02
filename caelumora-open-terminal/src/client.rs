@@ -6,7 +6,7 @@
 
 use caelumora_api::remote::describe_request_error;
 use caelumora_api::terminal::{TerminalError, TerminalResult};
-use caelumora_model::remote::RemoteEndpoint;
+use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_security::secret::SecretManager;
 use caelumora_security::SecurityContext;
 use reqwest::{Client as HttpClient, Method, RequestBuilder, Response, StatusCode, Url};

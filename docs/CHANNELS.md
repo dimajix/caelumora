@@ -223,7 +223,7 @@ deleted again.
 A session and a channel may each be held in a language, a BCP 47 tag (`Language`). A channel is held
 in its own, else in its session's - whatever that is at the moment, so that changing the session's
 reaches every channel without one of its own (`Channel::effective_language`, issue 425). The rule is
-the model's and answered there alone; the views, the prompt part and the REST API ask it. A channel
+the domain's and answered there alone; the views, the prompt part and the REST API ask it. A channel
 without a language of its own therefore cannot be held in none while its session has one: who wants
 none leaves the session's empty too.
 
@@ -241,7 +241,7 @@ translated.
 A session and a channel may say what they are for: a `summary`, one line seen at a glance, and a
 `briefing`, what an agent should know before it works there - conventions, context, what to do and
 what not, like an `AGENTS.md`. Both come from the template and are changed by whoever may change the
-place. Their types bound them (`caelumora_model::value::text`): a briefing is in the context of
+place. Their types bound them (`caelumora_domain::value::text`): a briefing is in the context of
 every agent there on every turn. They are kept exactly as written; trimming is the input's.
 
 A session's descriptions are public, as its name is: everybody in the session reads them, and every
@@ -1110,7 +1110,7 @@ policy to the user (see [WEB-UI.md](WEB-UI.md)).
 
 A user can address participants directly with `@handle` (e.g. `@sassy` for "Sassy"). A handle is the
 participant's name transliterated to ASCII and lowercased, other characters collapsed into `-`
-(`caelumora_model::mention`): "Zoë" is `@zoe`, and `@Zoë` addresses her too. Unknown handles stay
+(`caelumora_domain::mention`): "Zoë" is `@zoe`, and `@Zoë` addresses her too. Unknown handles stay
 plain text, and text in backticks is ignored.
 
 `@all` and its synonym `@channel` address everyone at once: every user and agent taking part, those

@@ -28,12 +28,12 @@ use axum::{
     Router,
 };
 use caelumora_api::terminal::ByteStream;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot::Detail;
+use caelumora_domain::store::StoreError;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::{ChannelView, Viewer, Views};
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::Detail;
-use caelumora_model::store::StoreError;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::session::SessionSnapshot;
 use std::sync::Arc;
@@ -392,6 +392,9 @@ pub(crate) mod tests {
     use axum::body::{to_bytes, Body};
     use axum::http::header::{COOKIE, SET_COOKIE};
     use axum::http::Request;
+    use caelumora_domain::config::{AppConfig, AuthConfig};
+    use caelumora_domain::template::testing::{make_channel_template, make_template};
+    use caelumora_domain::template::{ChannelTemplate, SessionTemplate};
     use caelumora_kernel::event::EventBus;
     use caelumora_kernel::kernel::KernelBuilder;
     use caelumora_kernel::plugin::Plugin;
@@ -400,9 +403,6 @@ pub(crate) mod tests {
     use caelumora_kernel::testing::TestKernel;
     use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_kernel::user_provider::UserManager;
-    use caelumora_model::config::{AppConfig, AuthConfig};
-    use caelumora_model::template::testing::{make_channel_template, make_template};
-    use caelumora_model::template::{ChannelTemplate, SessionTemplate};
     use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use tower::ServiceExt;

@@ -7,7 +7,7 @@
 use crate::view::SessionView;
 use anyhow::{bail, Result};
 use caelumora_api::component::Face;
-use caelumora_model::type_map::{ErasedArc, TypeKey};
+use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use futures::future::BoxFuture;
 use futures::FutureExt;
 use std::any::TypeId;

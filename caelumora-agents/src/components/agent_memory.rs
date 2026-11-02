@@ -29,12 +29,12 @@ use crate::tool::{
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_model::memory::{Memory, MemoryId};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_model::question::Answers;
-use caelumora_model::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::memory::{Memory, MemoryId};
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::question::Answers;
+use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::fmt;
 use std::fmt::Debug;
@@ -283,25 +283,25 @@ mod tests {
     use crate::testing;
     use crate::testing::detached_participant;
     use crate::tool::ToolError;
+    use caelumora_domain::actor::{ActorId, EventContext};
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::channel::testing::main_channel;
+    use caelumora_domain::channel::Participant;
+    use caelumora_domain::confidentiality::{Classification, Confidentiality};
+    use caelumora_domain::confidentiality::{Compartments, Place, Reading};
+    use caelumora_domain::privacy::{PrivacyConfig, SessionPrivacy};
+    use caelumora_domain::role::{RoleId, Roles};
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::{ChannelId, Session, SessionId};
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::work::Work;
     use caelumora_kernel::agent::state::{AgentStateHandle, AgentStates};
     use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
     use caelumora_kernel::session::testing::{owned_kernel_under, participant_runtime_in, spec};
     use caelumora_kernel::session::{ChannelSpec, SessionLoop, SessionManager};
     use caelumora_kernel::testing::Discard;
-    use caelumora_model::actor::{ActorId, EventContext};
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::channel::testing::main_channel;
-    use caelumora_model::channel::Participant;
-    use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::confidentiality::{Compartments, Place, Reading};
-    use caelumora_model::privacy::{PrivacyConfig, SessionPrivacy};
-    use caelumora_model::role::{RoleId, Roles};
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::session::{ChannelId, Session, SessionId};
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
-    use caelumora_model::work::Work;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_security::SecurityContext;
     use caelumora_store::memory::MemoryStore;
@@ -972,7 +972,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_entry_released_to_another_compartment_is_recalled_there() {
-        use caelumora_model::confidentiality::Compartment;
+        use caelumora_domain::confidentiality::Compartment;
         let agent = AgentId::new();
         let handle = handle(agent).await;
         let compartments = Compartments::new([

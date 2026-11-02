@@ -11,11 +11,11 @@ use crate::model::ModelError;
 use crate::reader::ViewError;
 use crate::terminal::TerminalError;
 use crate::workspace::WorkspaceError;
-use caelumora_model::actor::ActorId;
-use caelumora_model::content::ContentId;
-use caelumora_model::store::StoreError;
-use caelumora_model::template::TemplateError;
-use caelumora_model::value::ValueError;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::content::ContentId;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::template::TemplateError;
+use caelumora_domain::value::ValueError;
 use std::error::Error;
 use std::io;
 
@@ -100,8 +100,8 @@ pub type AttachmentResult<T> = Result<T, AttachmentError>;
 /// The message to show a user for `error`: the outermost error in its chain that may be shown, or
 /// `None` if there is none - each error asked of `judge` first: what it shows of an error of a type
 /// it knows, `None` for one it does not know or that may not be shown - then judged by the API's
-/// types (and the model's). One walk through the chain, so the outermost error that may be shown is
-/// shown, whoever knows its type: the agents' logic judges its own errors so
+/// types (and the domain's). One walk through the chain, so the outermost error that may be shown
+/// is shown, whoever knows its type: the agents' logic judges its own errors so
 /// (`caelumora_agents::error::user_message`, issue 370).
 pub fn user_message_with(
     error: &anyhow::Error,
@@ -166,7 +166,7 @@ pub fn store_message(error: &StoreError) -> Option<String> {
     }
 }
 
-/// What the API shows of `e`, if it is of a type of the API's - or of the model's - that may be
+/// What the API shows of `e`, if it is of a type of the API's - or of the domain's - that may be
 /// shown.
 fn judged(e: &(dyn Error + 'static)) -> Option<String> {
     if let Some(e) = e.downcast_ref::<ComponentError>() {

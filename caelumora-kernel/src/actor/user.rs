@@ -9,23 +9,23 @@ use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
 use caelumora_api::command::CommandError;
 use caelumora_api::transport::{EventReceiver, EventSender, TransportError};
-use caelumora_model::actor::{
+use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
-use caelumora_model::agent::AgentId;
-use caelumora_model::approval::{
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::approval::{
     ApprovalDecision, ApprovalRequest, ApprovalResponse, ApprovalRule, ApprovalRuleId, RuleDecision,
 };
-use caelumora_model::channel::ChannelId;
-use caelumora_model::command::{Command, CommandVisibility};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::content::ContentId;
-use caelumora_model::mention::{handle_of, is_group_handle};
-use caelumora_model::message::{Message, MessageId, MessageRole};
-use caelumora_model::question::{QuestionError, QuestionId, QuestionRequest, Response};
-use caelumora_model::session::SessionId;
-use caelumora_model::value::name::Name;
-use caelumora_model::work::TurnId;
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::command::{Command, CommandVisibility};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::content::ContentId;
+use caelumora_domain::mention::{handle_of, is_group_handle};
+use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::question::{QuestionError, QuestionId, QuestionRequest, Response};
+use caelumora_domain::session::SessionId;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::work::TurnId;
 use caelumora_security::{AccessPolicy, AccessQuestions, ActionType, SecurityContext};
 use chrono::Utc;
 use std::collections::HashMap;
@@ -968,10 +968,10 @@ mod tests {
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
-    use caelumora_model::actor::EventContext;
-    use caelumora_model::channel::testing::make_channel;
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::user::testing::make_user;
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::user::testing::make_user;
     use caelumora_store::testing::record_users;
     use std::iter;
     use std::time::Duration;

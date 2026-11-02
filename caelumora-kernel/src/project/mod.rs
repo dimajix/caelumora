@@ -11,10 +11,10 @@ mod manager;
 pub use manager::ProjectManager;
 
 use crate::scoped::ScopeNotEmpty;
-use caelumora_model::project::ProjectId;
-use caelumora_model::store::StoreError;
-use caelumora_model::user::UserId;
-use caelumora_model::value::ValueError;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::store::StoreError;
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::ValueError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {

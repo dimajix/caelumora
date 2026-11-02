@@ -1,13 +1,13 @@
 //! Histories (issue 258): what was said and how turns went, item by item.
 
-use caelumora_model::actor::{ActorId, Rejection, RequestReason, RetryTarget};
-use caelumora_model::agent::RetryRefused;
-use caelumora_model::chain::Position;
-use caelumora_model::digest::Digest;
-use caelumora_model::history::{HistoryEntry, HistoryPage};
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::work::TurnId;
+use caelumora_domain::actor::{ActorId, Rejection, RequestReason, RetryTarget};
+use caelumora_domain::agent::RetryRefused;
+use caelumora_domain::chain::Position;
+use caelumora_domain::digest::Digest;
+use caelumora_domain::history::{HistoryEntry, HistoryPage};
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -323,14 +323,14 @@ pub struct HistoryMessageResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::digest;
-    use caelumora_model::user::UserId;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::digest;
+    use caelumora_domain::user::UserId;
 
     #[test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     fn a_history_is_given_as_its_messages_and_how_turns_ended() {
-        use caelumora_model::turn::GivenUpReason;
+        use caelumora_domain::turn::GivenUpReason;
         let turn = TurnId::new();
         let actor = ActorId::default();
         let said = HistoryItemResponse::of(

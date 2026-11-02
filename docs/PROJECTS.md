@@ -20,7 +20,7 @@ the section `artifacts` does.
 
 ## What a project is
 
-A project is a stored entity of the kernel (`caelumora_model::project::Project`): owned by a user,
+A project is a stored entity of the kernel (`caelumora_domain::project::Project`): owned by a user,
 with a name, a description, members and an access list. It lies in a scope, where it is found by
 name, and it **holds a scope of its own** (`Scope::ProjectScope`): what lies there belongs to the
 project - names are unique in it, and it goes with the project as what lies in any scope goes with

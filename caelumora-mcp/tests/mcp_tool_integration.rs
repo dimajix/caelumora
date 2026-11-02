@@ -12,6 +12,21 @@ use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::component::ComponentContainer;
 use caelumora_api::runtime::ActorRuntime;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
+use caelumora_domain::channel::Channel;
+use caelumora_domain::component::{
+    ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy,
+};
+use caelumora_domain::confidentiality::{Classification, Confidentiality};
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::session::testing::bare_session;
+use caelumora_domain::session::SessionId;
+use caelumora_domain::tool::Tool;
+use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::name::{Name, ScopedName};
+use caelumora_domain::work::Work;
 use caelumora_kernel::component::BuildContext;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::kernel::Kernel;
@@ -19,21 +34,6 @@ use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::testing::{asked_for, TestKernel, World};
 use caelumora_mcp::library::McpLibrary;
 use caelumora_mcp::tool::MCP_TOOL_KIND;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
-use caelumora_model::channel::Channel;
-use caelumora_model::component::{
-    ComponentBundle, ComponentConfig, ComponentDescriptor, ComponentFailPolicy,
-};
-use caelumora_model::confidentiality::{Classification, Confidentiality};
-use caelumora_model::scope::Scope;
-use caelumora_model::security::SecurityAttributes;
-use caelumora_model::session::testing::bare_session;
-use caelumora_model::session::SessionId;
-use caelumora_model::tool::Tool;
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::value::name::{Name, ScopedName};
-use caelumora_model::work::Work;
 use caelumora_security::{Policies, SecurityContext};
 use caelumora_store::{EntityStores, Persistence};
 use rmcp::handler::server::router::tool::ToolRouter;

@@ -13,7 +13,7 @@ use crate::scoped::ScopeNotEmpty;
 use crate::session::SessionError;
 use crate::view::AgentContextError;
 use caelumora_api::error::{component_message, store_message, user_message_with};
-use caelumora_model::security::Refused;
+use caelumora_domain::security::Refused;
 use std::error::Error;
 
 /// The message to show a user for `error`: the outermost error in its chain whose type is known to
@@ -87,14 +87,14 @@ mod tests {
     use caelumora_api::error::StorageGone;
     use caelumora_api::reader::ViewError;
     use caelumora_api::workspace::WorkspaceError;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::Agent;
-    use caelumora_model::channel::ChannelId;
-    use caelumora_model::content::ContentId;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::store::StoreError;
-    use caelumora_model::store::Stored;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::Agent;
+    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::content::ContentId;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::store::StoreError;
+    use caelumora_domain::store::Stored;
 
     /// An error of a type of another crate's, holding one of the kernel's.
     #[derive(Debug, thiserror::Error)]

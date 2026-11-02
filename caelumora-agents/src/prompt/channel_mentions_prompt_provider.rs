@@ -21,8 +21,8 @@ use crate::prompt::{
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::PromptTexts;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::prompt_catalogue::PromptTexts;
 use std::sync::Arc;
 
 pub const CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND: &str = "channel_mentions_prompt_provider";
@@ -81,7 +81,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing;
-    use caelumora_model::agent::AgentChannelState;
+    use caelumora_domain::agent::AgentChannelState;
 
     #[tokio::test]
     async fn an_agent_is_reminded_only_where_another_agent_could_be_asked() {

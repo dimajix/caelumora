@@ -16,9 +16,9 @@ use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::turn::Turn;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::model::ModelClient;
-use caelumora_model::actor::ActorId;
-use caelumora_model::message::{Message, MessageEvent, MessageRole};
-use caelumora_model::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::message::{Message, MessageEvent, MessageRole};
+use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use futures::StreamExt;
 use std::sync::Arc;
 
@@ -210,10 +210,10 @@ mod tests {
     use crate::testing::prompts;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
+    use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::tool::Tool;
     use caelumora_kernel::workspace::testing::session_with_workspace;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::tool::Tool;
     use futures::stream;
     use futures::stream::BoxStream;
     use std::collections::VecDeque;

@@ -14,12 +14,12 @@ use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
 use caelumora_api::runtime::OwnRecord;
-use caelumora_model::agent::AgentChannelState;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::digest::Digest;
-use caelumora_model::ledger::Staged;
-use caelumora_model::note::{Note, NoteChain, NoteChange, NoteId, NoteOrigin, Notes};
-use caelumora_model::turn::TurnState;
+use caelumora_domain::agent::AgentChannelState;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::digest::Digest;
+use caelumora_domain::ledger::Staged;
+use caelumora_domain::note::{Note, NoteChain, NoteChange, NoteId, NoteOrigin, Notes};
+use caelumora_domain::turn::TurnState;
 
 /// Which of an agent's note chains in a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -186,10 +186,10 @@ fn write_canonical(value: &Value, out: &mut String) {
 /// which an integrity check must not do silently.
 #[expect(
     clippy::expect_used,
-    reason = "the model types hashed always serialise; a digest of `Null` instead would be wrong silently"
+    reason = "the domain types hashed always serialise; a digest of `Null` instead would be wrong silently"
 )]
 fn to_json<T: Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).expect("hashed model types serialise to JSON")
+    serde_json::to_value(value).expect("hashed domain types serialise to JSON")
 }
 
 /// The digest of a chain of messages ending in `message`, whose predecessor chain has the digest

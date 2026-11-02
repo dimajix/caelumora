@@ -2,9 +2,9 @@
 //! of user records (issue 306).
 
 use super::{AuthError, AuthResult, Credential, UserProvider};
-use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::store::{StoreError, StoreResultExt};
-use caelumora_model::user::{User, UserId, UserUpdateEvent};
+use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_domain::store::{StoreError, StoreResultExt};
+use caelumora_domain::user::{User, UserId, UserUpdateEvent};
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
 use std::fmt::Debug;
@@ -173,15 +173,15 @@ impl UserManager {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::event::EntityChange;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::role::RoleId;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::store::Stored;
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::value::name::Name;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::event::EntityChange;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::role::RoleId;
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::store::Stored;
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::value::name::Name;
     use caelumora_security::Policies;
     use caelumora_store::testing::ContendedStore;
     use caelumora_store::{EntityStores, Persistence};

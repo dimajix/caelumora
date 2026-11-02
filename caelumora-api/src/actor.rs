@@ -5,17 +5,17 @@ use crate::runtime::ActorRuntime;
 use crate::transport::{EventReceiver, EventSender};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use caelumora_model::actor::{
+use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext,
 };
-use caelumora_model::channel::ChannelId;
-use caelumora_model::command::Command;
-use caelumora_model::component::ComponentConfig;
-use caelumora_model::history::Heard;
-use caelumora_model::session::SessionId;
-use caelumora_model::tool::ToolSet;
-use caelumora_model::value::name::Name;
-use caelumora_model::work::{TurnId, Work};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::command::Command;
+use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::history::Heard;
+use caelumora_domain::session::SessionId;
+use caelumora_domain::tool::ToolSet;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::work::{TurnId, Work};
 use futures::future::BoxFuture;
 use std::any::Any;
 use std::fmt::Debug;

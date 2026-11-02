@@ -6,21 +6,21 @@ use async_trait::async_trait;
 use caelumora_api::reader::{ChannelReader, ParticipantReader, SessionReader};
 use caelumora_api::reader::{PrivateNotesElsewhere, ViewResult};
 use caelumora_api::terminal::ByteStream;
-use caelumora_model::actor::{ActorDescription, ActorId};
-use caelumora_model::chain::Position;
-use caelumora_model::confidentiality::{Classification, Place};
-use caelumora_model::content::{ContentId, ContentRef};
-use caelumora_model::history::HistoryPage;
-use caelumora_model::message::{Message, MessageId};
-use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::project::ProjectId;
-use caelumora_model::session::{ChannelId, SessionId};
-use caelumora_model::snapshot::PublishedNotes;
-use caelumora_model::store::history::HistoryField;
-use caelumora_model::store::query::Filter;
-use caelumora_model::value::language::Language;
-use caelumora_model::value::name::Name;
-use caelumora_model::value::text::{Briefing, Summary};
+use caelumora_domain::actor::{ActorDescription, ActorId};
+use caelumora_domain::chain::Position;
+use caelumora_domain::confidentiality::{Classification, Place};
+use caelumora_domain::content::{ContentId, ContentRef};
+use caelumora_domain::history::HistoryPage;
+use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::privacy::SessionPrivacy;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::session::{ChannelId, SessionId};
+use caelumora_domain::snapshot::PublishedNotes;
+use caelumora_domain::store::history::HistoryField;
+use caelumora_domain::store::query::Filter;
+use caelumora_domain::value::language::Language;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::value::text::{Briefing, Summary};
 
 #[async_trait]
 impl SessionReader for SessionView {

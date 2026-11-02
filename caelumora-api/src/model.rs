@@ -5,11 +5,11 @@
 //! model of its own, which is then the agent's affair (issue 520).
 
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::{Classification, Confidentiality};
-use caelumora_model::context::ModelProfile;
-use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::tool::Tool;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::{Classification, Confidentiality};
+use caelumora_domain::context::ModelProfile;
+use caelumora_domain::message::{Message, MessageEvent};
+use caelumora_domain::tool::Tool;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 

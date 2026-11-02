@@ -4,8 +4,8 @@
 //! (`caelumora_kernel::command`).
 
 use crate::component::{ComponentError, ComponentImpl, ComponentResult};
-use caelumora_model::command::Command;
-use caelumora_model::security::Refused;
+use caelumora_domain::command::Command;
+use caelumora_domain::security::Refused;
 use std::fmt::Debug;
 use std::sync::Arc;
 

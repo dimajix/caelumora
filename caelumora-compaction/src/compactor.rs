@@ -11,9 +11,9 @@
 use crate::cut::{Cut, Given};
 use crate::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
 use caelumora_agents::turn::Turn;
-use caelumora_model::actor::ActorId;
-use caelumora_model::context::KnowledgeRef;
-use caelumora_model::message::{Message, MessageId, MessageRole};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::context::KnowledgeRef;
+use caelumora_domain::message::{Message, MessageId, MessageRole};
 use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -171,18 +171,18 @@ mod tests {
     use crate::testing::{two_calls, Scripted, SUMMARY};
     use async_trait::async_trait;
     use caelumora_agents::testing::{agent_runtime, workspace_turn};
+    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::confidentiality::{Classification, Confidentiality};
+    use caelumora_domain::context::{KnowledgeSource, ModelProfile, SenderFormat};
+    use caelumora_domain::store::{EntityKind, Stored};
+    use caelumora_domain::transcript::TranscriptEntry;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::time_zone::TimeZone;
+    use caelumora_domain::work::Work;
+    use caelumora_domain::workspace::{Workspace, WorkspaceId};
     use caelumora_kernel::testing::participant_runtime_in;
     use caelumora_kernel::workspace::testing::{session_with_workspace, WithWorkspace};
-    use caelumora_model::actor::EventContext;
-    use caelumora_model::agent::AgentChannelState;
-    use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::context::{KnowledgeSource, ModelProfile, SenderFormat};
-    use caelumora_model::store::{EntityKind, Stored};
-    use caelumora_model::transcript::TranscriptEntry;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::time_zone::TimeZone;
-    use caelumora_model::work::Work;
-    use caelumora_model::workspace::{Workspace, WorkspaceId};
 
     /// What the agent of a test is given, as a plugin gives it - a skill, say: a workspace, here,
     /// and its text.

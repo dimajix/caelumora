@@ -2,8 +2,8 @@
 # Finds a library that links what decides, against the rule of docs/ARCHITECTURE.md, "The kernel
 # decides, the agent side asks" (issues 516, 517): a library - whole, or the library side of a crate
 # that stands on both levels, built with its feature `library` alone - links `caelumora-api`, the
-# model and other libraries, never `caelumora-kernel`, `caelumora-security` or `caelumora-store`; and
-# `caelumora-api` links no crate of Caelumora but the model. Only normal dependencies count
+# domain and other libraries, never `caelumora-kernel`, `caelumora-security` or `caelumora-store`;
+# and `caelumora-api` links no crate of Caelumora but the domain. Only normal dependencies count
 # (`cargo tree -e normal`): a library's tests may build the kernel's world. Every crate found is
 # named on stderr, with what it links, and the script fails if there is one, or if `cargo tree`
 # fails.
@@ -41,9 +41,9 @@ for crate in $both_levels; do
     refuse "the library side of $crate" \
         "$(dependencies -p "$crate" --no-default-features --features library)"
 done
-if dependencies -p caelumora-api | grep -vx 'caelumora-api\|caelumora-model' | grep -q '^caelumora-'
+if dependencies -p caelumora-api | grep -vx 'caelumora-api\|caelumora-domain' | grep -q '^caelumora-'
 then
-    echo "library-deps.sh: caelumora-api depends on a crate of Caelumora but the model" >&2
+    echo "library-deps.sh: caelumora-api depends on a crate of Caelumora but the domain" >&2
     failed=1
 fi
 exit $failed

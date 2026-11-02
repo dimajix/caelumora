@@ -10,10 +10,10 @@ use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
 use caelumora_api::actor::Answering;
 use caelumora_api::transport::EventSender;
-use caelumora_model::message::Message;
-use caelumora_model::tool::ToolCallState;
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::turn::TurnState;
+use caelumora_domain::message::Message;
+use caelumora_domain::tool::ToolCallState;
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::turn::TurnState;
 use tracing::warn;
 
 /// What is still needed of a turn once it is taken over (`commit`).
@@ -143,14 +143,14 @@ mod tests {
     use crate::message::testing::given_up_turns;
     use crate::notes::NoteKind;
     use crate::turn::tests::message;
+    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::confidentiality::{Classification, Confidentiality};
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult};
     use caelumora_kernel::testing::Discard;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
-    use caelumora_model::actor::ActorEvent;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::confidentiality::{Classification, Confidentiality};
-    use caelumora_model::message::MessageId;
-    use caelumora_model::message::MessageRole;
-    use caelumora_model::tool::{ToolCall, ToolCallResult};
     use chrono::Utc;
     use futures::executor;
     use serde_json::Value;
@@ -159,8 +159,8 @@ mod tests {
     /// A turn begun on `state`, whose model called `tool` with `arguments`;
     /// the call ran if `ran`, and a note was staged.
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
-        use caelumora_model::note::{NoteChange, NoteId};
-        use caelumora_model::tool::{ToolResultStatus, ToolVisibility};
+        use caelumora_domain::note::{NoteChange, NoteId};
+        use caelumora_domain::tool::{ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), state);
         let call = ToolCall {
             id: Some("1".to_string()),
@@ -279,8 +279,8 @@ mod tests {
     /// A turn begun on `state`, whose model called `send_mail` and `delete`
     /// in one step: `send_mail` ran, `delete` waits for its approval.
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
-        use caelumora_model::approval::ToolMatcher;
-        use caelumora_model::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
+        use caelumora_domain::approval::ToolMatcher;
+        use caelumora_domain::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), state);
         let call = |id: &str, name: &str| ToolCall {
             id: Some(id.to_string()),
@@ -321,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_turn_is_taken_over_with_every_call_answered() {
-        use caelumora_model::tool::ToolResultStatus;
+        use caelumora_domain::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
         let turn = a_turn_with_an_open_step(&mut state);
         let (tx, mut rx) = mpsc::channel(8);
@@ -369,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_turn_given_up_with_an_open_step_answers_it() {
-        use caelumora_model::tool::ToolResultStatus;
+        use caelumora_domain::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
         let turn = a_turn_with_an_open_step(&mut state);
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;

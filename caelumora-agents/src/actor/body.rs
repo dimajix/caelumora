@@ -21,17 +21,17 @@ use caelumora_api::component::ComponentImpl;
 use caelumora_api::model::ModelProfileProvider;
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::{EventReceiver, EventSender};
-use caelumora_model::actor::{
+use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
-use caelumora_model::agent::{AgentChannelState, AgentId, HearsDuringTurn, RetryRefused};
-use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::Visibility;
-use caelumora_model::context::{KnowledgeRef, ModelProfile, PromptPart};
-use caelumora_model::transcript::TranscriptEntry;
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::value::name::Name;
-use caelumora_model::work::Work;
+use caelumora_domain::agent::{AgentChannelState, AgentId, HearsDuringTurn, RetryRefused};
+use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::confidentiality::Visibility;
+use caelumora_domain::context::{KnowledgeRef, ModelProfile, PromptPart};
+use caelumora_domain::transcript::TranscriptEntry;
+use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::work::Work;
 use futures::future::BoxFuture;
 use std::future::ready;
 use std::sync::Arc;
@@ -365,9 +365,9 @@ mod testing {
     use super::*;
     use crate::prompt::external_context_provider::ExternalContextProvider;
     use crate::testing::{detached_actor_runtime, detached_participant};
+    use caelumora_domain::agent::Personality;
     use caelumora_kernel::agent::state::AgentStateHandle;
     use caelumora_kernel::kernel::AgentRuntime;
-    use caelumora_model::agent::Personality;
 
     impl AgentBody {
         /// The body of an agent in a channel outside a session, perceiving

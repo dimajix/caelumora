@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-caelumora-model.workspace = true
+caelumora-domain.workspace = true
 caelumora-security.workspace = true
 caelumora-store.workspace = true
 caelumora-api.workspace = true
@@ -27,7 +27,7 @@ uuid.workspace = true
 caelumora-security = { workspace = true, features = ["test-support"] }
 caelumora-store = { workspace = true, features = ["test-support"] }
 chrono.workspace = true
-caelumora-model = { workspace = true, features = ["test-support"] }
+caelumora-domain = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync"] }
 uuid = { workspace = true, features = ["v4"] }
 

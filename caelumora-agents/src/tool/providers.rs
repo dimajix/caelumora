@@ -7,9 +7,9 @@ use crate::situation::Situation;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use caelumora_api::component::{ComponentError, ComponentImpl, ComponentResult};
-use caelumora_model::approval::ToolMatcher;
-use caelumora_model::question::{Answers, Questions};
-use caelumora_model::tool::{ToolCall, ToolSet};
+use caelumora_domain::approval::ToolMatcher;
+use caelumora_domain::question::{Answers, Questions};
+use caelumora_domain::tool::{ToolCall, ToolSet};
 use tracing::warn;
 
 /// The tool providers of an agent's components. It keeps the providers,
@@ -125,12 +125,12 @@ impl ToolProviders {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::question::{Addressee, Question};
-    use caelumora_model::tool::{Tool, ToolParameters};
-    use caelumora_model::turn::TurnState;
-    use caelumora_model::work::Work;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::question::{Addressee, Question};
+    use caelumora_domain::tool::{Tool, ToolParameters};
+    use caelumora_domain::turn::TurnState;
+    use caelumora_domain::work::Work;
     use serde_json::{json, Value};
     use std::sync::{Arc, Mutex};
 

@@ -1,8 +1,8 @@
 //! The live documents of a running session and their one writer each (issue 86): a controller holds
 //! the current `Session`, `Channel`, `Agent`, `User` or `Workspace`, stores a change first - which
 //! is where the permission is checked - and only then takes it over and announces it on the event
-//! bus. The documents themselves are the model's; keeping them live, writing them and announcing is
-//! the kernel's.
+//! bus. The documents themselves are the domain's; keeping them live, writing them and announcing
+//! is the kernel's.
 //!
 //! Every controller holds its document as a `LiveDocument` (issue 358),
 //! which keeps it live, holds a lock while it is changed, stores it - with
@@ -47,8 +47,8 @@ pub use session::SessionController;
 pub use user::UserController;
 pub use workspace::WorkspaceController;
 
-use caelumora_model::approval::ApprovalRule;
-use caelumora_model::store::{StoreError, StoreResult};
+use caelumora_domain::approval::ApprovalRule;
+use caelumora_domain::store::{StoreError, StoreResult};
 
 /// Nothing if a place may keep every one of `rules` (issue 13): a
 /// session's or a channel's rules only ask or deny, everywhere within it.

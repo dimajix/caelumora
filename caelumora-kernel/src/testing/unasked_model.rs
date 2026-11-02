@@ -5,10 +5,10 @@ use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::model::{ModelClient, ModelError, ModelProfileProvider, ModelResult};
-use caelumora_model::actor::ActorId;
-use caelumora_model::context::ModelProfile;
-use caelumora_model::message::{Message, MessageEvent};
-use caelumora_model::tool::Tool;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::context::ModelProfile;
+use caelumora_domain::message::{Message, MessageEvent};
+use caelumora_domain::tool::Tool;
 use futures::stream::{self, BoxStream, StreamExt};
 use std::sync::Arc;
 

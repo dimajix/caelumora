@@ -1,6 +1,6 @@
 //! The compartments a classification may name (issue 133).
 
-use caelumora_model::confidentiality::Compartment;
+use caelumora_domain::confidentiality::Compartment;
 use serde::Serialize;
 
 /// A compartment a classification may name (issue 133), as configured.

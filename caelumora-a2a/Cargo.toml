@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-caelumora-model.workspace = true
+caelumora-domain.workspace = true
 caelumora-api.workspace = true
 caelumora-agents.workspace = true
 anyhow.workspace = true

@@ -30,10 +30,10 @@ mod testing;
 
 use async_trait::async_trait;
 use caelumora_agents::turn::Turn;
-use caelumora_model::context::KnowledgeRef;
-use caelumora_model::message::Message;
-use caelumora_model::prompt_catalogue::PromptError;
-use caelumora_model::store::EntityKind;
+use caelumora_domain::context::KnowledgeRef;
+use caelumora_domain::message::Message;
+use caelumora_domain::prompt_catalogue::PromptError;
+use caelumora_domain::store::EntityKind;
 use std::fmt::Debug;
 use uuid::Uuid;
 

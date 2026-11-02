@@ -3,11 +3,11 @@
 //! read. A node decides nothing: whoever changes it asks again.
 
 use super::Views;
-use caelumora_model::actor::ActorId;
-use caelumora_model::group::{Group, GroupId};
-use caelumora_model::scope::Scope;
-use caelumora_model::snapshot::GroupSnapshot;
-use caelumora_model::store::StoreResultExt;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::scope::Scope;
+use caelumora_domain::snapshot::GroupSnapshot;
+use caelumora_domain::store::StoreResultExt;
 use caelumora_security::{AccessQuestions, SecurityContext};
 
 #[derive(Clone)]

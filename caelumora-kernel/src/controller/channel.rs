@@ -2,20 +2,20 @@ use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
 use arc_swap::Guard;
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::AgentId;
-use caelumora_model::approval::ApprovalRule;
-use caelumora_model::channel::{
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::AgentId;
+use caelumora_domain::approval::ApprovalRule;
+use caelumora_domain::channel::{
     self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, Participant,
 };
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::event::{EventPublisher, GlobalEvent};
-use caelumora_model::group::Group;
-use caelumora_model::message::Message;
-use caelumora_model::removal::Removal;
-use caelumora_model::security::Subject;
-use caelumora_model::store::{StoreError, StoreResult};
-use caelumora_model::value::name::Name;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::event::{EventPublisher, GlobalEvent};
+use caelumora_domain::group::Group;
+use caelumora_domain::message::Message;
+use caelumora_domain::removal::Removal;
+use caelumora_domain::security::Subject;
+use caelumora_domain::store::{StoreError, StoreResult};
+use caelumora_domain::value::name::Name;
 use caelumora_security::SecurityContext;
 use caelumora_store::{EntityStore, EntityStores};
 use std::sync::Arc;

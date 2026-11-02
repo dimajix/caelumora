@@ -2,19 +2,19 @@
 
 use super::*;
 use crate::tool::ask_user_tool::ASK_USER_TOOL_KIND;
-use caelumora_model::component::ComponentConfig;
-use caelumora_model::question::{QuestionError, QuestionRequest};
-use caelumora_model::tool::{ToolCallResult, ToolResultStatus};
-use caelumora_model::transcript::TranscriptEntry;
+use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::question::{QuestionError, QuestionRequest};
+use caelumora_domain::tool::{ToolCallResult, ToolResultStatus};
+use caelumora_domain::transcript::TranscriptEntry;
 use std::sync::Mutex;
 use tokio::time;
 
 /// A call of the `asking` tool, the component that gives it -
 /// `sensitive` or not - and what the model says once it has its result.
 fn a_call_asking(sensitive: bool) -> (Message, Message, ComponentConfig) {
-    use caelumora_model::component::ComponentDescriptor;
-    use caelumora_model::message::MessageRole;
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::component::ComponentDescriptor;
+    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let call = Message {
         role: MessageRole::Assistant,
@@ -60,7 +60,7 @@ async fn questions_requested(events: &mut broadcast::Receiver<Envelope>) -> Ques
 
 #[tokio::test]
 async fn a_call_waits_for_the_answers_and_the_turn_goes_on_with_them() {
-    use caelumora_model::question::Response;
+    use caelumora_domain::question::Response;
     let (call, done, components) = a_call_asking(false);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
@@ -178,7 +178,7 @@ async fn a_message_instead_of_the_answers_declines_them_and_is_heard_after_the_t
 
 #[tokio::test]
 async fn sensitive_answers_reach_the_tool_alone_and_are_never_stored() {
-    use caelumora_model::question::Response;
+    use caelumora_domain::question::Response;
     let (call, done, components) = a_call_asking(true);
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(Scripted(Mutex::new([call, done].into()))), components).await;
@@ -206,10 +206,10 @@ async fn sensitive_answers_reach_the_tool_alone_and_are_never_stored() {
 
 #[tokio::test]
 async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
-    use caelumora_model::component::ComponentDescriptor;
-    use caelumora_model::message::MessageRole;
-    use caelumora_model::question::Response;
-    use caelumora_model::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::component::ComponentDescriptor;
+    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::question::Response;
+    use caelumora_domain::tool::{ToolCall, ToolVisibility};
 
     let ask = |id: &str, whom: &str| Message {
         role: MessageRole::Assistant,

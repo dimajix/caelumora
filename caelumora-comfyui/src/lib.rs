@@ -11,7 +11,7 @@ pub mod workflow;
 #[cfg(test)]
 use caelumora_agents::testing;
 #[cfg(test)]
-use caelumora_model::prompt_catalogue::PromptTexts;
+use caelumora_domain::prompt_catalogue::PromptTexts;
 
 /// The namespace of the texts of ComfyUI's tool in the prompt catalogue (issue 57).
 pub(crate) const NAMESPACE: &str = "comfyui";

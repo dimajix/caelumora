@@ -21,7 +21,7 @@
 //!   each read asked of the policy.
 //!
 //! What an entity carries of who may reach it (`SecurityAttributes`) and what a refusal says
-//! (`Refused`) are the model's (`caelumora_model::security`).
+//! (`Refused`) are the domain's (`caelumora_domain::security`).
 
 mod access;
 mod action;

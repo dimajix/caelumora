@@ -7,10 +7,10 @@
 //! 296, 344).
 
 use super::Views;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::snapshot::WorkspaceSnapshot;
-use caelumora_model::value::text::Description;
-use caelumora_model::workspace::{Workspace, WorkspaceId};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::snapshot::WorkspaceSnapshot;
+use caelumora_domain::value::text::Description;
+use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use caelumora_security::AccessQuestions;
 
 #[derive(Clone)]

@@ -1,10 +1,10 @@
 //! `AppState`: what every handler of the API shares.
 
 use crate::auth::Auth;
+use caelumora_domain::confidentiality::Compartments;
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::SessionManager;
-use caelumora_model::confidentiality::Compartments;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 

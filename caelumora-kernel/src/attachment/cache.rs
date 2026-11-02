@@ -2,8 +2,8 @@
 //! model call gives a model every image of its context again, which is read from a storage once.
 
 use bytes::Bytes;
-use caelumora_model::content::ContentRef;
-use caelumora_model::digest::Digest;
+use caelumora_domain::content::ContentRef;
+use caelumora_domain::digest::Digest;
 use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
@@ -93,8 +93,8 @@ fn at(attachment: &ContentRef) -> (String, String, Digest) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::content::testing::make_content_ref;
-    use caelumora_model::digest;
+    use caelumora_domain::content::testing::make_content_ref;
+    use caelumora_domain::digest;
 
     /// A reference to `bytes` under `key` in the storage "kept".
     fn at_key(key: &str, bytes: &[u8]) -> ContentRef {

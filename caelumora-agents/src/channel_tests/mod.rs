@@ -25,6 +25,22 @@ use caelumora_api::component::ComponentFacets;
 use caelumora_api::component::ComponentKind;
 use caelumora_api::component::{config_of_params, Params};
 use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
+use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_domain::actor::{EventContext, RetryTarget};
+use caelumora_domain::agent::testing::make_personality;
+use caelumora_domain::agent::{AgentId, HearsDuringTurn, Personality};
+use caelumora_domain::channel::{Channel, Participant};
+use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::config::AppConfig;
+use caelumora_domain::context::ModelProfile;
+use caelumora_domain::history::HistoryEntry;
+use caelumora_domain::message::{Message, MessageEvent, MessageId};
+use caelumora_domain::question::{Answers, Questions};
+use caelumora_domain::tool::{Tool, ToolParameters};
+use caelumora_domain::user::UserId;
+use caelumora_domain::work::TurnId;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::testing::*;
 use caelumora_kernel::channel::*;
@@ -32,22 +48,6 @@ use caelumora_kernel::command::help_command::HelpCommandProvider;
 use caelumora_kernel::command::CommandExecutor;
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::testing::TestKernel;
-use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope};
-use caelumora_model::actor::{EventContext, RetryTarget};
-use caelumora_model::agent::testing::make_personality;
-use caelumora_model::agent::{AgentId, HearsDuringTurn, Personality};
-use caelumora_model::channel::{Channel, Participant};
-use caelumora_model::command::{Command, CommandOutput};
-use caelumora_model::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::config::AppConfig;
-use caelumora_model::context::ModelProfile;
-use caelumora_model::history::HistoryEntry;
-use caelumora_model::message::{Message, MessageEvent, MessageId};
-use caelumora_model::question::{Answers, Questions};
-use caelumora_model::tool::{Tool, ToolParameters};
-use caelumora_model::user::UserId;
-use caelumora_model::work::TurnId;
 use caelumora_security::AllowAllPolicy;
 use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
 use caelumora_store::Persistence;
@@ -262,7 +262,7 @@ async fn told_states(
 /// says: what its users are told of a failure, else the cause - with
 /// the channel, if it was lowered.
 async fn turn_given_up(events: &mut Receiver<Envelope>, agent: AgentId) -> String {
-    use caelumora_model::turn::GivenUpReason;
+    use caelumora_domain::turn::GivenUpReason;
     time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = events.recv().await.expect("the channel is running");
@@ -357,7 +357,7 @@ impl ToolProvider for Asking {
         Ok(serde_json::json!({ "answered_by": answers.answered_by_name, "responses": answers.responses }).into())
     }
     fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
-        use caelumora_model::question::{Addressee, Question};
+        use caelumora_domain::question::{Addressee, Question};
         Ok(Some(Questions {
             questions: vec![Question {
                 header: "Secret".to_string(),

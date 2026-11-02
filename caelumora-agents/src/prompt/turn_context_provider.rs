@@ -8,10 +8,10 @@ use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::context::{KnowledgeRef, PromptPart};
-use caelumora_model::message::MessageRole;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::{KnowledgeRef, PromptPart};
+use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
 pub const TURN_CONTEXT_PROVIDER_KIND: &str = "turn_context_provider";
@@ -128,10 +128,10 @@ mod tests {
     use crate::prompt::Prompt;
     use crate::turn::Turn;
     use anyhow::Result;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::component::ComponentFailPolicy;
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::message::{Message, MessageId};
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::component::ComponentFailPolicy;
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::message::{Message, MessageId};
     use futures::executor;
 
     fn message(content: &str) -> Message {

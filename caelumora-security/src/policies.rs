@@ -2,7 +2,7 @@
 
 use crate::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
 use crate::{AccessPolicy, AllowAllPolicy, Memberships, OwnershipPolicy};
-use caelumora_model::config::{AppConfig, SecurityConfig};
+use caelumora_domain::config::{AppConfig, SecurityConfig};
 use std::sync::Arc;
 
 /// The `AccessPolicy` and the `ConfidentialityPolicy` of the process (issue 449): what the kernel

@@ -1,5 +1,5 @@
 use arc_swap::{ArcSwap, Guard};
-use caelumora_model::agent::Personality;
+use caelumora_domain::agent::Personality;
 use std::sync::Arc;
 
 /// A personality as this instance holds it, shared by the actors of all its agents in all sessions

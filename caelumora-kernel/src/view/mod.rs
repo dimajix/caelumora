@@ -25,7 +25,7 @@
 //! work reads - never a view, through which it would reach the policies, the managers and the
 //! viewer's context.
 //!
-//! A node answers with a snapshot (`caelumora_model::snapshot`, issue 80)
+//! A node answers with a snapshot (`caelumora_domain::snapshot`, issue 80)
 //! for a client that lists and offers: the node's data with its questions
 //! answered at one moment.
 
@@ -56,23 +56,23 @@ use crate::session::{Found, SessionLoop, SessionManager};
 use crate::workspace::WorkspaceManager;
 use caelumora_api::component::Services;
 use caelumora_api::reader::{ViewError, ViewResult};
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::{Agent, AgentId, Personality};
-use caelumora_model::confidentiality::{Place, Reading};
-use caelumora_model::group::{Group, GroupId};
-use caelumora_model::privacy::SessionPrivacy;
-use caelumora_model::project::ProjectId;
-use caelumora_model::prompt_catalogue::PromptCatalogue;
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::Scope;
-use caelumora_model::security::{AclEntry, SecurityAttributes, Subject};
-use caelumora_model::session::{ChannelId, SessionField, SessionId};
-use caelumora_model::snapshot::{
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::{Agent, AgentId, Personality};
+use caelumora_domain::confidentiality::{Place, Reading};
+use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::privacy::SessionPrivacy;
+use caelumora_domain::project::ProjectId;
+use caelumora_domain::prompt_catalogue::PromptCatalogue;
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::Scope;
+use caelumora_domain::security::{AclEntry, SecurityAttributes, Subject};
+use caelumora_domain::session::{ChannelId, SessionField, SessionId};
+use caelumora_domain::snapshot::{
     AccessSnapshot, DeletedSnapshot, PersonalitySnapshot, ScopeSnapshot,
 };
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreResult, StoreResultExt, Stored};
-use caelumora_model::workspace::WorkspaceId;
+use caelumora_domain::store::query::{Filter, Query};
+use caelumora_domain::store::{StoreResult, StoreResultExt, Stored};
+use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_security::{AccessPolicy, AccessQuestions, Policies, SecurityContext};
 use caelumora_store::history::HistoryStore;
@@ -973,27 +973,27 @@ mod tests {
     use crate::testing::{Script, ScriptedAgents, TestKernel};
     use caelumora_api::error::AttachmentError;
     use caelumora_api::reader::{ChannelReader, SessionReader};
-    use caelumora_model::actor::Rejection;
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
-    use caelumora_model::approval::ToolMatcher;
-    use caelumora_model::channel::testing::{founded, main_channel};
-    use caelumora_model::channel::{Channel, ChannelState, Participant};
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::context::{ContextItem, ContextRef};
-    use caelumora_model::history::{Audience, HistoryEntry, HistoryPage, Recorded};
-    use caelumora_model::message::Message;
-    use caelumora_model::security::{Grant, SecurityAttributes, Subject};
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::session::{Participant as SessionParticipant, Session};
-    use caelumora_model::snapshot::Detail;
-    use caelumora_model::turn::GivenUpReason;
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::Name;
-    use caelumora_model::value::text::Introduction;
-    use caelumora_model::value::text::{Briefing, Summary};
-    use caelumora_model::work::TurnId;
+    use caelumora_domain::actor::Rejection;
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
+    use caelumora_domain::approval::ToolMatcher;
+    use caelumora_domain::channel::testing::{founded, main_channel};
+    use caelumora_domain::channel::{Channel, ChannelState, Participant};
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::context::{ContextItem, ContextRef};
+    use caelumora_domain::history::{Audience, HistoryEntry, HistoryPage, Recorded};
+    use caelumora_domain::message::Message;
+    use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::{Participant as SessionParticipant, Session};
+    use caelumora_domain::snapshot::Detail;
+    use caelumora_domain::turn::GivenUpReason;
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::Name;
+    use caelumora_domain::value::text::Introduction;
+    use caelumora_domain::value::text::{Briefing, Summary};
+    use caelumora_domain::work::TurnId;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_store::testing::record_users;
     use caelumora_store::testing::stored_agent;
@@ -1064,7 +1064,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_context_of_an_external_agent_is_what_the_remote_agent_was_given() {
-        use caelumora_model::message::{Message, MessageId};
+        use caelumora_domain::message::{Message, MessageId};
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -1304,8 +1304,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_is_described_with_handles_only_for_who_can_be_mentioned() {
-        use caelumora_model::approval::{ApprovalStrategy, Approver};
-        use caelumora_model::channel::InternalActor;
+        use caelumora_domain::approval::{ApprovalStrategy, Approver};
+        use caelumora_domain::channel::InternalActor;
 
         let (_, manager) = owned_kernel(Default::default());
         let alice = make_user("Alice Example");
@@ -1388,7 +1388,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_participants_profile_says_who_it_is_to_everybody_in_the_channel() {
-        use caelumora_model::user::UserProfile;
+        use caelumora_domain::user::UserProfile;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -1483,10 +1483,10 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn what_is_new_to_a_user_is_counted_from_what_they_read() {
-        use caelumora_model::message::{Message, MessageId, MessageRole};
-        use caelumora_model::snapshot::Unread;
-        use caelumora_model::store::StoreError;
-        use caelumora_model::user::User;
+        use caelumora_domain::message::{Message, MessageId, MessageRole};
+        use caelumora_domain::snapshot::Unread;
+        use caelumora_domain::store::StoreError;
+        use caelumora_domain::user::User;
 
         let (_, manager) = owned_kernel(Default::default());
         let alice = make_user("alice");
@@ -1654,9 +1654,9 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn what_a_channel_holds_is_read_through_its_nodes_and_a_participants_context_by_who_may()
     {
-        use caelumora_model::ledger::Change;
-        use caelumora_model::message::{Message, MessageId, MessageRole};
-        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_domain::ledger::Change;
+        use caelumora_domain::message::{Message, MessageId, MessageRole};
+        use caelumora_domain::note::{NoteId, NoteOrigin};
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -1838,12 +1838,12 @@ mod tests {
     #[tokio::test]
     async fn an_agent_does_not_reach_a_channel_its_owner_may_not_read_but_knows_what_it_wrote_there(
     ) {
-        use caelumora_model::channel::FormerParticipant;
-        use caelumora_model::ledger::Change;
-        use caelumora_model::message::{Message, MessageId};
-        use caelumora_model::note::{NoteId, NoteOrigin};
-        use caelumora_model::privacy::SessionPrivacy;
-        use caelumora_model::removal::Removal;
+        use caelumora_domain::channel::FormerParticipant;
+        use caelumora_domain::ledger::Change;
+        use caelumora_domain::message::{Message, MessageId};
+        use caelumora_domain::note::{NoteId, NoteOrigin};
+        use caelumora_domain::privacy::SessionPrivacy;
+        use caelumora_domain::removal::Removal;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -1935,9 +1935,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_agents_private_notes_are_read_from_every_channel_of_the_session_by_who_may() {
-        use caelumora_model::ledger::Change;
-        use caelumora_model::message::MessageId;
-        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_domain::ledger::Change;
+        use caelumora_domain::message::MessageId;
+        use caelumora_domain::note::{NoteId, NoteOrigin};
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2002,9 +2002,9 @@ mod tests {
 
     #[tokio::test]
     async fn an_agent_whose_personality_is_gone_keeps_its_name_and_its_state() {
-        use caelumora_model::ledger::Change;
-        use caelumora_model::message::MessageId;
-        use caelumora_model::note::{NoteId, NoteOrigin};
+        use caelumora_domain::ledger::Change;
+        use caelumora_domain::message::MessageId;
+        use caelumora_domain::note::{NoteId, NoteOrigin};
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2077,9 +2077,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
-        use caelumora_model::actor::ActorState;
-        use caelumora_model::tool::{ToolCall, ToolCallState};
-        use caelumora_model::turn::TurnState;
+        use caelumora_domain::actor::ActorState;
+        use caelumora_domain::tool::{ToolCall, ToolCallState};
+        use caelumora_domain::turn::TurnState;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2146,12 +2146,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_snapshot_holds_the_details_asked_for_and_no_others() {
-        use caelumora_model::ledger::Change;
-        use caelumora_model::message::{Message, MessageId, TokenUsage};
-        use caelumora_model::note::{NoteId, NoteOrigin};
-        use caelumora_model::snapshot::ChannelParticipantSnapshot;
-        use caelumora_model::tool::{ToolCall, ToolCallState};
-        use caelumora_model::turn::TurnState;
+        use caelumora_domain::ledger::Change;
+        use caelumora_domain::message::{Message, MessageId, TokenUsage};
+        use caelumora_domain::note::{NoteId, NoteOrigin};
+        use caelumora_domain::snapshot::ChannelParticipantSnapshot;
+        use caelumora_domain::tool::{ToolCall, ToolCallState};
+        use caelumora_domain::turn::TurnState;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2255,13 +2255,13 @@ mod tests {
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_agent_reads_another_channel_as_a_whole_by_their_classifications_or_what_was_released_to_it(
     ) {
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
-        use caelumora_model::content::testing::make_content_ref;
-        use caelumora_model::content::ContentRef;
-        use caelumora_model::ledger::Change;
-        use caelumora_model::message::{Message, MessageId, MessageRole};
-        use caelumora_model::note::{NoteId, NoteOrigin};
-        use caelumora_model::privacy::SessionPrivacy;
+        use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_domain::content::testing::make_content_ref;
+        use caelumora_domain::content::ContentRef;
+        use caelumora_domain::ledger::Change;
+        use caelumora_domain::message::{Message, MessageId, MessageRole};
+        use caelumora_domain::note::{NoteId, NoteOrigin};
+        use caelumora_domain::privacy::SessionPrivacy;
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (kernel, manager) = owned_kernel(ConfidentialityRules::new(compartments));
@@ -2485,7 +2485,7 @@ mod tests {
     #[tokio::test]
     async fn a_participant_that_left_is_still_reached_by_what_it_said_and_a_gone_channel_is_told_from_one_never_there(
     ) {
-        use caelumora_model::message::{Message, MessageId};
+        use caelumora_domain::message::{Message, MessageId};
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2578,8 +2578,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_gone_channel_is_reached_as_a_live_one_by_the_clearance_too() {
-        use caelumora_model::confidentiality::{Clearance, Confidentiality};
-        use caelumora_model::role::{RoleId, Roles};
+        use caelumora_domain::confidentiality::{Clearance, Confidentiality};
+        use caelumora_domain::role::{RoleId, Roles};
         let staff = RoleId::new();
         let roles = Roles::new([(
             staff,
@@ -2686,8 +2686,8 @@ mod tests {
 
     #[tokio::test]
     async fn who_left_is_a_former_participant_with_who_removed_them_also_without_a_word() {
-        use caelumora_model::channel::FormerParticipant;
-        use caelumora_model::removal::Removal;
+        use caelumora_domain::channel::FormerParticipant;
+        use caelumora_domain::removal::Removal;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2742,8 +2742,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_reads_another_by_their_classification_not_by_who_takes_part() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
 
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
         let (_, manager) = owned_kernel(ConfidentialityRules::new(compartments));
@@ -2805,7 +2805,7 @@ mod tests {
             let confidentiality = Arc::clone(confidentiality);
             let context = alice_ctx.clone();
             async move {
-                use caelumora_model::confidentiality::Place;
+                use caelumora_domain::confidentiality::Place;
                 use caelumora_security::confidentiality::ConfidentialityQuestions;
                 let place = |channel: &ChannelLoop| Place {
                     channel: channel.id(),
@@ -2851,8 +2851,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_reader_knows_the_privacy_of_its_session_and_looks_up_others() {
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::privacy::PrivacyConfig;
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::privacy::PrivacyConfig;
 
         let (_, manager) = owned_kernel(Default::default());
         let (alice, carol) = (make_user("alice"), make_user("carol"));
@@ -2896,8 +2896,8 @@ mod tests {
     #[tokio::test]
     async fn a_released_message_is_read_where_its_channel_is_not() {
         use caelumora_api::reader::ViewError;
-        use caelumora_model::actor::ActorId;
-        use caelumora_model::confidentiality::{Compartment, Compartments, Confidentiality};
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
 
         let compartments = Compartments::new([
             (Compartment::new("hr"), vec![]),
@@ -2995,7 +2995,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_participant_s_answer_under_way_is_in_the_snapshot_of_its_channel() {
-        use caelumora_model::actor::{ActorEvent, ActorId};
+        use caelumora_domain::actor::{ActorEvent, ActorId};
 
         let store = Persistence::in_memory();
         let kernel = TestKernel {

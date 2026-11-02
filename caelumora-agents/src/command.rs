@@ -6,7 +6,7 @@
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandResult, ProvidesCommands};
-use caelumora_model::command::CommandOutput;
+use caelumora_domain::command::CommandOutput;
 
 /// A component facet contributing commands an agent carries out itself
 /// (issue 269) - `/skill`, `/compact` -, of agents run here and elsewhere

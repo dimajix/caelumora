@@ -20,28 +20,28 @@ use crate::view::{Viewer, Views};
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::{Error, Result};
-use caelumora_model::actor::ActorId;
+use caelumora_domain::actor::ActorId;
 #[cfg(any(test, feature = "test-support"))]
-use caelumora_model::channel::Participant;
-use caelumora_model::channel::{Channel, ChannelField};
-use caelumora_model::event::{Announcing, GlobalEvent};
-use caelumora_model::group::{Group, GroupId};
-use caelumora_model::project::{Project, ProjectId};
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::{Scope, ScopeField};
-use caelumora_model::security::{SecurityAttributes, Subject};
-use caelumora_model::session;
-use caelumora_model::session::{ChannelId, Session, SessionId};
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{StoreError, StoreResult, StoreResultExt, Stored};
-use caelumora_model::template::{
+use caelumora_domain::channel::Participant;
+use caelumora_domain::channel::{Channel, ChannelField};
+use caelumora_domain::event::{Announcing, GlobalEvent};
+use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::{Scope, ScopeField};
+use caelumora_domain::security::{SecurityAttributes, Subject};
+use caelumora_domain::session;
+use caelumora_domain::session::{ChannelId, Session, SessionId};
+use caelumora_domain::store::query::{Filter, Query};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_domain::template::{
     ScopeTemplate, SessionTemplate, SessionTemplateId, WorkspaceTemplate,
 };
-use caelumora_model::user::UserId;
-use caelumora_model::value::language::Language;
-use caelumora_model::value::name::Name;
-use caelumora_model::value::time_zone::TimeZone;
-use caelumora_model::workspace::WorkspaceChoice;
+use caelumora_domain::user::UserId;
+use caelumora_domain::value::language::Language;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::value::time_zone::TimeZone;
+use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_security::{
     AccessQuestions, ActionType, Enforcement, Policies, SecurityContext, JOIN,
 };
@@ -1135,41 +1135,41 @@ mod tests {
     use crate::testing::TestKernel;
     use crate::view::Viewer;
     use anyhow::Result;
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::actor::{ActorEvent, ActorState, Envelope};
-    use caelumora_model::agent::testing::make_personality;
-    use caelumora_model::agent::Agent;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::approval::ApprovalStrategy;
-    use caelumora_model::channel::testing::main_channel;
-    use caelumora_model::channel::{self, moderation_components, Channel, InternalActor};
-    use caelumora_model::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
-    use caelumora_model::confidentiality::Classification;
-    use caelumora_model::event::EntityChange;
-    use caelumora_model::group::GroupId;
-    use caelumora_model::project::Project;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::{Grant, Secured, SecurityAttributes, Subject};
-    use caelumora_model::session;
-    use caelumora_model::session::testing::make_session;
-    use caelumora_model::session::ChannelId;
-    use caelumora_model::session::Session;
-    use caelumora_model::store::query::Query;
-    use caelumora_model::store::{StoreError, Stored};
-    use caelumora_model::template::testing::{make_channel_template, make_template};
-    use caelumora_model::template::{
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::actor::{ActorEvent, ActorState, Envelope};
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::Agent;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::approval::ApprovalStrategy;
+    use caelumora_domain::channel::testing::main_channel;
+    use caelumora_domain::channel::{self, moderation_components, Channel, InternalActor};
+    use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
+    use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::event::EntityChange;
+    use caelumora_domain::group::GroupId;
+    use caelumora_domain::project::Project;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::security::{Grant, Secured, SecurityAttributes, Subject};
+    use caelumora_domain::session;
+    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::ChannelId;
+    use caelumora_domain::session::Session;
+    use caelumora_domain::store::query::Query;
+    use caelumora_domain::store::{StoreError, Stored};
+    use caelumora_domain::template::testing::{make_channel_template, make_template};
+    use caelumora_domain::template::{
         ChannelTemplate, InternalActorTemplate, SessionTemplate, SessionTemplateId,
     };
-    use caelumora_model::turn::{GivenUpReason, TurnState};
-    use caelumora_model::user::testing::make_user;
-    use caelumora_model::user::UserProfile;
-    use caelumora_model::user::{User, UserId};
-    use caelumora_model::value::language::Language;
-    use caelumora_model::value::name::ScopedName;
-    use caelumora_model::value::time_zone::TimeZone;
-    use caelumora_model::value::ValueError;
-    use caelumora_model::workspace::{Workspace, WorkspaceChoice};
+    use caelumora_domain::turn::{GivenUpReason, TurnState};
+    use caelumora_domain::user::testing::make_user;
+    use caelumora_domain::user::UserProfile;
+    use caelumora_domain::user::{User, UserId};
+    use caelumora_domain::value::language::Language;
+    use caelumora_domain::value::name::ScopedName;
+    use caelumora_domain::value::time_zone::TimeZone;
+    use caelumora_domain::value::ValueError;
+    use caelumora_domain::workspace::{Workspace, WorkspaceChoice};
     use caelumora_security::SecurityContext;
     use caelumora_store::memory::MemoryStore;
     use caelumora_store::testing::record_users;
@@ -1338,8 +1338,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_has_the_global_commands_and_its_own_but_no_name_twice() {
-        use caelumora_model::command::HELP_COMMAND_KIND;
-        use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
+        use caelumora_domain::command::HELP_COMMAND_KIND;
+        use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
         let kernel = test_kernel();
         let names = |executor: CommandExecutor| async move {
             executor
@@ -1374,7 +1374,7 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_deleted_agent_rests_in_its_channels_keeps_its_name_and_comes_back_restored() {
-        use caelumora_model::channel::Participant;
+        use caelumora_domain::channel::Participant;
         /// Waits until `holds` does, at most two seconds: a running channel
         /// follows the agent as the session learns of it.
         async fn until(holds: impl Fn() -> bool, what: &str) {
@@ -1497,7 +1497,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_that_missed_an_agent_being_deleted_finds_out_as_it_looks_again() {
-        use caelumora_model::channel::Participant;
+        use caelumora_domain::channel::Participant;
         let kernel = test_kernel();
         let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (system, ctx) = (SecurityContext::system(), SecurityContext::default());
@@ -1824,7 +1824,7 @@ mod tests {
     /// group of its members and what lies in its scope.
     #[tokio::test]
     async fn a_session_s_own_project_goes_and_comes_back_with_it() {
-        use caelumora_model::security::AclEntry;
+        use caelumora_domain::security::AclEntry;
 
         let kernel = test_kernel();
         let stores = kernel.entity_stores().clone();
@@ -2077,8 +2077,8 @@ mod tests {
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn what_lies_in_a_scope_goes_with_its_session_or_channel() {
-        use caelumora_model::agent::Personality;
-        use caelumora_model::user::UserId;
+        use caelumora_domain::agent::Personality;
+        use caelumora_domain::user::UserId;
 
         let kernel = test_kernel();
         let personalities = Arc::clone(&kernel.entity_stores().personalities);
@@ -2198,9 +2198,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_agents_of_a_scope_are_announced_as_they_go_and_purged_with_their_state() {
-        use caelumora_model::agent::{AgentState, PersonalityId};
-        use caelumora_model::memory::{MemoryChange, MemoryId};
-        use caelumora_model::message::MessageId;
+        use caelumora_domain::agent::{AgentState, PersonalityId};
+        use caelumora_domain::memory::{MemoryChange, MemoryId};
+        use caelumora_domain::message::MessageId;
 
         let kernel = test_kernel();
         let agents = Arc::clone(&kernel.entity_stores().agents);
@@ -2266,7 +2266,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_running_session_is_no_way_around_the_policy() {
-        use caelumora_model::user::UserId;
+        use caelumora_domain::user::UserId;
 
         let (_, manager) = owned_kernel(Default::default());
 

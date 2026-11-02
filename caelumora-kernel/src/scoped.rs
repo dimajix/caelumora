@@ -37,15 +37,15 @@
 //! kernel's name.
 
 use async_trait::async_trait;
-use caelumora_model::actor::ActorId;
-use caelumora_model::channel::Channel;
-use caelumora_model::event::{Announcing, EventPublisher, GlobalEvent};
-use caelumora_model::project::Project;
-use caelumora_model::removal::Removal;
-use caelumora_model::scope::{Scope, Scoped, ScopedField};
-use caelumora_model::session::Session;
-use caelumora_model::store::query::{Filter, Query};
-use caelumora_model::store::{
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::channel::Channel;
+use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
+use caelumora_domain::project::Project;
+use caelumora_domain::removal::Removal;
+use caelumora_domain::scope::{Scope, Scoped, ScopedField};
+use caelumora_domain::session::Session;
+use caelumora_domain::store::query::{Filter, Query};
+use caelumora_domain::store::{
     EntityKind, NoEntity, StoreError, StoreResult, StoreResultExt, Stored,
 };
 use caelumora_security::SecurityContext;
@@ -545,18 +545,18 @@ pub(crate) async fn purge_for_good<T: Stored>(
 #[cfg(test)]
 mod tests {
     use super::{ScopeHolders, Unowned};
-    use caelumora_model::actor::ActorId;
-    use caelumora_model::channel::testing::make_channel;
-    use caelumora_model::component::ComponentBundle;
-    use caelumora_model::project::Project;
-    use caelumora_model::removal::Removal;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::security::SecurityAttributes;
-    use caelumora_model::session::testing::bare_session;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::store::StoreError;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::component::ComponentBundle;
+    use caelumora_domain::project::Project;
+    use caelumora_domain::removal::Removal;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::security::SecurityAttributes;
+    use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::store::StoreError;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::ScopedName;
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
     use std::sync::Arc;

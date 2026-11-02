@@ -14,7 +14,7 @@ against this list, rule by rule, before it is reported (the self-review of
 
 *   Import what you use with `use` at the top of the module and write it by its name: `impl
     Stored for Skill`, `Skill::KIND` - never `impl crate::store::Stored for Skill` or
-    `caelumora_model::skill::Skill::KIND`, also not for a single use or in a test. A function may
+    `caelumora_domain::skill::Skill::KIND`, also not for a single use or in a test. A function may
     be called by its module (`time::sleep` after `use tokio::time;`), never by a longer path. A
     path is written out only where an import cannot serve ([Imports](#imports); clippy checks
     it).
@@ -47,7 +47,7 @@ against this list, rule by rule, before it is reported (the self-review of
     traits of its own - its questions on `AccessQuestions`, its views on `Views` - and adds nothing
     about its kind to the kernel (see [PLUGINS.md](PLUGINS.md)).
 *   A library of the agent side - `caelumora-agents`, a crate that brings an agent's components -
-    links `caelumora-api`, the model and other libraries, never the kernel, `caelumora-security` or
+    links `caelumora-api`, the domain and other libraries, never the kernel, `caelumora-security` or
     `caelumora-store` - but as a dev-dependency, for the world of its tests -: it registers through
     its `LibraryBuilder` alone, asks the kernel through `ActorRuntime`, `Situation` and `Turn`, and
     reads through the readers ([ARCHITECTURE.md](ARCHITECTURE.md#principles);
@@ -205,8 +205,8 @@ or changes.
 
 ## Crates and interfaces
 
-*   **Model and kernel.** When you change `caelumora-model`, keep `caelumora-kernel` compatible with
-    it.
+*   **Domain and kernel.** When you change `caelumora-domain`, keep `caelumora-kernel` compatible
+    with it.
 *   **REST and web UI.** When you change the REST API - its routes in `caelumora-rest-server`, its
     types in `caelumora-rest-api` -, keep `caelumora-web-ui` compatible with it.
 *   **Components.** A new component kind is registered in the `ComponentRegistry` - a library's
@@ -302,7 +302,7 @@ condition's doc comment names it, and a test holds both together.
 A running object - `SessionLoop`, `ChannelLoop`, `ParticipantRuntime` - and the stored entity it
 holds (`Session`, `Channel`) share their work by three rules:
 
-*   **The model derives.** A value derived from an entity is computed in `caelumora-model` - a
+*   **The domain derives.** A value derived from an entity is computed in `caelumora-domain` - a
     method of the entity (`Session::effective_time_zone`) or a constructor of the derived type
     (`SessionPrivacy::of(&Session)`) -, a context of an entity in `caelumora-security`
     (`SecurityContext::of_agent`) - never in the kernel, so that the stored document and the
@@ -405,7 +405,7 @@ Errors carry what failed, and only what may be shown goes to users.
 *   Use `anyhow::Result` for general application logic, especially in the kernel, where diverse
     error types are aggregated: code that gathers errors and passes them on, within an operation or
     at the top of a task - not at the boundary to implementations of others.
-*   Use `thiserror` for domain-specific error types, as in `caelumora-model`.
+*   Use `thiserror` for domain-specific error types, as in `caelumora-domain`.
 *   A method of a trait answers a specific error type, never `anyhow`: who implements it is not
     fixed - a module of the kernel today, a plugin tomorrow -, and its caller has to tell its errors
     apart. The type is the contract: what the caller can distinguish - what may be shown, a refusal,
@@ -425,7 +425,7 @@ Errors carry what failed, and only what may be shown goes to users.
     `ComponentError::Build` wraps every failure of a component graph with the component's id and
     kind.
 *   An error caused by a remote system names the endpoint, without credentials, query or fragment
-    (`caelumora_model::remote::redact_endpoint`), and the chain of its causes (the kernel's
+    (`caelumora_domain::remote::redact_endpoint`), and the chain of its causes (the kernel's
     `caelumora_api::remote::describe_chain`; for a failed request without the URL `reqwest` writes
     into it, `describe_request_error`). `ModelError` names the endpoint, the model and the backend's
     own explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
@@ -558,13 +558,13 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     from the type's own API and widens nothing outside `test-support`. The tests of the actors in a
     running channel live in `channel/tests/` of the kernel, those of the agents in `channel_tests/`
     of `caelumora-agents`.
-*   **Documents in tests:** a test that needs a document of the model starts from what the `testing`
-    module of its kind makes - `make_personality`, `make_session`, `make_user`, `make_template`,
-    `make_channel`, `make_message` - and writes beside it only what it differs in
+*   **Documents in tests:** a test that needs a document of the domain starts from what the
+    `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
+    `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in
     (`Personality { kind, ..make_personality("remote") }`), so that a new field of the kind changes
     one place and every test says what is particular about its document. These modules are the
-    model's, so that its own tests reach them too; what stores documents in `EntityStores` and needs
-    nothing of the kernel - `stored_agent`, `record_users` - is the stores'
+    domain's, so that its own tests reach them too; what stores documents in `EntityStores` and
+    needs nothing of the kernel - `stored_agent`, `record_users` - is the stores'
     (`caelumora_store::testing`), and the policies a test opens them by are
     `caelumora_security::testing`'s. The kernel's `testing` modules build what runs and stores - a
     kernel, a running or a stored session.
@@ -583,10 +583,10 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and not
     started, with `session::testing::persist` -: the session with the groups of its participants, a
     project of its own and its channels (issues 471, 486). Its document, by the rule above, comes
-    from the model's `session::testing::make_session`: a user's session, as a template builds one.
+    from the domain's `session::testing::make_session`: a user's session, as a template builds one.
     `bare_session` of the same module is the system's session that holds nothing but its id; a test
     starts from it where the session is nobody's in particular - in the tests of the stores, whose
-    subject the document is, and of what the model derives from a session's fields -, and where it
+    subject the document is, and of what the domain derives from a session's fields -, and where it
     stores a session's document alone - a controller's, a step of `create_from_template` -, which
     says why where it makes or stores it. Outside `caelumora-kernel`, a session is started by its
     manager alone: `SessionLoop::new` is the crate's.

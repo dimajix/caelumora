@@ -1,12 +1,12 @@
 //! In whose name something is done (issues 255, 341): the
 //! `SecurityContext` every operation is asked in.
 
-use caelumora_model::actor::ActorId;
-use caelumora_model::agent::Agent;
-use caelumora_model::approval::Approver;
-use caelumora_model::channel::{Channel, ChannelId};
-use caelumora_model::role::RoleId;
-use caelumora_model::session::SessionId;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::agent::Agent;
+use caelumora_domain::approval::Approver;
+use caelumora_domain::channel::{Channel, ChannelId};
+use caelumora_domain::role::RoleId;
+use caelumora_domain::session::SessionId;
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -140,9 +140,9 @@ impl SecurityContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::PersonalityId;
-    use caelumora_model::user::UserId;
-    use caelumora_model::value::name::ScopedName;
+    use caelumora_domain::agent::PersonalityId;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::ScopedName;
 
     /// Issue 341: an agent acting when nobody asked it is the caller and
     /// the initiator - it caused what it does -, answered for by its owner

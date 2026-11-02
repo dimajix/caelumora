@@ -2,9 +2,9 @@
 //! how they are written.
 
 use crate::skill::{SkillBody, SkillId, SkillSnapshot};
-use caelumora_model::actor::ActorId;
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::value::text::Description;
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::value::text::Description;
 use caelumora_rest_api::scope::{ScopeKind, ScopeResponse};
 use serde::{Deserialize, Serialize};
 
@@ -77,9 +77,9 @@ pub struct SkillBodyRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::scope::Scope;
-    use caelumora_model::session::SessionId;
-    use caelumora_model::snapshot::ScopeSnapshot;
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::snapshot::ScopeSnapshot;
 
     #[test]
     fn a_skill_is_answered_with_its_scope_and_its_body_only_alone() {

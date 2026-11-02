@@ -17,9 +17,9 @@ use crate::prompt::{
 use crate::situation::Situation;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_model::confidentiality::Classification;
-use caelumora_model::prompt_catalogue::{context, PromptTexts};
-use caelumora_model::tool::ToolSet;
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::prompt_catalogue::{context, PromptTexts};
+use caelumora_domain::tool::ToolSet;
 use std::sync::Arc;
 
 pub const TOOL_SETS_PROMPT_PROVIDER_KIND: &str = "tool_sets_prompt_provider";
@@ -89,9 +89,9 @@ mod tests {
     use super::*;
     use crate::testing;
     use crate::turn::Turn;
-    use caelumora_model::agent::{AgentChannelState, AgentId};
-    use caelumora_model::tool::{Tool, ToolParameters};
-    use caelumora_model::work::Work;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::tool::{Tool, ToolParameters};
+    use caelumora_domain::work::Work;
 
     fn tool(name: &str) -> Tool {
         Tool {

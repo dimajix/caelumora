@@ -1,4 +1,4 @@
-// User commands (issue 28). Mirrors `caelumora_model::command::parse_input`:
+// User commands (issue 28). Mirrors `caelumora_domain::command::parse_input`:
 // the client decides whether a line is a command or a message, and sends it
 // to the matching endpoint.
 

@@ -7,7 +7,7 @@ use super::wire::{
     text_of, StreamResponse, WireMessage, WirePart, WireRole, WireStatus, WireTask, WireTaskState,
 };
 use caelumora_agents::external::{ExternalEvent, OutboundMessage};
-use caelumora_model::external_agent::{ConversationId, TaskId};
+use caelumora_domain::external_agent::{ConversationId, TaskId};
 use std::collections::HashMap;
 use uuid::Uuid;
 

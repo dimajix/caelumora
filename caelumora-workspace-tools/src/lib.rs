@@ -15,7 +15,7 @@ mod shell;
 #[cfg(test)]
 use caelumora_agents::testing;
 #[cfg(test)]
-use caelumora_model::prompt_catalogue::{PromptCatalogue, PromptTexts};
+use caelumora_domain::prompt_catalogue::{PromptCatalogue, PromptTexts};
 #[cfg(test)]
 use std::sync::Arc;
 

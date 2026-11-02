@@ -1,10 +1,10 @@
 //! The secrets of a process (issue 516): its sources, tried in order (`SecretProvider`), and the
 //! `SecretManager` that asks the policy before each is read, in the name it is asked in. What is
-//! read and how reading fails are the model's (`caelumora_model::secret`).
+//! read and how reading fails are the domain's (`caelumora_domain::secret`).
 
 use crate::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use async_trait::async_trait;
-use caelumora_model::secret::{SecretError, SecretResult, Secrets};
+use caelumora_domain::secret::{SecretError, SecretResult, Secrets};
 use std::fmt::Debug;
 use std::sync::Arc;
 

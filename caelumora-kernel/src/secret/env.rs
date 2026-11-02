@@ -3,7 +3,7 @@
 use crate::backend::Backends;
 use async_trait::async_trait;
 use caelumora_api::component::NoParams;
-use caelumora_model::secret::SecretResult;
+use caelumora_domain::secret::SecretResult;
 use caelumora_security::secret::SecretProvider;
 use std::env;
 use std::sync::Arc;

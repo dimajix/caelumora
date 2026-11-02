@@ -17,23 +17,23 @@ use caelumora_api::logging::{agent_span, envelope_span};
 use caelumora_api::model::{ModelClient, ModelProfileProvider};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::{EventReceiver, EventSender};
-use caelumora_model::actor::{
+use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
-use caelumora_model::agent::{AgentChannelState, RetryRefused};
-use caelumora_model::approval::{ApprovalResponse, ApprovalStatus};
-use caelumora_model::command::Command;
-use caelumora_model::component::ComponentConfig;
-use caelumora_model::confidentiality::{Classification, Visibility};
-use caelumora_model::history::Heard;
-use caelumora_model::message::{Message, MessageEvent, MessageRole};
-use caelumora_model::plan::PlanProgress;
-use caelumora_model::tool::{ToolCall, ToolCallState, ToolSet};
-use caelumora_model::turn::GivenUpReason;
-use caelumora_model::turn::TurnState;
-use caelumora_model::type_map::TypeKey;
-use caelumora_model::value::name::Name;
-use caelumora_model::work::{TurnId, Work};
+use caelumora_domain::agent::{AgentChannelState, RetryRefused};
+use caelumora_domain::approval::{ApprovalResponse, ApprovalStatus};
+use caelumora_domain::command::Command;
+use caelumora_domain::component::ComponentConfig;
+use caelumora_domain::confidentiality::{Classification, Visibility};
+use caelumora_domain::history::Heard;
+use caelumora_domain::message::{Message, MessageEvent, MessageRole};
+use caelumora_domain::plan::PlanProgress;
+use caelumora_domain::tool::{ToolCall, ToolCallState, ToolSet};
+use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::turn::TurnState;
+use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::name::Name;
+use caelumora_domain::work::{TurnId, Work};
 use chrono::Utc;
 use std::sync::Arc;
 use tracing::{debug, info, warn, Instrument};
@@ -1263,11 +1263,11 @@ impl Actor for AgentActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_model::agent::AgentId;
-    use caelumora_model::confidentiality::Confidentiality;
-    use caelumora_model::context::{KnowledgeRef, KnowledgeSource};
-    use caelumora_model::message::MessageId;
-    use caelumora_model::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
 
     fn tool(name: &str, visibility: ToolVisibility) -> Tool {
         Tool {
