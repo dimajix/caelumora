@@ -10,7 +10,7 @@ use std::sync::Arc;
 /// the services of the kernel, of which each component is given those its kind uses
 /// (`ComponentContext`). A component does not keep the name: what it does later it does in the
 /// context of the act it serves, as a tool does in its turn's. The one exception is a plugin's
-/// model (`caelumora-models`, issue 520), which is given the `Acting` as a service and keeps it - a
+/// model (`caelumora-model`, issue 520), which is given the `Acting` as a service and keeps it - a
 /// handle that builds the context of each call when it is made, never a context, and one no library
 /// can name.
 #[derive(Debug, Clone)]

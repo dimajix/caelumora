@@ -1,11 +1,11 @@
 # Language Models
 
 Which settings suit which model, as far as it was measured: those of the model, of the backend
-`ollama` in `plugins.models`, and those of how an agent's context is framed for it, of the kind
-`model` of `caelumora-models`. The parameters themselves are described in
+`ollama` in `plugins.model`, and those of how an agent's context is framed for it, of the kind
+`model` of `caelumora-model`. The parameters themselves are described in
 [CONFIGURATION.md](CONFIGURATION.md#the-model); the rules they set, in
 [AGENT-TURN.md](AGENT-TURN.md). `caelumora-app` and `caelumora-tui` offer a local Ollama where
-`plugins.models` names none (issue 329); the kernel names no model. What is not measured is said so:
+`plugins.model` names none (issue 329); the kernel names no model. What is not measured is said so:
 a setting without a measurement is the default, not a recommendation.
 
 The measurements are in `work/sender_names/` (`RESULTS.md`, scripts and summaries); they ran
@@ -16,7 +16,7 @@ that works from one that does not, not to rank close ones.
 
 ```yaml
 plugins:
-  models:
+  model:
     gemma:
       type: ollama
       model: "gemma4:26b"
@@ -53,7 +53,7 @@ cloud model is given the tokens of a local model that shares its tokenizer, name
 
 ```yaml
 plugins:
-  models:
+  model:
     gemma-cloud:
       type: ollama
       model: "gemma4:cloud"

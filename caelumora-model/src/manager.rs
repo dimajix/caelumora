@@ -15,14 +15,14 @@ use std::sync::Arc;
 use tracing::debug;
 
 /// The language models the platform offers, by the names the configuration gives them (the section
-/// `plugins.models`): what builds each agent its client of one. A service the plugin offers.
+/// `plugins.model`): what builds each agent its client of one. A service the plugin offers.
 #[derive(Debug)]
 pub(crate) struct ModelManager {
     models: NamedBackends<dyn ModelProvider>,
 }
 
 impl ModelManager {
-    /// The models `models` names, of the section `plugins.models`.
+    /// The models `models` names, of the section `plugins.model`.
     pub(crate) fn new(models: NamedBackends<dyn ModelProvider>) -> Self {
         Self { models }
     }

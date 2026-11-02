@@ -13,9 +13,9 @@ the kernel when something fails. How components are declared and built is in
 
 A plugin (issue 323) is a crate linked into the program that brings a subject the kernel does not
 know - a kind of entity with what keeps it, its components, its views and its routes, or a service
-of its own (`caelumora-models`, issue 520) - or a backend of a service of the kernel (issue 324) or
-of another plugin (`caelumora-ollama`). It implements `caelumora_kernel::plugin::Plugin` - a name
-for messages, `backends` and `register` - and the program lists it: `caelumora-app` in
+of its own (`caelumora-model`, issue 520) - or a backend of a service of the kernel (issue 324) or
+of another plugin (`caelumora-model-ollama`). It implements `caelumora_kernel::plugin::Plugin` - a
+name for messages, `backends` and `register` - and the program lists it: `caelumora-app` in
 `rest_plugins()` if it serves routes, otherwise in `plugins()`, and builds the kernel with both;
 `caelumora-tui` in its own `plugins()`. A program builds the kernel with
 `KernelBuilder::from_config`, given the configuration and its plugins, in two steps, and registers
@@ -73,8 +73,8 @@ it registers, a plugin
 *   is handed the kernel's storages of content (`content_storages`, issue 282) for what it keeps
     beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes the backends its own service is served by, which other plugins may bring, from its section
-    (`make_named`, issue 520) - the models of `caelumora-models`, served by the backend `ollama` of
-    `caelumora-ollama`;
+    (`make_named`, issue 520) - the models of `caelumora-model`, served by the backend `ollama` of
+    `caelumora-model-ollama`;
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
     says only what its kind adds - where it announces and what lies behind an entity), and
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
@@ -101,13 +101,14 @@ the `AppState`; the API serves them behind the same login as the kernel's (`rout
 that brings a component of a channel alone, such as `caelumora-decision` (issue 403), registers its
 kind in `register`. One that brings backends alone, such as `caelumora-open-terminal` (issue 327) or
 `caelumora-store-json` (issue 446), registers them in `backends` and nothing in `register`. A plugin
-may depend on another plugin to bring a backend of that plugin's service - `caelumora-ollama` on
-`caelumora-models` (issue 520) -, as it depends on the kernel to bring one of the kernel's; what a
-plugin's service offers is its own API, as the faces of `caelumora-skills` are. A backend of the
-stores runs the store suite in its own tests (`caelumora_store::suite`, feature `test-support`). A
-plugin's tests use the world of the security suite - the kernel with the recording ownership policy
-and three users -, `caelumora_kernel::testing`, as a dev-dependency with the feature `test-support`.
-That world runs no agent unless a library brings them (`World::with(plugins, libraries, …)`).
+may depend on another plugin to bring a backend of that plugin's service -
+`caelumora-model-ollama` on `caelumora-model` (issue 520) -, as it depends on the kernel to bring
+one of the kernel's; what a plugin's service offers is its own API, as the faces of
+`caelumora-skills` are. A backend of the stores runs the store suite in its own tests
+(`caelumora_store::suite`, feature `test-support`). A plugin's tests use the world of the security
+suite - the kernel with the recording ownership policy and three users -,
+`caelumora_kernel::testing`, as a dev-dependency with the feature `test-support`. That world runs no
+agent unless a library brings them (`World::with(plugins, libraries, …)`).
 
 ## What a library is
 

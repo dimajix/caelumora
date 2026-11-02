@@ -1,7 +1,7 @@
 //! What an agent is given of a language model (issues 130, 520): the facet `ModelClient`, through
 //! which it asks its model, with the errors of a call (`ModelError`), and the profile by which its
 //! context is written for that model (`ModelProfileProvider`). The models the platform offers come
-//! from the plugin `caelumora-models`, which builds each agent its client; a library may bring a
+//! from the plugin `caelumora-model`, which builds each agent its client; a library may bring a
 //! model of its own, which is then the agent's affair (issue 520).
 
 use async_trait::async_trait;

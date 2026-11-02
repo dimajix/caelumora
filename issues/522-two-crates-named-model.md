@@ -1,6 +1,6 @@
 # 522 — Two crates are named after the model, one for the domain and one for language models
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -128,3 +128,6 @@ issues, `work/` and the record in CRATES.md.
 - **2026-11-02** — Plan of two steps made, on the branch `issue-522-crate-names`.
 - **2026-11-02** — Step 1 done: `caelumora-model` is `caelumora-domain`, and where the documents,
   the module docs and the scripts meant the crate by "the model", they say "the domain".
+- **2026-11-02** — Step 2 done: `caelumora-models` is `caelumora-model` with `ModelPlugin` and the
+  section `plugins.model`, `caelumora-ollama` is `caelumora-model-ollama` with `OllamaModelPlugin`
+  and the name `model_ollama`; CRATES.md records the old names. Done.

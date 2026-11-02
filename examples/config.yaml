@@ -113,7 +113,7 @@ plugins:
   artifacts:
     max_bytes: 52428800
   # The language models the platform offers (issue 520), each by its name and
-  # a backend: `ollama` of the plugin caelumora-ollama. Without this section
+  # a backend: `ollama` of the plugin caelumora-model-ollama. Without this section
   # the program offers one: the Ollama server at 127.0.0.1:11434 and the model
   # gemma4:26b (issue 329). Here that model, with the size of its context set,
   # as docs/LLM-MODELS.md recommends, so that it is not cut off at Ollama's
@@ -124,7 +124,7 @@ plugins:
   #        lists no tokens, a local one that shares its tokenizer
   #      think: Ollama's default for the model
   #      vision: asked of the server
-  models:
+  model:
     gemma:
       type: ollama
       model: "gemma4:26b"
@@ -188,12 +188,12 @@ users:
 # component for it gets the default. A component here is the default of each
 # such facet it provides - the model's client and its profile, built once for
 # both. Without this section the built-in defaults are used: for the model, the
-# kind `model` of caelumora-models, which talks to the one model of
-# `plugins.models` - among several, a component of it names one (`name`). Here
+# kind `model` of caelumora-model, which talks to the one model of
+# `plugins.model` - among several, a component of it names one (`name`). Here
 # how the context is framed for that model, as docs/LLM-MODELS.md recommends
 # for it: senders marked in XML, which it attributes best. Further parameters,
 # with their defaults:
-#      name: the one model of `plugins.models`
+#      name: the one model of `plugins.model`
 #      reasoning_history: current_turn
 #      system_messages: only_at_start
 #      message_times: true

@@ -25,8 +25,8 @@ use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
-use caelumora_models::plugin::ModelsPlugin;
-use caelumora_ollama::plugin::{with_local_model, OllamaPlugin};
+use caelumora_model::plugin::ModelPlugin;
+use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -200,8 +200,8 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(OpenTerminalPlugin),
-        Box::new(ModelsPlugin),
-        Box::new(OllamaPlugin),
+        Box::new(ModelPlugin),
+        Box::new(OllamaModelPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
@@ -274,8 +274,8 @@ mod tests {
     use caelumora_kernel::seed::Seed;
     use caelumora_kernel::terminal::TerminalProvider;
     use caelumora_mcp::tool::MCP_TOOL_KIND;
-    use caelumora_models::plugin::MODELS;
-    use caelumora_ollama::client::OLLAMA_BACKEND;
+    use caelumora_model::plugin::MODEL;
+    use caelumora_model_ollama::client::OLLAMA_BACKEND;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::secret::SecretManager;
     use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
@@ -303,7 +303,7 @@ mod tests {
             config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
         let workflows = root.join(config.libraries[COMFYUI]["workflows"].as_str().unwrap());
         let libraries = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
-        let models = [(MODELS.to_string(), config.plugins[MODELS].clone())].into();
+        let models = [(MODEL.to_string(), config.plugins[MODEL].clone())].into();
         let AppConfig { compartments, roles, component_defaults, .. } = config;
         kernel_of(
             store,
@@ -379,7 +379,7 @@ mod tests {
     fn without_a_model_configured_the_program_offers_one_served_by_ollama() {
         let config = with_local_model(AppConfig::default());
         let models: BTreeMap<String, BackendConfig> =
-            serde_json::from_value(config.plugins[MODELS].clone()).unwrap();
+            serde_json::from_value(config.plugins[MODEL].clone()).unwrap();
         let backends: Vec<&str> = models.values().map(|model| model.kind.as_str()).collect();
         assert_eq!(backends, [OLLAMA_BACKEND]);
         kernel_of(&Persistence::in_memory(), &config);

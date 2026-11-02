@@ -453,8 +453,8 @@ dependencies = [
  "caelumora-kernel",
  "caelumora-logging",
  "caelumora-mcp",
- "caelumora-models",
- "caelumora-ollama",
+ "caelumora-model",
+ "caelumora-model-ollama",
  "caelumora-open-terminal",
  "caelumora-rest-server",
  "caelumora-security",
@@ -660,7 +660,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "caelumora-models"
+name = "caelumora-model"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -678,7 +678,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "caelumora-ollama"
+name = "caelumora-model-ollama"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
@@ -691,7 +691,7 @@ dependencies = [
  "caelumora-api",
  "caelumora-domain",
  "caelumora-kernel",
- "caelumora-models",
+ "caelumora-model",
  "chrono",
  "dashmap",
  "futures",
@@ -888,8 +888,8 @@ dependencies = [
  "caelumora-kernel",
  "caelumora-logging",
  "caelumora-mcp",
- "caelumora-models",
- "caelumora-ollama",
+ "caelumora-model",
+ "caelumora-model-ollama",
  "caelumora-open-terminal",
  "caelumora-skills",
  "caelumora-store-json",

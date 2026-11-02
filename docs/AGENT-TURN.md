@@ -52,7 +52,7 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
 
 *   **`Planning`** calls the model with the context and the agent's tools and streams the answer -
     through its `ModelClient` - for a model the platform offers, a client the plugin
-    `caelumora-models` builds for the agent alone, which makes every call in the agent's name, for
+    `caelumora-model` builds for the agent alone, which makes every call in the agent's name, for
     the work's initiator (issue 520). With tool calls it registers them for approval where their
     tool requires it and goes to `ExecutingTools`; otherwise to `Reflecting`. A turn makes at most
     `MAX_MODEL_CALLS` model calls, counted across a restart, and each step of its plan and the

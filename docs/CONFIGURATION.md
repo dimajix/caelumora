@@ -55,7 +55,7 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
 | `plugins.artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
-| `plugins.models` | The section of the plugin `caelumora-models` (issue 520): the language models the platform offers, each a [backend](#backends) by its name - see [The model](#the-model). | none - the program offers one |
+| `plugins.model` | The section of the plugin `caelumora-model` (issue 520): the language models the platform offers, each a [backend](#backends) by its name - see [The model](#the-model). | none - the program offers one |
 | `libraries.comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`ModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults - for the model, the kind `model` ([The model](#the-model)) |
@@ -157,15 +157,15 @@ ComfyUI's template of that name.
 
 ## The model
 
-The language models the platform offers are a plugin's, `caelumora-models` (issue 520): its section
-`plugins.models` names each by its name and a [backend](#backends), and every call of one passes the
+The language models the platform offers are a plugin's, `caelumora-model` (issue 520): its section
+`plugins.model` names each by its name and a [backend](#backends), and every call of one passes the
 plugin. Without the section, the program offers one - `caelumora-app` and `caelumora-tui` a local
-Ollama with the defaults of the backend `ollama`, of the plugin `caelumora-ollama` (issue 329); the
-kernel names no model. There is no environment variable for it.
+Ollama with the defaults of the backend `ollama`, of the plugin `caelumora-model-ollama` (issue
+329); the kernel names no model. There is no environment variable for it.
 
 ```yaml
 plugins:
-  models:
+  model:
     gemma:
       type: ollama
       endpoint:
@@ -185,10 +185,10 @@ plugins:
 
 Before the first call to a model, the backend reads the model's control tokens from the server and
 keeps them from being produced by any text it sends; if they cannot be read, the call fails
-(`control_tokens` of `caelumora-ollama`). They are read of the model's `tokenizer`, if one is
+(`control_tokens` of `caelumora-model-ollama`). They are read of the model's `tokenizer`, if one is
 configured.
 
-An agent is given its model as a component: the kind `model` of `caelumora-models`, which provides
+An agent is given its model as a component: the kind `model` of `caelumora-model`, which provides
 the `ModelClient` facet, of which an agent has exactly one, and how the agent's context is framed
 for the model (`ModelProfileProvider`). A personality may configure its own; every other agent gets
 the one `component_defaults` names, or else the kind `model` without parameters - the one model
@@ -215,7 +215,7 @@ component_defaults:
 
 | Parameter of `model` | Meaning | Default |
 |---|---|---|
-| `name` | The model of `plugins.models`; one not configured keeps the agent from being built | the one there is - needed where there are several |
+| `name` | The model of `plugins.model`; one not configured keeps the agent from being built | the one there is - needed where there are several |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |
 | `system_messages` | Where the model keeps system messages: `only_at_start` - any later one is given as a user message - or `anywhere` (see [AGENT-TURN.md](AGENT-TURN.md#system-messages)) | `only_at_start` |
 | `sender_format` | How the model is told who wrote a message of another participant: `none`, `prefix` or `xml` (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `prefix` |

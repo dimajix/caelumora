@@ -1,7 +1,7 @@
 //! Backends (issue 324): what serves a service - a storage of workspaces (`dyn TerminalProvider`)
 //! or of content (`dyn ContentStorage`, issue 282), a user provider (`dyn UserProvider`), a secret
 //! provider (`dyn SecretProvider`), what the stores keep their data in (`dyn PersistenceBackend`,
-//! issue 446), and a service of a plugin - the models of `caelumora-models` (issue 520) - named in
+//! issue 446), and a service of a plugin - the models of `caelumora-model` (issue 520) - named in
 //! the configuration by its type (`BackendConfig`) and made by the factory registered under that
 //! type for the service: the kernel's (`Backends::built_in`) or a plugin's (`Plugin::backends`).
 //!

@@ -79,14 +79,15 @@ drawn in [CRATES.md](CRATES.md):
     brings nothing but its component kind `a2a_agent`, so that the agents keep the facet
     `ExternalAgent` and name no protocol (issue 326). See
     [Agents that run elsewhere](#agents-that-run-elsewhere).
-*   **`caelumora-models`** - the language models the platform offers (issue 520), a plugin: the
-    section `plugins.models`, the service that builds each agent its client of one - which makes
+*   **`caelumora-model`** - the language models the platform offers (issue 520), a plugin: the
+    section `plugins.model`, the service that builds each agent its client of one - which makes
     every call in the agent's name as the kernel holds it then -, and the kind `model`, the default
     of the model's facets. A model is needed only within an agent, so it is no part of the kernel.
     See [CONFIGURATION.md](CONFIGURATION.md#the-model).
-*   **`caelumora-ollama`** - language models served by Ollama, a plugin that brings nothing but the
-    backend `ollama` of the models of `caelumora-models`, so that neither names a model provider;
-    the programs offer a local one where the configuration names no model (issues 329, 520).
+*   **`caelumora-model-ollama`** - language models served by Ollama, a plugin that brings nothing
+    but the backend `ollama` of the models of `caelumora-model`, so that neither names a model
+    provider; the programs offer a local one where the configuration names no model (issues 329,
+    520).
 *   **`caelumora-decision`** - decision models, which answer typed questions about a text with
     probabilities, reached through the `/v1/systemone` contract: a plugin that brings nothing but
     its component kind `decision_policy`, a `ResponderPolicy` that chooses who answers by what was
@@ -162,7 +163,7 @@ Some services of the kernel are served by one of a choice of **backends**, named
 configuration by their `type` (issue 324): the stores (`PersistenceBackend`, issue 446), the
 storages of workspaces (`TerminalProvider`), the storages of binary content (`ContentStorage`, issue
 282), the secret providers (`SecretProvider`) and the user providers (`UserProvider`); a plugin's
-service may be served so too - the models of `caelumora-models` (`ModelProvider`, issue 520), which
+service may be served so too - the models of `caelumora-model` (`ModelProvider`, issue 520), which
 it makes of its section (`KernelBuilder::make_named`). A backend is made by the factory registered
 under its type for its service, in `Backends` (`caelumora_kernel::backend`), which reads its
 parameters and asks the services it is given for what it needs. The kernel registers its own
@@ -297,7 +298,7 @@ part in the turn. A component contributes tools (`ToolProvider`), text for the m
 (`PromptProvider`), or filters incoming messages (`PerceiveInProcessor`). Of some facets an agent
 has exactly one: the `ModelClient`, the language model it talks to, and the `ContextProvider`, which
 assembles the model's context. Both have built-in defaults that a personality or the configuration
-can replace - the model's is the kind `model` of the plugin `caelumora-models`, which talks to a
+can replace - the model's is the kind `model` of the plugin `caelumora-model`, which talks to a
 model the platform offers (issue 520). Tool calls are run by the agent's `ToolExecutor` with the
 tools of its providers; it is no component, so that what it checks is never a personality's choice,
 and what of a call is the kernel's to decide - whether it may be called, what the rules of its

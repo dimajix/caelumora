@@ -7,5 +7,5 @@ libraries='caelumora-agents caelumora-mcp caelumora-a2a caelumora-comfyui
 caelumora-workspace-tools caelumora-compaction'
 both_levels='caelumora-skills caelumora-artifacts'
 library_side='extension.rs component.rs library.rs'
-plugins='caelumora-decision caelumora-models caelumora-ollama caelumora-open-terminal
+plugins='caelumora-decision caelumora-model caelumora-model-ollama caelumora-open-terminal
 caelumora-store-json caelumora-store-postgres'

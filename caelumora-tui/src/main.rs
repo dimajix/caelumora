@@ -33,8 +33,8 @@ use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
-use caelumora_models::plugin::ModelsPlugin;
-use caelumora_ollama::plugin::{with_local_model, OllamaPlugin};
+use caelumora_model::plugin::ModelPlugin;
+use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
@@ -537,8 +537,8 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
         Box::new(OpenTerminalPlugin),
-        Box::new(ModelsPlugin),
-        Box::new(OllamaPlugin),
+        Box::new(ModelPlugin),
+        Box::new(OllamaModelPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),

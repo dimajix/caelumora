@@ -22,7 +22,7 @@ The project is organized as a Rust workspace with the following crates:
 - **`caelumora-kernel`**: The execution engine: sessions, channels, event routing and the views.
 - **`caelumora-api`**: The kernel's API: what a library of the agent side is given and declares.
 - **`caelumora-agents`**: What an agent does in a channel: its cognitive cycle, tools and
-  prompts; the model it talks to is offered by the plugin `caelumora-models`.
+  prompts; the model it talks to is offered by the plugin `caelumora-model`.
 - **`caelumora-rest-api`**: The request and response types of the REST interface.
 - **`caelumora-rest-server`**: REST interface for interacting with the system, as a crate the
   program links.

@@ -2,7 +2,7 @@
 //! the agent is given it - its client, which is built for this agent alone, and the profile by
 //! which its context is framed for that model.
 //!
-//! Parameters: `name`, the model of the section `plugins.models` - left out, the one there is -,
+//! Parameters: `name`, the model of the section `plugins.model` - left out, the one there is -,
 //! and how the context is framed for it: `reasoning_history`, which reasoning of earlier messages
 //! the model is given back (`never`, `current_turn` - the default - or `always`, issue 63),
 //! `system_messages`, where the model keeps system messages (`only_at_start` - the default - or
@@ -103,7 +103,7 @@ pub(crate) fn register_all(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::{with_default_model, ModelsPlugin, MODELS};
+    use crate::plugin::{with_default_model, ModelPlugin, MODEL};
     use crate::ModelProvider;
     use anyhow::Result;
     use async_trait::async_trait;
@@ -183,11 +183,11 @@ mod tests {
             .iter()
             .map(|(name, params)| (*name, BackendConfig::new("answering", params.clone())))
             .collect();
-        let plugins = [(MODELS.to_string(), serde_json::to_value(models).unwrap())].into();
+        let plugins = [(MODEL.to_string(), serde_json::to_value(models).unwrap())].into();
         let prompts =
             prompts.iter().map(|(variant, dir)| (variant.to_string(), dir.clone())).collect();
         let config = AppConfig { plugins, prompts, ..AppConfig::default() };
-        TestKernel { config, plugins: vec![&ModelsPlugin, &Answerers], ..Default::default() }
+        TestKernel { config, plugins: vec![&ModelPlugin, &Answerers], ..Default::default() }
             .try_build()
             .unwrap()
     }
@@ -319,15 +319,15 @@ mod tests {
     fn a_default_model_fills_a_section_that_names_none() {
         let local = || BackendConfig::new("local", Value::Null);
         let filled = with_default_model(AppConfig::default(), "local", local());
-        assert_eq!(filled.plugins[MODELS], json!({ "local": { "type": "local" } }));
+        assert_eq!(filled.plugins[MODEL], json!({ "local": { "type": "local" } }));
         let kept =
             with_default_model(filled.clone(), "other", BackendConfig::new("other", Value::Null));
         assert_eq!(kept.plugins, filled.plugins, "one configured is kept");
         let empty =
-            AppConfig { plugins: [(MODELS.to_string(), json!({}))].into(), ..AppConfig::default() };
+            AppConfig { plugins: [(MODEL.to_string(), json!({}))].into(), ..AppConfig::default() };
         assert_eq!(with_default_model(empty, "local", local()).plugins, filled.plugins);
         let wrong = AppConfig {
-            plugins: [(MODELS.to_string(), json!("gemma"))].into(),
+            plugins: [(MODEL.to_string(), json!("gemma"))].into(),
             ..AppConfig::default()
         };
         let left = with_default_model(wrong.clone(), "local", local());

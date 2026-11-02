@@ -22,8 +22,8 @@ flowchart TD
 
     subgraph plugins["Plugins"]
         decision["caelumora-decision"]
-        models["caelumora-models"]
-        ollama["caelumora-ollama"]
+        model["caelumora-model"]
+        model_ollama["caelumora-model-ollama"]
         open_terminal["caelumora-open-terminal"]
         store_json["caelumora-store-json"]
         store_postgres["caelumora-store-postgres"]
@@ -60,7 +60,7 @@ flowchart TD
     plugins --> api
     plugins --> domain
     plugins --> kernel
-    ollama --> models
+    model_ollama --> model
     decision & kernel & open_terminal & rest_server & store & store_json & store_postgres --> security
     a2a & comfyui & compaction & mcp & workspace_tools --> agents
     libraries --> api
@@ -89,6 +89,10 @@ those it takes with other features than their default ones.
 | `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server`, `caelumora-security` and `caelumora-store`; `caelumora-artifacts` and `caelumora-skills` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
+Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` was named
+`caelumora-model`, `caelumora-model` `caelumora-models` and `caelumora-model-ollama`
+`caelumora-ollama`; the issues before it name them so.
+
 `caelumora-rest-client` depends on no crate of the workspace, and none on it; it is reserved for a
 client of the REST interface. `caelumora-web-ui` is no crate, but the browser frontend served by
 `caelumora-app`.
@@ -109,8 +113,8 @@ The graph is not only what has grown, but holds rules of the design:
     build the kernel's world with.
 *   A plugin links the kernel, which it extends (see [PLUGINS.md](PLUGINS.md)).
 *   Nothing but the programs depends on a plugin - but a plugin that brings a backend of another
-    plugin's service, as `caelumora-ollama` brings one of the models of `caelumora-models` (issue
-    520) -, and only the crates that are a plugin and a library at once, with `server`, on
+    plugin's service, as `caelumora-model-ollama` brings one of the models of `caelumora-model`
+    (issue 520) -, and only the crates that are a plugin and a library at once, with `server`, on
     `caelumora-rest-server`.
 
 ## How the graph is written
