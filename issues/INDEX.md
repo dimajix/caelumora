@@ -567,6 +567,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [524](524-two-memberships.md) | open | `caelumora_security::Memberships`, the groups an access list names, and `caelumora_store::history::Memberships`, who took part in a channel when, share a name, although "membership" was decided to be the groups' word and a channel's the participant's. |
 | [526](526-large-modules-of-the-domain.md) | done | Several files of `caelumora-domain` hold several concepts each in up to 1400 lines of code - the actors' events, envelopes and states in `actor.rs`, the history's entries, records and readers in `history/mod.rs`, an agent's context, its model's profile and its resolution in `context.rs` -, so that no first sentence of their module docs can name one responsibility. |
 | [528](528-session-re-exports-the-channel-s-types.md) | open | `caelumora_domain::session` re-exports `Channel`, `ChannelId`, `ChannelState` and `Participant` from `caelumora_domain::channel`, so that each of them is imported by two paths - most code by the channel's, some by the session's. |
+| [530](530-the-api-s-module-remote.md) | open | `caelumora_api::remote` holds a cache of values kept for a time (`ExpiringCache`) and how an error's chain of causes is described (`describe_chain`, `describe_request_error`) - neither of them about a remote system -, under a name that `caelumora_domain::remote`, where an endpoint is, also bears. |
 
 ## Integrations
 
