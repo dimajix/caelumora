@@ -103,3 +103,7 @@ concepts each file is to hold, not yet every item.
   estimate of an image given along, asserted inside a test of the profile before, is a test of its
   own beside `ContextItem::estimated_tokens`, so that `IMAGE_TOKENS` stays private there; the two
   `impl ContextItem` are one. The paths are as before.
+- **2026-11-02** — Step `tool` done: `tool/mod.rs` (a tool as it is offered: `Tool`, `ToolSet`,
+  `ToolParameters`, `ArgumentLanguage`, `ToolVisibility`, `ToolPresentation`), `call.rs` (a call as
+  it is recorded and where it stands: `ToolCall`, `ToolCallResult`, `ToolResultStatus`,
+  `ToolMedia`, `ToolCallState`, `ToolCallStatus`). The paths are as before.
