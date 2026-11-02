@@ -1,6 +1,6 @@
 # 526 — Several modules of the domain hold many concepts in one file
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -76,3 +76,53 @@ concepts each file is to hold, not yet every item.
 - **2026-11-02** — Opened at the maintainer's request, after splitting `query` and
   `confidentiality` was proposed in the work on issue
   [523](523-the-model-s-store-module-is-named-after-the-stores.md).
+- **2026-11-02** — Step `query` done: `query/mod.rs` (`Query`, `Cursor`, `Page`, `ordered_after`),
+  `field.rs` (`Field`, `FieldPath`, `NoField`, `FieldValue`), `filter.rs` (`Filter`, `meeting`);
+  the paths are as before.
+- **2026-11-02** — Step `confidentiality` done: `classification.rs` (the scale, the compartments,
+  `Classification` and the flow rule), `label.rs` (`LabelCauses`, apart from the classification,
+  since it reads messages and the model's profile), `clearance.rs`, `reading.rs`,
+  `visibility.rs`, `testing.rs`; `Clearance` reads a classification by its getters now that it
+  lies in another file. The paths are as before.
+- **2026-11-02** — Step `actor` done: `actor/mod.rs` (`ActorId`, `ActorDescription`; module docs,
+  which the file lacked), `event.rs` (`ActorEvent`, `RequestReason`, `RetryTarget`, `Rejection`),
+  `envelope.rs` (`Envelope`, `EventContext`, `Pick`), `state.rs` (`ActorState`,
+  `ProcessingStateHolder`). `ActorDescription` lies in `mod.rs` beside `ActorId`, as who an actor
+  is, not how far it is; `Rejection` with `ActorEvent::MessageRejected`, whose reason it is; `Pick`
+  with the envelope. The paths are as before.
+- **2026-11-02** — Step `history` done: `history/mod.rs` (`History`, `fold`, `HistoryPage`, what is
+  read from a history and how it is changed), `entry.rs` (`HistoryEntry`), `recorded.rs`
+  (`Recorded`, `Audience`, `Recipients`), `reader.rs` (`Reader`, `Heard`, `EVERY_POSITION`), beside
+  `filter.rs`. `HistoryEntry::named_sender` and `Recorded::delivered`, private before, are
+  `pub(super)` now that their callers lie in another file of `history`. The paths are as before.
+- **2026-11-02** — Step `context` done: `context/mod.rs` (module docs, re-exports), `item.rs` (what
+  a context is made of and refers to), `profile.rs` (`ModelProfile` and its settings, with the
+  framing it applies), `resolver.rs` (`ContextResolver`, `ResolvedContext`), and `testing.rs` with
+  the one helper the tests of `profile` and `resolver` share. `participant_notice` and
+  `ModelProfile::place_system_messages`, private before, are `pub(super)` for the resolver. The
+  estimate of an image given along, asserted inside a test of the profile before, is a test of its
+  own beside `ContextItem::estimated_tokens`, so that `IMAGE_TOKENS` stays private there; the two
+  `impl ContextItem` are one. The paths are as before.
+- **2026-11-02** — Step `tool` done: `tool/mod.rs` (a tool as it is offered: `Tool`, `ToolSet`,
+  `ToolParameters`, `ArgumentLanguage`, `ToolVisibility`, `ToolPresentation`), `call.rs` (a call as
+  it is recorded and where it stands: `ToolCall`, `ToolCallResult`, `ToolResultStatus`,
+  `ToolMedia`, `ToolCallState`, `ToolCallStatus`). The paths are as before.
+- **2026-11-02** — Step `approval` done: `approval/mod.rs` (asking: `ApproverId`, `Approver`,
+  `ApprovalStrategy`, a request, its answers and status; module docs, which it lacked), `rule.rs`
+  (the rules: `ApprovalRule`, `ApprovalRuleId`, the matchers, `Reach`, `RuleDecision`, `Coverage`,
+  `RuleError` and the limits), beside `shell.rs`. The paths are as before.
+- **2026-11-02** — Step `channel` done: `channel/mod.rs` (`Channel` with how it is stored and asked
+  for, `ChannelField`, the events of its changes, its moderation; module docs, which it lacked),
+  `history_access.rs` (`HistoryAccess`, `HistoryStart`), `participant.rs` (`Participant`,
+  `InternalActor`, and `FormerParticipant`, which the table had left unnamed), `state.rs`
+  (`ChannelState`, `ChannelStateChange`), `testing.rs` (the former `pub mod testing`). The paths
+  are as before.
+- **2026-11-02** — Cleanup, from the reviews of the steps: the test of what is not recorded, which
+  tests `Envelope::entry` and `ActorEvent::is_transient`, lies in `actor/envelope.rs`; the context's
+  test helper `text` is built from `make_message`; `use std::fmt::Debug;` is gone where `Debug` was
+  only derived (`privacy`, `message`, `history/filter`, `security/attributes`, `tool`); `Approver`,
+  `ApprovalStrategy` and its variants, `ApprovalRequest` and `Reach::is_everywhere` have doc
+  comments. `Pick` stays in `actor/envelope.rs`: the review proposed it for
+  `caelumora_api::transport`, but the domain returns it itself (`Personality::pick`), and the domain
+  does not link the API.
+  Done: the modules of the table are directories, and no public path changed.

@@ -17,7 +17,6 @@ use crate::session::{Participant, Session, SessionId};
 use crate::user::UserId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::fmt::Debug;
 
 /// Which privacy policy a session has.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]

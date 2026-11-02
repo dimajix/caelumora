@@ -1,26 +1,9 @@
-//! Classification (issue 133): how sensitive a piece of information is, and
-//! for whom it is meant.
-//!
-//! A `Classification` is a level from a fixed scale and an audience of
-//! compartments - areas such as a topic, a group or a customer, which the
-//! administrator configures (`Compartments`). What may flow where is decided
-//! by the one flow rule, `Classification::flows_to`, from the
-//! classifications involved alone - not by who takes part in a channel at
-//! the moment, so that a decision stays the same when someone joins or
-//! leaves. The decisions are a `ConfidentialityPolicy`'s, apart from who may
-//! do what (`AccessPolicy`) and asked beside it (issue 304);
-//! `ConfidentialityRules` is the one Caelumora applies - both
-//! `caelumora-security`'s (issue 517).
-//!
-//! Whether anyone but an actor's owner sees something at all is a separate
-//! axis, `Visibility`: ownership, not sensitivity.
+//! How sensitive a piece of information is and for whom it is meant (issue 133): a level of a fixed
+//! scale (`Confidentiality`) and an audience of compartments (`Compartment`), as the administrator
+//! configured them and which reads which (`Compartments`), and the one flow rule over them
+//! (`Classification::flows_to`).
 
-use crate::channel::Channel;
-use crate::context::ModelProfile;
-use crate::message::Message;
-use crate::privacy::SessionPrivacy;
 use crate::query::FieldValue;
-use crate::session::ChannelId;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -306,53 +289,6 @@ impl fmt::Display for Classification {
     }
 }
 
-/// Which of the classifications in a message's context set its label
-/// (issue 170). The label of a message is the join of everything its turn
-/// had seen, at most the channel's classification (issue 168); what set it
-/// is derived from that, nothing about it is stored:
-///
-/// - what was not classified counted as the channel, and so set the label
-///   to the channel's;
-/// - if the classified parts had no audience in common, the label is the
-///   channel's, set by the parts with an audience;
-/// - otherwise the parts at the label's level set it.
-#[derive(Debug)]
-pub struct LabelCauses {
-    label: Classification,
-    disjoint: bool,
-}
-
-impl LabelCauses {
-    /// The causes of `label`, the classification of a message whose
-    /// context's parts are classified `classifications` - those known.
-    pub fn new<'a>(
-        label: Classification,
-        classifications: impl IntoIterator<Item = &'a Classification>,
-    ) -> Self {
-        let disjoint = Classification::join_all(classifications).is_none();
-        Self { label, disjoint }
-    }
-
-    /// Whether a part classified `classification` - `None`: not known -
-    /// set the label.
-    pub fn set_by(&self, classification: Option<&Classification>) -> bool {
-        match classification {
-            None => true,
-            Some(c) if self.disjoint => !c.compartments().is_empty(),
-            Some(c) => c.level() == self.label.level(),
-        }
-    }
-
-    /// Whether `message`, as the model of `profile` was given it, set the
-    /// label: by its own classification, that of a tool result in it, or that
-    /// of an attachment it was given along (issue 282).
-    pub fn set_by_message(&self, message: &Message, profile: &ModelProfile) -> bool {
-        profile
-            .classifications_given(message)
-            .any(|classification| self.set_by(Some(classification)))
-    }
-}
-
 /// The compartments the administrator configured, and which may read which
 /// (issue 133). The read relation is closed transitively when it is built:
 /// what a compartment wrote may contain what it read, so whoever may read
@@ -455,162 +391,11 @@ impl Compartments {
     }
 }
 
-/// What someone may see (issue 133): what is classified up to `level`, in
-/// `compartment` - or, without one, what is general. A clearance is on the
-/// side of who reads: a person *belongs* to a compartment, while a channel
-/// is *published* to it; so a clearance is judged by its own rule
-/// (`Clearances::admits`), not by the flow rule.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Clearance {
-    pub level: Confidentiality,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compartment: Option<Compartment>,
-}
-
-impl Clearance {
-    /// Whether this clearance sees what is classified `classification`: at
-    /// most its level, and - if it has compartments - through a
-    /// compartment of this clearance that reads one of them; if it has
-    /// none, only a clearance without compartment sees it.
-    fn sees(&self, classification: &Classification, compartments: &Compartments) -> bool {
-        if classification.level > self.level {
-            return false;
-        }
-        match &self.compartment {
-            None => classification.compartments.is_empty(),
-            Some(own) => classification.compartments.iter().any(|c| compartments.may_read(own, c)),
-        }
-    }
-}
-
-/// Everything someone is cleared for: the clearances of all their roles
-/// (issue 133). Empty: only what is public.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Clearances(Vec<Clearance>);
-
-impl Clearances {
-    /// These clearances.
-    pub(crate) fn new(clearances: Vec<Clearance>) -> Self {
-        Self(clearances)
-    }
-
-    /// Whether what is classified `classification` may be seen - by one of
-    /// the clearances, or because it is public.
-    pub fn admits(&self, classification: &Classification, compartments: &Compartments) -> bool {
-        classification.level == Confidentiality::Public
-            || self.0.iter().any(|c| c.sees(classification, compartments))
-    }
-}
-
-/// One side of a copy (`ConfidentialityQuestions::may_copy_information`): a channel, the
-/// classification of what is read there or of the channel that reads, and
-/// the session it belongs to as privacy sees it (issue 134). Whether two
-/// places are one channel, or in one session, is told by their ids.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Place {
-    pub channel: ChannelId,
-    pub classification: Classification,
-    pub session: SessionPrivacy,
-}
-
-impl Place {
-    /// Where `channel` lies, in a session that privacy sees as `session`, classified as the
-    /// channel is: what is read when the channel is read.
-    pub fn of(channel: &Channel, session: SessionPrivacy) -> Self {
-        Self { channel: channel.id, classification: channel.classification.clone(), session }
-    }
-}
-
-/// How far a reader reads what lies at a place (issues 133, 421): the whole,
-/// what was released to it - each entry classified so that it flows into a
-/// classification, the reader's -, or nothing. A reader's relation to a
-/// channel: the bound is the reader's, the channel decides whether it holds
-/// at all (its session's consent) or is not needed (it flows whole). Asked
-/// of a `ConfidentialityPolicy` as what of a channel may be copied into a
-/// place, once; data rather than a decision for each entry, so that a store
-/// reads only what may be read (`HistoryField`). How far, not who reads -
-/// that is `history::Reader`, whom a store gives which entries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Reading {
-    Whole,
-    Released(Classification),
-    Nothing,
-}
-
-impl Reading {
-    /// Whether the reader reads what is classified `classification`, with
-    /// the configured `compartments`.
-    pub fn admits(&self, classification: &Classification, compartments: &Compartments) -> bool {
-        match self {
-            Reading::Whole => true,
-            Reading::Released(into) => classification.flows_to(into, compartments),
-            Reading::Nothing => false,
-        }
-    }
-}
-
-/// Who sees a part of what an actor produces - an ownership flag beside the
-/// classification (issue 133). `Owner` is what never reaches a channel: the
-/// actor sees it, and its owner where they may see what the actor saw.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Visibility {
-    /// Published to the channel, which may read it as it reads the channel.
-    #[default]
-    Channel,
-    /// Only the actor and its owner.
-    Owner,
-}
-
-impl Visibility {
-    pub fn is_channel(&self) -> bool {
-        *self == Visibility::Channel
-    }
-}
-
-/// Classifications and compartments as the tests of this crate and of others write them.
-#[cfg(any(test, feature = "test-support"))]
-pub mod testing {
-    use super::{Classification, Compartment, Compartments, Confidentiality};
-
-    /// The compartment `name`.
-    pub fn compartment(name: &str) -> Compartment {
-        Compartment::new(name)
-    }
-
-    /// What is classified `level` for the compartments named `compartments`.
-    #[expect(
-        clippy::expect_used,
-        reason = "test code: a classification that is none fails the test"
-    )]
-    pub fn classified(level: Confidentiality, compartments: &[&str]) -> Classification {
-        Classification::new(level, compartments.iter().map(|c| compartment(c)))
-            .expect("a test's classification is one")
-    }
-
-    /// The compartments of an organisation: HR management reads HR, HR reads finance, and sales.
-    #[expect(clippy::expect_used, reason = "test code: compartments that are none fail the test")]
-    pub fn organisation() -> Compartments {
-        Compartments::new([
-            (compartment("hr_management"), vec![compartment("hr")]),
-            (compartment("hr"), vec![compartment("finance")]),
-            (compartment("finance"), vec![]),
-            (compartment("sales"), vec![]),
-        ])
-        .expect("the organisation's compartments read only what is configured")
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::testing::{classified, compartment, organisation};
     use super::*;
-    use crate::content::testing::make_content_ref;
-    use crate::content::ContentRef;
-    use crate::context::ModelProfile;
+    use crate::confidentiality::testing::{classified, compartment, organisation};
     use crate::query::meets_exactly_its_equals;
-    use crate::tool::{ToolCall, ToolCallResult};
     use Confidentiality::*;
 
     #[test]
@@ -625,10 +410,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    fn compartment_named(name: &str) -> Compartment {
-        compartment(name)
     }
 
     #[test]
@@ -830,58 +611,6 @@ mod tests {
             "only by the read relation"
         );
     }
-
-    #[test]
-    fn a_clearance_sees_per_compartment_up_to_its_own_level() {
-        let compartments = organisation();
-        let clearance = |level, compartment: Option<&str>| Clearance {
-            level,
-            compartment: compartment.map(compartment_named),
-        };
-        // Alice: internal of sales, confidential of HR, and what is general up to internal.
-        let alice = Clearances(vec![
-            clearance(Internal, Some("sales")),
-            clearance(Confidential, Some("hr")),
-            clearance(Internal, None),
-        ]);
-        assert!(alice.admits(&classified(Confidential, &["hr"]), &compartments));
-        assert!(
-            !alice.admits(&classified(Confidential, &["sales"]), &compartments),
-            "only internal of sales"
-        );
-        assert!(alice.admits(&classified(Internal, &["sales"]), &compartments));
-        assert!(
-            alice.admits(&classified(Confidential, &["finance"]), &compartments),
-            "HR reads finance"
-        );
-        assert!(
-            alice.admits(&classified(Confidential, &["hr", "sales"]), &compartments),
-            "published to HR too"
-        );
-        assert!(
-            !alice.admits(&classified(Internal, &["hr_management"]), &compartments),
-            "not hers"
-        );
-        assert!(alice.admits(&Classification::general(Internal), &compartments));
-        assert!(
-            !alice.admits(&Classification::general(Confidential), &compartments),
-            "a compartment says nothing of what is general"
-        );
-        assert!(
-            Clearances::default().admits(&Classification::general(Public), &compartments),
-            "public is public"
-        );
-        assert!(
-            !Clearances::default().admits(&Classification::general(Internal), &compartments),
-            "without a clearance only that"
-        );
-        let management = Clearances(vec![clearance(Internal, Some("hr_management"))]);
-        assert!(
-            management.admits(&classified(Internal, &["finance"]), &compartments),
-            "through what it reads"
-        );
-    }
-
     #[test]
     fn the_read_relation_is_closed_transitively() {
         let compartments = organisation();
@@ -967,61 +696,5 @@ mod tests {
             released.flows_to(&classified(Internal, &["sales"]), &compartments),
             "any of its audiences will do"
         );
-    }
-
-    #[test]
-    fn what_set_a_label_is_told_by_level_by_audience_and_by_what_is_not_known() {
-        let classified = |level, compartments: &[&str]| {
-            Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
-        };
-        let internal = Classification::general(Internal);
-        let confidential = Classification::general(Confidential);
-
-        let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
-        assert!(causes.set_by(Some(&confidential)), "a part at the label's level set it");
-        assert!(!causes.set_by(Some(&internal)), "one below did not");
-        assert!(causes.set_by(None), "what is not known counted as the channel");
-
-        let sales = classified(Internal, &["sales"]);
-        let causes =
-            LabelCauses::new(confidential.clone(), [&sales, &classified(Internal, &["hr"])]);
-        assert!(
-            causes.set_by(Some(&sales)),
-            "without an audience in common, the parts with one set the channel's label"
-        );
-        assert!(!causes.set_by(Some(&internal)), "a general part did not");
-
-        let causes = LabelCauses::new(confidential.clone(), [&internal, &confidential]);
-        let result = ToolCallResult::of(
-            &ToolCall {
-                id: Some("1".to_string()),
-                function_name: "noop".to_string(),
-                arguments: serde_json::json!({}),
-                visibility: Default::default(),
-                presentation: Default::default(),
-            },
-            Default::default(),
-            "secret".to_string(),
-            confidential.clone(),
-        );
-        let message = Message { tool_results: vec![result], ..Message::new(internal.clone()) };
-        let profile = ModelProfile::default();
-        assert!(
-            causes.set_by_message(&message, &profile),
-            "a tool result in a message sets the label as the message"
-        );
-        let attached = Message {
-            attachments: vec![ContentRef {
-                classification: confidential.clone(),
-                ..make_content_ref("a.png", b"a")
-            }],
-            ..Message::new(internal.clone())
-        };
-        assert!(
-            causes.set_by_message(&attached, &ModelProfile { images: true, ..profile }),
-            "and an attachment given along (issue 282)"
-        );
-        assert!(!causes.set_by_message(&attached, &profile), "not one only noted");
-        assert!(!causes.set_by_message(&Message::new(internal), &profile));
     }
 }

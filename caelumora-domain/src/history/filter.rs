@@ -13,7 +13,6 @@ use crate::confidentiality::{Classification, Compartments, Confidentiality, Read
 use crate::message::MessageRole;
 use crate::query::{Field, Filter};
 use serde::{Deserialize, Serialize};
-use std::fmt::Debug;
 use std::ops::Range;
 
 /// What a page of a history may be filtered by (`HistoryStore::page`,
