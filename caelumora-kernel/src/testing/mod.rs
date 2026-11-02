@@ -19,6 +19,7 @@ mod unasked_model;
 pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
 #[cfg(test)]
 pub(crate) use stand_in::StandIn;
+pub use unasked_model::with_unasked_model;
 
 use crate::actor::user::ChannelWatch;
 use crate::agent::AgentError;
@@ -262,11 +263,10 @@ pub struct TestKernel<'a> {
     pub access_policy: Arc<dyn AccessPolicy>,
     /// The default rules.
     pub confidentiality: Arc<dyn ConfidentialityPolicy>,
-    /// The default configuration; its models, unless it names one, a model that is not to be asked,
-    /// which a test's agents talk to unless it gives them another.
+    /// The default configuration.
     pub config: AppConfig,
-    /// Registers the component kinds of the test beside the built-in ones, before the plugins
-    /// register theirs; none.
+    /// Registers the component kinds of the test beside the built-in ones and a model that is not
+    /// to be asked (`with_unasked_model`), before the plugins register theirs; none.
     pub components: Box<dyn FnOnce(&mut ComponentRegistry) + 'a>,
     /// None.
     pub plugins: Vec<&'a dyn Plugin>,
@@ -305,16 +305,14 @@ impl TestKernel<'_> {
     /// As `KernelBuilder::new`, `plugin`, `library` and `build`.
     pub fn try_build(self) -> Result<Kernel> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
-        let mut backends = Backends::with_plugins(&self.plugins);
-        unasked_model::register_backend(&mut backends);
-        let config = unasked_model::with_unasked_model(self.config);
         let mut builder = KernelBuilder::new(
             self.store,
             secrets,
             Policies::new(self.access_policy, self.confidentiality),
-            &config,
-            backends,
+            &self.config,
+            Backends::with_plugins(&self.plugins),
         )?;
+        with_unasked_model(builder.components());
         (self.components)(builder.components());
         for plugin in self.plugins {
             builder.plugin(plugin)?;

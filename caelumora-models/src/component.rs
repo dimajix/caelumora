@@ -1,8 +1,8 @@
-//! The kind `model` (issue 520): an agent's language model, one of those the kernel offers, as the
-//! agent is given it - its client, which the kernel builds for this agent alone, and the profile by
+//! The kind `model` (issue 520): an agent's language model, one of those the platform offers, as
+//! the agent is given it - its client, which is built for this agent alone, and the profile by
 //! which its context is framed for that model.
 //!
-//! Parameters: `name`, the model of the configuration's `models` - left out, the one there is -,
+//! Parameters: `name`, the model of the section `plugins.models` - left out, the one there is -,
 //! and how the context is framed for it: `reasoning_history`, which reasoning of earlier messages
 //! the model is given back (`never`, `current_turn` - the default - or `always`, issue 63),
 //! `system_messages`, where the model keeps system messages (`only_at_start` - the default - or
@@ -15,11 +15,11 @@
 //! (issue 282). An unknown parameter is refused, so that a misspelt one does not silently fall back
 //! to its default.
 
-use super::ModelManager;
-use crate::component::ComponentRegistry;
-use crate::kernel::Acting;
+use crate::manager::ModelManager;
 use caelumora_api::component::{config_of_params, ComponentFacets, ComponentKind, Params};
 use caelumora_api::model::{ModelClient, ModelProfileProvider};
+use caelumora_kernel::component::ComponentRegistry;
+use caelumora_kernel::kernel::Acting;
 use caelumora_model::context::{
     message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle,
     SystemMessages,
@@ -29,7 +29,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 /// The kind of an agent's model: the default of both its facets.
-pub const MODEL_KIND: &str = "model";
+const MODEL_KIND: &str = "model";
 
 /// The parameters of a `model` component.
 #[derive(Debug, Deserialize)]
@@ -63,8 +63,11 @@ impl ModelProfileProvider for Framing {
     }
 }
 
-/// Registers the kind `model` with `registry`.
-pub(super) fn register(registry: &mut ComponentRegistry) {
+/// Registers the kind `model` with `registry`, and the model's facets, `ModelClient` and
+/// `ModelProfileProvider`, as facets of which an agent has exactly one, with it as their default.
+pub(crate) fn register_all(registry: &mut ComponentRegistry) {
+    registry.single::<dyn ModelClient>(Some(MODEL_KIND));
+    registry.single::<dyn ModelProfileProvider>(Some(MODEL_KIND));
     registry.register_async(
         ComponentKind::new(MODEL_KIND)
             .params::<ModelParams>()
@@ -100,16 +103,17 @@ pub(super) fn register(registry: &mut ComponentRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::Backends;
-    use crate::component::BuildContext;
-    use crate::kernel::{Kernel, KernelBuilder};
-    use crate::model::ModelProvider;
-    use crate::plugin::Plugin;
-    use crate::testing::TestKernel;
+    use crate::plugin::{with_default_model, ModelsPlugin, MODELS};
+    use crate::ModelProvider;
     use anyhow::Result;
     use async_trait::async_trait;
     use caelumora_api::component::{ComponentContainer, ComponentError, ComponentResult};
     use caelumora_api::model::{unlabelled_message, ModelResult};
+    use caelumora_kernel::backend::Backends;
+    use caelumora_kernel::component::BuildContext;
+    use caelumora_kernel::kernel::{Kernel, KernelBuilder};
+    use caelumora_kernel::plugin::Plugin;
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_model::actor::ActorId;
     use caelumora_model::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_model::config::{AppConfig, BackendConfig};
@@ -119,6 +123,7 @@ mod tests {
     use caelumora_model::type_map::TypeKey;
     use futures::stream::{self, BoxStream, StreamExt};
     use serde_json::{json, Value};
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     /// What a model of the backend `answering` is configured with.
@@ -174,16 +179,17 @@ mod tests {
     /// The kernel of a test that offers the models `models`, each answering with its `answer`, and
     /// the variants of the texts `prompts`.
     fn offering(models: &[(&str, Value)], prompts: &[(&str, PathBuf)]) -> Kernel {
-        let models = models
+        let models: BTreeMap<&str, BackendConfig> = models
             .iter()
-            .map(|(name, params)| {
-                (name.to_string(), BackendConfig::new("answering", params.clone()))
-            })
+            .map(|(name, params)| (*name, BackendConfig::new("answering", params.clone())))
             .collect();
+        let plugins = [(MODELS.to_string(), serde_json::to_value(models).unwrap())].into();
         let prompts =
             prompts.iter().map(|(variant, dir)| (variant.to_string(), dir.clone())).collect();
-        let config = AppConfig { models, prompts, ..AppConfig::default() };
-        TestKernel { config, plugins: vec![&Answerers], ..Default::default() }.try_build().unwrap()
+        let config = AppConfig { plugins, prompts, ..AppConfig::default() };
+        TestKernel { config, plugins: vec![&ModelsPlugin, &Answerers], ..Default::default() }
+            .try_build()
+            .unwrap()
     }
 
     /// The components of `kernel` an agent's model is made of - built of the kind `model` with
@@ -210,7 +216,7 @@ mod tests {
         }
     }
 
-    /// Issue 520: an agent's model is the kernel's model its component names, framed as the
+    /// Issue 520: an agent's model is the platform's model its component names, framed as the
     /// component says; whether it sees is the model's.
     #[tokio::test]
     async fn the_model_a_component_names_answers_framed_as_the_component_says() {
@@ -242,7 +248,7 @@ mod tests {
     }
 
     /// Issue 520: a component that names no model talks to the one there is; one that names a
-    /// model not configured, or none among several, is not built.
+    /// model not configured, or none among several, or where none is configured, is not built.
     #[tokio::test]
     async fn a_model_not_named_is_the_one_there_is() {
         let one = offering(&[("only", json!({ "answer": "the one" }))], &[]);
@@ -255,6 +261,10 @@ mod tests {
             offering(&[("a", json!({ "answer": "a" })), ("b", json!({ "answer": "b" }))], &[]);
         let refused = model_of(&two, json!({})).await.unwrap_err().to_string();
         assert!(refused.contains("has to name one where there are several"), "{refused}");
+
+        let none = offering(&[], &[]);
+        let refused = model_of(&none, json!({})).await.unwrap_err().to_string();
+        assert!(refused.contains("no model is configured"), "{refused}");
     }
 
     /// Issue 57: the model is given the variant of the texts its component names, and a component
@@ -289,5 +299,38 @@ mod tests {
             profile_of(json!({ "prompt_texts": "Gemma 4" })).await.is_err(),
             "no name of a variant"
         );
+    }
+
+    /// Issue 520: an agent that names no model is given the plugin's kind `model`, in place of
+    /// whatever a test's kernel, or a program, declared before the plugin registered.
+    #[tokio::test]
+    async fn the_kind_model_is_the_default_of_the_model_s_facets() {
+        let kernel = offering(&[("only", json!({ "answer": "the one" }))], &[]);
+        let facets = [TypeKey::of::<dyn ModelClient>(), TypeKey::of::<dyn ModelProfileProvider>()];
+        let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
+        let registry = Arc::clone(kernel.component_registry());
+        let container =
+            registry.build(&ComponentConfig::default(), &facets, &context).await.unwrap();
+        assert_eq!(answer_of(&container).await.as_deref(), Some("the one"));
+    }
+
+    /// Issue 520: a program's model is configured where the section names none, and only there.
+    #[test]
+    fn a_default_model_fills_a_section_that_names_none() {
+        let local = || BackendConfig::new("local", Value::Null);
+        let filled = with_default_model(AppConfig::default(), "local", local());
+        assert_eq!(filled.plugins[MODELS], json!({ "local": { "type": "local" } }));
+        let kept =
+            with_default_model(filled.clone(), "other", BackendConfig::new("other", Value::Null));
+        assert_eq!(kept.plugins, filled.plugins, "one configured is kept");
+        let empty =
+            AppConfig { plugins: [(MODELS.to_string(), json!({}))].into(), ..AppConfig::default() };
+        assert_eq!(with_default_model(empty, "local", local()).plugins, filled.plugins);
+        let wrong = AppConfig {
+            plugins: [(MODELS.to_string(), json!("gemma"))].into(),
+            ..AppConfig::default()
+        };
+        let left = with_default_model(wrong.clone(), "local", local());
+        assert_eq!(left.plugins, wrong.plugins, "for the plugin to refuse");
     }
 }

@@ -25,6 +25,7 @@ caelumora-open-terminal.workspace = true
 caelumora-store-json.workspace = true
 caelumora-store-postgres.workspace = true
 caelumora-workspace-tools.workspace = true
+caelumora-models.workspace = true
 caelumora-ollama.workspace = true
 caelumora-decision.workspace = true
 caelumora-comfyui.workspace = true

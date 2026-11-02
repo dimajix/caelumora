@@ -15,7 +15,7 @@ use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_api::model::{ModelClient, ModelError, ModelProfileProvider, ModelResult};
+use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_kernel::agent::state::AgentStateHandle;
 use caelumora_kernel::component::ComponentRegistry;
@@ -23,7 +23,9 @@ use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
 use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::TestKernel;
-use caelumora_kernel::testing::{participant_runtime_in, test_registry as runtime_registry, World};
+use caelumora_kernel::testing::{
+    participant_runtime_in, test_registry as runtime_registry, with_unasked_model, World,
+};
 use caelumora_kernel::workspace::testing::WithWorkspace;
 use caelumora_model::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_model::agent::{AgentChannelState, AgentId, Personality};
@@ -166,39 +168,6 @@ pub async fn asked_for_a_call(
     asked
 }
 
-/// The kind of the model the agents of a test without a kernel talk to unless they name one
-/// (`with_agent_kinds`). With a kernel, they talk to the kernel's model that is not to be asked,
-/// which a test's kernel offers (`TestKernel`); without one, there are no models of the kernel, and
-/// the kernel's kind `model` cannot be built.
-const UNASKED_MODEL_KIND: &str = "unasked_model";
-
-/// The model of a test that asks none: a call fails, as one to a model
-/// that cannot be reached.
-#[derive(Debug)]
-struct Unasked;
-
-#[async_trait]
-impl ModelClient for Unasked {
-    async fn chat_completion(
-        &self,
-        _: ActorId,
-        _: &[Message],
-        _: &[Tool],
-    ) -> BoxStream<'static, ModelResult<MessageEvent>> {
-        let refused = ModelError::Connection {
-            endpoint: UNASKED_MODEL_KIND.to_string(),
-            reason: "the model of a test is not to be asked".to_string(),
-        };
-        stream::iter([Err(refused)]).boxed()
-    }
-}
-
-impl ModelProfileProvider for Unasked {
-    fn profile(&self) -> ModelProfile {
-        Default::default()
-    }
-}
-
 /// The runtime of the agent `agent` in a channel of no running session, never attached, with a
 /// state of its own (`agent_runtime`): of the participant `detached_participant` makes.
 pub fn detached_actor_runtime(agent: AgentId) -> Arc<dyn ActorRuntime> {
@@ -272,29 +241,10 @@ pub fn test_registry(store: &Persistence) -> ComponentRegistry {
 
 /// Registers with `registry` the kinds of an agent's components (`register_components`) and a model
 /// that is not to be asked as the default (`with_unasked_model`) - for tests that build components
-/// without a kernel, which offers no model there; a kernel offers the agents' library its own.
+/// without a kernel, with the model a test's kernel gives its agents.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
     register_components(&mut registry.library_components());
     with_unasked_model(registry);
-}
-
-/// Registers with `registry` a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
-/// default of the model's facets in place of the kernel's, which needs a kernel's models.
-fn with_unasked_model(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new(UNASKED_MODEL_KIND)
-            .provides::<dyn ModelClient>()
-            .provides::<dyn ModelProfileProvider>(),
-        |_, _| {
-            let model = Arc::new(Unasked);
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ModelClient>(Arc::<Unasked>::clone(&model));
-            facets.insert::<dyn ModelProfileProvider>(model);
-            Ok(facets)
-        },
-    );
-    registry.single::<dyn ModelClient>(Some(UNASKED_MODEL_KIND));
-    registry.single::<dyn ModelProfileProvider>(Some(UNASKED_MODEL_KIND));
 }
 
 /// A model that gives the answers it was given, one per call, and then

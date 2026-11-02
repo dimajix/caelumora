@@ -13,7 +13,6 @@ pub mod group;
 pub mod kernel;
 mod library;
 mod lock;
-pub mod model;
 pub mod moderator;
 pub mod plugin;
 pub mod project;

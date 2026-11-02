@@ -5,7 +5,7 @@
 //! singles (issue 445).
 
 use super::container::Planned;
-use crate::{command, model, moderator};
+use crate::{command, moderator};
 use caelumora_api::component::{
     async_factory, factory, ComponentContext, ComponentFacets, ComponentFactory, ComponentGraph,
     ComponentKind, ComponentKinds, Face, LibraryComponents, Services,
@@ -124,7 +124,6 @@ impl ComponentRegistry {
     pub fn built_in(bundles: Arc<dyn EntityStore<ComponentBundle>>) -> Self {
         let mut registry = Self::new(bundles);
         command::register_all(&mut registry);
-        model::register_all(&mut registry);
         moderator::register_all(&mut registry);
         registry
     }
@@ -142,10 +141,10 @@ impl ComponentRegistry {
     }
 
     /// Refuses what a library registered (`LibraryComponents`, issue 516) and may not: a kind that
-    /// provides one of the facets the kernel builds in its own name or provides alone, `asked` -
-    /// those facets and, of the kinds a library did not register that provide one, what they need,
-    /// on and on -, a single of one of them a library declared, and a kind that uses a service
-    /// `of_libraries` does not answer for.
+    /// provides one of the facets the kernel builds in its own name, from the containers that ask
+    /// for `asked` - those facets and, of the kinds a library did not register that provide one,
+    /// what they need, on and on -, a single of one of them a library declared, and a kind that
+    /// uses a service `of_libraries` does not answer for.
     ///
     /// # Errors
     /// Naming the first such kind or single and what it provides, declares or uses.
@@ -159,8 +158,8 @@ impl ComponentRegistry {
         for (kind, registration) in self.kinds.iter().filter(|(_, r)| r.of_library) {
             if let Some(facet) = registration.kind.provided().iter().find(|f| of_kernel(f)) {
                 anyhow::bail!(
-                    "The component kind '{kind}' of a library provides {}, which is the kernel's to \
-                     provide",
+                    "The component kind '{kind}' of a library provides {}, which the kernel builds in \
+                     its own name",
                     facet.name()
                 );
             }
@@ -173,7 +172,7 @@ impl ComponentRegistry {
         }
         if let Some(facet) = self.singles_of_libraries.iter().find(|f| of_kernel(f)) {
             anyhow::bail!(
-                "A library declares {} a single, which is the kernel's to provide",
+                "A library declares {} a single, which the kernel builds in its own name",
                 facet.name()
             );
         }

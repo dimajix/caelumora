@@ -33,6 +33,7 @@ use caelumora_model::user::UserId;
 use caelumora_model::user_provider::Credential;
 use caelumora_model::value::language::Language;
 use caelumora_model::work::TurnId;
+use caelumora_models::plugin::ModelsPlugin;
 use caelumora_ollama::plugin::{with_local_model, OllamaPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_skills::library::SkillsLibrary;
@@ -536,6 +537,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
         Box::new(OpenTerminalPlugin),
+        Box::new(ModelsPlugin),
         Box::new(OllamaPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),

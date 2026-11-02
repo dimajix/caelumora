@@ -1,6 +1,8 @@
 //! `ParticipantRuntime`: what the actor of a participant runs with in its channel (issue 69), made
 //! by the kernel of the participant, and asking the kernel in its name.
 
+#[cfg(any(test, feature = "test-support"))]
+use super::ActingKind;
 use super::{Acting, ChannelRuntime, Kernel};
 use crate::actor::ActorManager;
 use crate::attachment::AttachmentManager;
@@ -49,7 +51,7 @@ impl ParticipantRuntime {
     /// (issue 516).
     #[cfg(any(test, feature = "test-support"))]
     pub fn acting_as(self, context: SecurityContext) -> Self {
-        Self { acting: Acting::Given(context), ..self }
+        Self { acting: Acting(ActingKind::Given(context)), ..self }
     }
 
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by

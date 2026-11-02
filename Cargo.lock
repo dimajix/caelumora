@@ -450,6 +450,7 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-models",
  "caelumora-ollama",
  "caelumora-open-terminal",
  "caelumora-rest-server",
@@ -648,6 +649,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-models"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "caelumora-api",
+ "caelumora-kernel",
+ "caelumora-model",
+ "futures",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "caelumora-ollama"
 version = "0.1.0"
 dependencies = [
@@ -661,6 +679,7 @@ dependencies = [
  "caelumora-api",
  "caelumora-kernel",
  "caelumora-model",
+ "caelumora-models",
  "chrono",
  "dashmap",
  "futures",
@@ -821,6 +840,7 @@ dependencies = [
  "caelumora-logging",
  "caelumora-mcp",
  "caelumora-model",
+ "caelumora-models",
  "caelumora-ollama",
  "caelumora-open-terminal",
  "caelumora-skills",

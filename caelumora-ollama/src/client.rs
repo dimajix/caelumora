@@ -1,7 +1,7 @@
-//! The backend `ollama`: a language model of the kernel served by Ollama (issues 130, 520), one
-//! entry of the configuration's `models`, which an agent's model names (the kind `model` of the
-//! kernel) - or the one a program offers where none is configured (`plugin::with_local_model`,
-//! issue 329): a local Ollama and the model `DEFAULT_MODEL`.
+//! The backend `ollama`: a language model the platform offers, served by Ollama (issues 130, 520),
+//! one entry of the section `plugins.models`, which an agent's model names (the kind `model` of
+//! `caelumora-models`) - or the one a program offers where none is configured
+//! (`plugin::with_local_model`, issue 329): a local Ollama and the model `DEFAULT_MODEL`.
 //!
 //! Parameters: `endpoint` (the Ollama server: its `url`, and its `timeout_secs`, how long a request
 //! may take to be answered - a streamed one until its stream begins; without it, as long as it
@@ -40,12 +40,12 @@ use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
 use caelumora_api::remote::{describe_chain, describe_request_error};
 use caelumora_kernel::backend::Backends;
-use caelumora_kernel::model::ModelProvider;
 use caelumora_model::actor::ActorId;
 use caelumora_model::content::ContentRef;
 use caelumora_model::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_model::remote::RemoteEndpoint;
 use caelumora_model::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
+use caelumora_models::ModelProvider;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::{BoxStream, StreamExt};
@@ -728,7 +728,7 @@ fn default_model() -> String {
     DEFAULT_MODEL.to_string()
 }
 
-/// A model served by Ollama, as the configuration's `models` names it.
+/// A model served by Ollama, as the section `plugins.models` names it.
 #[derive(Debug, Clone)]
 pub(crate) struct OllamaModel {
     http: Client,

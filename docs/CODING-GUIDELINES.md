@@ -568,8 +568,8 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
     build what runs and stores - a kernel, a running or a stored session.
 *   **A kernel in tests:** a test builds its kernel with `testing::TestKernel` (issue 375), whose
     parts all have defaults - a new memory store, no policy, the default rules, the default
-    configuration with a model that is not to be asked where it names none, the kernel's component
-    kinds and agents that answer "ok" - and names only those it differs in:
+    configuration, the kernel's component kinds with a model that is not to be asked
+    (`with_unasked_model`) and agents that answer "ok" - and names only those it differs in:
     `TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build()`, or `try_build()`
     for a test of what refuses to be built. Nobody else calls `KernelBuilder::new` in a test but the
     program's own (`caelumora-app`), which builds the kernel as the program does, so that a change

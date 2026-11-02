@@ -25,6 +25,7 @@ use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
 use caelumora_model::config::AppConfig;
+use caelumora_models::plugin::ModelsPlugin;
 use caelumora_ollama::plugin::{with_local_model, OllamaPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
@@ -199,6 +200,7 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(OpenTerminalPlugin),
+        Box::new(ModelsPlugin),
         Box::new(OllamaPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
@@ -275,9 +277,11 @@ mod tests {
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
+    use caelumora_models::plugin::MODELS;
     use caelumora_ollama::client::OLLAMA_BACKEND;
     use caelumora_skills::skill::Skill;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::path::Path;
     use tower::ServiceExt;
 
@@ -298,15 +302,16 @@ mod tests {
             config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
         let workflows = root.join(config.libraries[COMFYUI]["workflows"].as_str().unwrap());
         let libraries = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
-        let AppConfig { compartments, roles, models, component_defaults, .. } = config;
+        let models = [(MODELS.to_string(), config.plugins[MODELS].clone())].into();
+        let AppConfig { compartments, roles, component_defaults, .. } = config;
         kernel_of(
             store,
             &AppConfig {
                 compartments,
                 roles,
-                models,
                 component_defaults,
                 prompts,
+                plugins: models,
                 libraries,
                 ..AppConfig::default()
             },
@@ -368,14 +373,14 @@ mod tests {
     }
 
     /// A configuration that names no model is given one served by a local Ollama, as before the
-    /// model became the kernel's (issues 329, 520).
+    /// models became a plugin's (issues 329, 520).
     #[test]
-    fn without_a_model_configured_the_program_names_one_served_by_ollama() {
+    fn without_a_model_configured_the_program_offers_one_served_by_ollama() {
         let config = with_local_model(AppConfig::default());
-        let backends: Vec<&str> = config.models.values().map(|m| m.kind.as_str()).collect();
+        let models: BTreeMap<String, BackendConfig> =
+            serde_json::from_value(config.plugins[MODELS].clone()).unwrap();
+        let backends: Vec<&str> = models.values().map(|model| model.kind.as_str()).collect();
         assert_eq!(backends, [OLLAMA_BACKEND]);
-        let configured = with_local_model(config.clone());
-        assert_eq!(configured.models, config.models, "one configured is kept");
         kernel_of(&Persistence::in_memory(), &config);
     }
 

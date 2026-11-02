@@ -1,7 +1,8 @@
 //! What an agent is given of a language model (issues 130, 520): the facet `ModelClient`, through
 //! which it asks its model, with the errors of a call (`ModelError`), and the profile by which its
-//! context is written for that model (`ModelProfileProvider`). The models are the kernel's: it
-//! provides the `ModelClient` alone, so that every call of a model passes it.
+//! context is written for that model (`ModelProfileProvider`). The models the platform offers come
+//! from the plugin `caelumora-models`, which builds each agent its client; a library may bring a
+//! model of its own, which is then the agent's affair (issue 520).
 
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -43,8 +44,8 @@ pub fn unlabelled_message() -> Message {
     Message::new(Classification::general(Confidentiality::StrictlyConfidential))
 }
 
-/// The facet through which an agent asks its model, of which it has exactly one - provided by the
-/// kernel alone, for that agent alone (issue 520).
+/// The facet through which an agent asks its model, of which it has exactly one - for a model the
+/// platform offers, built for that agent alone (issue 520).
 #[async_trait]
 pub trait ModelClient: Send + Sync + Debug {
     /// Sends `context` and the `tools` the model may call (issue 137) - of each only its name,

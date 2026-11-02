@@ -1,6 +1,6 @@
-//! How models served by Ollama are joined to the kernel (issues 329, 520): as backends of its
-//! models alone. Which of them an agent talks to the configuration says, and the program where it
-//! says none.
+//! How models served by Ollama are joined to the kernel (issues 329, 520): as backends of the
+//! models of the plugin `caelumora-models` alone. Which of them an agent talks to the configuration
+//! says, and the program where it says none.
 
 use crate::client;
 use crate::client::OLLAMA_BACKEND;
@@ -9,6 +9,7 @@ use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_model::config::{AppConfig, BackendConfig};
+use caelumora_models::plugin::with_default_model;
 use serde_json::Value;
 
 /// The backend `ollama`, as a plugin.
@@ -29,12 +30,9 @@ impl Plugin for OllamaPlugin {
     }
 }
 
-/// `config`, with a model served by a local Ollama where it names none - the backend `ollama`
-/// without parameters -, for a program that makes it the model it names (issues 329, 520).
-pub fn with_local_model(mut config: AppConfig) -> AppConfig {
-    if config.models.is_empty() {
-        let model = BackendConfig::new(OLLAMA_BACKEND, Value::Null);
-        config.models.insert(OLLAMA_BACKEND.to_string(), model);
-    }
-    config
+/// `config`, with a model served by a local Ollama where its section `plugins.models` names none -
+/// the backend `ollama` without parameters -, for a program that makes it the model it offers
+/// (issues 329, 520).
+pub fn with_local_model(config: AppConfig) -> AppConfig {
+    with_default_model(config, OLLAMA_BACKEND, BackendConfig::new(OLLAMA_BACKEND, Value::Null))
 }

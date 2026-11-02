@@ -127,10 +127,10 @@ impl AgentRuntime {
     /// # Panics
     /// If `participant` is no agent's: the kernel makes the runtime of an agent alone.
     pub fn in_test(participant: ParticipantRuntime, state: Arc<AgentStateHandle>) -> Self {
-        use super::Acting;
+        use super::ActingKind;
         use crate::channel::ResolvedKind;
-        let (agent, personality) = match &participant.acting {
-            Acting::Participant { participant: resolved, .. } => match resolved.kind() {
+        let (agent, personality) = match &participant.acting.0 {
+            ActingKind::Participant { participant: resolved, .. } => match resolved.kind() {
                 ResolvedKind::Agent(agent, personality) => {
                     (Arc::clone(agent), Arc::clone(personality))
                 }
@@ -138,7 +138,7 @@ impl AgentRuntime {
                     panic!("{} takes part as no agent", participant.actor)
                 }
             },
-            Acting::Itself { .. } | Acting::Given(_) => Self::made_up(&participant),
+            ActingKind::Itself { .. } | ActingKind::Given(_) => Self::made_up(&participant),
         };
         Self { kernel: Arc::clone(participant.kernel()), participant, agent, personality, state }
     }

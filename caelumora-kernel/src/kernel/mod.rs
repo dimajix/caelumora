@@ -23,7 +23,8 @@ mod builder;
 mod channel;
 mod extension;
 
-pub(crate) use acting::Acting;
+pub use acting::Acting;
+pub(crate) use acting::ActingKind;
 pub use actor::ParticipantRuntime;
 pub use agent::AgentRuntime;
 pub use builder::KernelBuilder;

@@ -19,6 +19,7 @@ members = [
     "caelumora-store-json",
     "caelumora-store-postgres",
     "caelumora-workspace-tools",
+    "caelumora-models",
     "caelumora-ollama",
     "caelumora-decision",
     "caelumora-comfyui",
@@ -103,6 +104,7 @@ caelumora-open-terminal = { path = "caelumora-open-terminal" }
 caelumora-store-json = { path = "caelumora-store-json" }
 caelumora-store-postgres = { path = "caelumora-store-postgres" }
 caelumora-workspace-tools = { path = "caelumora-workspace-tools" }
+caelumora-models = { path = "caelumora-models" }
 caelumora-ollama = { path = "caelumora-ollama" }
 caelumora-decision = { path = "caelumora-decision" }
 caelumora-comfyui = { path = "caelumora-comfyui" }

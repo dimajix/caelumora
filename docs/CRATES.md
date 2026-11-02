@@ -22,6 +22,7 @@ flowchart TD
 
     subgraph plugins["Plugins"]
         decision["caelumora-decision"]
+        models["caelumora-models"]
         ollama["caelumora-ollama"]
         open_terminal["caelumora-open-terminal"]
         store_json["caelumora-store-json"]
@@ -55,6 +56,7 @@ flowchart TD
     plugins --> api
     plugins --> kernel
     plugins --> model
+    ollama --> models
     a2a & comfyui & compaction & mcp & workspace_tools --> agents
     libraries --> api
     agents -. "test-support" .-> kernel
@@ -98,8 +100,10 @@ The graph is not only what has grown, but holds rules of the design:
     only with `test-support`, the feature its tests and those of other libraries build the kernel
     with.
 *   A plugin links the kernel, which it extends (see [PLUGINS.md](PLUGINS.md)).
-*   Nothing but the programs depends on a plugin, and only the crates that are a plugin and a
-    library at once, with `server`, on `caelumora-rest-server`.
+*   Nothing but the programs depends on a plugin - but a plugin that brings a backend of another
+    plugin's service, as `caelumora-ollama` brings one of the models of `caelumora-models` (issue
+    520) -, and only the crates that are a plugin and a library at once, with `server`, on
+    `caelumora-rest-server`.
 
 ## How the graph is written
 

@@ -8,6 +8,7 @@ license.workspace = true
 caelumora-model.workspace = true
 caelumora-api.workspace = true
 caelumora-kernel.workspace = true
+caelumora-models.workspace = true
 aho-corasick.workspace = true
 anyhow.workspace = true
 async-stream.workspace = true

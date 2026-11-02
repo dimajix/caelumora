@@ -1,6 +1,6 @@
 # 520 — The kernel sees no call of a model
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -309,6 +309,35 @@ in the same change: `LLMClient` → `ModelClient`, `LLMError` → `ModelError`, 
    library's `ModelClient`, `OllamaPlugin`, the scripted backend of the tests, the configuration;
    the documents (ARCHITECTURE.md, PLUGINS.md, AGENT-TURN.md, CONFIGURATION.md, CRATES.md,
    LLM-MODELS.md).
+4. **The service as a plugin** (added on 2026-11-02, see below): `caelumora-models`.
+
+### Step 4: the models as a plugin
+
+Decided with the maintainer on 2026-11-02, after step 3. A model is needed only within an agent and
+asked independently of everything else the kernel holds - unlike the workspace, which a session
+and its channels share, and which stays in the kernel as issue
+[333](333-workspaces-woven-into-sessions.md) decided. So the service leaves the kernel, which is to
+hold sessions, channels, actors, commands, messages with their attachments, and projects.
+
+- **`caelumora-models`**, a plugin (`ModelsPlugin`), takes the whole module `model` of the kernel:
+  `ModelProvider`, `ModelManager`, `ModelClientFor`, the kind `model`. It claims the section
+  `plugins.models` - the models by name, each a backend -, makes them, offers the `ModelManager` as
+  a service, registers the kind `model` and declares both the model's facets singles with it as
+  their default. `caelumora-ollama` depends on it for `ModelProvider`: a plugin that brings a
+  backend of another plugin's service, the first one.
+- **What the kernel offers a plugin for it:** `Acting` becomes an opaque public type (`context`,
+  `context_for`), never part of `caelumora-api`; the `KernelBuilder` keeps the `Backends` and makes
+  the named backends of a service a plugin owns (`make_named`).
+- **No reservation of `ModelClient`.** The guard of step 3 goes again. An agent's library may bring
+  a model of its own: the kernel cannot keep linked code from calling a remote system anyway (issue
+  516), and what such a model costs is the agent's affair - its credentials it can only read
+  through the secrets the kernel checks. What the platform offers, every call passes; what an
+  agent brings, it answers for.
+- **Tests:** a `TestKernel` registers a model that is not to be asked as the default of the model's
+  facets, among its own kinds; a test that brings `ModelsPlugin` gets the plugin's `model` instead,
+  which declares the singles after. `caelumora_agents::testing::with_agent_kinds` uses the same
+  model, so there is one.
+- **The accounting** belongs to the plugin, not the kernel.
 
 ## Done when
 
@@ -356,3 +385,14 @@ in the same change: `LLMClient` → `ModelClient`, `LLMError` → `ModelError`, 
   the parameter `name`, as the attachments' storage is refused, not a `ModelError::Unknown` - an
   unknown model is a configuration that cannot be built, not a call that failed. The texts of
   `ModelError` say "model server" now.
+- **2026-11-02** — Step 4 done on the branch, as planned in *Step 4: the models as a plugin*: the
+  module `model` left the kernel for `caelumora-models` (`ModelsPlugin`, section `plugins.models`),
+  and `caelumora-ollama` depends on it, the first plugin on another plugin, a rule CRATES.md and
+  PLUGINS.md now state. The kernel offers what the plugin needs and nothing about models: `Acting`
+  is an opaque public type, and `KernelBuilder::make_named` makes the backends of a plugin's
+  service. The guard against a library's `ModelClient` of step 3 is gone, as decided. A
+  `TestKernel` registers a model that is not to be asked (`testing::with_unasked_model`), which
+  `with_agent_kinds` uses too, so the tests have one stand-in for a model.
+- **2026-11-02** — Done: steps 1 to 4 accepted by the maintainer and merged into `main`. What a
+  library may still change for every agent by registering a kind or declaring a single again is
+  issue [521](521-a-registration-made-again-replaces-the-first.md).

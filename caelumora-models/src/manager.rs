@@ -1,12 +1,12 @@
-//! The models the kernel offers, by their names, and the clients it builds of them
+//! The models the platform offers, by their names, and the clients it builds of them
 //! (`ModelManager`, issue 520).
 
-use super::ModelProvider;
-use crate::backend::NamedBackends;
-use crate::kernel::Acting;
+use crate::ModelProvider;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentError, ComponentResult};
 use caelumora_api::model::{ModelClient, ModelResult};
+use caelumora_kernel::backend::NamedBackends;
+use caelumora_kernel::kernel::Acting;
 use caelumora_model::actor::ActorId;
 use caelumora_model::message::{Message, MessageEvent};
 use caelumora_model::tool::Tool;
@@ -14,15 +14,15 @@ use futures::stream::BoxStream;
 use std::sync::Arc;
 use tracing::debug;
 
-/// The language models the kernel offers, by the names the configuration gives them
-/// (`AppConfig::models`): what builds each agent its client of one. A service of the kernel.
+/// The language models the platform offers, by the names the configuration gives them (the section
+/// `plugins.models`): what builds each agent its client of one. A service the plugin offers.
 #[derive(Debug)]
 pub(crate) struct ModelManager {
     models: NamedBackends<dyn ModelProvider>,
 }
 
 impl ModelManager {
-    /// The models `models` configures.
+    /// The models `models` names, of the section `plugins.models`.
     pub(crate) fn new(models: NamedBackends<dyn ModelProvider>) -> Self {
         Self { models }
     }
@@ -81,19 +81,5 @@ impl ModelClient for ModelClientFor {
             self.name, asking.caller_id, asking.principal_id, asking.initiator_id
         );
         self.model.chat_completion(context, tools).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use caelumora_model::security::SecurityContext;
-
-    /// Issue 520: where no model is configured, none can be asked.
-    #[test]
-    fn where_no_model_is_configured_there_is_no_client() {
-        let models = ModelManager::new(NamedBackends::default());
-        let refused = models.client_for(Acting::Given(SecurityContext::default()), None);
-        assert!(refused.is_err_and(|e| e.to_string().contains("no model is configured")));
     }
 }

@@ -209,7 +209,7 @@ Of some facets an agent has exactly one: the `ContextProvider`, the `ModelClient
 `ModelProfileProvider` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`
 and one `ModelProfileProvider`; a channel exactly one `Moderator` and one `ResponderPolicy`. They
 are registered with `ComponentRegistry::single` by the module that holds the default kind: the
-`ModelClient` and the `ModelProfileProvider` by the kernel's module `model`, whose kind `model` is
+`ModelClient` and the `ModelProfileProvider` by the plugin `caelumora-models`, whose kind `model` is
 the default of both (issue 520); the `ExternalAgent` by the agents' library, without one.
 
 The `ModelProfileProvider` says how the agent's model is given its context (issue 57): the
@@ -314,9 +314,9 @@ between them they hold:
     (`ControllerManager::owner_context`). The graph resolves every `ref` in its context; a component
     is not given it: what it asks it asks in the context of the act it serves - a tool in its
     turn's, a moderator in the event's it routes -, one context per piece of work. One component of
-    the kernel is the exception: the agent's model (`model`, issue 520) is given the `Acting` as a
-    service and keeps it, a handle that builds the context of each of its calls when the call is
-    made - one no library can name, since the type is the kernel's alone;
+    a plugin is the exception: the agent's model (`model` of `caelumora-models`, issue 520) is given
+    the `Acting` as a service and keeps it, a handle that builds the context of each of its calls
+    when the call is made - one no library can name, since it does not link the kernel;
 *   the services of the kernel its kind declares it uses - for a component of the kernel the
     policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
     that a new service needs no new field and no component is given one it does not declare. They
@@ -456,7 +456,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
 | `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the library `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
-| `model` | `ModelClient`, `ModelProfileProvider` | `name` (the one model of `models`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | The kernel's, the default model of an agent: a model the kernel offers (`models`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client the kernel builds for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
+| `model` | `ModelClient`, `ModelProfileProvider` | `name` (the one model of `plugins.models`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-models`, registered where it is joined; the default model of an agent: a model the platform offers (`plugins.models`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
 | `policy_moderator` | `Moderator` | `mentions_replace_policy` (`anyone`; `agents`), `on_undecided` (`none`; `all`), `max_agent_hops` (`3`), `max_span_depth` (`100`), `context_messages` (`10`) | The default moderator of a channel: routes as every channel does, asks the agents a message mentions - nobody for a message to people alone, unless `agents` - and else asks its `ResponderPolicy` whom to ask, told the last `context_messages` messages heard before - if it could not choose, whom `on_undecided` says, and tells the users when that is nobody ([CHANNELS.md](CHANNELS.md#moderators)); ends a chain between agents after `max_agent_hops` hops, and asks nobody to respond to an event `max_span_depth` deep ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |
