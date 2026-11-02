@@ -54,6 +54,7 @@ use caelumora_domain::context::ModelProfile;
 use caelumora_domain::external_agent::{ConversationId, TaskId};
 use caelumora_domain::group::GroupId;
 use caelumora_domain::message::{Message, MessageEvent};
+use caelumora_domain::query::Query;
 use caelumora_domain::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
@@ -61,7 +62,6 @@ use caelumora_domain::secret::Secrets;
 use caelumora_domain::security::{AclEntry, Grant, Secured, Subject};
 use caelumora_domain::session::{ChannelId, SessionId};
 use caelumora_domain::snapshot::PersonalitySnapshot;
-use caelumora_domain::store::query::Query;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::template::{
     ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate,

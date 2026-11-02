@@ -41,10 +41,10 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::Channel;
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::project::Project;
+use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::{Scope, Scoped, ScopedField};
 use caelumora_domain::session::Session;
-use caelumora_domain::store::query::{Filter, Query};
 use caelumora_domain::store::{
     EntityKind, NoEntity, StoreError, StoreResult, StoreResultExt, Stored,
 };

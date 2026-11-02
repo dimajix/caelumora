@@ -262,8 +262,8 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::config::BackendConfig;
+    use caelumora_domain::query::Query;
     use caelumora_domain::removal::Removal;
-    use caelumora_domain::store::query::Query;
     use caelumora_domain::template::ParticipantTemplate;
     use caelumora_domain::type_map::TypeKey;
     use caelumora_domain::value::text::Description;

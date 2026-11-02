@@ -19,8 +19,8 @@ use crate::channel::Channel;
 use crate::context::ModelProfile;
 use crate::message::Message;
 use crate::privacy::SessionPrivacy;
+use crate::query::FieldValue;
 use crate::session::ChannelId;
-use crate::store::query::FieldValue;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -609,7 +609,7 @@ mod tests {
     use crate::content::testing::make_content_ref;
     use crate::content::ContentRef;
     use crate::context::ModelProfile;
-    use crate::store::query::meets_exactly_its_equals;
+    use crate::query::meets_exactly_its_equals;
     use crate::tool::{ToolCall, ToolCallResult};
     use Confidentiality::*;
 

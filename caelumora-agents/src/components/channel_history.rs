@@ -19,12 +19,11 @@ use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents
 use caelumora_domain::chain::Position;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_domain::history::HistoryEntry;
+use caelumora_domain::history::{HistoryEntry, HistoryField};
 use caelumora_domain::message::Message;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::query::Filter;
 use caelumora_domain::question::Answers;
-use caelumora_domain::store::history::HistoryField;
-use caelumora_domain::store::query::Filter;
 use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;

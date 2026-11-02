@@ -6,7 +6,7 @@ use crate::actor::ActorId;
 use crate::confidentiality::{Classification, Visibility};
 use crate::content::ContentRef;
 use crate::digest::Digest;
-use crate::store::query::FieldValue;
+use crate::query::FieldValue;
 use crate::tool::{ToolCall, ToolCallResult};
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
@@ -500,7 +500,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::confidentiality::Confidentiality;
     use crate::content::testing::make_content_ref;
-    use crate::store::query::meets_exactly_its_equals;
+    use crate::query::meets_exactly_its_equals;
     use crate::tool::ToolVisibility;
     use chrono::Duration;
 

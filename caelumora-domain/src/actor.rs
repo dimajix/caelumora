@@ -7,9 +7,9 @@ use crate::digest::Digest;
 use crate::history::{HistoryEntry, Recipients};
 use crate::mention::handle_of;
 use crate::message::{Message, MessageId};
+use crate::query::FieldValue;
 use crate::question::{QuestionId, QuestionRequest, Response};
 use crate::session::SessionId;
-use crate::store::query::FieldValue;
 use crate::turn::GivenUpReason;
 use crate::user::UserId;
 use crate::value::name::Name;
@@ -1408,7 +1408,7 @@ mod tests {
     use super::*;
     use crate::actor::ActorState;
     use crate::message::MessageRole;
-    use crate::store::query::meets_exactly_its_equals;
+    use crate::query::meets_exactly_its_equals;
     use std::collections::HashSet;
 
     /// Issue 403: what is public of an actor names its handle only where it

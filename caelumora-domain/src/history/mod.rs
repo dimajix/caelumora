@@ -1,17 +1,19 @@
-//! The history of a channel as an agent keeps it (issue 06): the chain of
-//! what happened in it - messages said, each of the agent's own with what it
-//! was produced from, reclassifications (issue 133), changes to what was
-//! said (issue 234), where the steps of a plan began (issue 263), how
-//! turns ended (issue 258) and who joined or left (issue 408) - read into
-//! the messages as they stand (issue 197). Every entry is recorded with whom
-//! it was sent by and whom it went to (`Recorded`, issue 417), and with the
-//! head of the envelope it came in, so that it can be delivered again from
-//! here (`Recorded::envelope`, issue 223); and read only for a reader, who is
-//! given what of it they may see (`Recorded::as_seen_by`), and who stands
-//! somewhere in it (`Heard`).
+//! The history of a channel as an agent keeps it (issue 06): the chain of what happened in it -
+//! messages said, each of the agent's own with what it was produced from, reclassifications (issue
+//! 133), changes to what was said (issue 234), where the steps of a plan began (issue 263), how
+//! turns ended (issue 258) and who joined or left (issue 408) - read into the messages as they
+//! stand (issue 197). Every entry is recorded with whom it was sent by and whom it went to
+//! (`Recorded`, issue 417), and with the head of the envelope it came in, so that it can be
+//! delivered again from here (`Recorded::envelope`, issue 223); and read only for a reader, who is
+//! given what of it they may see (`Recorded::as_seen_by`), and who stands somewhere in it
+//! (`Heard`). What a page of it is filtered by - the fields of an item as it is kept, and the
+//! conditions over them - is `filter`'s (`HistoryField`, `KeptItem`, issues 421, 451).
 
+mod filter;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+
+pub use filter::{HistoryField, KeptItem};
 
 use crate::actor::{
     ActorEvent, ActorId, Envelope, EventContext, Rejection, RequestReason, RetryTarget,

@@ -1,19 +1,17 @@
-//! The words of the stores (issues 93, 323): what an entity is to be stored (`Stored`) - its kind
-//! (`EntityKind`), its revision (`Revision`), what encloses it (`Enclosing`) -, what a state the
-//! stores keep tells of its changes (`Journaled`), what a query asks (`query`) and a page of a
-//! history is filtered by (`history`), and how a store fails (`StoreError`). The stores themselves
-//! are `caelumora-store`'s (issue 517).
+//! What the domain says of being stored (issues 93, 323, 523): what an entity is to be stored
+//! (`Stored`) - its kind (`EntityKind`), its revision (`Revision`), what encloses it
+//! (`Enclosing`) -, what a state the stores keep tells of its changes (`Journaled`), and how a
+//! store fails (`StoreError`). What a query of a store asks is `query`'s, what a page of a history
+//! is filtered by is `history`'s; the stores themselves are `caelumora-store`'s (issue 517).
 
-pub mod history;
-pub mod query;
 #[cfg(test)]
 pub(crate) mod testing;
 
 use crate::confidentiality::Classification;
 use crate::intern::intern;
+use crate::query::Field;
 use crate::removal::Removal;
 use crate::security::{Refused, Secured};
-use crate::store::query::Field;
 use crate::value::name::ScopedName;
 use crate::value::ValueError;
 use chrono::{DateTime, Utc};

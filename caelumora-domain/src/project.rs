@@ -12,11 +12,11 @@
 
 use crate::actor::ActorId;
 use crate::group::GroupId;
+use crate::query::{FieldValue, Filter};
 use crate::removal::Removal;
 use crate::scope::{Scope, ScopeField, Scoped};
 use crate::security::{Grant, Secured, SecuredMut, SecurityAttributes, Subject};
 use crate::session::SessionId;
-use crate::store::query::{FieldValue, Filter};
 use crate::store::{EntityKind, NoEntity, Revision, Stored, Updatable};
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};

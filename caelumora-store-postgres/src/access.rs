@@ -3,8 +3,8 @@
 
 use crate::filter::Condition;
 use caelumora_domain::actor::ActorId;
+use caelumora_domain::query::Filter;
 use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
-use caelumora_domain::store::query::Filter;
 use caelumora_security::Admission;
 use sqlx::postgres::PgArguments;
 use sqlx::query::QueryAs;

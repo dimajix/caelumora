@@ -6,12 +6,12 @@
 //! a classification the reader may copy - conditions as data, so that a database answers them as a
 //! `WHERE`. The histories a store keeps, and how it reads them, are `caelumora_store::history`'s.
 
+use super::{Reader, Recorded};
 use crate::actor::ActorId;
 use crate::chain::Position;
 use crate::confidentiality::{Classification, Compartments, Confidentiality, Reading};
-use crate::history::{Reader, Recorded};
 use crate::message::MessageRole;
-use crate::store::query::{Field, Filter};
+use crate::query::{Field, Filter};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::ops::Range;

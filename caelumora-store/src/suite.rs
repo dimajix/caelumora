@@ -32,20 +32,19 @@ use caelumora_domain::digest;
 use caelumora_domain::external_agent::ConversationId;
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::history::testing::items_of;
-use caelumora_domain::history::History;
 use caelumora_domain::history::{
-    Audience, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION,
+    Audience, History, HistoryEntry, HistoryPage, Reader, Recorded, EVERY_POSITION,
 };
 use caelumora_domain::message::MessageId;
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::query::{Field, Filter, Page, Query};
 use caelumora_domain::removal::{Removal, RemovalId};
 use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::{Scope, Scoped};
 use caelumora_domain::security::{AclEntry, Grant, Secured, SecurityAttributes, Subject};
 use caelumora_domain::session::testing::bare_session;
 use caelumora_domain::session::{Session, SessionId};
-use caelumora_domain::store::query::{Field, Filter, Page, Query};
 use caelumora_domain::store::{
     EntityKind, Journaled, NoEntity, Revision, StoreError, StoreResult, Stored,
 };

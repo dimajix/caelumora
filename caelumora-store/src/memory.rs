@@ -12,10 +12,11 @@ use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::context::FrameRef;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::history::{History, HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_domain::history::{
+    History, HistoryEntry, HistoryField, HistoryPage, Reader, Recorded,
+};
 use caelumora_domain::message::{Message, MessageId};
-use caelumora_domain::store::history::HistoryField;
-use caelumora_domain::store::query::{ordered_after, FieldPath, Filter};
+use caelumora_domain::query::{ordered_after, FieldPath, Filter};
 use caelumora_domain::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
 use caelumora_domain::tool::ToolSet;
 use caelumora_domain::transcript::{known, Transcript, TranscriptEntry};
@@ -688,8 +689,8 @@ mod tests {
     use crate::suite;
     use crate::{EntityStores, Persistence};
     use caelumora_domain::group::GroupId;
+    use caelumora_domain::query::Query;
     use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
-    use caelumora_domain::store::query::Query;
     use caelumora_domain::user::UserId;
     use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
 

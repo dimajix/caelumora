@@ -11,6 +11,7 @@ use caelumora_domain::content::ContentId;
 use caelumora_domain::define_id;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::project::ProjectId;
+use caelumora_domain::query::Field;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::{Scope, Scoped, ScopedField};
 use caelumora_domain::security::{
@@ -18,7 +19,6 @@ use caelumora_domain::security::{
 };
 use caelumora_domain::session::{ChannelId, SessionId};
 use caelumora_domain::snapshot::AccessSnapshot;
-use caelumora_domain::store::query::Field;
 use caelumora_domain::store::{EntityKind, NoEntity, Revision, Stored};
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::ScopedName;

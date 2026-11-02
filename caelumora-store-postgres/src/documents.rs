@@ -4,7 +4,7 @@ use crate::access::{entries, Admitted};
 use crate::connection::{quoted, sql, Connection};
 use crate::filter::Condition;
 use async_trait::async_trait;
-use caelumora_domain::store::query::{FieldPath, Filter};
+use caelumora_domain::query::{FieldPath, Filter};
 use caelumora_domain::store::{EntityKind, Revision, StoreError, StoreResult};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_security::Admission;

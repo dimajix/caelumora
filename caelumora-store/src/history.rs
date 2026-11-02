@@ -18,10 +18,11 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::history::{HistoryEntry, HistoryPage, Reader, Recorded};
+use caelumora_domain::history::{
+    HistoryEntry, HistoryField, HistoryPage, KeptItem, Reader, Recorded,
+};
 use caelumora_domain::message::{Message, MessageId};
-use caelumora_domain::store::history::{HistoryField, KeptItem};
-use caelumora_domain::store::query::{meeting, Filter};
+use caelumora_domain::query::{meeting, Filter};
 use caelumora_domain::store::StoreResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

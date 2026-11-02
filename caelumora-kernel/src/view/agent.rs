@@ -6,8 +6,8 @@ use super::{ChannelView, Views};
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{Agent, AgentId};
+use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::snapshot::AgentSnapshot;
-use caelumora_domain::store::query::{Filter, Query};
 use caelumora_domain::store::StoreResultExt;
 use caelumora_security::{AccessQuestions, SecurityContext};
 
