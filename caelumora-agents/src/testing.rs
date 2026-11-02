@@ -14,8 +14,7 @@ use crate::tool::ToolProvider;
 use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
-use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_api::library::{Library, LibraryBuilder};
+use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::model::{ModelClient, ModelError, ModelProfileProvider, ModelResult};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_kernel::agent::state::AgentStateHandle;
@@ -55,29 +54,9 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time::{sleep, timeout};
 
-/// The agents in the world of a test, as a library (issues 373, 516): the agents' library
-/// (`AgentsLibrary`) and a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
-/// default of the model's facets. A test gives it to the kernel's `World` with its own plugins and
-/// libraries. Naming the default model is the program's (issue 329); the tests have no program that
-/// names one, so this library declares it.
-#[derive(Debug, Default)]
-pub struct TestAgents;
-
-impl Library for TestAgents {
-    fn name(&self) -> &'static str {
-        AgentsLibrary.name()
-    }
-
-    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
-        AgentsLibrary.register(library)?;
-        with_unasked_model(&mut library.components());
-        Ok(())
-    }
-}
-
-/// The world with the agents (`TestAgents`) and nothing else.
+/// The world with the agents (`AgentsLibrary`) and nothing else.
 pub async fn world() -> World {
-    World::with(&[], &[&TestAgents], |_| {}).await
+    World::with(&[], &[&AgentsLibrary], |_| {}).await
 }
 
 /// A turn of `agent`, of `owner`, in the first channel of `session`,
@@ -187,9 +166,11 @@ pub async fn asked_for_a_call(
     asked
 }
 
-/// The kind of the model the agents of a test talk to unless they name one
-/// (`TestAgents`, `with_agent_kinds`).
-pub const UNASKED_MODEL_KIND: &str = "unasked_model";
+/// The kind of the model the agents of a test without a kernel talk to unless they name one
+/// (`with_agent_kinds`). With a kernel, they talk to the kernel's model that is not to be asked,
+/// which a test's kernel offers (`TestKernel`); without one, there are no models of the kernel, and
+/// the kernel's kind `model` cannot be built.
+const UNASKED_MODEL_KIND: &str = "unasked_model";
 
 /// The model of a test that asks none: a call fails, as one to a model
 /// that cannot be reached.
@@ -231,7 +212,7 @@ pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     let session = bare_session(SessionId::new());
     let channel = bare_channel(session.id);
     detached_participant_in(
-        TestKernel { libraries: vec![&TestAgents], ..Default::default() }.build(),
+        TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build(),
         session,
         channel,
         ActorId::Agent(agent),
@@ -291,18 +272,16 @@ pub fn test_registry(store: &Persistence) -> ComponentRegistry {
 
 /// Registers with `registry` the kinds of an agent's components (`register_components`) and a model
 /// that is not to be asked as the default (`with_unasked_model`) - for tests that build components
-/// without a kernel; a kernel gets them from `TestAgents`.
+/// without a kernel, which offers no model there; a kernel offers the agents' library its own.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
-    let mut components = registry.library_components();
-    register_components(&mut components);
-    with_unasked_model(&mut components);
+    register_components(&mut registry.library_components());
+    with_unasked_model(registry);
 }
 
-/// Registers with `components` a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
-/// default of the model's facets - the kernel names none, each program names its own (issue 329),
-/// and the tests declare this one.
-fn with_unasked_model(components: &mut LibraryComponents<'_>) {
-    components.register(
+/// Registers with `registry` a model that is not to be asked (`UNASKED_MODEL_KIND`), declared the
+/// default of the model's facets in place of the kernel's, which needs a kernel's models.
+fn with_unasked_model(registry: &mut ComponentRegistry) {
+    registry.register(
         ComponentKind::new(UNASKED_MODEL_KIND)
             .provides::<dyn ModelClient>()
             .provides::<dyn ModelProfileProvider>(),
@@ -314,8 +293,8 @@ fn with_unasked_model(components: &mut LibraryComponents<'_>) {
             Ok(facets)
         },
     );
-    components.single::<dyn ModelClient>(Some(UNASKED_MODEL_KIND));
-    components.single::<dyn ModelProfileProvider>(Some(UNASKED_MODEL_KIND));
+    registry.single::<dyn ModelClient>(Some(UNASKED_MODEL_KIND));
+    registry.single::<dyn ModelProfileProvider>(Some(UNASKED_MODEL_KIND));
 }
 
 /// A model that gives the answers it was given, one per call, and then

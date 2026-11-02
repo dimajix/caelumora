@@ -412,7 +412,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, agent_runtime, TestAgents};
+    use crate::library::AgentsLibrary;
+    use crate::testing::{self, agent_runtime};
     use caelumora_kernel::kernel::ParticipantRuntime;
     use caelumora_kernel::session::testing::detached_participant_in;
     use caelumora_kernel::testing::Discard;
@@ -434,7 +435,7 @@ mod tests {
         let channel = bare_channel(session.id);
         let kernel = TestKernel {
             access_policy: Arc::new(OwnershipPolicy::new()),
-            libraries: vec![&TestAgents],
+            libraries: vec![&AgentsLibrary],
             ..Default::default()
         }
         .build();

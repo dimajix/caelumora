@@ -4,16 +4,13 @@
 use anyhow::Result;
 use caelumora_a2a::library::A2aLibrary;
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_api::component::ComponentError;
 use caelumora_api::library::Library;
-use caelumora_api::model::{ModelClient, ModelProfileProvider};
 use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_kernel::channel::ChannelLoop;
-use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
@@ -36,8 +33,7 @@ use caelumora_model::user::UserId;
 use caelumora_model::user_provider::Credential;
 use caelumora_model::value::language::Language;
 use caelumora_model::work::TurnId;
-use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
-use caelumora_ollama::library::OllamaLibrary;
+use caelumora_ollama::plugin::{with_local_model, OllamaPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
@@ -540,6 +536,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
         Box::new(OpenTerminalPlugin),
+        Box::new(OllamaPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
@@ -552,7 +549,6 @@ fn libraries() -> Vec<Box<dyn Library>> {
     vec![
         Box::new(AgentsLibrary),
         Box::new(CompactionLibrary),
-        Box::new(OllamaLibrary),
         Box::new(McpLibrary),
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolsLibrary),
@@ -562,27 +558,16 @@ fn libraries() -> Vec<Box<dyn Library>> {
     ]
 }
 
-/// Names the defaults of the facets of which an agent has one that the kernel leaves to the program
-/// (issue 329) among the kinds of `components`: the model is served by Ollama. `component_defaults`
-/// of the configuration still replaces them.
-///
-/// # Errors
-/// If a plugin that brings a default kind is not among `plugins`.
-fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentError> {
-    components.set_default_kind::<dyn ModelClient>(OLLAMA_CLIENT_KIND)?;
-    components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
-}
-
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let config = if let Some(config_path) = args.config {
+    let config = with_local_model(if let Some(config_path) = args.config {
         AppConfig::load(config_path)?
     } else {
         AppConfig::default()
-    };
+    });
 
     // Into a file by default: log lines on the terminal would break the prompt.
     init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
@@ -593,7 +578,6 @@ async fn main() -> Result<()> {
     for library in libraries() {
         builder.library(library.as_ref())?;
     }
-    default_kinds(builder.components())?;
     let kernel = Arc::new(builder.build()?);
     kernel.seed(&config.seed).await?;
     let entity_stores = kernel.entity_stores();

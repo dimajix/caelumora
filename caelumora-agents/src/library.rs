@@ -10,23 +10,16 @@ use anyhow::Result;
 use caelumora_api::actor::{agent_factory, Actor};
 use caelumora_api::component::LibraryComponents;
 use caelumora_api::library::{Library, LibraryBuilder};
-use caelumora_api::model::{ModelClient, ModelProfileProvider};
 use caelumora_model::agent::PersonalityKind;
 
 /// Registers the kinds of an agent's components with `registry` (issue 370): its context
-/// (`prompt`), its model and its profile (`ModelClient`, `ModelProfileProvider`), its tools
-/// (`tool`), its memory and notes (`components`) and the facet an agent that runs elsewhere is
-/// reached through (`external`). What `AgentsLibrary` registers, and a test that builds components
-/// without a kernel.
+/// (`prompt`), its tools (`tool`), its memory and notes (`components`) and the facet an agent that
+/// runs elsewhere is reached through (`external`) - its model is the kernel's (issue 520). What
+/// `AgentsLibrary` registers, and a test that builds components without a kernel.
 pub fn register_components(registry: &mut LibraryComponents<'_>) {
     components::register_all(registry);
     prompt::register_all(registry);
     tool::register_all(registry);
-    // The model and its profile, of each of which an agent has exactly one, without a default
-    // kind: the kernel knows no model provider, the program names it
-    // (`ComponentRegistry::set_default_kind`, issue 329).
-    registry.single::<dyn ModelClient>(None);
-    registry.single::<dyn ModelProfileProvider>(None);
     external::register_all(registry);
 }
 

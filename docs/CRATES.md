@@ -22,6 +22,7 @@ flowchart TD
 
     subgraph plugins["Plugins"]
         decision["caelumora-decision"]
+        ollama["caelumora-ollama"]
         open_terminal["caelumora-open-terminal"]
         store_json["caelumora-store-json"]
         store_postgres["caelumora-store-postgres"]
@@ -31,7 +32,6 @@ flowchart TD
         agents["caelumora-agents"]
         mcp["caelumora-mcp"]
         a2a["caelumora-a2a"]
-        ollama["caelumora-ollama"]
         comfyui["caelumora-comfyui"]
         workspace_tools["caelumora-workspace-tools"]
         compaction["caelumora-compaction"]

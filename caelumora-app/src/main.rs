@@ -12,15 +12,12 @@ use axum::routing;
 use axum::Router;
 use caelumora_a2a::library::A2aLibrary;
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_api::component::ComponentError;
 use caelumora_api::library::Library;
-use caelumora_api::model::{ModelClient, ModelProfileProvider};
 use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_comfyui::library::ComfyUiLibrary;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
-use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
@@ -28,8 +25,7 @@ use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
 use caelumora_mcp::library::McpLibrary;
 use caelumora_model::config::AppConfig;
-use caelumora_ollama::client::OLLAMA_CLIENT_KIND;
-use caelumora_ollama::library::OllamaLibrary;
+use caelumora_ollama::plugin::{with_local_model, OllamaPlugin};
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -70,11 +66,11 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let config = if let Some(config_path) = args.config {
+    let config = with_local_model(if let Some(config_path) = args.config {
         AppConfig::load(config_path)?
     } else {
         AppConfig::default()
-    };
+    });
 
     init(&config.logging, LogTarget::Stderr, "info,tower_http=debug,axum::rejection=trace")?;
 
@@ -84,7 +80,6 @@ async fn main() -> Result<()> {
     for library in libraries() {
         builder.library(library.as_ref())?;
     }
-    default_kinds(builder.components())?;
     let kernel = Arc::new(builder.build()?);
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
     let user_manager = Arc::clone(kernel.user_manager());
@@ -204,6 +199,7 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(OpenTerminalPlugin),
+        Box::new(OllamaPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
@@ -216,7 +212,6 @@ fn libraries() -> Vec<Box<dyn Library>> {
     vec![
         Box::new(AgentsLibrary),
         Box::new(CompactionLibrary),
-        Box::new(OllamaLibrary),
         Box::new(McpLibrary),
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolsLibrary),
@@ -224,17 +219,6 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
     ]
-}
-
-/// Names the defaults of the facets of which an agent has one that the kernel leaves to the program
-/// (issue 329) among the kinds of `components`: the model is served by Ollama. `component_defaults`
-/// of the configuration still replaces them.
-///
-/// # Errors
-/// If a plugin that brings a default kind is not among `plugins`.
-fn default_kinds(components: &mut ComponentRegistry) -> Result<(), ComponentError> {
-    components.set_default_kind::<dyn ModelClient>(OLLAMA_CLIENT_KIND)?;
-    components.set_default_kind::<dyn ModelProfileProvider>(OLLAMA_CLIENT_KIND)
 }
 
 /// Every plugin of the program, which it builds its kernel with: `rest_plugins` and `plugins`,
@@ -291,6 +275,7 @@ mod tests {
     use caelumora_model::template::ParticipantTemplate;
     use caelumora_model::type_map::TypeKey;
     use caelumora_model::value::text::Description;
+    use caelumora_ollama::client::OLLAMA_BACKEND;
     use caelumora_skills::skill::Skill;
     use serde_json::json;
     use std::path::Path;
@@ -302,10 +287,10 @@ mod tests {
     }
 
     /// The kernel of the program, with its plugins and libraries, over `store`, with the policy of
-    /// the example configuration, which knows the roles the example seed names, its component
-    /// defaults, on which the example seed's models build (issue 445), its variants of the texts,
-    /// which they are given (issue 57), and the workflows of ComfyUI its agent generates images
-    /// with (issue 512) - read from where the program runs, the root of the sources.
+    /// the example configuration, which knows the roles the example seed names, its models and its
+    /// component defaults, on which the example seed's models build (issue 445), its variants of
+    /// the texts, which they are given (issue 57), and the workflows of ComfyUI its agent generates
+    /// images with (issue 512) - read from where the program runs, the root of the sources.
     fn kernel(store: &Persistence) -> Kernel {
         let config = AppConfig::load(example("config.yaml")).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
@@ -313,12 +298,13 @@ mod tests {
             config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
         let workflows = root.join(config.libraries[COMFYUI]["workflows"].as_str().unwrap());
         let libraries = [(COMFYUI.to_string(), json!({ "workflows": workflows }))].into();
-        let AppConfig { compartments, roles, component_defaults, .. } = config;
+        let AppConfig { compartments, roles, models, component_defaults, .. } = config;
         kernel_of(
             store,
             &AppConfig {
                 compartments,
                 roles,
+                models,
                 component_defaults,
                 prompts,
                 libraries,
@@ -330,6 +316,7 @@ mod tests {
     /// The kernel of the program, with its plugins and its libraries, over `store`, as `config`
     /// configures it.
     fn kernel_of(store: &Persistence, config: &AppConfig) -> Kernel {
+        let config = &with_local_model(config.clone());
         let access_policy = Arc::new(AllowAllPolicy::new());
         let secrets =
             Arc::new(SecretManager::new(vec![], Arc::<AllowAllPolicy>::clone(&access_policy)));
@@ -349,7 +336,6 @@ mod tests {
         for library in libraries() {
             builder.library(library.as_ref()).unwrap();
         }
-        default_kinds(builder.components()).unwrap();
         builder.build().unwrap()
     }
 
@@ -381,19 +367,16 @@ mod tests {
         }
     }
 
-    /// An agent whose personality names no model, in a configuration that
-    /// names none either, talks to Ollama as before the kind moved into its
-    /// plugin (issue 329).
+    /// A configuration that names no model is given one served by a local Ollama, as before the
+    /// model became the kernel's (issues 329, 520).
     #[test]
-    fn the_default_model_is_served_by_ollama() {
-        let kernel = kernel_of(&Persistence::in_memory(), &AppConfig::default());
-        assert_eq!(
-            kernel
-                .component_registry()
-                .kind_of::<dyn ModelClient>(&ComponentConfig::default())
-                .as_deref(),
-            Some(OLLAMA_CLIENT_KIND)
-        );
+    fn without_a_model_configured_the_program_names_one_served_by_ollama() {
+        let config = with_local_model(AppConfig::default());
+        let backends: Vec<&str> = config.models.values().map(|m| m.kind.as_str()).collect();
+        assert_eq!(backends, [OLLAMA_BACKEND]);
+        let configured = with_local_model(config.clone());
+        assert_eq!(configured.models, config.models, "one configured is kept");
+        kernel_of(&Persistence::in_memory(), &config);
     }
 
     #[tokio::test]

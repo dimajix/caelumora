@@ -8,8 +8,9 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
-    about_agent_commands, activities_until_the_turn_ends, register_scripted, saying, TestAgents,
+    about_agent_commands, activities_until_the_turn_ends, register_scripted, saying,
 };
 use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
 use caelumora_api::command::CommandError;
@@ -46,7 +47,7 @@ fn measured(prompt: u64, message: Message) -> Message {
 
 /// A world whose model, of the kind `scripted`, gives `answers`, one per call.
 async fn world(answers: Vec<Message>) -> World {
-    World::with(&[], &[&TestAgents, &CompactionLibrary], |registry| {
+    World::with(&[], &[&AgentsLibrary, &CompactionLibrary], |registry| {
         register_scripted(registry, "scripted", answers)
     })
     .await

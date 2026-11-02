@@ -17,6 +17,7 @@ use crate::controller::ControllerManager;
 use crate::event::EventBus;
 use crate::group::GroupManager;
 use crate::library::ForLibrary;
+use crate::model::{ModelManager, ModelProvider};
 use crate::plugin::Plugin;
 use crate::scoped::{ScopeHolders, ScopeMember, ScopedEntities, ScopedKind, Unowned};
 use crate::seed::SeedSection;
@@ -28,6 +29,7 @@ use anyhow::{bail, Context, Result};
 use caelumora_api::component::Face;
 use caelumora_api::component::Services;
 use caelumora_api::library::Library;
+use caelumora_api::model::ModelClient;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_model::approval::ApprovalRule;
 use caelumora_model::component::ComponentConfig;
@@ -179,17 +181,17 @@ impl KernelBuilder {
     /// the components that replace built-in defaults of facets of which an agent has one
     /// (`component_defaults`, issue 99), what the system restricts of tool calls (`approvals`,
     /// issue 13), the storages workspaces are made in (`workspaces`, issue 253), the storages of
-    /// content (`content`, issue 282), what a message may carry (`attachments`, issue 282), the
-    /// user providers (`users`) and the sections of the plugins and the libraries. The component
-    /// kinds agents and sessions are built from are the built-in ones
-    /// (`ComponentRegistry::built_in`), resolving the bundles in the builder's stores; a plugin
-    /// adds its own, and a test stand-ins, such as a model of its own (issue 130), through
-    /// `components`. `backends` makes the storages and the user providers `config` names (issue
-    /// 324): `Backends::with_plugins` of the plugins registered afterwards.
+    /// content (`content`, issue 282), the language models (`models`, issue 520), what a message
+    /// may carry (`attachments`, issue 282), the user providers (`users`) and the sections of the
+    /// plugins and the libraries. The component kinds agents and sessions are built from are the
+    /// built-in ones (`ComponentRegistry::built_in`), resolving the bundles in the builder's
+    /// stores; a plugin adds its own, and a test stand-ins, such as a model of its own (issue 130),
+    /// through `components`. `backends` makes the storages, the models and the user providers
+    /// `config` names (issue 324): `Backends::with_plugins` of the plugins registered afterwards.
     ///
     /// # Errors
-    /// If a store of the kernel's kinds cannot be opened, or a storage of workspaces or of content
-    /// or a user provider cannot be made.
+    /// If a store of the kernel's kinds cannot be opened, or a storage of workspaces or of content,
+    /// a model or a user provider cannot be made.
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     pub fn new(
         persistence: Persistence,
@@ -241,6 +243,11 @@ impl KernelBuilder {
             &policies,
             storages,
         ));
+        let models = Arc::new(ModelManager::new(backends.make_named::<dyn ModelProvider>(
+            "model",
+            &config.models,
+            &backend_services,
+        )?));
         let content_storages = Arc::new(backends.make_named::<dyn ContentStorage>(
             "storage of content",
             &config.content.storage,
@@ -287,7 +294,8 @@ impl KernelBuilder {
             .with(Arc::clone(&confidentiality))
             .with(Arc::clone(&secret_manager))
             .with(Arc::clone(&workspaces))
-            .with(Arc::clone(&attachments));
+            .with(Arc::clone(&attachments))
+            .with(models);
         // The kernel's texts, before any plugin adds its own.
         let mut prompts = PromptCatalogue::new();
         prompts.add(KERNEL, KERNEL_PROMPTS)?;
@@ -575,16 +583,18 @@ impl KernelBuilder {
 
     /// Refuses what a library registered that reaches what is the kernel's (issue 516): a kind or a
     /// single of a facet the kernel builds in its own name - for a channel (`ChannelLoop`) or for
-    /// the commands of a session (`CommandExecutor`) -, or a kind that uses a service that is
-    /// neither a library's nor the texts: a library is trusted for nothing, and its components
-    /// reach nothing of the kernel but through the interface they are given.
+    /// the commands of a session (`CommandExecutor`) - or provides alone - an agent's model, so
+    /// that every call of a model passes the kernel (issue 520) -, or a kind that uses a service
+    /// that is neither a library's nor the texts: a library is trusted for nothing, and its
+    /// components reach nothing of the kernel but through the interface they are given.
     ///
     /// # Errors
     /// As `ComponentRegistry::keeps_libraries_to_their_side`.
     fn libraries_keep_to_their_side(&self) -> Result<()> {
         let channel = ChannelLoop::COMPONENT_FACETS.iter();
+        let model = TypeKey::of::<dyn ModelClient>();
         let asked: Vec<TypeKey> =
-            channel.chain(CommandExecutor::COMPONENT_FACETS).copied().collect();
+            channel.chain(CommandExecutor::COMPONENT_FACETS).chain([&model]).copied().collect();
         let texts = TypeKey::of::<PromptCatalogue>();
         self.component_registry.keeps_libraries_to_their_side(&asked, |service| {
             service.id == texts.id || self.services_of_libraries.iter().any(|s| s.id == service.id)
@@ -744,7 +754,7 @@ mod tests {
 
         built(&Brings(|c| brought(c, |kind| kind.uses::<Workflows>().uses::<PromptCatalogue>())))
             .expect("its own service and the texts");
-        let refusing: [(Brings, &str); 6] = [
+        let refusing: [(Brings, &str); 8] = [
             (Brings(|c| brought(c, |kind| kind.provides::<dyn Moderator>())), "provides Moderator"),
             (
                 Brings(|c| brought(c, |kind| kind.provides::<dyn ResponderPolicy>())),
@@ -763,6 +773,12 @@ mod tests {
                 "uses SecretManager",
             ),
             (Brings(|c| c.single::<dyn Moderator>(None)), "declares Moderator a single"),
+            // Issue 520: every call of a model passes the kernel.
+            (
+                Brings(|c| brought(c, |kind| kind.provides::<dyn ModelClient>())),
+                "provides ModelClient",
+            ),
+            (Brings(|c| c.single::<dyn ModelClient>(None)), "declares ModelClient a single"),
         ];
         for (brings, what) in refusing {
             let refused = built(&brings).expect_err(what);

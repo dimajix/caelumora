@@ -208,12 +208,9 @@ needs - its default strategy `summary_compaction` - and the `ModelClient` that o
 Of some facets an agent has exactly one: the `ContextProvider`, the `ModelClient`, the
 `ModelProfileProvider` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`
 and one `ModelProfileProvider`; a channel exactly one `Moderator` and one `ResponderPolicy`. They
-are registered with `ComponentRegistry::single` by the module that holds the default kind - or,
-where the kernel holds no kind, by the agents' library, without one: the `ModelClient` and the
-`ModelProfileProvider`, whose kinds are libraries' (issue 329). The program names their default
-among the kinds its libraries brought (`ComponentRegistry::set_default_kind`, refused for a kind
-that is not registered as providing the facet): `caelumora-app` and `caelumora-tui` name
-`ollama_client` of `caelumora-ollama` for both.
+are registered with `ComponentRegistry::single` by the module that holds the default kind: the
+`ModelClient` and the `ModelProfileProvider` by the kernel's module `model`, whose kind `model` is
+the default of both (issue 520); the `ExternalAgent` by the agents' library, without one.
 
 The `ModelProfileProvider` says how the agent's model is given its context (issue 57): the
 `ModelProfile` - which reasoning it is given back, how senders are marked, whether it sees images
@@ -227,16 +224,15 @@ and keeps it with every turn.
     asks - a session's commands, say - never builds one.
 *   A single may have no default where none makes sense: the remote agent of an `ExternalAgent` is
     always named. A container asked for it that provides none fails then; nothing is checked
-    beforehand. The `ModelClient` has no default in the kernel, only the one the program names.
+    beforehand.
 *   What a container's single is, is known without building it (`ComponentRegistry::kind_of`) -
     unless the container refers to a component bundle, which might provide it.
 *   The default comes from, in this order: the container's own component; the defaults the container
     was built with (an external agent's actor gives its `ContextProvider` so,
     `external_context_provider`); the configuration (`AppConfig::component_defaults`, see
-    [CONFIGURATION.md](CONFIGURATION.md)); and finally the default kind - the program's
-    (`set_default_kind`), or else the one it was registered with. The program's choice is kept apart
-    from the declaration: a library that declares the single after the program named its default -
-    the agents' library in a test's registry (issue 370) - does not undo it.
+    [CONFIGURATION.md](CONFIGURATION.md)); and finally the kind it was registered with. Declared
+    again, a single's declaration replaces the one before - a test that builds an agent's
+    components without a kernel declares a model of its own so.
 *   A default may provide several singles - a model, its client and its profile (issue 57) - as
     long as no other default provides one of them too. It is built once for all of them: a
     container keeps its defaults by the component, not by the facet asked for.
@@ -253,8 +249,8 @@ differ.
 ```yaml
 component_defaults:              # of the configuration
   - id: model
-    kind: ollama_client
-    params: { model: "gemma4:26b", sender_format: xml, context_size: 65536 }
+    kind: model
+    params: { name: gemma, sender_format: xml }
 personalities:                   # of the seed
 - name: sassy-assistant
   components:
@@ -315,9 +311,12 @@ between them they hold:
     agent's components the agent's own, with its owner's rights, as the controllers hold them when
     the graph is planned (`ActorRuntime::build_components`); for a channel's components and a
     session's commands the owner's, given once, with their roles as they are when it is built
-    (`ControllerManager::owner_context`). The graph resolves every `ref` in its context; a
-    component is not given it: what it asks it asks in the context of the act it serves - a tool in
-    its turn's, a moderator in the event's it routes -, one context per piece of work;
+    (`ControllerManager::owner_context`). The graph resolves every `ref` in its context; a component
+    is not given it: what it asks it asks in the context of the act it serves - a tool in its
+    turn's, a moderator in the event's it routes -, one context per piece of work. One component of
+    the kernel is the exception: the agent's model (`model`, issue 520) is given the `Acting` as a
+    service and keeps it, a handle that builds the context of each of its calls when the call is
+    made - one no library can name, since the type is the kernel's alone;
 *   the services of the kernel its kind declares it uses - for a component of the kernel the
     policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
     that a new service needs no new field and no component is given one it does not declare. They
@@ -457,7 +456,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
 | `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the library `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
-| `ollama_client` | `ModelClient`, `ModelProfileProvider` | `endpoint` (`http://127.0.0.1:11434`, no timeout, no `auth`), `model` (`gemma4:26b`), `tokenizer` (`model` itself), `think`, `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default), `context_size` (Ollama's default), `vision` (asked of `/api/show`) | The default model: a model served by Ollama ([CONFIGURATION.md](CONFIGURATION.md#the-model)). Defuses the model's control tokens in every text it sends. |
+| `model` | `ModelClient`, `ModelProfileProvider` | `name` (the one model of `models`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | The kernel's, the default model of an agent: a model the kernel offers (`models`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client the kernel builds for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
 | `policy_moderator` | `Moderator` | `mentions_replace_policy` (`anyone`; `agents`), `on_undecided` (`none`; `all`), `max_agent_hops` (`3`), `max_span_depth` (`100`), `context_messages` (`10`) | The default moderator of a channel: routes as every channel does, asks the agents a message mentions - nobody for a message to people alone, unless `agents` - and else asks its `ResponderPolicy` whom to ask, told the last `context_messages` messages heard before - if it could not choose, whom `on_undecided` says, and tells the users when that is nobody ([CHANNELS.md](CHANNELS.md#moderators)); ends a chain between agents after `max_agent_hops` hops, and asks nobody to respond to an event `max_span_depth` deep ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |

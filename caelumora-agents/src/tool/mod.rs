@@ -1057,7 +1057,8 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, agent_runtime, TestAgents};
+    use crate::library::AgentsLibrary;
+    use crate::testing::{self, agent_runtime};
     use caelumora_kernel::controller::SessionController;
     use caelumora_kernel::kernel::ChannelRuntime;
     use caelumora_kernel::testing::{participant_runtime_in, TestKernel, World};
@@ -1388,7 +1389,7 @@ mod tests {
             access_policy,
             confidentiality,
             config,
-            libraries: vec![&TestAgents],
+            libraries: vec![&AgentsLibrary],
             ..Default::default()
         }
         .build();

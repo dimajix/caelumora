@@ -169,7 +169,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, agent_runtime, TestAgents};
+    use crate::library::AgentsLibrary;
+    use crate::testing::{self, agent_runtime};
     use crate::turn::Turn;
     use caelumora_api::reader::ViewError;
     use caelumora_kernel::session::testing::participant_runtime_in;
@@ -311,9 +312,12 @@ mod tests {
     #[tokio::test]
     async fn the_participants_of_the_channel_are_read_with_their_introductions() {
         let store = Persistence::in_memory();
-        let kernel =
-            TestKernel { store: store.clone(), libraries: vec![&TestAgents], ..Default::default() }
-                .build();
+        let kernel = TestKernel {
+            store: store.clone(),
+            libraries: vec![&AgentsLibrary],
+            ..Default::default()
+        }
+        .build();
         let system = SecurityContext::system();
 
         let kaya = make_user("Kaya");

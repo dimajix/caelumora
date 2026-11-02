@@ -262,8 +262,9 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::AgentsLibrary;
     use crate::prompt::current_time_prompt_provider::CURRENT_TIME_PROMPT_PROVIDER_KIND;
-    use crate::testing::{agent_runtime, TestAgents};
+    use crate::testing::agent_runtime;
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
     use caelumora_api::component::ComponentFacets;
@@ -349,7 +350,7 @@ mod tests {
             store,
             config,
             components: Box::new(components),
-            libraries: vec![&TestAgents],
+            libraries: vec![&AgentsLibrary],
             ..Default::default()
         }
         .build();

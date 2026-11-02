@@ -296,9 +296,10 @@ pub(crate) mod tests {
     use crate::files::READ_FILE;
     use crate::library::WorkspaceToolsLibrary;
     use crate::{catalogue, prompts};
+    use caelumora_agents::library::AgentsLibrary;
+    use caelumora_agents::testing as agent_testing;
     use caelumora_agents::testing::with_agent_kinds;
     use caelumora_agents::testing::workspace_turn;
-    use caelumora_agents::testing::{self as agent_testing, TestAgents};
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::component::ComponentRegistry;
     use caelumora_kernel::testing::World;
@@ -323,7 +324,7 @@ pub(crate) mod tests {
     /// to read -, and is never asked whether the agent may change them.
     #[tokio::test]
     async fn a_read_of_a_file_asks_what_reading_asks_and_never_a_change() {
-        let world = World::with(&[], &[&TestAgents, &WorkspaceToolsLibrary], |_| {}).await;
+        let world = World::with(&[], &[&AgentsLibrary, &WorkspaceToolsLibrary], |_| {}).await;
         let personality = world.personality("plain", None, &[]).await;
         let helper = world.agent("helper", world.alice, &personality).await;
         let alice = World::as_user(world.alice);

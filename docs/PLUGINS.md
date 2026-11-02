@@ -24,8 +24,8 @@ its libraries after (see [What a library is](#what-a-library-is)):
     services are made of has to be known first.
 2.  The policies, the stores and the secrets are made, then the kernel's services, managers and
     component kinds (`KernelBuilder::new`), with the backends the configuration names; then each
-    plugin registers the rest of what it brings (`register`). Once the libraries registered too, the
-    program names the default kinds of singles (`set_default_kind`), and `build` makes the kernel.
+    plugin registers the rest of what it brings (`register`). Once the libraries registered too,
+    `build` makes the kernel.
 
 A plugin brings what is the kernel's - a backend, a kind of entity with its manager, views and
 routes, a component of a channel such as the `ResponderPolicy` of `caelumora-decision` - and is
@@ -107,18 +107,18 @@ agent unless a library brings them (`World::with(plugins, libraries, …)`).
 A library (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) is a crate of
 the agent side: what runs an agent - `caelumora-agents`, the essential one, which brings the kinds
 of agent and the built-in components (issue 370) - or brings components for an agent's facets -
-`caelumora-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-ollama` (issue 329),
-`caelumora-workspace-tools` (issue 428), `caelumora-compaction` (issue 464), `caelumora-comfyui`
-(issue 512), and the library sides of `caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`,
-`ArtifactsLibrary`). It is linked into the program as a plugin is, but trusted for nothing, and
-links the kernel's API (`caelumora-api`), the model and other libraries, never the kernel: the
-kernel is a dev-dependency of its tests alone, which build the kernel's world - for
-`caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`
-checks, run by the pre-commit hook. It implements `caelumora_api::library::Library` - a name for
-messages and `register` -, and the programs list it in `libraries()`, the agents' library first, and
-register each with `KernelBuilder::library` once their plugins registered. A library registers with
-a `LibraryBuilder`, a trait of the API the kernel implements, which offers what a library registers
-and nothing of the kernel - no store, no policy, no secret, no controller:
+`caelumora-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-workspace-tools` (issue 428),
+`caelumora-compaction` (issue 464), `caelumora-comfyui` (issue 512), and the library sides of
+`caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`, `ArtifactsLibrary`). It is linked
+into the program as a plugin is, but trusted for nothing, and links the kernel's API
+(`caelumora-api`), the model and other libraries, never the kernel: the kernel is a dev-dependency
+of its tests alone, which build the kernel's world - for `caelumora-agents` its `testing` too, under
+`test-support` -, which `scripts/library-deps.sh` checks, run by the pre-commit hook. It implements
+`caelumora_api::library::Library` - a name for messages and `register` -, and the programs list it
+in `libraries()`, the agents' library first, and register each with `KernelBuilder::library` once
+their plugins registered. A library registers with a `LibraryBuilder`, a trait of the API the kernel
+implements, which offers what a library registers and nothing of the kernel - no store, no policy,
+no secret, no controller:
 
 *   its component kinds (`components()`, a `LibraryComponents`), marked as a library's;
 *   its kinds of agent (`register_agent_kind`): for a kind of personality, what builds its agents'
@@ -135,16 +135,14 @@ The typed calls (`config`, `provide`) lie on `dyn LibraryBuilder`, the trait's e
 them (`section`, `provide_of`), as `ActorRuntime::reader` lies over `reader_of`.
 
 The kernel is not built where a kind of a library provides a facet the kernel builds in its own
-name, a moderator of a channel or a command of a session, or uses a service that is neither a
-library's nor the texts (`PromptCatalogue`): a library's components reach nothing of the kernel but
-through the interface they are given. Whether a kind of a facet of which there is one is its
-default, the program says, not the library (`ComponentRegistry::set_default_kind`), so that two
-libraries of a facet cannot both claim it. A facet a library brings itself is its own:
+name, a moderator of a channel or a command of a session, or provides alone, an agent's model
+(`ModelClient`, so that every call of a model passes the kernel, issue 520), or uses a service that
+is neither a library's nor the texts (`PromptCatalogue`): a library's components reach nothing of
+the kernel but through the interface they are given. A facet a library brings itself is its own:
 `caelumora-compaction` registers its `CompactionStrategy` as a single with its default kind. A
 library whose components serve an agent's facets tests them with the agents beside it -
-`World::with(&[], &[&TestAgents, &Library], …)` -, where `caelumora_agents::testing::TestAgents`
-brings the agents' library and declares a model that is not to be asked the default of the model's
-facets (issues 370, 373): the tests have no program to name one.
+`World::with(&[], &[&AgentsLibrary, &Library], …)` -, whose kernel offers a model that is not to be
+asked where a test configures none, as a program offers one (issues 370, 373, 520).
 
 ## What a system service offers an agent's work
 

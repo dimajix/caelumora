@@ -18,9 +18,9 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-kernel`** - the kernel, where everything runs: sessions, channels and the actors of
     their users and approvers, the kinds of agent registered with it (`AgentKinds`), components, the
     views, the event bus, the controllers that keep entities live, workspaces, the storages of
-    binary content, and the store implementations. Its centre is the `Kernel`, built once in a
-    process by the `KernelBuilder`; what a channel or an actor runs with is its *runtime*, which the
-    kernel gives it - a channel its `ChannelRuntime`, a participant's actor its
+    binary content, the language models, and the store implementations. Its centre is the `Kernel`,
+    built once in a process by the `KernelBuilder`; what a channel or an actor runs with is its
+    *runtime*, which the kernel gives it - a channel its `ChannelRuntime`, a participant's actor its
     `ParticipantRuntime`, an agent's actor its `ActorRuntime` -, and an actor reaches its channel
     through its runtime alone. What a library is given and declares - the kernel's API - is a crate
     of its own, `caelumora-api`.
@@ -63,9 +63,9 @@ drawn in [CRATES.md](CRATES.md):
     brings nothing but its component kind `a2a_agent`, so that the agents keep the facet
     `ExternalAgent` and name no protocol (issue 326). See
     [Agents that run elsewhere](#agents-that-run-elsewhere).
-*   **`caelumora-ollama`** - language models served by Ollama, a library that brings nothing but its
-    component kind `ollama_client`, so that the API keeps the facet `ModelClient` and names no model
-    provider; the programs name it as the default model (issue 329). See
+*   **`caelumora-ollama`** - language models served by Ollama, a plugin that brings nothing but the
+    backend `ollama` of the kernel's models, so that the kernel names no model provider; the
+    programs offer a local one where the configuration names no model (issues 329, 520). See
     [CONFIGURATION.md](CONFIGURATION.md#the-model).
 *   **`caelumora-decision`** - decision models, which answer typed questions about a text with
     probabilities, reached through the `/v1/systemone` contract: a plugin that brings nothing but
@@ -120,10 +120,10 @@ is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBui
 are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose actors the
 channel builds (`AgentKinds`), and the kinds of their components; without it, the program is a chat
 between users. `caelumora-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
-`caelumora-ollama`, `caelumora-compaction` and `caelumora-workspace-tools` bring component kinds
-alone, `caelumora-comfyui` a section of the configuration and a service besides; they build on the
-agents' library, and a library that defines facets of its own for others to serve is built on in
-turn: `caelumora-skills` serves the `KnowledgeRestorer` of `caelumora-compaction`. A service with a
+`caelumora-compaction` and `caelumora-workspace-tools` bring component kinds alone,
+`caelumora-comfyui` a section of the configuration and a service besides; they build on the agents'
+library, and a library that defines facets of its own for others to serve is built on in turn:
+`caelumora-skills` serves the `KnowledgeRestorer` of `caelumora-compaction`. A service with a
 manager of its own that extends the kernel - skills and artifacts, which plugins bring, the
 workspace, which the kernel brings itself - is a **system service**: it runs on the kernel's side,
 its manager decides with the kernel's policies, its views serve the frontends, and what an agent's
@@ -141,20 +141,21 @@ Details: [PLUGINS.md](PLUGINS.md).
 Some services of the kernel are served by one of a choice of **backends**, named in the
 configuration by their `type` (issue 324): the stores (`PersistenceBackend`, issue 446), the
 storages of workspaces (`TerminalProvider`), the storages of binary content (`ContentStorage`, issue
-282), the secret providers (`SecretProvider`) and the user providers (`UserProvider`). A backend is
-made by the factory registered under its type for its service, in `Backends`
-(`caelumora_kernel::backend`), which reads its parameters and asks the services it is given for what
-it needs. The kernel registers its own (`Backends::built_in`); a plugin adds one by registering its
-factory in `Plugin::backends`, which is asked before anything is made - so a new storage or provider
-is a crate linked into the program, and no edit of the kernel, as the Open Terminal storages of
-`caelumora-open-terminal` are (issue 327). The backends are made once, when the kernel is built
-(`KernelBuilder::from_config`): the secret providers first, which need only the policies, then the
-stores, which may ask for the secrets - a database connects by one -, then the storages and the user
-providers with the secrets and the records of the users at hand. The stores' backends are opened
-last, once the plugins registered and opened the stores of their kinds (`PersistenceBackend::open`,
-issue 447), so that one that cannot be made ready fails the start. The backends a section names by
-name are handed to their owners as one `NamedBackends` - the storages of workspaces, the storages of
-content -, of which an owner keeps what is new in the one its section names, or in the one there is:
+282), the language models (`ModelProvider`, issue 520), the secret providers (`SecretProvider`) and
+the user providers (`UserProvider`). A backend is made by the factory registered under its type for
+its service, in `Backends` (`caelumora_kernel::backend`), which reads its parameters and asks the
+services it is given for what it needs. The kernel registers its own (`Backends::built_in`); a
+plugin adds one by registering its factory in `Plugin::backends`, which is asked before anything is
+made - so a new storage or provider is a crate linked into the program, and no edit of the kernel,
+as the Open Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are made
+once, when the kernel is built (`KernelBuilder::from_config`): the secret providers first, which
+need only the policies, then the stores, which may ask for the secrets - a database connects by
+one -, then the storages and the user providers with the secrets and the records of the users at
+hand. The stores' backends are opened last, once the plugins registered and opened the stores of
+their kinds (`PersistenceBackend::open`, issue 447), so that one that cannot be made ready fails the
+start. The backends a section names by name are handed to their owners as one `NamedBackends` - the
+storages of workspaces, the storages of content, the models -, of which an owner uses the one
+named - where it keeps what is new, the model an agent's component names - or the one there is:
 among several, one has to be named (`NamedBackends::chosen`). What is kept names the backend it lies
 in and finds it again by that name (`NamedBackends::kept_in`); one since removed from the
 configuration is `StorageGone`, the server's failure and not the request's. What a plugin keeps
@@ -274,12 +275,12 @@ What an agent can do is not programmed into the `AgentActor` but configured: a p
 part in the turn. A component contributes tools (`ToolProvider`), text for the model
 (`PromptProvider`), or filters incoming messages (`PerceiveInProcessor`). Of some facets an agent
 has exactly one: the `ModelClient`, the language model it talks to, and the `ContextProvider`, which
-assembles the model's context. The `ContextProvider` has a built-in default, the `ModelClient` the
-one the program names; a personality or the configuration can replace either. Tool calls are run by
-the agent's `ToolExecutor` with the tools of its providers; it is no component, so that what it
-checks is never a personality's choice, and what of a call is the kernel's to decide - whether it
-may be called, what the rules of its places say, what may flow where - it asks of the kernel
-(`ActorRuntime::admit_tool_call`, `may_publish`, issue 516).
+assembles the model's context. Both have built-in defaults that a personality or the configuration
+can replace - the model's is the kernel's kind `model`, which talks to a model of the kernel (issue
+520). Tool calls are run by the agent's `ToolExecutor` with the tools of its providers; it is no
+component, so that what it checks is never a personality's choice, and what of a call is the
+kernel's to decide - whether it may be called, what the rules of its places say, what may flow
+where - it asks of the kernel (`ActorRuntime::admit_tool_call`, `may_publish`, issue 516).
 
 Components are wired by type, much like Spring beans: a component asks for the facets it needs, and
 the container builds whatever provides them. User commands such as `/help` are components as well,
@@ -444,16 +445,17 @@ The design repeats a few decisions; new code follows them.
 *   **The kernel decides, the agent side asks.** As the frontends map what the kernel decides, the
     libraries of the agent side ask it. The kernel is to the agent side what an operating system's
     kernel is to its user space - a modular one: its own services are sessions, channels with their
-    history, the attachments of their messages and their approver, actors and their state, and
-    persistence, with what they need around them - security with the secrets bound to a context, the
-    event bus, projects -; the workspace, skills, artifacts and memory are system services that
-    extend it (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - so far
-    the workspace, skills and artifacts as extensions; memory is still reached through the agent's
-    state (issue [518](../issues/518-memory-is-reached-through-the-agents-state.md)). A plugin that
-    brings what is the kernel's - a backend, a kind of entity with its manager, views and routes, a
-    component of a channel - is trusted as the kernel; what runs an agent or serves its facets is a
-    **library** of the **agent side**, trusted for nothing: `caelumora-agents`, and the crates that
-    bring components for an agent (which crate stands where is listed in
+    history, the attachments of their messages and their approver, actors and their state, the
+    language models every call of which passes it (issue 520), and persistence, with what they need
+    around them - security with the secrets bound to a context, the event bus, projects -; the
+    workspace, skills, artifacts and memory are system services that extend it (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - so far the workspace,
+    skills and artifacts as extensions; memory is still reached through the agent's state (issue
+    [518](../issues/518-memory-is-reached-through-the-agents-state.md)). A plugin that brings what
+    is the kernel's - a backend, a kind of entity with its manager, views and routes, a component of
+    a channel - is trusted as the kernel; what runs an agent or serves its facets is a **library**
+    of the **agent side**, trusted for nothing: `caelumora-agents`, and the crates that bring
+    components for an agent (which crate stands where is listed in
     [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). A library is not a program: the binaries
     (`caelumora-app`, `caelumora-tui`) link the kernel, its plugins and the libraries, and choose
     which are in. A library sees the kernel through the kernel's API alone - an actor its

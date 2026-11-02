@@ -1,9 +1,9 @@
 //! Backends (issue 324): what serves a service - a storage of workspaces (`dyn TerminalProvider`)
-//! or of content (`dyn ContentStorage`, issue 282), a user provider (`dyn UserProvider`), a secret
-//! provider (`dyn SecretProvider`), what the stores keep their data in (`dyn PersistenceBackend`,
-//! issue 446) - named in the configuration by its type (`BackendConfig`) and made by the factory
-//! registered under that type for the service: the kernel's (`Backends::built_in`) or a plugin's
-//! (`Plugin::backends`).
+//! or of content (`dyn ContentStorage`, issue 282), a language model (`dyn ModelProvider`, issue
+//! 520), a user provider (`dyn UserProvider`), a secret provider (`dyn SecretProvider`), what the
+//! stores keep their data in (`dyn PersistenceBackend`, issue 446) - named in the configuration by
+//! its type (`BackendConfig`) and made by the factory registered under that type for the service:
+//! the kernel's (`Backends::built_in`) or a plugin's (`Plugin::backends`).
 //!
 //! Built to look like the `ComponentRegistry` where the two do the same: a type is a name, its
 //! parameters are read by `config_of_params` - one it does not take refused, a type that takes none
@@ -44,10 +44,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Arc;
 
-/// The backends a section of the configuration names, by their names - the
-/// storages of workspaces, the storages of content -, which what lies there
-/// refers to its backend by. Shown by their names alone: a backend's
-/// parameters may name places of the host.
+/// The backends a section of the configuration names, by their names - the storages of workspaces,
+/// the storages of content, the models -, which what lies there, or what asks a model, refers to
+/// its backend by. Shown by their names alone: a backend's parameters may name places of the host.
 pub struct NamedBackends<T: ?Sized>(BTreeMap<String, Arc<T>>);
 
 /// Why no backend of a `NamedBackends` could be chosen (`chosen`), as the

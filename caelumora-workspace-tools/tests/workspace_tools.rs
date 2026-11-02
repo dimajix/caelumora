@@ -4,9 +4,9 @@
 //! (`caelumora_agents::testing`). The tests of an action that acts in someone's name assert what it
 //! asks, as the suite does for the kernel's.
 
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
-    asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_scripted, TestAgents,
-    ONCE_MODEL_KIND,
+    asked_as_a_call_on_the_workspace, asked_for_a_call, calling, register_scripted, ONCE_MODEL_KIND,
 };
 use caelumora_kernel::testing::World;
 use caelumora_kernel::view::Viewer;
@@ -35,7 +35,7 @@ async fn asked_for_a_call_on_the_workspace(
     made: &str,
     owner: fn(&World) -> UserId,
 ) -> Vec<String> {
-    let world = World::with(&[], &[&TestAgents, &WorkspaceToolsLibrary], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary, &WorkspaceToolsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![calling(function, arguments)])
     })
     .await;
@@ -125,7 +125,7 @@ async fn an_agent_reaches_the_workspace_of_a_session_its_owner_does_not_take_par
 async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_channel() {
     let write =
         calling("write_file", serde_json::json!({ "path": "notes/a.md", "content": "written" }));
-    let world = World::with(&[], &[&TestAgents, &WorkspaceToolsLibrary], |registry| {
+    let world = World::with(&[], &[&AgentsLibrary, &WorkspaceToolsLibrary], |registry| {
         register_scripted(registry, ONCE_MODEL_KIND, vec![write])
     })
     .await;

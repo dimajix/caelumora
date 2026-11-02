@@ -217,7 +217,7 @@ mod tests {
 
         assert_eq!(
             user_message_with(&error, |_| None).as_deref(),
-            Some("cannot reach LLM backend at http://localhost:11434: connection refused")
+            Some("cannot reach the model server at http://localhost:11434: connection refused")
         );
     }
 }

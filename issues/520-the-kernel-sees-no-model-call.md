@@ -338,3 +338,21 @@ in the same change: `LLMClient` → `ModelClient`, `LLMError` → `ModelError`, 
   with `Given` beside `Participant` and the test's `Itself`, as revised in *The plan*;
   `ParticipantRuntime` builds its contexts by it, and `BuildContext` holds it - an agent's
   components are built in the agent's `Acting`, all others in a context given once, as before.
+- **2026-11-02** — Step 3 done on the branch, as decided with the maintainer before it began:
+  `AppConfig::models` names the models, each a backend (`ModelProvider`) by its name, flat and
+  without a key for a default - an agent's model names one, or talks to the one there is; the
+  `ModelManager` of the kernel builds each agent its client (`ModelClientFor`), which builds the
+  context of each call from the agent's `Acting` and logs who asks which model; the kind `model`
+  of the kernel, the default of both the model's facets, takes the framing as its parameters and
+  reaches the `Acting` as a service its `BuildContext` offers; no library may bring a
+  `ModelClient`. `caelumora-ollama` is a plugin with the backend `ollama`, and offers the programs
+  a local model where none is configured (`with_local_model`); `ComponentRegistry::set_default_kind`
+  had no user left and is gone. Deviating from the plan: the scripted models of the agents' tests
+  stay `ModelClient` kinds the tests register in the kernel's registry - they test the agents, not
+  the service, which has tests of its own -, and `TestAgents` is gone: a test's kernel offers a
+  model that is not to be asked where the test configures none. Smaller deviations: the client is
+  `ModelClientFor`, after `SecretsFor`, not `AgentModelClient`; `ModelManager::new` takes no
+  default, since `models` has no key for one; and `client_for` answers a `ComponentError` naming
+  the parameter `name`, as the attachments' storage is refused, not a `ModelError::Unknown` - an
+  unknown model is a configuration that cannot be built, not a call that failed. The texts of
+  `ModelError` say "model server" now.

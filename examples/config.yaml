@@ -164,37 +164,49 @@ users:
 #  - id: nudge
 #    kind: nudge_command
 
+# The language models the kernel offers (issue 520), each by its name and a
+# backend: `ollama` of the plugin caelumora-ollama. Without this section the
+# program names one: the Ollama server at 127.0.0.1:11434 and the model
+# gemma4:26b (issue 329). Here that model, with the size of its context set,
+# as docs/LLM-MODELS.md recommends, so that it is not cut off at Ollama's
+# default. Further parameters, with their defaults:
+#      endpoint:
+#        url: "http://127.0.0.1:11434"
+#      tokenizer: the model itself - for a model of Ollama's cloud, which
+#        lists no tokens, a local one that shares its tokenizer
+#      think: Ollama's default for the model
+#      vision: asked of the server
+models:
+  gemma:
+    type: ollama
+    model: "gemma4:26b"
+    context_size: 65536
+
 # Components that replace a built-in default for every personality that does
 # not configure its own (issue 99): of some facets an agent has exactly one -
 # the language model it talks to (`ModelClient`, issue 130), or what assembles
 # the model's context (`ContextProvider`) - and a personality without a
 # component for it gets the default. A component here is the default of each
-# such facet it provides - the model of its client and its profile, built
-# once for both. Without this section the built-in defaults are used, and
-# for the model the program's: `ollama_client` of the plugin caelumora-ollama
-# (issue 329), with the Ollama server at 127.0.0.1:11434 and the model
-# gemma4:26b. Here that model, configured as docs/LLM-MODELS.md
-# recommends for it: senders marked in XML, which it attributes best, and the
-# size of its context set, so that it is not cut off at Ollama's default.
-# Further parameters, with their defaults:
-#      endpoint:
-#        url: "http://127.0.0.1:11434"
-#      tokenizer: the model itself - for a model of Ollama's cloud, which
-#        lists no tokens, a local one that shares its tokenizer
-#      think: true
+# such facet it provides - the model's client and its profile, built once for
+# both. Without this section the built-in defaults are used: for the model, the
+# kind `model` of the kernel, which talks to the one model of `models` - among
+# several, a component of it names one (`name`). Here how the context is framed
+# for that model, as docs/LLM-MODELS.md recommends for it: senders marked in
+# XML, which it attributes best. Further parameters, with their defaults:
+#      name: the one model of `models`
 #      reasoning_history: current_turn
 #      system_messages: only_at_start
+#      message_times: true
+#      prompt_texts: the default texts
 # A personality may build on one of these by its id, and name only the
 # parameters that differ (`kind: default`, issue 445): Sassy in
 # examples/seed.yaml builds on `model`.
 component_defaults:
   - id: model
-    kind: ollama_client
+    kind: model
     params:
-      model: "gemma4:26b"
       sender_format: xml
       sender_style: handle
-      context_size: 65536
 #  - id: context
 #    kind: turn_context_provider
 

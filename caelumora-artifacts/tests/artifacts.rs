@@ -15,9 +15,10 @@ use axum::http::{Request, StatusCode};
 use axum::response::IntoResponse;
 use axum::Router;
 use bytes::Bytes;
+use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
     self as agent_testing, asked_as_a_call_on_the_workspace, asked_for_a_call, calling,
-    register_scripted, TestAgents, ONCE_MODEL_KIND,
+    register_scripted, ONCE_MODEL_KIND,
 };
 use caelumora_agents::tool::{ToolError, ToolProvider};
 use caelumora_api::error::ContentError;
@@ -83,7 +84,7 @@ use tower::ServiceExt;
 
 /// The world with artifacts.
 async fn world() -> World {
-    World::with(&[&ArtifactsPlugin], &[&TestAgents, &ArtifactsLibrary], |_| {}).await
+    World::with(&[&ArtifactsPlugin], &[&AgentsLibrary, &ArtifactsLibrary], |_| {}).await
 }
 
 /// The one owner of artifacts of `world`.
@@ -297,7 +298,7 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
 async fn the_tool_is_not_offered_without_a_storage_of_content() {
     let world = World::configured(
         &[&ArtifactsPlugin],
-        &[&TestAgents, &ArtifactsLibrary],
+        &[&AgentsLibrary, &ArtifactsLibrary],
         |_| {},
         |config| {
             config.content = Default::default();
@@ -376,7 +377,7 @@ async fn kept_in(store: Persistence) -> Kept {
         store,
         config,
         plugins: vec![&ArtifactsPlugin],
-        libraries: vec![&TestAgents, &ArtifactsLibrary],
+        libraries: vec![&AgentsLibrary, &ArtifactsLibrary],
         ..Default::default()
     }
     .build();
@@ -451,7 +452,7 @@ async fn new_artifacts_go_to_the_storage_the_section_names_or_the_one_there_is()
         TestKernel {
             config,
             plugins: vec![&ArtifactsPlugin],
-            libraries: vec![&TestAgents, &ArtifactsLibrary],
+            libraries: vec![&AgentsLibrary, &ArtifactsLibrary],
             ..Default::default()
         }
         .try_build()
@@ -1549,10 +1550,11 @@ async fn publishing_into_a_project_needs_reading_it() {
 #[tokio::test]
 async fn an_agents_artifact_is_published_for_its_owner() {
     let call = calling(PUBLISH_ARTIFACT, json!({ "path": "notes/a.md" }));
-    let world = World::with(&[&ArtifactsPlugin], &[&TestAgents, &ArtifactsLibrary], |registry| {
-        register_scripted(registry, ONCE_MODEL_KIND, vec![call])
-    })
-    .await;
+    let world =
+        World::with(&[&ArtifactsPlugin], &[&AgentsLibrary, &ArtifactsLibrary], |registry| {
+            register_scripted(registry, ONCE_MODEL_KIND, vec![call])
+        })
+        .await;
     let kept = |files: &Path, _: &Path| {
         fs::read_dir(files.join("content").join("artifacts"))
             .is_ok_and(|mut entries| entries.next().is_some())
@@ -1629,7 +1631,7 @@ async fn a_purge_that_fails_between_is_restored_by_nobody_and_finished_by_the_ne
     let elsewhere = TestKernel {
         store: persistence.clone(),
         plugins: vec![&ArtifactsPlugin],
-        libraries: vec![&TestAgents, &ArtifactsLibrary],
+        libraries: vec![&AgentsLibrary, &ArtifactsLibrary],
         ..Default::default()
     }
     .build();

@@ -238,6 +238,10 @@ pub struct AppConfig {
     /// of messages (issue 282). No storage unless configured: then nothing
     /// such can be kept.
     pub content: ContentConfig,
+    /// The language models the kernel offers (issue 520), each by the name an agent's model names
+    /// it with and a backend (`dyn ModelProvider`). None unless configured: then the program
+    /// names one, or no agent can ask a model.
+    pub models: BTreeMap<String, BackendConfig>,
     /// What a message may carry besides its text (issue 282).
     pub attachments: AttachmentsConfig,
     /// The variants of the texts given to models (issue 57), each by its name and the directory of
@@ -331,6 +335,7 @@ impl Default for AppConfig {
             approvals: ApprovalsConfig::default(),
             workspaces: WorkspacesConfig::default(),
             content: ContentConfig::default(),
+            models: BTreeMap::new(),
             attachments: AttachmentsConfig::default(),
             prompts: BTreeMap::new(),
             plugins: BTreeMap::new(),

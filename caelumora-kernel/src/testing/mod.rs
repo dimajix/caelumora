@@ -14,6 +14,7 @@
 mod scripted_agent;
 #[cfg(test)]
 mod stand_in;
+mod unasked_model;
 
 pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
 #[cfg(test)]
@@ -261,6 +262,8 @@ pub struct TestKernel<'a> {
     pub access_policy: Arc<dyn AccessPolicy>,
     /// The default rules.
     pub confidentiality: Arc<dyn ConfidentialityPolicy>,
+    /// The default configuration; its models, unless it names one, a model that is not to be asked,
+    /// which a test's agents talk to unless it gives them another.
     pub config: AppConfig,
     /// Registers the component kinds of the test beside the built-in ones, before the plugins
     /// register theirs; none.
@@ -302,12 +305,15 @@ impl TestKernel<'_> {
     /// As `KernelBuilder::new`, `plugin`, `library` and `build`.
     pub fn try_build(self) -> Result<Kernel> {
         let secrets = Arc::new(SecretManager::new(vec![], Arc::clone(&self.access_policy)));
+        let mut backends = Backends::with_plugins(&self.plugins);
+        unasked_model::register_backend(&mut backends);
+        let config = unasked_model::with_unasked_model(self.config);
         let mut builder = KernelBuilder::new(
             self.store,
             secrets,
             Policies::new(self.access_policy, self.confidentiality),
-            &self.config,
-            Backends::with_plugins(&self.plugins),
+            &config,
+            backends,
         )?;
         (self.components)(builder.components());
         for plugin in self.plugins {
@@ -366,7 +372,7 @@ impl World {
 
     /// The world with `plugins` (issue 323) and `libraries` (issue 516), and the component kinds
     /// `register` adds besides the built-in ones. It runs no agent unless a library brings them:
-    /// in the agents' tests, `caelumora_agents::testing::TestAgents` does (issues 370, 373).
+    /// in the agents' tests, `caelumora_agents::library::AgentsLibrary` does (issues 370, 373).
     pub async fn with(
         plugins: &[&dyn Plugin],
         libraries: &[&dyn Library],

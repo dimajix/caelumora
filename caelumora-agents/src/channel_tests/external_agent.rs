@@ -4,8 +4,8 @@
 use super::*;
 use crate::external::testing::{CallsRead, ScriptedExternalAgent};
 use crate::external::ExternalAgent;
+use crate::library::AgentsLibrary;
 use crate::prompt::PromptProvider;
-use crate::testing::TestAgents;
 use anyhow::Result;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::model::ModelProfileProvider;
@@ -111,7 +111,7 @@ async fn external_channel(
         store,
         access_policy,
         components: Box::new(components),
-        libraries: vec![&TestAgents],
+        libraries: vec![&AgentsLibrary],
         ..Default::default()
     }
     .build();
@@ -1935,7 +1935,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     let kernel = TestKernel {
         store: store.clone(),
         components: Box::new(components),
-        libraries: vec![&TestAgents],
+        libraries: vec![&AgentsLibrary],
         ..Default::default()
     }
     .build();

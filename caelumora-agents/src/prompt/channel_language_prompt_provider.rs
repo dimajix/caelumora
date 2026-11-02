@@ -137,7 +137,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, agent_runtime, TestAgents};
+    use crate::library::AgentsLibrary;
+    use crate::testing::{self, agent_runtime};
     use crate::turn::Turn;
     use caelumora_kernel::session::testing::participant_runtime_in;
     use caelumora_kernel::session::{SessionLoop, SessionManager};
@@ -209,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_language_is_read_from_the_channel_and_its_session_at_every_turn() {
-        let kernel = TestKernel { libraries: vec![&TestAgents], ..Default::default() }.build();
+        let kernel = TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build();
         let system = SecurityContext::system();
 
         let agent = stored_agent(

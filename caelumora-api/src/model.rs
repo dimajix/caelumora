@@ -1,7 +1,7 @@
 //! What an agent is given of a language model (issues 130, 520): the facet `ModelClient`, through
 //! which it asks its model, with the errors of a call (`ModelError`), and the profile by which its
-//! context is written for that model (`ModelProfileProvider`). The kinds that provide them are in
-//! crates of their own, and the program names the default (issue 329).
+//! context is written for that model (`ModelProfileProvider`). The models are the kernel's: it
+//! provides the `ModelClient` alone, so that every call of a model passes it.
 
 use async_trait::async_trait;
 use caelumora_model::actor::ActorId;
@@ -18,17 +18,17 @@ use std::fmt::Debug;
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
     /// The backend could not be reached or the connection broke.
-    #[error("cannot reach LLM backend at {endpoint}: {reason}")]
+    #[error("cannot reach the model server at {endpoint}: {reason}")]
     Connection { endpoint: String, reason: String },
     /// The backend answered the request with an HTTP error, e.g. an unknown
     /// model. `message` is the backend's own explanation where it gave one.
-    #[error("LLM backend at {endpoint} rejected the request for model '{model}' (HTTP {status}): {message}")]
+    #[error("the model server at {endpoint} rejected the request for model '{model}' (HTTP {status}): {message}")]
     Rejected { endpoint: String, model: String, status: u16, message: String },
     /// The backend reported an error in the middle of a response.
-    #[error("LLM backend at {endpoint} failed for model '{model}': {message}")]
+    #[error("the model server at {endpoint} failed for model '{model}': {message}")]
     Backend { endpoint: String, model: String, message: String },
     /// The response could not be understood.
-    #[error("invalid response from LLM backend at {endpoint}: {reason}")]
+    #[error("invalid response from the model server at {endpoint}: {reason}")]
     InvalidResponse { endpoint: String, reason: String },
 }
 
@@ -43,7 +43,8 @@ pub fn unlabelled_message() -> Message {
     Message::new(Classification::general(Confidentiality::StrictlyConfidential))
 }
 
-/// The facet through which an agent asks its model, of which it has exactly one.
+/// The facet through which an agent asks its model, of which it has exactly one - provided by the
+/// kernel alone, for that agent alone (issue 520).
 #[async_trait]
 pub trait ModelClient: Send + Sync + Debug {
     /// Sends `context` and the `tools` the model may call (issue 137) - of each only its name,
@@ -66,8 +67,7 @@ pub trait ModelClient: Send + Sync + Debug {
 /// the context of every turn and applied where the model's input is resolved (`ContextResolver`).
 /// An agent has exactly one: its model's component provides it beside its `ModelClient`, an
 /// external agent's beside its `ExternalAgent` - so what writes for a model learns how without
-/// asking the model itself. Without a default in the kernel, as the `ModelClient`: the program
-/// names the kind of its model for both.
+/// asking the model itself.
 pub trait ModelProfileProvider: Send + Sync + Debug {
     /// The profile of the model.
     fn profile(&self) -> ModelProfile;
