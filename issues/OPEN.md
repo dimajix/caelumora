@@ -67,7 +67,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [522](522-two-crates-named-model.md) | open | medium | refactoring | The crate of the domain's data and rules is named `caelumora-model` and the plugin of the language models `caelumora-models`, so that two crates a letter apart mean two unrelated things, and "model" means the domain in one and a language model in the other. |
+| [522](522-two-crates-named-model.md) | in progress | medium | refactoring | The crate of the domain's data and rules is named `caelumora-model` and the plugin of the language models `caelumora-models`, so that two crates a letter apart mean two unrelated things, and "model" means the domain in one and a language model in the other. |
 
 ## Low priority
 
