@@ -183,12 +183,12 @@ users:
 
 # Components that replace a built-in default for every personality that does
 # not configure its own (issue 99): of some facets an agent has exactly one -
-# the language model it talks to (`ModelClient`, issue 130), or what assembles
-# the model's context (`ContextProvider`) - and a personality without a
+# the language model it talks to (`LanguageModelClient`, issue 130), or what
+# assembles the model's context (`ContextProvider`) - and a personality without a
 # component for it gets the default. A component here is the default of each
 # such facet it provides - the model's client and its profile, built once for
 # both. Without this section the built-in defaults are used: for the model, the
-# kind `model` of caelumora-model, which talks to the one model of
+# kind `language_model` of caelumora-model, which talks to the one model of
 # `plugins.model` - among several, a component of it names one (`name`). Here
 # how the context is framed for that model, as docs/LLM-MODELS.md recommends
 # for it: senders marked in XML, which it attributes best. Further parameters,
@@ -203,7 +203,7 @@ users:
 # examples/seed.yaml builds on `model`.
 component_defaults:
   - id: model
-    kind: model
+    kind: language_model
     params:
       sender_format: xml
       sender_style: handle

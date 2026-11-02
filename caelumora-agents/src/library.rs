@@ -14,9 +14,9 @@ use caelumora_domain::agent::PersonalityKind;
 
 /// Registers the kinds of an agent's components with `registry` (issue 370): its context
 /// (`prompt`), its tools (`tool`), its memory and notes (`components`) and the facet an agent that
-/// runs elsewhere is reached through (`external`) - its model is the kind `model` of the plugin
-/// `caelumora-model`, or one a library brings (issue 520). What `AgentsLibrary` registers, and a
-/// test that builds components without a kernel.
+/// runs elsewhere is reached through (`external`) - its model is the kind `language_model` of the
+/// plugin `caelumora-model`, or one a library brings (issue 520). What `AgentsLibrary` registers,
+/// and a test that builds components without a kernel.
 pub fn register_components(registry: &mut LibraryComponents<'_>) {
     components::register_all(registry);
     prompt::register_all(registry);

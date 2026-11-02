@@ -1,10 +1,10 @@
 //! The models the platform offers, by their names, and the clients it builds of them
 //! (`ModelManager`, issue 520).
 
-use crate::ModelProvider;
+use crate::LanguageModelProvider;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentError, ComponentResult};
-use caelumora_api::model::{ModelClient, ModelResult};
+use caelumora_api::model::{LanguageModelClient, ModelResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::message::{Message, MessageEvent};
 use caelumora_domain::tool::Tool;
@@ -18,12 +18,12 @@ use tracing::debug;
 /// `plugins.model`): what builds each agent its client of one. A service the plugin offers.
 #[derive(Debug)]
 pub(crate) struct ModelManager {
-    models: NamedBackends<dyn ModelProvider>,
+    models: NamedBackends<dyn LanguageModelProvider>,
 }
 
 impl ModelManager {
     /// The models `models` names, of the section `plugins.model`.
-    pub(crate) fn new(models: NamedBackends<dyn ModelProvider>) -> Self {
+    pub(crate) fn new(models: NamedBackends<dyn LanguageModelProvider>) -> Self {
         Self { models }
     }
 
@@ -33,11 +33,11 @@ impl ModelManager {
     /// # Errors
     /// `ComponentError::InvalidConfig` naming the parameter `name` where it names no model, or none
     /// among several, or where no model is configured.
-    pub(crate) fn client_for(
+    pub(crate) fn language_client_for(
         &self,
         acting: Acting,
         name: Option<&str>,
-    ) -> ComponentResult<ModelClientFor> {
+    ) -> ComponentResult<LanguageModelClientFor> {
         let chosen = self
             .models
             .chosen(name)
@@ -45,30 +45,30 @@ impl ModelManager {
         let Some((name, model)) = chosen else {
             return Err(ComponentError::InvalidConfig("no model is configured".to_string()));
         };
-        Ok(ModelClientFor { acting, name: name.to_string(), model: Arc::clone(model) })
+        Ok(LanguageModelClientFor { acting, name: name.to_string(), model: Arc::clone(model) })
     }
 }
 
-/// A model as one agent asks it (`ModelManager::client_for`): each call made in the context its
-/// `Acting` builds at that call, which says who asks which model - what a check of the call, or a
-/// count of what it used, is to go by.
+/// A model as one agent asks it (`ModelManager::language_client_for`): each call made in the
+/// context its `Acting` builds at that call, which says who asks which model - what a check of the
+/// call, or a count of what it used, is to go by.
 #[derive(Debug)]
-pub(crate) struct ModelClientFor {
+pub(crate) struct LanguageModelClientFor {
     acting: Acting,
     /// The model's name, as the configuration gives it.
     name: String,
-    model: Arc<dyn ModelProvider>,
+    model: Arc<dyn LanguageModelProvider>,
 }
 
-impl ModelClientFor {
-    /// Whether its model is given images (`ModelProvider::sees_images`).
+impl LanguageModelClientFor {
+    /// Whether its model is given images (`LanguageModelProvider::sees_images`).
     pub(crate) async fn sees_images(&self) -> bool {
         self.model.sees_images().await
     }
 }
 
 #[async_trait]
-impl ModelClient for ModelClientFor {
+impl LanguageModelClient for LanguageModelClientFor {
     async fn chat_completion(
         &self,
         initiator: ActorId,

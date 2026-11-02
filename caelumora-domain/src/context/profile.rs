@@ -54,12 +54,11 @@ impl ReasoningHistory {
     }
 }
 
-/// How a model is to be given its context: a property of the model,
-/// declared by the agent's `ModelClient` and applied where the model's input
-/// is resolved (`ContextResolver`), so that a backend gets only what its
-/// model is to see. A closed set of rules, as data, so that it can be
-/// recorded with every message and applied again when what the model saw
-/// is asked for (issue 16's history).
+/// How a model is to be given its context: a property of the model, declared by the component of
+/// the agent's model, or of an external agent (`ModelProfileProvider`), and applied where the
+/// model's input is resolved (`ContextResolver`), so that a backend gets only what its model is to
+/// see. A closed set of rules, as data, so that it can be recorded with every message and applied
+/// again when what the model saw is asked for (issue 16's history).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelProfile {
     /// Which reasoning of earlier messages the model is given back.

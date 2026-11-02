@@ -15,7 +15,7 @@ use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
+use caelumora_api::model::{LanguageModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
@@ -40,7 +40,7 @@ use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::TestKernel;
 use caelumora_kernel::testing::{
-    participant_runtime_in, test_registry as runtime_registry, with_unasked_model, World,
+    participant_runtime_in, test_registry as runtime_registry, with_unasked_language_model, World,
 };
 use caelumora_kernel::workspace::testing::WithWorkspace;
 use caelumora_store::Persistence;
@@ -240,11 +240,11 @@ pub fn test_registry(store: &Persistence) -> ComponentRegistry {
 }
 
 /// Registers with `registry` the kinds of an agent's components (`register_components`) and a model
-/// that is not to be asked as the default (`with_unasked_model`) - for tests that build components
-/// without a kernel, with the model a test's kernel gives its agents.
+/// that is not to be asked as the default (`with_unasked_language_model`) - for tests that build
+/// components without a kernel, with the model a test's kernel gives its agents.
 pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
     register_components(&mut registry.library_components());
-    with_unasked_model(registry);
+    with_unasked_language_model(registry);
 }
 
 /// A model that gives the answers it was given, one per call, and then
@@ -253,7 +253,7 @@ pub fn with_agent_kinds(registry: &mut ComponentRegistry) {
 pub struct Scripted(pub Mutex<VecDeque<Message>>);
 
 #[async_trait]
-impl ModelClient for Scripted {
+impl LanguageModelClient for Scripted {
     async fn chat_completion(
         &self,
         _: ActorId,
@@ -388,11 +388,11 @@ pub fn register_scripted(registry: &mut ComponentRegistry, kind: &str, answers: 
     let model = Arc::new(Scripted(Mutex::new(answers.into())));
     registry.register(
         ComponentKind::new(kind)
-            .provides::<dyn ModelClient>()
+            .provides::<dyn LanguageModelClient>()
             .provides::<dyn ModelProfileProvider>(),
         move |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ModelClient>(Arc::<Scripted>::clone(&model));
+            facets.insert::<dyn LanguageModelClient>(Arc::<Scripted>::clone(&model));
             facets.insert::<dyn ModelProfileProvider>(Arc::<Scripted>::clone(&model));
             Ok(facets)
         },

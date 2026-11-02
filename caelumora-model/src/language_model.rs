@@ -1,6 +1,6 @@
-//! The kind `model` (issue 520): an agent's language model, one of those the platform offers, as
-//! the agent is given it - its client, which is built for this agent alone, and the profile by
-//! which its context is framed for that model.
+//! The kind `language_model` (issue 520): an agent's language model, one of those the platform
+//! offers, as the agent is given it - its client, which is built for this agent alone, and the
+//! profile by which its context is framed for that model.
 //!
 //! Parameters: `name`, the model of the section `plugins.model` - left out, the one there is -,
 //! and how the context is framed for it: `reasoning_history`, which reasoning of earlier messages
@@ -17,7 +17,7 @@
 
 use crate::manager::ModelManager;
 use caelumora_api::component::{config_of_params, ComponentFacets, ComponentKind, Params};
-use caelumora_api::model::{ModelClient, ModelProfileProvider};
+use caelumora_api::model::{LanguageModelClient, ModelProfileProvider};
 use caelumora_domain::context::{
     message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle,
     SystemMessages,
@@ -29,12 +29,12 @@ use serde::Deserialize;
 use std::sync::Arc;
 
 /// The kind of an agent's model: the default of both its facets.
-const MODEL_KIND: &str = "model";
+const LANGUAGE_MODEL_KIND: &str = "language_model";
 
-/// The parameters of a `model` component.
+/// The parameters of a `language_model` component.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ModelParams {
+struct LanguageModelParams {
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -51,7 +51,7 @@ struct ModelParams {
     prompt_texts: Option<PromptVariant>,
 }
 
-impl Params for ModelParams {}
+impl Params for LanguageModelParams {}
 
 /// How the context of the agent's model is framed, as its component is configured.
 #[derive(Debug)]
@@ -63,26 +63,27 @@ impl ModelProfileProvider for Framing {
     }
 }
 
-/// Registers the kind `model` with `registry`, and the model's facets, `ModelClient` and
-/// `ModelProfileProvider`, as facets of which an agent has exactly one, with it as their default.
+/// Registers the kind `language_model` with `registry`, and the model's facets,
+/// `LanguageModelClient` and `ModelProfileProvider`, as facets of which an agent has exactly one,
+/// with it as their default.
 pub(crate) fn register_all(registry: &mut ComponentRegistry) {
-    registry.single::<dyn ModelClient>(Some(MODEL_KIND));
-    registry.single::<dyn ModelProfileProvider>(Some(MODEL_KIND));
+    registry.single::<dyn LanguageModelClient>(Some(LANGUAGE_MODEL_KIND));
+    registry.single::<dyn ModelProfileProvider>(Some(LANGUAGE_MODEL_KIND));
     registry.register_async(
-        ComponentKind::new(MODEL_KIND)
-            .params::<ModelParams>()
-            .provides::<dyn ModelClient>()
+        ComponentKind::new(LANGUAGE_MODEL_KIND)
+            .params::<LanguageModelParams>()
+            .provides::<dyn LanguageModelClient>()
             .provides::<dyn ModelProfileProvider>()
             .uses::<ModelManager>()
             .uses::<Acting>()
             .uses::<PromptCatalogue>(),
         |descriptor, context| async move {
-            let params = config_of_params::<ModelParams>(&descriptor.params)?;
+            let params = config_of_params::<LanguageModelParams>(&descriptor.params)?;
             context.service::<PromptCatalogue>()?.require_variant(params.prompt_texts)?;
             // For the agent its components are built for, in its name at each call.
             let acting = Acting::clone(context.service::<Acting>()?);
             let models = context.service::<ModelManager>()?;
-            let client = models.client_for(acting, params.name.as_deref())?;
+            let client = models.language_client_for(acting, params.name.as_deref())?;
             let profile = ModelProfile {
                 reasoning_history: params.reasoning_history,
                 system_messages: params.system_messages,
@@ -93,7 +94,7 @@ pub(crate) fn register_all(registry: &mut ComponentRegistry) {
                 images: client.sees_images().await,
             };
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ModelClient>(Arc::new(client));
+            facets.insert::<dyn LanguageModelClient>(Arc::new(client));
             facets.insert::<dyn ModelProfileProvider>(Arc::new(Framing(profile)));
             Ok(facets)
         },
@@ -104,7 +105,7 @@ pub(crate) fn register_all(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use crate::plugin::{with_default_model, ModelPlugin, MODEL};
-    use crate::ModelProvider;
+    use crate::LanguageModelProvider;
     use anyhow::Result;
     use async_trait::async_trait;
     use caelumora_api::component::{ComponentContainer, ComponentError, ComponentResult};
@@ -142,7 +143,7 @@ mod tests {
     struct Answering(Answer);
 
     #[async_trait]
-    impl ModelProvider for Answering {
+    impl LanguageModelProvider for Answering {
         async fn sees_images(&self) -> bool {
             self.0.seeing
         }
@@ -166,9 +167,10 @@ mod tests {
         }
 
         fn backends(&self, backends: &mut Backends) {
-            backends.register::<dyn ModelProvider, Answer, _>("answering", |_, answer, _| {
-                Ok(Arc::new(Answering(answer)))
-            });
+            backends
+                .register::<dyn LanguageModelProvider, Answer, _>("answering", |_, answer, _| {
+                    Ok(Arc::new(Answering(answer)))
+                });
         }
 
         fn register(&self, _: &mut KernelBuilder) -> Result<()> {
@@ -192,23 +194,24 @@ mod tests {
             .unwrap()
     }
 
-    /// The components of `kernel` an agent's model is made of - built of the kind `model` with
-    /// `params` - in a name given once.
+    /// The components of `kernel` an agent's model is made of - built of the kind `language_model`
+    /// with `params` - in a name given once.
     async fn model_of(kernel: &Kernel, params: Value) -> ComponentResult<ComponentContainer> {
         let config = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params,
-                ..ComponentDescriptor::new("model", MODEL_KIND)
+                ..ComponentDescriptor::new("model", LANGUAGE_MODEL_KIND)
             }],
         };
-        let facets = [TypeKey::of::<dyn ModelClient>(), TypeKey::of::<dyn ModelProfileProvider>()];
+        let facets =
+            [TypeKey::of::<dyn LanguageModelClient>(), TypeKey::of::<dyn ModelProfileProvider>()];
         let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
         Arc::clone(kernel.component_registry()).build(&config, &facets, &context).await
     }
 
     /// What the model of `container` answers.
     async fn answer_of(container: &ComponentContainer) -> Option<String> {
-        let client = container.one::<dyn ModelClient>().await.unwrap();
+        let client = container.one::<dyn LanguageModelClient>().await.unwrap();
         let events: Vec<_> = client.chat_completion(ActorId::None, &[], &[]).await.collect().await;
         match events.last() {
             Some(Ok(MessageEvent::Complete(message))) => message.content.clone(),
@@ -301,12 +304,13 @@ mod tests {
         );
     }
 
-    /// Issue 520: an agent that names no model is given the plugin's kind `model`, in place of
-    /// whatever a test's kernel, or a program, declared before the plugin registered.
+    /// Issue 520: an agent that names no model is given the plugin's kind `language_model`, in
+    /// place of whatever a test's kernel, or a program, declared before the plugin registered.
     #[tokio::test]
-    async fn the_kind_model_is_the_default_of_the_model_s_facets() {
+    async fn the_kind_language_model_is_the_default_of_the_model_s_facets() {
         let kernel = offering(&[("only", json!({ "answer": "the one" }))], &[]);
-        let facets = [TypeKey::of::<dyn ModelClient>(), TypeKey::of::<dyn ModelProfileProvider>()];
+        let facets =
+            [TypeKey::of::<dyn LanguageModelClient>(), TypeKey::of::<dyn ModelProfileProvider>()];
         let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
         let registry = Arc::clone(kernel.component_registry());
         let container =

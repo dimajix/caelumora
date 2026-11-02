@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::turn::Turn;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_api::model::ModelClient;
+use caelumora_api::model::LanguageModelClient;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::message::{Message, MessageEvent, MessageRole};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -31,7 +31,7 @@ const NONE: &str = "none";
 #[derive(Debug)]
 pub struct SummaryCompaction {
     /// The agent's own model, which writes the summary.
-    model_client: Arc<dyn ModelClient>,
+    model_client: Arc<dyn LanguageModelClient>,
     /// What its model is asked, and how the summary is titled (issue 57).
     prompts: PromptTexts,
 }
@@ -188,12 +188,12 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         writing_for_the_model(
             ComponentKind::new(SUMMARY_COMPACTION_KIND)
                 .provides::<dyn CompactionStrategy>()
-                .needs::<dyn ModelClient>(),
+                .needs::<dyn LanguageModelClient>(),
         ),
         |_descriptor, context| async move {
             let prompts = texts_of(&context).await?;
             // The agent's own model writes the summary.
-            let model_client = context.one::<dyn ModelClient>().await?.facet;
+            let model_client = context.one::<dyn LanguageModelClient>().await?.facet;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn CompactionStrategy>(Arc::new(SummaryCompaction {
                 model_client,
@@ -244,7 +244,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl ModelClient for Summariser {
+    impl LanguageModelClient for Summariser {
         async fn chat_completion(
             &self,
             _: ActorId,

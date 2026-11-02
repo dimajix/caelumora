@@ -111,7 +111,7 @@ facet trait lives next to the code that uses it, not among the implementations -
 | `ActivityProvider` | what an agent does of its own accord before a model call - compacting its context | `crate::activity` |
 | `PromptProvider` | prompt parts, of agents and external agents alike | `crate::prompt` |
 | `ContextProvider` | what the model is given | `crate::prompt` |
-| `ModelClient` | the language model the agent talks to | `caelumora_api::model` |
+| `LanguageModelClient` | the language model the agent talks to | `caelumora_api::model` |
 | `ModelProfileProvider` | how the agent's model is given its context, of agents and external agents alike | `caelumora_api::model` |
 | `ExternalAgent` | the remote agent an external personality's agents are | `crate::external` |
 | `PerceiveInProcessor` | filtering of incoming messages, of agents and external agents alike | `crate::message` |
@@ -194,30 +194,32 @@ it (issue 337):
 
 | Owner | Asks for | Declared as |
 |---|---|---|
-| agent | `ContextProvider`, `ModelClient`, `ModelProfileProvider`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider`, `ActivityProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
+| agent | `ContextProvider`, `LanguageModelClient`, `ModelProfileProvider`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider`, `ActivityProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
 | a session's commands | `ChannelCommandProvider` | `Kernel::new_command_executor` |
 
 An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and,
 if it lists `compaction`, the `CompactionStrategy` and the `KnowledgeRestorer`s that component
-needs - its default strategy `summary_compaction` - and the `ModelClient` that one needs in turn.
+needs - its default strategy `summary_compaction` - and the `LanguageModelClient` that one needs in
+turn.
 
 ### Facets of which there is exactly one
 
-Of some facets an agent has exactly one: the `ContextProvider`, the `ModelClient`, the
+Of some facets an agent has exactly one: the `ContextProvider`, the `LanguageModelClient`, the
 `ModelProfileProvider` and the `CompactionStrategy`; an external agent exactly one `ExternalAgent`
 and one `ModelProfileProvider`; a channel exactly one `Moderator` and one `ResponderPolicy`. They
 are registered with `ComponentRegistry::single` by the module that holds the default kind: the
-`ModelClient` and the `ModelProfileProvider` by the plugin `caelumora-model`, whose kind `model` is
-the default of both (issue 520); the `ExternalAgent` by the agents' library, without one.
+`LanguageModelClient` and the `ModelProfileProvider` by the plugin `caelumora-model`, whose kind
+`language_model` is the default of both (issue 520); the `ExternalAgent` by the agents' library,
+without one.
 
 The `ModelProfileProvider` says how the agent's model is given its context (issue 57): the
 `ModelProfile` - which reasoning it is given back, how senders are marked, whether it sees images
 (issue 282). It is the facet of its own of what the model's component, or an external agent's,
-declares beside its `ModelClient` or its `ExternalAgent`, so that what writes for the model learns
-how without asking the model itself. The agent's body takes it once, as its components are built,
-and keeps it with every turn.
+declares beside its `LanguageModelClient` or its `ExternalAgent`, so that what writes for the model
+learns how without asking the model itself. The agent's body takes it once, as its components are
+built, and keeps it with every turn.
 
 *   Two components of one container that provide such a facet are refused before anything is built.
 *   If none does, a default is built the first time the facet is asked for. A container that never
@@ -249,7 +251,7 @@ differ.
 ```yaml
 component_defaults:              # of the configuration
   - id: model
-    kind: model
+    kind: language_model
     params: { name: gemma, sender_format: xml }
 personalities:                   # of the seed
 - name: sassy-assistant
@@ -314,9 +316,9 @@ between them they hold:
     (`ControllerManager::owner_context`). The graph resolves every `ref` in its context; a component
     is not given it: what it asks it asks in the context of the act it serves - a tool in its
     turn's, a moderator in the event's it routes -, one context per piece of work. One component of
-    a plugin is the exception: the agent's model (`model` of `caelumora-model`, issue 520) is given
-    the `Acting` as a service and keeps it, a handle that builds the context of each of its calls
-    when the call is made - one no library can name, since it does not link the kernel;
+    a plugin is the exception: the agent's model (`language_model` of `caelumora-model`, issue 520)
+    is given the `Acting` as a service and keeps it, a handle that builds the context of each of its
+    calls when the call is made - one no library can name, since it does not link the kernel;
 *   the services of the kernel its kind declares it uses - for a component of the kernel the
     policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
     that a new service needs no new field and no component is given one it does not declare. They
@@ -456,7 +458,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
 | `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
 | `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the library `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
-| `model` | `ModelClient`, `ModelProfileProvider` | `name` (the one model of `plugins.model`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-model`, registered where it is joined; the default model of an agent: a model the platform offers (`plugins.model`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
+| `language_model` | `LanguageModelClient`, `ModelProfileProvider` | `name` (the one model of `plugins.model`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-model`, registered where it is joined; the default model of an agent: a model the platform offers (`plugins.model`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
 | `policy_moderator` | `Moderator` | `mentions_replace_policy` (`anyone`; `agents`), `on_undecided` (`none`; `all`), `max_agent_hops` (`3`), `max_span_depth` (`100`), `context_messages` (`10`) | The default moderator of a channel: routes as every channel does, asks the agents a message mentions - nobody for a message to people alone, unless `agents` - and else asks its `ResponderPolicy` whom to ask, told the last `context_messages` messages heard before - if it could not choose, whom `on_undecided` says, and tells the users when that is nobody ([CHANNELS.md](CHANNELS.md#moderators)); ends a chain between agents after `max_agent_hops` hops, and asks nobody to respond to an event `max_span_depth` deep ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
 | `round_robin_policy` | `ResponderPolicy` | - | The default policy: the agents take turns. |
@@ -465,7 +467,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `user_driven_policy` | `ResponderPolicy` | - | Asks every agent if a user wrote, nobody if an agent did. |
 | `decision_policy` | `ResponderPolicy` | `endpoint`, `model` (`nimble`), `keep_alive`, `threshold` (`0.3`), `max_responders` (`1`), `destination` (`public`) | Of the plugin `caelumora-decision`, registered where it is joined; configured by an operator alone. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
 | `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the library `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it had been given there; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
-| `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `ModelClient`. |
+| `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LanguageModelClient`. |
 | `help_command` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |

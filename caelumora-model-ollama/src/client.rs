@@ -1,6 +1,6 @@
 //! The backend `ollama`: a language model the platform offers, served by Ollama (issues 130, 520),
-//! one entry of the section `plugins.model`, which an agent's model names (the kind `model` of
-//! `caelumora-model`) - or the one a program offers where none is configured
+//! one entry of the section `plugins.model`, which an agent's model names (the kind
+//! `language_model` of `caelumora-model`) - or the one a program offers where none is configured
 //! (`plugin::with_local_model`, issue 329): a local Ollama and the model `DEFAULT_MODEL`.
 //!
 //! Parameters: `endpoint` (the Ollama server: its `url`, and its `timeout_secs`, how long a request
@@ -45,7 +45,7 @@ use caelumora_domain::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
 use caelumora_kernel::backend::Backends;
-use caelumora_model::ModelProvider;
+use caelumora_model::LanguageModelProvider;
 use chrono::Utc;
 use dashmap::DashMap;
 use futures::stream::{BoxStream, StreamExt};
@@ -896,7 +896,7 @@ where
 }
 
 #[async_trait]
-impl ModelProvider for OllamaModel {
+impl LanguageModelProvider for OllamaModel {
     async fn sees_images(&self) -> bool {
         match self.vision {
             Some(sees) => sees,
@@ -997,7 +997,7 @@ impl ModelProvider for OllamaModel {
 /// Registers the backend `ollama` with `backends`: its models share what is read of their servers.
 pub(crate) fn register_backend(backends: &mut Backends) {
     let known = Arc::new(Known::default());
-    backends.register::<dyn ModelProvider, OllamaModelConfig, _>(
+    backends.register::<dyn LanguageModelProvider, OllamaModelConfig, _>(
         OLLAMA_BACKEND,
         move |_, config, _| Ok(Arc::new(OllamaModel::new(config, Arc::clone(&known)))),
     );

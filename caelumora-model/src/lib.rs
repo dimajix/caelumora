@@ -1,16 +1,18 @@
 //! The language models the platform offers (issue 520), as a plugin: a service whose backends other
-//! plugins bring (`ModelProvider`), configured by name in the section `plugins.model`. An agent
-//! asks such a model through a client the plugin builds for it alone (`ModelManager::client_for`),
-//! which makes each call in the agent's name as the kernel holds it at that call - the one place
-//! where what is called of the models the platform offers, by whom, can be known. A model an
-//! agent's library brings itself is the agent's affair, and passes no such place.
+//! plugins bring (`LanguageModelProvider`), configured by name in the section `plugins.model`. An
+//! agent asks such a model through a client the plugin builds for it alone
+//! (`ModelManager::language_client_for`), which makes each call in the agent's name as the kernel
+//! holds it at that call - the one place where what is called of the models the platform offers, by
+//! whom, can be known. A model an agent's library brings itself is the agent's affair, and passes
+//! no such place.
 //!
-//! An agent is given its model as a component of the kind `model` (`component`), the default of
-//! both its model's facets, `ModelClient` and `ModelProfileProvider`. Which model it names and how
-//! its context is framed for that model are the component's parameters; where the model is served
-//! and how is the backend's. The plugin that joins it to the kernel is `plugin`.
+//! An agent is given its model as a component of the kind `language_model` (module
+//! `language_model`), the default of both its model's facets, `LanguageModelClient` and
+//! `ModelProfileProvider`. Which model it names and how its context is framed for that model are
+//! the component's parameters; where the model is served and how is the backend's. The plugin that
+//! joins it to the kernel is `plugin`.
 
-mod component;
+mod language_model;
 mod manager;
 pub mod plugin;
 
@@ -25,7 +27,7 @@ use std::fmt::Debug;
 /// backend its `type` names, which a plugin registers (`Backends::register`). It knows where and
 /// how its model is served, and decides nothing: in whose name it is asked is the kernel's.
 #[async_trait]
-pub trait ModelProvider: Send + Sync + Debug {
+pub trait LanguageModelProvider: Send + Sync + Debug {
     /// Whether the model is given images (issue 282) - configured, or asked of its server once.
     async fn sees_images(&self) -> bool;
 

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::logging::{agent_span, envelope_span};
-use caelumora_api::model::{ModelClient, ModelProfileProvider};
+use caelumora_api::model::{LanguageModelClient, ModelProfileProvider};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{
@@ -47,7 +47,7 @@ pub(crate) struct AgentActor {
 
     // Components
     /// The model it talks to: exactly one (issue 130).
-    model_client: ComponentImpl<dyn ModelClient>,
+    model_client: ComponentImpl<dyn LanguageModelClient>,
     /// What it does of its own accord before a model call - compacting its
     /// context -, in the order of its components (issue 464).
     activities: Vec<ComponentImpl<dyn ActivityProvider>>,
@@ -62,7 +62,7 @@ impl AgentActor {
     /// through its body.
     pub(crate) const COMPONENT_FACETS: &[TypeKey] = &[
         TypeKey::of::<dyn ContextProvider>(),
-        TypeKey::of::<dyn ModelClient>(),
+        TypeKey::of::<dyn LanguageModelClient>(),
         TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn ActivityProvider>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
@@ -94,7 +94,7 @@ impl AgentActor {
             resume,
         )
         .await?;
-        let model_client = components.one::<dyn ModelClient>().await?;
+        let model_client = components.one::<dyn LanguageModelClient>().await?;
         let activities = components.get_all::<dyn ActivityProvider>(None)?;
         let emit_out_processors = components.get_all::<dyn EmitOutProcessor>(None)?;
         let tool_executor = ToolExecutor::new(

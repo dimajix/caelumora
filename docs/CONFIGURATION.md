@@ -58,7 +58,7 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `plugins.model` | The section of the plugin `caelumora-model` (issue 520): the language models the platform offers, each a [backend](#backends) by its name - see [The model](#the-model). | none - the program offers one |
 | `libraries.comfyui` | The section of the library `caelumora-comfyui` (issue 512): `workflows`, the directory of the workflows of ComfyUI. See [ComfyUI](#comfyui). | none - no workflows |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
-| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`ModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults - for the model, the kind `model` ([The model](#the-model)) |
+| `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LanguageModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults - for the model, the kind `language_model` ([The model](#the-model)) |
 
 The approval rules and the compartments are checked when the configuration is read; the backends,
 `component_defaults`, the sections of the plugins and of the libraries, each among its own, and the
@@ -111,7 +111,7 @@ or only the entries that differ. What a file leaves out, and a namespace without
 they are; other files than `.yaml` ones are not read. A variant falls back to `default`, `default`
 to the texts compiled in. A variant's name is lower case letters, digits, `_` and `-`; a path is
 read as `seed` is, from where the program runs. Which variant a model is given, its component
-names (`prompt_texts` of `model`, `a2a_agent` and `decision_policy`): one that is not
+names (`prompt_texts` of `language_model`, `a2a_agent` and `decision_policy`): one that is not
 configured keeps the component from being built. The example configuration names one, `gemma4`
 in `examples/prompts/gemma4`, which the model of Sassy in the example seed is given.
 
@@ -188,12 +188,12 @@ keeps them from being produced by any text it sends; if they cannot be read, the
 (`control_tokens` of `caelumora-model-ollama`). They are read of the model's `tokenizer`, if one is
 configured.
 
-An agent is given its model as a component: the kind `model` of `caelumora-model`, which provides
-the `ModelClient` facet, of which an agent has exactly one, and how the agent's context is framed
-for the model (`ModelProfileProvider`). A personality may configure its own; every other agent gets
-the one `component_defaults` names, or else the kind `model` without parameters - the one model
-there is. A library may bring a model of its own; what it costs is then the agent's affair, and its
-credentials only the secrets the kernel lets it read.
+An agent is given its model as a component: the kind `language_model` of `caelumora-model`, which
+provides the `LanguageModelClient` facet, of which an agent has exactly one, and how the agent's
+context is framed for the model (`ModelProfileProvider`). A personality may configure its own; every
+other agent gets the one `component_defaults` names, or else the kind `language_model` without
+parameters - the one model there is. A library may bring a model of its own; what it costs is then
+the agent's affair, and its credentials only the secrets the kernel lets it read.
 
 A personality's own model replaces the default whole. One that is to differ in a few parameters
 builds on the default instead, by its `id`, and names only those (`kind: default`, issue 445, see
@@ -204,7 +204,7 @@ example seed builds on `model`.
 ```yaml
 component_defaults:
   - id: model
-    kind: model
+    kind: language_model
     params:
       name: gemma
       reasoning_history: current_turn
@@ -213,7 +213,7 @@ component_defaults:
       sender_style: handle
 ```
 
-| Parameter of `model` | Meaning | Default |
+| Parameter of `language_model` | Meaning | Default |
 |---|---|---|
 | `name` | The model of `plugins.model`; one not configured keeps the agent from being built | the one there is - needed where there are several |
 | `reasoning_history` | Which earlier reasoning the model is given back: `never`, `current_turn` or `always` (see [AGENT-TURN.md](AGENT-TURN.md#reasoning-given-back)) | `current_turn` |

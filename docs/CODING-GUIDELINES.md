@@ -571,13 +571,13 @@ visible for it, beyond what the `testing` modules below offer - says that a cut 
 *   **A kernel in tests:** a test builds its kernel with `testing::TestKernel` (issue 375), whose
     parts all have defaults - a new memory store, no policy, the default rules, the default
     configuration, the kernel's component kinds with a model that is not to be asked
-    (`with_unasked_model`) and agents that answer "ok" - and names only those it differs in:
-    `TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build()`, or `try_build()`
-    for a test of what refuses to be built. Nobody else calls `KernelBuilder::new` in a test but the
-    program's own (`caelumora-app`), which builds the kernel as the program does, so that a change
-    to it is a change to one place, and what a test differs in is what it names; a test of building
-    from a configuration goes through `KernelBuilder::from_config`, as the programs do.
-    `session::testing::test_kernel()` and `owned_kernel(rules)` are the two kernels most tests
+    (`with_unasked_language_model`) and agents that answer "ok" - and names only those it differs
+    in: `TestKernel { libraries: vec![&AgentsLibrary], ..Default::default() }.build()`, or
+    `try_build()` for a test of what refuses to be built. Nobody else calls `KernelBuilder::new` in
+    a test but the program's own (`caelumora-app`), which builds the kernel as the program does, so
+    that a change to it is a change to one place, and what a test differs in is what it names; a
+    test of building from a configuration goes through `KernelBuilder::from_config`, as the programs
+    do. `session::testing::test_kernel()` and `owned_kernel(rules)` are the two kernels most tests
     share.
 *   **Sessions in tests:** a test that needs a session makes it as the kernel does - running, with
     `SessionManager::create` (`session::testing::create`, `World::session_of`); stored and not

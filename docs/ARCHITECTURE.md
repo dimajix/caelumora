@@ -81,9 +81,9 @@ drawn in [CRATES.md](CRATES.md):
     [Agents that run elsewhere](#agents-that-run-elsewhere).
 *   **`caelumora-model`** - the language models the platform offers (issue 520), a plugin: the
     section `plugins.model`, the service that builds each agent its client of one - which makes
-    every call in the agent's name as the kernel holds it then -, and the kind `model`, the default
-    of the model's facets. A model is needed only within an agent, so it is no part of the kernel.
-    See [CONFIGURATION.md](CONFIGURATION.md#the-model).
+    every call in the agent's name as the kernel holds it then -, and the kind `language_model`, the
+    default of the model's facets. A model is needed only within an agent, so it is no part of the
+    kernel. See [CONFIGURATION.md](CONFIGURATION.md#the-model).
 *   **`caelumora-model-ollama`** - language models served by Ollama, a plugin that brings nothing
     but the backend `ollama` of the models of `caelumora-model`, so that neither names a model
     provider; the programs offer a local one where the configuration names no model (issues 329,
@@ -163,10 +163,10 @@ Some services of the kernel are served by one of a choice of **backends**, named
 configuration by their `type` (issue 324): the stores (`PersistenceBackend`, issue 446), the
 storages of workspaces (`TerminalProvider`), the storages of binary content (`ContentStorage`, issue
 282), the secret providers (`SecretProvider`) and the user providers (`UserProvider`); a plugin's
-service may be served so too - the models of `caelumora-model` (`ModelProvider`, issue 520), which
-it makes of its section (`KernelBuilder::make_named`). A backend is made by the factory registered
-under its type for its service, in `Backends` (`caelumora_kernel::backend`), which reads its
-parameters and asks the services it is given for what it needs. The kernel registers its own
+service may be served so too - the models of `caelumora-model` (`LanguageModelProvider`, issue 520),
+which it makes of its section (`KernelBuilder::make_named`). A backend is made by the factory
+registered under its type for its service, in `Backends` (`caelumora_kernel::backend`), which reads
+its parameters and asks the services it is given for what it needs. The kernel registers its own
 (`Backends::built_in`); a plugin adds one by registering its factory in `Plugin::backends`, which is
 asked before anything is made - so a new storage or provider is a crate linked into the program, and
 no edit of the kernel, as the Open Terminal storages of `caelumora-open-terminal` are (issue 327).
@@ -296,14 +296,14 @@ What an agent can do is not programmed into the `AgentActor` but configured: a p
 **components**, and each component offers one or more **facets** - traits through which it takes
 part in the turn. A component contributes tools (`ToolProvider`), text for the model
 (`PromptProvider`), or filters incoming messages (`PerceiveInProcessor`). Of some facets an agent
-has exactly one: the `ModelClient`, the language model it talks to, and the `ContextProvider`, which
-assembles the model's context. Both have built-in defaults that a personality or the configuration
-can replace - the model's is the kind `model` of the plugin `caelumora-model`, which talks to a
-model the platform offers (issue 520). Tool calls are run by the agent's `ToolExecutor` with the
-tools of its providers; it is no component, so that what it checks is never a personality's choice,
-and what of a call is the kernel's to decide - whether it may be called, what the rules of its
-places say, what may flow where - it asks of the kernel (`ActorRuntime::admit_tool_call`,
-`may_publish`, issue 516).
+has exactly one: the `LanguageModelClient`, the language model it talks to, and the
+`ContextProvider`, which assembles the model's context. Both have built-in defaults that a
+personality or the configuration can replace - the model's is the kind `language_model` of the
+plugin `caelumora-model`, which talks to a model the platform offers (issue 520). Tool calls are run
+by the agent's `ToolExecutor` with the tools of its providers; it is no component, so that what it
+checks is never a personality's choice, and what of a call is the kernel's to decide - whether it
+may be called, what the rules of its places say, what may flow where - it asks of the kernel
+(`ActorRuntime::admit_tool_call`, `may_publish`, issue 516).
 
 Components are wired by type, much like Spring beans: a component asks for the facets it needs, and
 the container builds whatever provides them. User commands such as `/help` are components as well,

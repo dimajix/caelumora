@@ -268,7 +268,7 @@ mod tests {
     use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
     use crate::tool::{denied_result, ToolProvider};
     use caelumora_api::component::ComponentFacets;
-    use caelumora_api::model::{ModelClient, ModelResult};
+    use caelumora_api::model::{LanguageModelClient, ModelResult};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::testing::bare_channel;
@@ -299,7 +299,7 @@ mod tests {
     struct Gemma;
 
     #[async_trait]
-    impl ModelClient for Gemma {
+    impl LanguageModelClient for Gemma {
         async fn chat_completion(
             &self,
             _: ActorId,
@@ -331,12 +331,12 @@ mod tests {
         let components = |registry: &mut ComponentRegistry| {
             registry.register(
                 ComponentKind::new("gemma")
-                    .provides::<dyn ModelClient>()
+                    .provides::<dyn LanguageModelClient>()
                     .provides::<dyn ModelProfileProvider>(),
                 |_, _| {
                     let model = Arc::new(Gemma);
                     let mut facets = ComponentFacets::empty();
-                    facets.insert::<dyn ModelClient>(Arc::<Gemma>::clone(&model));
+                    facets.insert::<dyn LanguageModelClient>(Arc::<Gemma>::clone(&model));
                     facets.insert::<dyn ModelProfileProvider>(model);
                     Ok(facets)
                 },

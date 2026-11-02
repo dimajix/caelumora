@@ -1,6 +1,6 @@
 # 525 — An image model is reached only by a tool of its own, past the models' service
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Integrations
@@ -50,6 +50,48 @@ bring a tool of its own, with the same parameters.
 Depends on [522](522-two-crates-named-model.md). The interface - trait, facet, request, how a tool
 names its models - is put before the maintainer first.
 
+## Decision
+
+Decided with the maintainer on 2026-11-02, in three steps, each reviewed on its own:
+
+1.  **The language model is named so.** `ModelClient` becomes `LanguageModelClient`,
+    `ModelProvider` `LanguageModelProvider`, `ModelClientFor` `LanguageModelClientFor`, the kind
+    `model` `language_model`, `with_unasked_model` `with_unasked_language_model`; in
+    `caelumora-model` the module of the kind, `component`, becomes `language_model`, with
+    `LanguageModelParams` and `LANGUAGE_MODEL_KIND`, and `ModelManager::client_for`
+    `language_client_for`, beside which step 3 puts `image_client_for`. What both kinds of model
+    share keeps its name: `ModelError` and `ModelResult` - the failure of a model's backend -,
+    `ModelManager`, the crate and plugin `caelumora-model` and the module `caelumora_api::model` -
+    the models the platform offers. `ModelProfile` and `ModelProfileProvider` keep theirs too: the
+    profile is how an agent's context is written, which an external agent provides as well, without
+    a client of a language model. A rename alone, without a change of behaviour.
+2.  **The section is split.** `plugins.model` holds the language models under `language` and the
+    image models under `image`, one plugin with one section; `with_default_model` writes under
+    `language`.
+3.  **Image models are the service's.**
+    *   The API (`caelumora_api::image`) gives an agent `ImageModelClient` - its `name`, its
+        `description`, and `generate(initiator, &ImageRequest) -> ModelResult<Vec<Image>>` -, an
+        `ImageRequest` of `prompt`, `negative_prompt`, `width`, `height` and `seed`, and an `Image`
+        of a name and its bytes. `ModelError` gains `Unfit`, a request outside what the model
+        takes, which the tool gives the model to correct.
+    *   `caelumora-model` brings the backend trait `ImageModelProvider` (`description`,
+        `generate`) and the kind `image_model`, which names one image model (`name`, the one there
+        is where left out) and provides its `ImageModelClient` for the agent's `Acting`, as
+        `language_model` does. `ImageModelClient` is no single: an agent may have several.
+    *   ComfyUI is the backend `comfyui` of the plugin `caelumora-model-comfyui`, with the
+        parameters `endpoint` and `workflow`, the path of a workflow's pair of files; one image
+        model is one workflow, and there is no directory of workflows any more.
+    *   The tool is the kind `image_tool` of the library `caelumora-tool-image`, which needs every
+        `ImageModelClient` of its agent and offers them by name, the first the default; the
+        argument `workflow` becomes `model`. It keeps `requires_approval`, `destination` and
+        `description`. `caelumora-comfyui` is removed.
+    *   `destination` stays the tool's for now: it describes where the server keeps the arguments,
+        which is the model's, but a tool of several models would need the meet of their
+        classifications, or the service a check of each call - a question of its own.
+
+The crate of the workspace's tools is to be named after the scheme of `caelumora-tool-image`,
+issue [531](531-workspace-tools-named-apart-from-the-tools.md).
+
 ## Done when
 
 - Image models are backends of the models' service, configured with the language models, and the
@@ -60,3 +102,8 @@ names its models - is put before the maintainer first.
 
 - **2026-11-02** — Opened at the maintainer's request, after the discussion of the names of the
   crates (issue [522](522-two-crates-named-model.md)).
+- **2026-11-02** — Plan of three steps decided with the maintainer (see Decision), on the branch
+  `issue-525-image-models`.
+- **2026-11-02** — Step 1 done: the language model's facet, backend trait and kind are named
+  `LanguageModelClient`, `LanguageModelProvider` and `language_model`. Stored personalities and
+  configurations whose components name the kind `model` have to name `language_model`.

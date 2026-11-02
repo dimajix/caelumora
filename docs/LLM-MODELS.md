@@ -2,7 +2,7 @@
 
 Which settings suit which model, as far as it was measured: those of the model, of the backend
 `ollama` in `plugins.model`, and those of how an agent's context is framed for it, of the kind
-`model` of `caelumora-model`. The parameters themselves are described in
+`language_model` of `caelumora-model`. The parameters themselves are described in
 [CONFIGURATION.md](CONFIGURATION.md#the-model); the rules they set, in
 [AGENT-TURN.md](AGENT-TURN.md). `caelumora-app` and `caelumora-tui` offer a local Ollama where
 `plugins.model` names none (issue 329); the kernel names no model. What is not measured is said so:
@@ -23,7 +23,7 @@ plugins:
       context_size: 65536
 component_defaults:
   - id: model
-    kind: model
+    kind: language_model
     params:
       sender_format: xml
       sender_style: handle

@@ -149,9 +149,9 @@ through the interface they are given. A facet a library brings itself is its own
 `caelumora-compaction` registers its `CompactionStrategy` as a single with its default kind. A
 library whose components serve an agent's facets tests them with the agents beside it -
 `World::with(&[], &[&AgentsLibrary, &Library], …)` -, whose kernel gives its agents a model that is
-not to be asked unless a test brings the models' plugin (`testing::with_unasked_model`, issues 370,
-373, 520). A library may bring a model of its own (a `ModelClient`): what it costs is then the
-agent's affair, and its credentials only the secrets the kernel lets it read.
+not to be asked unless a test brings the models' plugin (`testing::with_unasked_language_model`,
+issues 370, 373, 520). A library may bring a model of its own (a `LanguageModelClient`): what it
+costs is then the agent's affair, and its credentials only the secrets the kernel lets it read.
 
 ## What a system service offers an agent's work
 

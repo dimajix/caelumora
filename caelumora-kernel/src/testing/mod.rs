@@ -14,12 +14,12 @@
 mod scripted_agent;
 #[cfg(test)]
 mod stand_in;
-mod unasked_model;
+mod unasked_language_model;
 
 pub use scripted_agent::{Script, ScriptedAgent, ScriptedAgents};
 #[cfg(test)]
 pub(crate) use stand_in::StandIn;
-pub use unasked_model::with_unasked_model;
+pub use unasked_language_model::with_unasked_language_model;
 
 use crate::actor::user::ChannelWatch;
 use crate::agent::AgentError;
@@ -269,7 +269,7 @@ pub struct TestKernel<'a> {
     /// The default configuration.
     pub config: AppConfig,
     /// Registers the component kinds of the test beside the built-in ones and a model that is not
-    /// to be asked (`with_unasked_model`), before the plugins register theirs; none.
+    /// to be asked (`with_unasked_language_model`), before the plugins register theirs; none.
     pub components: Box<dyn FnOnce(&mut ComponentRegistry) + 'a>,
     /// None.
     pub plugins: Vec<&'a dyn Plugin>,
@@ -315,7 +315,7 @@ impl TestKernel<'_> {
             &self.config,
             Backends::with_plugins(&self.plugins),
         )?;
-        with_unasked_model(builder.components());
+        with_unasked_language_model(builder.components());
         (self.components)(builder.components());
         for plugin in self.plugins {
             builder.plugin(plugin)?;

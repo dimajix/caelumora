@@ -1,9 +1,9 @@
 //! How the models are joined to the kernel (issue 520): the section `plugins.model`, the service
-//! that builds an agent its client, and the kind `model` with the model's facets.
+//! that builds an agent its client, and the kind `language_model` with the model's facets.
 
-use crate::component;
+use crate::language_model;
 use crate::manager::ModelManager;
-use crate::ModelProvider;
+use crate::LanguageModelProvider;
 use anyhow::Result;
 use caelumora_domain::config::{AppConfig, BackendConfig};
 use caelumora_kernel::kernel::KernelBuilder;
@@ -27,9 +27,9 @@ impl Plugin for ModelPlugin {
 
     fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
         let configs: BTreeMap<String, BackendConfig> = kernel.config(MODEL)?;
-        let models = kernel.make_named::<dyn ModelProvider>("model", &configs)?;
+        let models = kernel.make_named::<dyn LanguageModelProvider>("model", &configs)?;
         kernel.provide(Arc::new(ModelManager::new(models)));
-        component::register_all(kernel.components());
+        language_model::register_all(kernel.components());
         Ok(())
     }
 }

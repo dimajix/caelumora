@@ -35,7 +35,7 @@ use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
+use caelumora_api::model::{LanguageModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::reader::ViewError;
 use caelumora_api::workspace::WorkspaceError;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Rejection};
@@ -2336,7 +2336,7 @@ struct Held {
 }
 
 #[async_trait]
-impl ModelClient for Held {
+impl LanguageModelClient for Held {
     async fn chat_completion(
         &self,
         _: ActorId,
@@ -2400,11 +2400,11 @@ async fn bob_speaks_while_alices_turn_works(
         let model = Arc::clone(&model);
         registry.register(
             ComponentKind::new("held")
-                .provides::<dyn ModelClient>()
+                .provides::<dyn LanguageModelClient>()
                 .provides::<dyn ModelProfileProvider>(),
             move |_, _| {
                 let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn ModelClient>(Arc::<Held>::clone(&model));
+                facets.insert::<dyn LanguageModelClient>(Arc::<Held>::clone(&model));
                 facets.insert::<dyn ModelProfileProvider>(Arc::<Held>::clone(&model));
                 Ok(facets)
             },

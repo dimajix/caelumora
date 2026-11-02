@@ -11,7 +11,7 @@ use crate::tool::sleep_tool::SLEEP_TOOL_KIND;
 use crate::tool::stop_tool::STOP_TOOL_KIND;
 use crate::turn::MAX_MODEL_CALLS;
 use anyhow::Result;
-use caelumora_api::model::{ModelClient, ModelError, ModelProfileProvider, ModelResult};
+use caelumora_api::model::{LanguageModelClient, ModelError, ModelProfileProvider, ModelResult};
 use caelumora_domain::agent::{
     AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused,
 };
@@ -457,7 +457,7 @@ impl Gated {
 }
 
 #[async_trait::async_trait]
-impl ModelClient for Gated {
+impl LanguageModelClient for Gated {
     async fn chat_completion(
         &self,
         _: ActorId,
@@ -1640,7 +1640,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
 struct FailsWhere(Mutex<VecDeque<Option<Message>>>);
 
 #[async_trait::async_trait]
-impl ModelClient for FailsWhere {
+impl LanguageModelClient for FailsWhere {
     async fn chat_completion(
         &self,
         _: ActorId,
@@ -1822,7 +1822,7 @@ async fn a_turn_that_reaches_the_limit_of_model_calls_is_given_up_and_may_be_ans
 struct FailsAfter(Mutex<VecDeque<Message>>);
 
 #[async_trait::async_trait]
-impl ModelClient for FailsAfter {
+impl LanguageModelClient for FailsAfter {
     async fn chat_completion(
         &self,
         _: ActorId,

@@ -24,7 +24,7 @@ use caelumora_api::command::{CommandResult, ProvidesCommands};
 use caelumora_api::component::ComponentFacets;
 use caelumora_api::component::ComponentKind;
 use caelumora_api::component::{config_of_params, Params};
-use caelumora_api::model::{ModelClient, ModelProfileProvider, ModelResult};
+use caelumora_api::model::{LanguageModelClient, ModelProfileProvider, ModelResult};
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_domain::actor::{EventContext, RetryTarget};
 use caelumora_domain::agent::testing::make_personality;
@@ -113,7 +113,7 @@ async fn run_again(
 pub(super) struct NeverAnswers;
 
 #[async_trait::async_trait]
-impl ModelClient for NeverAnswers {
+impl LanguageModelClient for NeverAnswers {
     async fn chat_completion(
         &self,
         _: ActorId,
@@ -138,9 +138,9 @@ pub(super) async fn stuck_in_a_model_call() -> Stuck {
 
 /// A model of a test: its client and its profile from one object, as a
 /// model's component gives both (issue 57).
-pub(super) trait TestModel: ModelClient + ModelProfileProvider {}
+pub(super) trait TestModel: LanguageModelClient + ModelProfileProvider {}
 
-impl<T: ModelClient + ModelProfileProvider> TestModel for T {}
+impl<T: LanguageModelClient + ModelProfileProvider> TestModel for T {}
 
 /// A running channel with alice and an agent that talks to `model` and
 /// has `components`, after alice said "hello".
@@ -196,13 +196,13 @@ async fn agent_channel_hearing(
     let components = move |registry: &mut ComponentRegistry| {
         registry.register(
             ComponentKind::new("test_model")
-                .provides::<dyn ModelClient>()
+                .provides::<dyn LanguageModelClient>()
                 .provides::<dyn ModelProfileProvider>(),
             move |_descriptor, _context| {
                 let mut facets = ComponentFacets::empty();
-                let client: Arc<dyn ModelClient> = Arc::clone(&model) as _;
+                let client: Arc<dyn LanguageModelClient> = Arc::clone(&model) as _;
                 let profile: Arc<dyn ModelProfileProvider> = Arc::clone(&model) as _;
-                facets.insert::<dyn ModelClient>(client);
+                facets.insert::<dyn LanguageModelClient>(client);
                 facets.insert::<dyn ModelProfileProvider>(profile);
                 Ok(facets)
             },

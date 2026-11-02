@@ -691,7 +691,7 @@ mod tests {
     use crate::user_provider::Credential;
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
-    use caelumora_api::model::ModelClient;
+    use caelumora_api::model::LanguageModelClient;
     use caelumora_domain::prompt_catalogue::PromptVariant;
     use caelumora_security::AllowAllPolicy;
     use std::fs;
@@ -767,7 +767,7 @@ mod tests {
 
         built(&Brings(|c| brought(c, |kind| kind.uses::<Workflows>().uses::<PromptCatalogue>())))
             .expect("its own service and the texts");
-        built(&Brings(|c| brought(c, |kind| kind.provides::<dyn ModelClient>())))
+        built(&Brings(|c| brought(c, |kind| kind.provides::<dyn LanguageModelClient>())))
             .expect("a model of its own, the agent's affair (issue 520)");
         let refusing: [(Brings, &str); 6] = [
             (Brings(|c| brought(c, |kind| kind.provides::<dyn Moderator>())), "provides Moderator"),

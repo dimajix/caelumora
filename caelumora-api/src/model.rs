@@ -1,8 +1,8 @@
-//! What an agent is given of a language model (issues 130, 520): the facet `ModelClient`, through
-//! which it asks its model, with the errors of a call (`ModelError`), and the profile by which its
-//! context is written for that model (`ModelProfileProvider`). The models the platform offers come
-//! from the plugin `caelumora-model`, which builds each agent its client; a library may bring a
-//! model of its own, which is then the agent's affair (issue 520).
+//! What an agent is given of a language model (issues 130, 520): the facet `LanguageModelClient`,
+//! through which it asks its model, with the errors of a call (`ModelError`), and the profile by
+//! which its context is written for that model (`ModelProfileProvider`). The models the platform
+//! offers come from the plugin `caelumora-model`, which builds each agent its client; a library may
+//! bring a model of its own, which is then the agent's affair (issue 520).
 
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
@@ -36,10 +36,10 @@ pub enum ModelError {
 /// What a call of a model answers.
 pub type ModelResult<T> = Result<T, ModelError>;
 
-/// An empty message of a model, as a `ModelClient` builds its answer from. A client does not know
-/// where its answer goes; the agent classifies every message of its model before it is used (issue
-/// 133). Until then it is the strictest classification there is without compartments, which no
-/// channel below `strictly_confidential` admits.
+/// An empty message of a model, as a `LanguageModelClient` builds its answer from. A client does
+/// not know where its answer goes; the agent classifies every message of its model before it is
+/// used (issue 133). Until then it is the strictest classification there is without compartments,
+/// which no channel below `strictly_confidential` admits.
 pub fn unlabelled_message() -> Message {
     Message::new(Classification::general(Confidentiality::StrictlyConfidential))
 }
@@ -47,7 +47,7 @@ pub fn unlabelled_message() -> Message {
 /// The facet through which an agent asks its model, of which it has exactly one - for a model the
 /// platform offers, built for that agent alone (issue 520).
 #[async_trait]
-pub trait ModelClient: Send + Sync + Debug {
+pub trait LanguageModelClient: Send + Sync + Debug {
     /// Sends `context` and the `tools` the model may call (issue 137) - of each only its name,
     /// description and parameters: whether its calls need approval, who sees them and how its
     /// results are classified are the kernel's, not the model's (issue 194) -, in the agent's name
@@ -66,7 +66,7 @@ pub trait ModelClient: Send + Sync + Debug {
 /// reasoning of earlier messages it is given back, how the senders of others' messages are marked,
 /// say (issues 63, 135). A property of the model, fixed for as long as its component lives, kept in
 /// the context of every turn and applied where the model's input is resolved (`ContextResolver`).
-/// An agent has exactly one: its model's component provides it beside its `ModelClient`, an
+/// An agent has exactly one: its model's component provides it beside its `LanguageModelClient`, an
 /// external agent's beside its `ExternalAgent` - so what writes for a model learns how without
 /// asking the model itself.
 pub trait ModelProfileProvider: Send + Sync + Debug {

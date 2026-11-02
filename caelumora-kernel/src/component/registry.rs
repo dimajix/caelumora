@@ -249,10 +249,9 @@ impl ComponentRegistry {
             .insert(facet.id, Single { facet, default_kind: default_kind.map(str::to_string) });
     }
 
-    /// Takes the configuration's defaults (`AppConfig::component_defaults`):
-    /// each of its components replaces the default kind of the singles it
-    /// provides, for every container - a model, of its `ModelClient` and of
-    /// its profile alike, built once for both.
+    /// Takes the configuration's defaults (`AppConfig::component_defaults`): each of its components
+    /// replaces the default kind of the singles it provides, for every container - a model, of its
+    /// `LanguageModelClient` and of its profile alike, built once for both.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` naming the component if one is a `ref` or builds on a
