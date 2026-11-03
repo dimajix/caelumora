@@ -1,6 +1,6 @@
 # 535 — An image a tool gave and its agent attached is kept and shown twice
 
-**Status:** open
+**Status:** done
 **Type:** question
 **Priority:** medium
 **Area:** Tools and approvals
@@ -54,6 +54,38 @@ other message refers to it. Whatever is chosen keeps that, or says what replaces
   that only keys are doubled. Fixes the storage only, and only as far as the backend can; the chat
   still shows two images.
 
+## Decision
+
+**Decided 2026-11-03 with the maintainer: what a tool gives stays seen; the card folds away what
+the answer shows (A).** B gives up drafts and images meant for the model alone, and with them the
+line 282 drew between what is said and what is seen; C brings back the counting 282 rejected.
+
+- **Which media the answer shows is known by the digest.** A copy keeps the digest of what it was
+  copied from (`AttachmentManager::copy`), so the record A was said to lack is there: the web UI
+  folds the media of a result at the card of its call where a message of the same turn carries an
+  attachment of the same digest. It compares what it was given, for the display alone; nothing is
+  looked up by a digest, which 282 rules out. Nothing is added to the kernel or the REST API.
+- **While the turn runs, the card shows the image;** once the answer that attached it arrives, the
+  image stands there alone. A draft the agent never attached stays at its card.
+
+**Decided 2026-11-03 with the maintainer: the storage keeps the copy, and a backend makes it
+cheap (D).** `attach` still copies: what an answer shows is its own, under a key of its own, and
+nothing above the storage counts. Sharing the result's content within the turn was weighed and
+not taken - it would loosen 282's rule that content belongs to one message, and the price would
+fall due with erasing a message (237).
+
+- **The backend may share the bytes between keys.** `ContentStorage::copy` keeps its contract -
+  two keys, each removed on its own -, and says that a backend may share the bytes behind them, as
+  long as removing one key leaves the other. `local` does it by a hard link, where the file system
+  counts the links.
+- **That is no counting of references as 282 rejected it.** 282 rejected counting the references
+  of messages, which lie scattered over versions, the participants' copies and the transcripts,
+  where an erasure would have to find them all. A backend counts keys, and every key has one owner
+  that removes it: the count is exact by construction. Nor is anything looked up by a digest: the
+  backend names what it shares itself.
+- **S3 would do it by keys it counts** - a key pointing to a blob, a count per blob -, recorded
+  under issue [272](272-artifacts-in-s3.md), whose design it is.
+
 ## Done when
 
 - It is decided whether what a tool gives stays seen, and how an image shown to the channel is kept
@@ -66,3 +98,10 @@ other message refers to it. Whatever is chosen keeps that, or says what replaces
 
 - **2026-11-03** — Issue created, from the work on issue
   [509](509-channel-attachments-panel.md), whose list of attachments shows only what was said.
+- **2026-11-03** — Decided with the maintainer: the card of a call folds away the media an answer of
+  its turn attached, known by their digest (A); how the storage keeps them is still open.
+- **2026-11-03** — Decided with the maintainer: the storage keeps the copy, and a backend may share
+  its bytes between keys (D); for S3 recorded under issue 272. The card of a call names what a
+  message of its turn carries instead of showing it (`attachedByTurn`, `ToolCallView`);
+  `ContentStorage::copy`, STORAGE.md, TOOLS.md and WEB-UI.md say so; CHANNELS.md stays as it
+  is, since what a message carries and a result gives does not change. Done.

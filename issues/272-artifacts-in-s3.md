@@ -52,6 +52,25 @@ traffic off the server, but the link works for whoever has it until it expires, 
 that keep a download from being shown inline (`Content-Disposition: attachment`, `nosniff`) must
 then be forced through the request. An option per storage, if at all; not the default.
 
+**Copies by keys it counts.** S3 has no hard links: `CopyObject` makes a second object, stored
+and paid for in full. An attachment an agent shows is such a copy of what its tool gave (issue
+[535](535-tool-media-attached-kept-and-shown-twice.md)), and generating images doubles every image
+shown. `ContentStorage::copy` allows the backend to share the bytes, as long as removing one key
+leaves the other; the provider may do so by keys it counts itself:
+
+- **An index.** A key names a blob, under a name of its own - random, never the digest, which
+  anyone can compute -, and a blob has a count of the keys naming it. S3 has no counter: the index
+  lies in S3 itself, written conditionally (`If-Match`) as a compare-and-swap, or in a database;
+  which S3-compatible services offer conditional writes is to be checked.
+- **Order.** A key is removed and its blob's count lowered before the blob is deleted: a crash in
+  between leaves a blob nobody names, never a key without content. Such blobs are swept now and
+  then.
+- **What it costs.** `get` reads the index before the blob, a round trip more; `remove_under` lists
+  the keys under the prefix in the index and lowers their counts, rather than deleting a prefix.
+
+Whether it is worth it is the provider's decision, not the kernel's: nothing above the storage
+changes either way.
+
 **Errors and logs.** An endpoint and a bucket name may say more than they should: errors and logs
 name the storage by its configured name and redact the endpoint, as remote integrations do (issue
 [188](188-remote-helpers-on-llm-error.md)).
@@ -70,3 +89,5 @@ a local storage; `CONFIGURATION.md` and `STORAGE.md` say so.
 
 - **2026-10-09** — Opened at the maintainer's request while deciding 271: artifacts are kept in a
   local storage only for now; object storage follows here.
+- **2026-11-03** — From issue 535: a copy within the storage may share its bytes; how the provider
+  could do so by keys it counts itself is added under *Considerations*.

@@ -85,7 +85,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
-import {activityNotice, activityUnderWay, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -1323,6 +1323,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     if (killedCommands?.channelId === channelId) killedCommands.ids.forEach(id => ids.add(id));
     return ids;
   }, [merged, killedCommands, channelId]);
+  // What the messages of each turn carry, which its calls' cards leave to them (issue 535).
+  const digestsByTurn = useMemo(() => attachedByTurn(shown), [shown]);
 
   /**
    * Ends the command `commandId` a call handed back as running, with what it
@@ -1615,6 +1617,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       onInterruptCall={mayInterruptCallsOf(msg) ? (call) => void interruptCall(msg, call) : undefined}
       onKillCommand={workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined}
       endedCommands={ended}
+      attachedInTurn={msg.turn_id ? digestsByTurn.get(msg.turn_id) : undefined}
       inTurn={inTurn}
       badges={[channel && msg.classification ? labelOtherThan(msg.classification, channel.classification) : null]
         .flatMap(released => released ? [`released: ${released}`] : [])}

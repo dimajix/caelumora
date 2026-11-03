@@ -163,6 +163,10 @@ interface MessageViewProps {
   /** The commands ended already in the channel. */
   endedCommands?: ReadonlySet<string>;
   /**
+   * The digests of what the messages of its turn carry, which its calls leave to them (issue 535).
+   */
+  attachedInTurn?: ReadonlySet<string>;
+  /**
    * Where it stands among the messages of its turn shown together (issue
    * 415): not `first`, it is not headed with its sender's name; not `last`,
    * it has no corner pointing at its sender. Shown alone where not given.
@@ -170,7 +174,7 @@ interface MessageViewProps {
   inTurn?: {first: boolean; last: boolean};
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, attachments, onSelectPage, onInterruptCall, onKillCommand, endedCommands, inTurn}) => {
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, attachments, onSelectPage, onInterruptCall, onKillCommand, endedCommands, attachedInTurn, inTurn}) => {
   const own = isOwn(msg, me);
   const named = inTurn?.first ?? true;
   const last = inTurn?.last ?? true;
@@ -210,7 +214,7 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, parti
         <div className="mt-2 space-y-2">
           {msg.tool_calls.map((call, cidx) => (
             <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} messageId={msg.id} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} attachments={attachments} onSelectPage={onSelectPage}
-              onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+              onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} attachedInTurn={attachedInTurn} />
           ))}
         </div>
       )}

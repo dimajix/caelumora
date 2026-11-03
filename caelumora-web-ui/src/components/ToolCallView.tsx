@@ -2,10 +2,11 @@
 // presentation says (issue 165). The frame is the same for every call; what is inside it is the
 // handler's of the call's presentation, the default one for every call that declares none. The
 // frame also shows the questions a call asked and how they were answered, where its result keeps
-// their record (`AnswersRecord`, issue 268), and what its result showed its model (issue 282).
+// their record (`AnswersRecord`, issue 268), and what its result showed its model (issue 282) but
+// what a message of its turn carries, which is shown there (issue 535).
 
 import React, {useEffect, useState} from 'react';
-import {BookOpen, CheckCircle2, Download, EyeOff, ImageIcon, Package, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {BookOpen, CheckCircle2, Download, EyeOff, ImageIcon, Package, Paperclip, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type ChannelArtifacts, type ChannelAttachments, type WorkspaceFiles} from '../api';
 import type {Page} from '../page';
@@ -1004,12 +1005,20 @@ interface ToolCallViewProps {
   onKillCommand?: (commandId: string) => void;
   /** The commands ended already, which are not offered to be ended. */
   endedCommands?: ReadonlySet<string>;
+  /**
+   * The digests of what the messages of its turn carry: what its result gave or showed of them is
+   * named here and shown there (issue 535).
+   */
+  attachedInTurn?: ReadonlySet<string>;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, messageId, abandoned, files, filesVersion, artifacts, attachments, onSelectPage, onInterrupt, onKillCommand, endedCommands}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, messageId, abandoned, files, filesVersion, artifacts, attachments, onSelectPage, onInterrupt, onKillCommand, endedCommands, attachedInTurn}) => {
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
-  // What the call gave and showed its model, as a message shows what it carries.
+  // What the call gave and showed its model, as a message shows what it carries - but what its
+  // turn attached, which only its message shows.
   const seen = [...(result?.media ?? []), ...(result?.shown ?? [])];
+  const attached = seen.filter(item => attachedInTurn?.has(item.digest));
+  const kept = seen.filter(item => !attached.includes(item));
   return (
     <div className="bg-gray-50 dark:bg-gray-800 rounded-sm border border-gray-200 dark:border-gray-600 overflow-hidden">
       <div className="bg-gray-100 dark:bg-gray-900 px-2 py-1 flex items-center justify-between border-b border-gray-200 dark:border-gray-600">
@@ -1065,8 +1074,14 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, message
       </div>
       <div className="p-2">
         <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage} onKillCommand={onKillCommand} endedCommands={endedCommands} />
-        {result && seen.length > 0 && (
-          <AttachmentList items={seen} messageId={result.message_id ?? messageId} attachments={attachments} classification={result.classification} />
+        {result && kept.length > 0 && (
+          <AttachmentList items={kept} messageId={result.message_id ?? messageId} attachments={attachments} classification={result.classification} />
+        )}
+        {result && attached.length > 0 && (
+          <div className="mt-2 flex items-center gap-1 text-[11px] opacity-60" title="Shown with the answer">
+            <Paperclip size={11} />
+            <span>Attached: {attached.map(item => item.name).join(', ')}</span>
+          </div>
         )}
         {result?.approval && result.approval.length > 0 && (
           // Set apart from what the presentation shows, where it shows anything.

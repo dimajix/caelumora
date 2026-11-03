@@ -129,6 +129,22 @@ export function endedCommands(messages: Message[]): Set<string> {
   return ended;
 }
 
+/**
+ * The digests of what the messages of each turn among `messages` carry, by the turn's id: a tool's
+ * result there that gave or showed the same content leaves it to the message (issue 535). A copy
+ * `attach` makes keeps the digest of what it copied.
+ */
+export function attachedByTurn(messages: Message[]): Map<string, Set<string>> {
+  const attached = new Map<string, Set<string>>();
+  for (const msg of messages) {
+    if (!msg.turn_id || !msg.attachments?.length) continue;
+    const digests = attached.get(msg.turn_id) ?? new Set<string>();
+    for (const attachment of msg.attachments) digests.add(attachment.digest);
+    attached.set(msg.turn_id, digests);
+  }
+  return attached;
+}
+
 /** Why a turn was given up (issues 145, 258), in this page's words. */
 export function givenUpText(reason: GivenUpReason): string {
   switch (reason.kind) {

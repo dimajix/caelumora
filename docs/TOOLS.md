@@ -185,7 +185,8 @@ message: the result refers to them from the moment they are kept, and its turn k
 What a tool gave is seen, not said: the model is given it with the result as it is given an
 attachment, numbered as one and noted after the result's text - its number, name, type and whether
 it is given along -, so that a model that cannot see learns of it and any model can name it; the
-agent shows it to the others by `attach`. The card of the call shows it where the result is shown.
+agent shows it to the others by `attach`. The card of the call shows it where the result is shown,
+until a message of the same turn carries it: then the message shows it, and the card names it.
 
 ## MCP servers
 

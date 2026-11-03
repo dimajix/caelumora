@@ -308,7 +308,10 @@ it is fetched anew as it starts.
     is described with it in `ToolCallView.tsx`. A call presented `quiet` is left out of the chat
     while it runs and where it succeeded, and a message that held nothing else with it
     (`withoutQuietCalls`): what it did shows elsewhere. The context and history panels show it as
-    any other.
+    any other. What a result gave or showed its model is shown at the card, but in the chat what a
+    message of the same turn carries - the same content, known by its digest, as `attach` copies
+    it -, which the card only names (`attachedByTurn`): an image the agent showed stands once, at
+    its answer. The context and history panels, the record of what the agent saw, show it whole.
 *   **While an agent answers**, its partial message is shown as it streams. Several agents answering
     at once each have an answer of their own, in the order they began, below every complete
     message: a message joins the history when it is complete, so an answer that ends first moves up

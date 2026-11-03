@@ -40,7 +40,8 @@ pub trait ContentStorage: Send + Sync + fmt::Debug {
     /// Removes what lies under `key`; nothing there is no error.
     async fn delete(&self, key: &str) -> ContentResult<()>;
     /// Puts a copy of what lies under `from` under `to`, as cheaply as the backend can (issue
-    /// 282): two keys, each removed on its own.
+    /// 282): two keys, each removed on its own. A backend may share the bytes between them - a
+    /// hard link, keys it counts itself (issue 535) - as long as removing one leaves the other.
     ///
     /// # Errors
     /// `NotFound` if nothing lies under `from`.

@@ -183,8 +183,10 @@ The `AttachmentManager` keeps an attachment under `attachments/<channel>/<id>`, 
 read through the message (`ChannelView::attachment`, its content `attachment_content`) - where a
 channel is read entry by entry, as its own label is released -, and its reference (`ContentRef`) is
 kept with the message in the channel's history. What an agent attaches of what it heard is a copy
-(`ContentStorage::copy`, a hard link where the file system makes one): two keys, each removed on its
-own, the copy waiting for its message as an upload does. What waits for its message is held in
+(`ContentStorage::copy`): two keys, each removed on its own, the copy waiting for its message as an
+upload does. How cheap it is, is the backend's: it may share the bytes between the keys - `local` by
+a hard link where the file system makes one, one without links by keys it counts itself -, so that
+nothing above it counts references. What waits for its message is held in
 memory alone; what a restart loses lies under its channel's prefix until the channel's state is
 purged with its session, which removes the whole prefix from every storage of content.
 

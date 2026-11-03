@@ -38,7 +38,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
-| [535](535-tool-media-attached-kept-and-shown-twice.md) | open | medium | question | An image a tool generates is kept as what its result gave, and once the agent shows it to the channel by `attach` it is kept again as a copy and shown twice in the chat - at the card of the call and at the answer -, so it is unclear whether what a tool gives is rightly seen rather than said. |
 
 ## User interaction
 
