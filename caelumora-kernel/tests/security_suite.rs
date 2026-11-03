@@ -441,7 +441,6 @@ async fn the_owner_changes_and_ends_the_session() {
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_goes() {
-    use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::history::HistoryEntry;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
@@ -461,35 +460,11 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
         )
         .await
         .unwrap();
-    let hers = side.user_actor(world.alice).unwrap();
-    let mut watch = hers.watch();
-    let mut say = async |text: &str| {
-        hers.send_message(Some(text.to_string()), None, Vec::new()).await.expect("sent");
-        let ActorEvent::CompleteMessageGenerated(said) =
-            shown(&mut watch, "CompleteMessageGenerated").await
-        else {
-            unreachable!()
-        };
-        // Shown as it is let in, recorded right after.
-        time::timeout(Duration::from_secs(5), async {
-            while !side
-                .visible_messages(ActorId::User(world.alice))
-                .await
-                .iter()
-                .any(|m| m.id == said.id)
-            {
-                time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("in the history");
-        said.id
-    };
-    let before = say("before bob").await;
+    let before = side.say_as(world.alice, "before bob", Vec::new()).await;
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::None)
         .await
         .expect("without what was said");
-    let after = say("after bob").await;
+    let after = side.say_as(world.alice, "after bob", Vec::new()).await;
 
     let reach = |user| {
         let manager = &world.manager;
@@ -573,14 +548,98 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 
+/// S4: the messages of a channel carrying attachments are read as a page of its history (issue
+/// 509), as far as the reader's view of it goes: bob, taken into the channel after a file was said
+/// in it, finds only the one said since; what a tool's result gave its model is no attachment and
+/// not among them; carol, a stranger, does not reach the channel. Asked as reaching the channel is.
+#[tokio::test]
+async fn the_messages_carrying_attachments_are_read_as_far_as_the_readers_view_goes() {
+    use caelumora_domain::content::testing::make_content_ref;
+    use caelumora_domain::history::{HistoryEntry, HistoryPage};
+    use caelumora_domain::message::testing::make_generated;
+    use caelumora_domain::message::{Message, MessageId};
+    use caelumora_domain::query::Filter;
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = World::as_user(world.alice);
+    let side = session
+        .create_channel(
+            &alice,
+            ChannelSpec {
+                name: "side".to_string(),
+                components: quiet(),
+                participants: vec![],
+                classification: None,
+                language: None,
+                uses_workspace: None,
+                internal_actors: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let attachments = world.kernel.attachment_manager();
+    let upload = || async {
+        let file = attachments
+            .create(&alice, &side.channel(), "notes.txt", None, (5, file("notes")))
+            .await
+            .expect("hers to upload");
+        vec![file.id]
+    };
+    let before = side.say_as(world.alice, "before bob", upload().await).await;
+    side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::None)
+        .await
+        .expect("without what was said");
+    side.say_as(world.alice, "words alone", Vec::new()).await;
+    let after = side.say_as(world.alice, "after bob", upload().await).await;
+    let given = Message {
+        sender_id: ActorId::Agent(AgentId::new()),
+        ..make_generated(MessageId::new(), vec![make_content_ref("drawn.png", b"png")])
+    };
+    side.record_said(vec![given]).await;
+
+    let (manager, session_id, channel_id) = (&world.manager, session.id(), side.id());
+    let carrying = |user: UserId| async move {
+        manager
+            .views(Viewer::new(World::as_user(user)))
+            .session(session_id)
+            .await?
+            .channel(channel_id)
+            .await?
+            .history_page_of(None, 10, Some(Filter::with_attachments()))
+            .await
+    };
+    let said = |page: HistoryPage| {
+        page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        said(carrying(world.alice).await.unwrap()),
+        [before, after],
+        "alice, the files said, not the words alone nor what the tool gave"
+    );
+    let (his, asked) = world.asked(carrying(world.bob)).await;
+    assert_eq!(said(his.unwrap()), [after], "bob from where he was taken in");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes"
+        ]),
+        "reaching the channel; reading in it asks nothing more"
+    );
+    assert!(
+        matches!(carrying(world.carol).await, Err(ViewError::SessionNotFound(_))),
+        "carol finds nothing of it"
+    );
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
 /// S5 (issue 404): a reader marks up to where they read a channel as they
 /// reach it - the store asks to read it - and nothing more; the mark is
 /// theirs alone, and a message before where their view begins is none they
 /// read. Carol, who does not reach the channel, marks nothing.
 #[tokio::test]
-#[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
-    use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::message::MessageId;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
@@ -600,34 +659,11 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
         )
         .await
         .unwrap();
-    let hers = side.user_actor(world.alice).unwrap();
-    let mut watch = hers.watch();
-    let mut say = async |text: &str| {
-        hers.send_message(Some(text.to_string()), None, Vec::new()).await.expect("sent");
-        let ActorEvent::CompleteMessageGenerated(said) =
-            shown(&mut watch, "CompleteMessageGenerated").await
-        else {
-            unreachable!()
-        };
-        time::timeout(Duration::from_secs(5), async {
-            while !side
-                .visible_messages(ActorId::User(world.alice))
-                .await
-                .iter()
-                .any(|m| m.id == said.id)
-            {
-                time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("in the history");
-        said.id
-    };
-    let before = say("before bob").await;
+    let before = side.say_as(world.alice, "before bob", Vec::new()).await;
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::None)
         .await
         .expect("without what was said");
-    let after = say("after bob").await;
+    let after = side.say_as(world.alice, "after bob", Vec::new()).await;
     let mark = |user: UserId, message: MessageId| {
         let controllers = world.kernel.controller_manager();
         let (session, channel) = (session.id(), side.id());

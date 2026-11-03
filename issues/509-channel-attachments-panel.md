@@ -1,6 +1,6 @@
 # 509 — A channel's attachments can be found only message by message
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** User interaction
@@ -62,7 +62,26 @@ gets a test for it.
   covers what is not listed.
 - REST-SERVER.md and WEB-UI.md describe it.
 
+## Decision
+
+- **Wanted**, in the form that costs least: the history can already be filtered by what a message
+  carries (`HistoryField::Attachments`), the store answers it as a condition of the page, the items
+  it keeps stand as the messages do now - modified, or taken back and carrying nothing -, and the
+  view that reads them answers how far the reader's view goes.
+- **A filter of the history, not a route of its own:** `GET …/history?attachments=true` is a page
+  of the messages carrying attachments (`Filter::with_attachments`), as the history is otherwise
+  read - no second response, no second way of reading. A page counts messages, not attachments.
+  An agent's history takes the same query (`AgentContextView::history_page_of`), with no place in
+  the web UI.
+- **Without what tools gave:** the list holds what was said. Whether an image a tool generated is
+  rightly seen rather than said - it is kept and shown twice once its agent attaches it - is a
+  question of its own, issue [535](535-tool-media-attached-kept-and-shown-twice.md).
+- **No way from an entry to its message** for now: the chat has nothing to show a message not yet
+  loaded, and the list is useful without it.
+
 ## History
 
 - **2026-10-30** — Issue created, split off from issue [208](208-generated-artifacts.md), which
   wanted a panel of a channel's artifacts and left it open when it was cut with issue 282.
+- **2026-11-03** — Decided as above. Step 1: `?attachments=true` on both histories, read through
+  `Filter::with_attachments`; the web UI's list follows as step 2.

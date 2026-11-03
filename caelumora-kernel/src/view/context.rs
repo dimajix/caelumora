@@ -15,10 +15,11 @@ use caelumora_domain::context::{ContextResolver, ResolvedContext};
 use caelumora_domain::digest::Digest;
 #[cfg(any(test, feature = "test-support"))]
 use caelumora_domain::history::History;
-use caelumora_domain::history::{HistoryPage, Reader};
+use caelumora_domain::history::{HistoryField, HistoryPage, Reader};
 use caelumora_domain::message::MessageId;
 use caelumora_domain::note::Note;
 use caelumora_domain::prompt_catalogue::{PromptCatalogue, PromptError};
+use caelumora_domain::query::Filter;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::transcript::Transcript;
 use caelumora_store::history::HistoryStore;
@@ -210,22 +211,22 @@ impl AgentContextView {
         Ok(said.and_then(|(_, item)| item.said().map(|m| m.classification.clone())))
     }
 
-    /// A page of all that was offered to the agent in the channel and what
-    /// it said itself (issues 207, 218), as the messages stand now, and how
-    /// its turns ended (issue 258): the last `limit` items before the
-    /// position `before` - the last ones without it -, and where the page
-    /// before it ends. What of it each of its messages was produced from is
-    /// that message's context.
+    /// A page of all that was offered to the agent in the channel and what it said itself (issues
+    /// 207, 218), as the messages stand now, and how its turns ended (issue 258): the last `limit`
+    /// items before the position `before` - the last ones without it - that meet `filter`, if one
+    /// is given - the messages carrying attachments, say -, and where the page before it ends. What
+    /// of it each of its messages was produced from is that message's context.
     ///
     /// # Errors
     /// `Failed` if the history cannot be read.
-    pub async fn history_page(
+    pub async fn history_page_of(
         &self,
         before: Option<Position>,
         limit: usize,
+        filter: Option<Filter<HistoryField>>,
     ) -> Result<HistoryPage, AgentContextError> {
         self.histories
-            .page(self.channel, &self.reading_as(), Position::START, before, limit, None)
+            .page(self.channel, &self.reading_as(), Position::START, before, limit, filter.as_ref())
             .await
             .map_err(|source| AgentContextError::Failed {
                 actor: self.actor(),
@@ -291,9 +292,11 @@ mod tests {
     use super::*;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::context::{ContextItem, FrameRef, PromptRef};
     use caelumora_domain::digest::{self, prompt};
     use caelumora_domain::history::HistoryEntry;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::Message;
     use caelumora_domain::message::MessageRole;
     use caelumora_domain::work::TurnId;
@@ -301,7 +304,30 @@ mod tests {
 
     /// The items of the agent's history as the view reads them.
     async fn items_of(view: &AgentContextView) -> Vec<HistoryEntry> {
-        view.history_page(None, 1000).await.expect("read").entries().cloned().collect()
+        view.history_page_of(None, 1000, None).await.expect("read").entries().cloned().collect()
+    }
+
+    /// Issue 509: what the agent was offered and said is read by a filter, as a channel's history
+    /// is - here the messages carrying attachments.
+    #[tokio::test]
+    async fn a_page_of_what_the_agent_saw_is_read_by_a_filter() {
+        let actor = ActorId::Agent(AgentId::new());
+        let said = |attachments| Message {
+            sender_id: actor,
+            attachments,
+            ..make_message(MessageId::new())
+        };
+        let words = said(Vec::new());
+        let attached = said(vec![make_content_ref("notes.png", b"png")]);
+        let mut history = History::default();
+        history.extend(vec![words, attached.clone()]);
+
+        let view = AgentContextView::of_state(actor, AgentChannelState::default(), history).await;
+        let page =
+            view.history_page_of(None, 10, Some(Filter::with_attachments())).await.expect("read");
+        let ids: Vec<MessageId> =
+            page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect();
+        assert_eq!(ids, [attached.id], "the message carrying attachments alone");
     }
 
     #[tokio::test]

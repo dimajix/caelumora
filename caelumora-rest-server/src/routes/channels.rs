@@ -146,9 +146,9 @@ pub(super) async fn get_channel(
 /// on.
 const SNAPSHOT_ITEMS: usize = 20;
 
-/// A page of the history of the channel, as the user may see it (issues 46,
-/// 218): its messages and how turns ended (issue 258), oldest first - the
-/// last ones, or those before `?before=`.
+/// A page of the history of the channel, as the user may see it (issues 46, 218): its messages and
+/// how turns ended (issue 258), oldest first - the last ones, or those before `?before=`; with
+/// `?attachments=true`, the messages carrying attachments alone (issue 509).
 pub(super) async fn get_channel_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
@@ -156,7 +156,7 @@ pub(super) async fn get_channel_history(
     user: AuthenticatedUser,
 ) -> Result<Json<HistoryPageResponse<Message>>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let page = channel.history_page(query.before, query.limit()).await?;
+    let page = channel.history_page_of(query.before, query.limit(), query.filter()).await?;
     Ok(Json(HistoryPageResponse::of(page, |message, _| message)))
 }
 
@@ -836,10 +836,10 @@ async fn knowledge_response(
     }
 }
 
-/// A page of all that was offered to actor `aid` in the channel and what it
-/// said itself (issues 207, 218), and how its turns ended (issue 258),
-/// oldest first - the last ones, or those before `?before=` -, for whoever
-/// may read what it saw.
+/// A page of all that was offered to actor `aid` in the channel and what it said itself (issues
+/// 207, 218), and how its turns ended (issue 258), oldest first - the last ones, or those before
+/// `?before=` -, for whoever may read what it saw; with `?attachments=true`, the messages carrying
+/// attachments alone (issue 509).
 pub(super) async fn agent_history(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
@@ -848,7 +848,7 @@ pub(super) async fn agent_history(
 ) -> Result<Json<HistoryPageResponse<HistoryMessageResponse>>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let view = participant_of(&channel, aid).await?.context().await?;
-    let page = view.history_page(query.before, query.limit()).await?;
+    let page = view.history_page_of(query.before, query.limit(), query.filter()).await?;
     let heard: Vec<MessageId> =
         page.entries().filter_map(|item| item.said().map(|m| m.id)).collect();
     let passed_on = view.in_transcript(&heard).await?;
@@ -1046,6 +1046,34 @@ mod tests {
         views.session(session).await.unwrap().channel(channel).await.unwrap().running().is_some()
     }
 
+    /// The page of a history `uri` names, as whoever `cookie` logs in reads it.
+    async fn page_of(api: &Router, cookie: &str, uri: &str) -> Value {
+        let request = Request::get(uri).header(COOKIE, cookie).body(Body::empty()).unwrap();
+        let page = api.clone().oneshot(request).await.unwrap();
+        assert_eq!(page.status(), StatusCode::OK);
+        serde_json::from_slice(&to_bytes(page.into_body(), usize::MAX).await.unwrap()).unwrap()
+    }
+
+    /// Has whoever `cookie` logs in say `text` in the channel, and waits until its history holds
+    /// it - kept, before a stop would lose it on its way (issue 385).
+    async fn say(api: &Router, cookie: &str, session: SessionId, channel: ChannelId, text: &str) {
+        let channel_uri = format!("/sessions/{}/channels/{}", session.0, channel.0);
+        let sent = Request::post(format!("{channel_uri}/messages"))
+            .header(COOKIE, cookie)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({ "content": text }).to_string()))
+            .unwrap();
+        assert_eq!(api.clone().oneshot(sent).await.unwrap().status(), StatusCode::OK);
+        let history = format!("{channel_uri}/history");
+        time::timeout(Duration::from_secs(5), async {
+            while !page_of(api, cookie, &history).await.to_string().contains(text) {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("in the history");
+    }
+
     /// Issue 386: following a channel that does not run does not start it;
     /// the stream waits for whoever acts in it - and shows what they said,
     /// after the channel's state -, follows it while it runs, starts from
@@ -1061,13 +1089,7 @@ mod tests {
         read_until(&mut stream, &mut read, |read| snapshots(read) == 1).await;
         assert!(!runs(&state, session, channel).await, "following starts nothing");
 
-        let sent =
-            Request::post(format!("/sessions/{}/channels/{}/messages", session.0, channel.0))
-                .header(COOKIE, &cookie)
-                .header(CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({"content": "hello there"}).to_string()))
-                .unwrap();
-        assert_eq!(api.clone().oneshot(sent).await.unwrap().status(), StatusCode::OK);
+        say(&api, &cookie, session, channel, "hello there").await;
         let after = |read: &str, nth: usize| {
             read.split("event: snapshot").nth(nth).unwrap_or_default().to_string()
         };
@@ -1077,23 +1099,6 @@ mod tests {
             "whoever acts starts it, and is shown what they said after the state it started from"
         );
 
-        // Kept, before the stop would lose it on its way (issue 385).
-        let history = format!("/sessions/{}/channels/{}/history", session.0, channel.0);
-        for _ in 0..100 {
-            let page = api
-                .clone()
-                .oneshot(
-                    Request::get(&history).header(COOKIE, &cookie).body(Body::empty()).unwrap(),
-                )
-                .await
-                .unwrap();
-            if String::from_utf8_lossy(&to_bytes(page.into_body(), usize::MAX).await.unwrap())
-                .contains("hello there")
-            {
-                break;
-            }
-            time::sleep(Duration::from_millis(10)).await;
-        }
         // Seen at the stop, which only a stream following the actor sees.
         state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
         read_until(&mut stream, &mut read, |read| snapshots(read) == 3).await;
@@ -1179,6 +1184,23 @@ mod tests {
             "the detail says what is wrong: {}",
             json["detail"]
         );
+    }
+
+    /// Issue 509: `?attachments=true` reads a page of the messages carrying attachments alone -
+    /// none of a message of words.
+    #[tokio::test]
+    async fn a_page_of_the_messages_carrying_attachments_is_asked_for_by_the_query() {
+        let state = state();
+        let (api, cookie, session, channel) = stopped_session_of_alice(&state).await;
+        say(&api, &cookie, session, channel, "hello there").await;
+
+        let history = format!("/sessions/{}/channels/{}/history", session.0, channel.0);
+        let carrying = page_of(&api, &cookie, &format!("{history}?attachments=true")).await;
+        assert!(
+            !carrying["items"].as_array().unwrap().iter().any(|item| item["said"].is_object()),
+            "words alone carry nothing: {carrying}"
+        );
+        state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or

@@ -472,6 +472,7 @@ pub fn executed_calls<'a>(
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
     use super::*;
+    use crate::tool::{ToolResultStatus, ToolVisibility};
     use uuid::Uuid;
 
     /// A message from a user with id `id`.
@@ -484,6 +485,33 @@ pub mod testing {
             content: Some("hello".to_string()),
             timestamp: Utc::now(),
             ..Message::new(Classification::CHANNEL_DEFAULT)
+        }
+    }
+
+    /// A message with id `id` of the result of a call of `generate_image`, shown to the channel,
+    /// that gave its model `media` (issue 512): seen, not said - no attachment of the message.
+    pub fn make_generated(id: MessageId, media: Vec<ContentRef>) -> Message {
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: "generate_image".to_string(),
+            arguments: Value::Null,
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        };
+        let result = ToolCallResult {
+            media,
+            ..ToolCallResult::of(
+                &call,
+                ToolResultStatus::Ok,
+                "generated".to_string(),
+                Classification::CHANNEL_DEFAULT,
+            )
+        };
+        Message {
+            role: MessageRole::Tool,
+            content: None,
+            tool_results: vec![result],
+            ..make_message(id)
         }
     }
 

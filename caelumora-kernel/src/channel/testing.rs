@@ -11,6 +11,7 @@
 use crate::channel::ChannelLoop;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
+use crate::testing::shown;
 use crate::view::AgentContextView;
 use anyhow::{Error, Result};
 use caelumora_api::actor::Actor;
@@ -21,6 +22,7 @@ use caelumora_domain::approval::{ApprovalStrategy, Approver};
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::testing::{founded, make_channel};
 use caelumora_domain::channel::{Channel, InternalActor, Participant};
+use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::{HistoryEntry, Reader};
 use caelumora_domain::message::Message;
@@ -196,6 +198,33 @@ impl ChannelLoop {
             .put_channel_state(self.id, &mut state)
             .await
             .expect("the history is stored");
+    }
+
+    /// Has `user` say `text`, with the attachments `attachments` they uploaded for it, and waits
+    /// until the channel recorded it in its history: the id of the message.
+    ///
+    /// # Panics
+    /// If `user` takes no part, or the message is not sent, not shown to them or not recorded
+    /// within five seconds.
+    pub async fn say_as(&self, user: UserId, text: &str, attachments: Vec<ContentId>) -> MessageId {
+        let actor = self.user_actor(user).expect("the user takes part");
+        let mut watch = actor.watch();
+        actor.send_message(Some(text.to_string()), None, attachments).await.expect("sent");
+        let ActorEvent::CompleteMessageGenerated(said) =
+            shown(&mut watch, "CompleteMessageGenerated").await
+        else {
+            unreachable!()
+        };
+        // Shown as it is let in, recorded right after.
+        time::timeout(Duration::from_secs(5), async {
+            while !self.visible_messages(ActorId::User(user)).await.iter().any(|m| m.id == said.id)
+            {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("in the history");
+        said.id
     }
 
     /// Runs the channel until the stored state of `agent` fulfils `done` -

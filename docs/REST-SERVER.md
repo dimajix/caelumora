@@ -312,7 +312,9 @@ step.
 Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)
 before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the
 position in the history of the oldest item of the page, what the page before it is read with
-(`?before=`), and `null` once there is none; a client passes it on and computes nothing with it. A
+(`?before=`), and `null` once there is none; a client passes it on and computes nothing with it.
+With `?attachments=true`, a page holds only the messages carrying attachments, and counts only them
+(issue 509) - what a tool's result gave its model is no attachment and not among them. A
 page holds what its reader sees and counts only that (issue 417): what went to every participant
 while they were one - from what was shared with them as they joined up to where they left -, what
 went to them by name, and what they sent. Its messages stand as they do now, with every change made

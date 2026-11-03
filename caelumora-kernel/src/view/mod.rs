@@ -1131,7 +1131,7 @@ mod tests {
         );
         assert_eq!(seen.private_notes(), (Vec::new(), None), "an external agent writes none");
         assert!(!seen
-            .history_page(None, 100)
+            .history_page_of(None, 100, None)
             .await
             .unwrap()
             .entries()

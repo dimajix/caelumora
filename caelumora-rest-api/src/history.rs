@@ -4,8 +4,9 @@ use caelumora_domain::actor::{ActorId, Rejection, RequestReason, RetryTarget};
 use caelumora_domain::agent::RetryRefused;
 use caelumora_domain::chain::Position;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::history::{HistoryEntry, HistoryPage};
+use caelumora_domain::history::{HistoryEntry, HistoryField, HistoryPage};
 use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::query::Filter;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::work::TurnId;
 use chrono::{DateTime, Utc};
@@ -262,15 +263,17 @@ const PAGE_ITEMS: usize = 50;
 /// The most items a page of a history holds.
 const MAX_PAGE_ITEMS: usize = 200;
 
-/// Which page of a history to read (issue 218): `?before=<position>` - the
-/// `earlier` of the page after it; without it, the last page - and
-/// `&limit=<items>`.
+/// Which page of a history to read (issue 218): `?before=<position>` - the `earlier` of the page
+/// after it; without it, the last page - and `&limit=<items>`; with `&attachments=true`, a page of
+/// the messages carrying attachments alone (issue 509).
 #[derive(Debug, Default, Deserialize)]
 pub struct HistoryQuery {
     #[serde(default)]
     pub before: Option<Position>,
     #[serde(default)]
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub attachments: bool,
 }
 
 impl HistoryQuery {
@@ -278,6 +281,11 @@ impl HistoryQuery {
     /// `MAX_PAGE_ITEMS`; `PAGE_ITEMS` if not asked.
     pub fn limit(&self) -> usize {
         self.limit.map_or(PAGE_ITEMS, |limit| limit.clamp(1, MAX_PAGE_ITEMS))
+    }
+
+    /// The condition the page is read by: the messages carrying attachments, if asked for.
+    pub fn filter(&self) -> Option<Filter<HistoryField>> {
+        self.attachments.then(Filter::with_attachments)
     }
 }
 
@@ -326,6 +334,16 @@ mod tests {
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::digest;
     use caelumora_domain::user::UserId;
+
+    /// Issue 509: a page of a history is read by a condition only where it is asked for.
+    #[test]
+    fn the_messages_carrying_attachments_are_read_as_asked_for() {
+        assert_eq!(HistoryQuery::default().filter(), None);
+        assert_eq!(
+            HistoryQuery { attachments: true, ..Default::default() }.filter(),
+            Some(Filter::with_attachments())
+        );
+    }
 
     #[test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]

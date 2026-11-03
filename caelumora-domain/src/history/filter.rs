@@ -100,10 +100,13 @@ impl Filter<HistoryField> {
 
     /// A message that says something: words, or attachments (issue 282).
     pub fn saying() -> Self {
-        Filter::any_of([
-            Filter::written(),
-            Filter::negated(Filter::IsNull(HistoryField::Attachments)),
-        ])
+        Filter::any_of([Filter::written(), Filter::with_attachments()])
+    }
+
+    /// A message carrying attachments (issues 282, 509) - not what its tool results gave their
+    /// model, which is seen, not said.
+    pub fn with_attachments() -> Self {
+        Filter::negated(Filter::IsNull(HistoryField::Attachments))
     }
 
     /// A message containing `words` (`Filter::Contains`).

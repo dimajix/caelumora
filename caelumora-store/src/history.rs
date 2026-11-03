@@ -417,7 +417,7 @@ mod tests {
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::history::testing::items_of;
     use caelumora_domain::history::{Audience, History};
-    use caelumora_domain::message::testing::{id, make_message};
+    use caelumora_domain::message::testing::{id, make_generated, make_message};
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::user::UserId;
     use chrono::Utc;
@@ -608,6 +608,13 @@ mod tests {
             !keeps(&Filter::written(), said(attached.clone()))
                 && keeps(&Filter::heard(), said(attached.clone())),
             "an attachment alone is heard, though nothing is written"
+        );
+        let given = make_generated(id(2), vec![make_content_ref("drawn.png", b"png")]);
+        assert!(
+            keeps(&Filter::with_attachments(), said(attached.clone()))
+                && !keeps(&Filter::with_attachments(), said(by_alice.clone()))
+                && !keeps(&Filter::with_attachments(), said(given)),
+            "what a message carries as attachments, not what its tool results gave"
         );
         for message in [
             by_alice.clone(),

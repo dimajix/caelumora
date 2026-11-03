@@ -512,19 +512,19 @@ participant (issue 417), and is kept apart from the channel state's document (is
     (`KeptItem`: the item as recorded, its position, whether it is published), which a test holds
     to `seen_by`; a database adds it to the `WHERE` of a page. A page counts what its reader sees.
     The filter is data too (issue 421): a `Filter` of the entity stores' queries over the fields of
-    an item as it is kept (`HistoryField`) - a message said, its sender, role
-    and words, whom it mentions, its level and compartments -, made by the reader's needs
-    (`Filter::said_by`, `heard`, `containing`, `readable` for what a reader from another channel may
-    read) and judged on the item before its form is chosen, so that a database adds it to the same
-    `WHERE`. In which form is `Recorded::as_seen_by`: as it was recorded for its sender, as
-    everybody was given it (`Message::published`) for anyone else. Whatever reads a history without
-    holding it reads there, whether the channel runs or not: the views - a page over REST, a
-    message, what an agent saw -, the checks before a change, an actor's inbox that fell behind, the
-    tool that reads another channel. The answer of a turn, what its end carried as it was delivered,
-    is read from the messages of the turn said before its end (`HistoryStore::answer`). Where a
-    participant's view begins is the start of their first range (`HistoryStore::attendance`). A
-    page is addressed by the position (`seq`) of its oldest item; a client passes it back without
-    computing with it.
+    an item as it is kept (`HistoryField`) - a message said, its sender, role and words, what it
+    carries, whom it mentions, its level and compartments -, made by the reader's needs
+    (`Filter::said_by`, `heard`, `containing`, `with_attachments`, `readable` for what a reader from
+    another channel may read) and judged on the item before its form is chosen, so that a database
+    adds it to the same `WHERE`. In which form is `Recorded::as_seen_by`: as it was recorded for its
+    sender, as everybody was given it (`Message::published`) for anyone else. Whatever reads a
+    history without holding it reads there, whether the channel runs or not: the views - a page over
+    REST, a message, what an agent saw -, the checks before a change, an actor's inbox that fell
+    behind, the tool that reads another channel. The answer of a turn, what its end carried as it
+    was delivered, is read from the messages of the turn said before its end
+    (`HistoryStore::answer`). Where a participant's view begins is the start of their first range
+    (`HistoryStore::attendance`). A page is addressed by the position (`seq`) of its oldest item; a
+    client passes it back without computing with it.
 *   **The holder keeps a window.** The channel loop holds the history from `history_from` on, a
     small part of the document: the last `WINDOW` (200) entries. After every put it lets go of what
     lies before (`keep_window`, `Chain::keep_from`), and a state is loaded from there. What a holder

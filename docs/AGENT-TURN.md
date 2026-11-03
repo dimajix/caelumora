@@ -870,9 +870,10 @@ given what it was produced from.
     names, loaded from the store on whichever branch it lies. For an external agent it is what its
     remote agent was given in the call that produced it, without prompt parts or tools, which are
     the remote agent's own.
-*   `history_page(before, limit)` is a page of the channel's history as the agent saw it - what
-    went to it, what it said in full, what it was given and when it compacted -, as the messages
-    stand now, from where its view begins, read from the store as the agent (issue 417).
+*   `history_page_of(before, limit, filter)` is a page of the channel's history as the agent saw
+    it - what went to it, what it said in full, what it was given and when it compacted -, as the
+    messages stand now, from where its view begins, read from the store as the agent (issue 417),
+    of the items that meet `filter`, as a channel's history is read.
     `in_transcript` tells which of a page's messages reached the transcript, on whichever branch -
     not those the perceive processors dropped -, asked of the store once for the page.
 
