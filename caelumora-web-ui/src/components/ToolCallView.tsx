@@ -8,13 +8,13 @@
 import React, {useEffect, useState} from 'react';
 import {BookOpen, CheckCircle2, Download, EyeOff, ImageIcon, Package, Paperclip, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
-import {api, type ChannelArtifacts, type ChannelAttachments, type WorkspaceFiles} from '../api';
-import type {Page} from '../page';
+import {api, type WorkspaceFiles} from '../api';
 import {ApiRequestError} from '../errors';
 import {commandResult, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandResult} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 import {MarkdownMessage} from './MarkdownMessage';
 import {AttachmentList} from './AttachmentList';
+import {useShownChannel} from '../shownChannel';
 
 const TOOL_STATUS_LABELS: Record<Exclude<ToolResultStatus, 'ok'>, string> = {
   denied: 'Denied',
@@ -63,29 +63,12 @@ function toolResultText(result: ToolResult): string {
 }
 
 /**
- * What a presentation's handler is given: the call, its result once it has one, and the files of
- * the channel's workspace where it is shown in the chat.
+ * What a presentation's handler is given: the call and its result once it has one. What it needs of
+ * the channel it reads where it is shown (`useShownChannel`).
  */
 export interface ToolCallContentProps {
   call: ToolCall;
   result?: ToolResult;
-  /** The files of the channel's workspace as the user may use them; absent outside the chat. */
-  files?: WorkspaceFiles;
-  /** Changes whenever those files may have changed. */
-  filesVersion?: number;
-  /** The artifacts of the channel as the user reaches them; absent outside the chat. */
-  artifacts?: ChannelArtifacts;
-  /** Opens a page in the place of the channel - a skill's; absent outside the chat. */
-  onSelectPage?: (page: Page) => void;
-  /**
-   * Ends a command a call handed back as running (issue 294); absent where the user may not change
-   * the workspace's files.
-   */
-  onKillCommand?: (commandId: string) => void;
-  /**
-   * The commands a result in the channel, or the user, ended: none is offered to be ended again.
-   */
-  endedCommands?: ReadonlySet<string>;
 }
 
 /** The default presentation: the call's arguments and its result, as they are. */
@@ -143,7 +126,8 @@ function commandStatus(command: CommandResult): string {
  * A shell command (issue 251): the command as a line of code, what it printed as a terminal shows
  * it, and where it stands. A call that follows or ends a command started before names it by its id.
  */
-const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onKillCommand, endedCommands}) => {
+const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  const {onKillCommand, endedCommands} = useShownChannel();
   const args = argumentsObject(call.arguments);
   const command = typeof args?.command === 'string' ? args.command : null;
   const followed = typeof args?.id === 'string' ? args.id : null;
@@ -611,7 +595,8 @@ function useOfferedState(files: WorkspaceFiles | undefined, path: string | null,
  * that it is gone. Whoever cannot use the workspace in the channel sees the card without the
  * download.
  */
-const FilePublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, files, filesVersion}) => {
+const FilePublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  const {files, filesVersion} = useShownChannel();
   const args = argumentsObject(call.arguments);
   const offered = resultObject(result);
   const path = textOf(offered, 'path') ?? textOf(args, 'path');
@@ -695,7 +680,8 @@ function useArtifact(id: string | null): ArtifactResponse | null {
  * a download of that version - fixed, whatever became of the file -, and "Open" to its page (issue
  * 291) for whoever reaches the artifact itself. It lives as long as its project (issue 467).
  */
-const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result, artifacts, onSelectPage}) => {
+const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  const {artifacts, onSelectPage} = useShownChannel();
   const args = argumentsObject(call.arguments);
   const published = resultObject(result);
   const id = textOf(published, 'artifact');
@@ -739,7 +725,8 @@ const ArtifactPublishToolCallContent: React.FC<ToolCallContentProps> = ({call, r
  * where the arguments hold them. A loaded skill's text is not in the result, which names the skill:
  * it is given to the agent to follow, never published (issue 389).
  */
-const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onSelectPage}) => {
+const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  const {onSelectPage} = useShownChannel();
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Skill not shown</span>;
   const args = argumentsObject(call.arguments);
   const answered = resultObject(result);
@@ -778,7 +765,8 @@ const SkillToolCallContent: React.FC<ToolCallContentProps> = ({call, result, onS
  * The skills an agent may load, listed (issue 301): how many, and each with its name - linked to
  * its page where the chat can open it - and what it is for, as `/skills` lists them.
  */
-const SkillListToolCallContent: React.FC<ToolCallContentProps> = ({result, onSelectPage}) => {
+const SkillListToolCallContent: React.FC<ToolCallContentProps> = ({result}) => {
+  const {onSelectPage} = useShownChannel();
   const skills = objectsOf(resultObject(result)?.skills);
   return (
     <>
@@ -985,34 +973,20 @@ interface ToolCallViewProps {
    * (`ToolResult.message_id`).
    */
   messageId?: string;
+  /**
+   * The turn of the message holding the call: what its result gave or showed of what a message of
+   * the turn carries is named here and shown there (issue 535).
+   */
+  turnId?: string;
   /** Its caller was removed from the channel before it ended. */
   abandoned?: boolean;
-  /** The files of the channel's workspace, for a call that offers one (issue 273). */
-  files?: WorkspaceFiles;
-  /** Changes whenever those files may have changed. */
-  filesVersion?: number;
-  /** The artifacts of the channel, for a call that published one (issue 271). */
-  artifacts?: ChannelArtifacts;
-  /** The attachments of the channel's messages, for what a result showed (issue 282). */
-  attachments?: ChannelAttachments;
-  /**
-   * Opens a page in the place of the channel - a skill's, for a call that names one (issue 281).
-   */
-  onSelectPage?: (page: Page) => void;
   /** Interrupts the call alone while it runs, for who may (issue 276); the turn goes on. */
   onInterrupt?: () => void;
-  /** Ends a command the call handed back as running, for who may (issue 294). */
-  onKillCommand?: (commandId: string) => void;
-  /** The commands ended already, which are not offered to be ended. */
-  endedCommands?: ReadonlySet<string>;
-  /**
-   * The digests of what the messages of its turn carry: what its result gave or showed of them is
-   * named here and shown there (issue 535).
-   */
-  attachedInTurn?: ReadonlySet<string>;
 }
 
-export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, messageId, abandoned, files, filesVersion, artifacts, attachments, onSelectPage, onInterrupt, onKillCommand, endedCommands, attachedInTurn}) => {
+export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, messageId, turnId, abandoned, onInterrupt}) => {
+  const {attachments, digestsByTurn} = useShownChannel();
+  const attachedInTurn = turnId ? digestsByTurn?.get(turnId) : undefined;
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   // What the call gave and showed its model, as a message shows what it carries - but what its
   // turn attached, which only its message shows.
@@ -1073,7 +1047,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, message
         </div>
       </div>
       <div className="p-2">
-        <Content call={call} result={result} files={files} filesVersion={filesVersion} artifacts={artifacts} onSelectPage={onSelectPage} onKillCommand={onKillCommand} endedCommands={endedCommands} />
+        <Content call={call} result={result} />
         {result && kept.length > 0 && (
           <AttachmentList items={kept} messageId={result.message_id ?? messageId} attachments={attachments} classification={result.classification} />
         )}

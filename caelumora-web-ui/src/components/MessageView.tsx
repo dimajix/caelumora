@@ -1,11 +1,9 @@
-// One message as the chat shows it - reasoning, content, tool calls with
-// their status and result - shared by the chat and the context panel (issue 41).
+// One message as the chat shows it - reasoning, content, tool calls with their status and result -
+// shared by the chat and the context and history panels (issue 41).
 
 import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
 import type {ActorId, ChannelParticipant, Message, ToolCall} from '../types';
-import type {ChannelArtifacts, ChannelAttachments, WorkspaceFiles} from '../api';
-import type {Page} from '../page';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {mentionedHandles} from '../mention';
@@ -14,6 +12,7 @@ import {HoverCard} from './HoverCard';
 import {UsageStats} from './UsageStats';
 import {ToolCallView} from './ToolCallView';
 import {AttachmentList} from './AttachmentList';
+import {useShownChannel} from '../shownChannel';
 
 /** When a message was written: date and time, the full form on hover (issue 43). */
 export const MessageTime: React.FC<{timestamp?: string; className?: string}> = ({timestamp, className}) => {
@@ -141,31 +140,8 @@ interface MessageViewProps {
   /** Further icons for the footer, e.g. showing the message's context. */
   actions?: React.ReactNode;
   className?: string;
-  /**
-   * The files of the channel's workspace, where its calls may offer one for download (issue 273).
-   */
-  files?: WorkspaceFiles;
-  /** Changes whenever those files may have changed. */
-  filesVersion?: number;
-  /** The artifacts of the channel, where its calls published one (issue 271). */
-  artifacts?: ChannelArtifacts;
-  /**
-   * The attachments of the channel's messages, where they are downloaded (issue 282); named only
-   * without it.
-   */
-  attachments?: ChannelAttachments;
-  /** Opens a page in the place of the channel - a skill's, where its calls name one (issue 281). */
-  onSelectPage?: (page: Page) => void;
   /** Interrupts one of its calls alone while it runs (issue 276); offered where given. */
   onInterruptCall?: (call: ToolCall) => void;
-  /** Ends a command one of its calls handed back as running (issue 294); offered where given. */
-  onKillCommand?: (commandId: string) => void;
-  /** The commands ended already in the channel. */
-  endedCommands?: ReadonlySet<string>;
-  /**
-   * The digests of what the messages of its turn carry, which its calls leave to them (issue 535).
-   */
-  attachedInTurn?: ReadonlySet<string>;
   /**
    * Where it stands among the messages of its turn shown together (issue
    * 415): not `first`, it is not headed with its sender's name; not `last`,
@@ -174,7 +150,8 @@ interface MessageViewProps {
   inTurn?: {first: boolean; last: boolean};
 }
 
-export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, files, filesVersion, artifacts, attachments, onSelectPage, onInterruptCall, onKillCommand, endedCommands, attachedInTurn, inTurn}) => {
+export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, participants, badges, actions, className, onInterruptCall, inTurn}) => {
+  const {attachments} = useShownChannel();
   const own = isOwn(msg, me);
   const named = inTurn?.first ?? true;
   const last = inTurn?.last ?? true;
@@ -213,8 +190,8 @@ export const MessageView: React.FC<MessageViewProps> = ({message: msg, me, parti
       {msg.tool_calls && msg.tool_calls.length > 0 && (
         <div className="mt-2 space-y-2">
           {msg.tool_calls.map((call, cidx) => (
-            <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} messageId={msg.id} abandoned={msg.abandoned} files={files} filesVersion={filesVersion} artifacts={artifacts} attachments={attachments} onSelectPage={onSelectPage}
-              onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} onKillCommand={onKillCommand} endedCommands={endedCommands} attachedInTurn={attachedInTurn} />
+            <ToolCallView key={cidx} call={call} result={msg.tool_results?.find(r => r.id === call.id)} messageId={msg.id} turnId={msg.turn_id} abandoned={msg.abandoned}
+              onInterrupt={onInterruptCall && call.id ? () => onInterruptCall(call) : undefined} />
           ))}
         </div>
       )}

@@ -17,6 +17,7 @@ import {actorUuid} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {ToolSetList} from './ToolSetList';
 import {MessageView} from './MessageView';
+import {ShownChannelContext} from '../shownChannel';
 import {mergeToolResultsAmong} from '../messages';
 
 /** How many of the latest messages are shown before "show earlier". */
@@ -228,74 +229,77 @@ export const ContextPanel: React.FC<ContextPanelProps> = ({sessionId, channelId,
   const rest = rows.slice(pinned);
   const hidden = showAll ? 0 : Math.max(0, rest.length - SHOWN_AT_FIRST);
 
+  // A record: its cards show what was seen whole (issue 535) and offer no download, no page and
+  // no ending of a command, which are the chat's (issue 536).
   return (
-    <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
-        <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
-          <ScrollText size={18} />
-          <h3 className="font-semibold text-sm flex-1">What {message.sender_name || 'the agent'} was given</h3>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
-            <X size={16} />
-          </button>
+    <ShownChannelContext value={{attachments}}>
+      <div className="w-full border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 flex flex-col min-h-0">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 space-y-2">
+          <div className="flex items-center gap-2 text-gray-700 dark:text-gray-200">
+            <ScrollText size={18} />
+            <h3 className="font-semibold text-sm flex-1">What {message.sender_name || 'the agent'} was given</h3>
+            <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md" title="Close">
+              <X size={16} />
+            </button>
+          </div>
+          {message.classification && (
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              Labelled <span className="text-gray-700 dark:text-gray-300">{classificationLabel(message.classification)}</span> by
+              what it had seen; marked is what of this set the label.
+            </div>
+          )}
+          {context && (
+            <div className="space-y-0.5">
+              <DigestLine label="Transcript" digest={context.transcript_digest} />
+              <DigestLine label="Tools" digest={context.tools_digest} />
+            </div>
+          )}
         </div>
-        {message.classification && (
-          <div className="text-xs text-gray-500 dark:text-gray-400">
-            Labelled <span className="text-gray-700 dark:text-gray-300">{classificationLabel(message.classification)}</span> by
-            what it had seen; marked is what of this set the label.
-          </div>
-        )}
-        {context && (
-          <div className="space-y-0.5">
-            <DigestLine label="Transcript" digest={context.transcript_digest} />
-            <DigestLine label="Tools" digest={context.tools_digest} />
-          </div>
-        )}
-      </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {notice && <div className="text-sm text-gray-500 dark:text-gray-400">{notice}</div>}
-        {!context && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
-        {context && (
-          <>
-            {context.knowledge?.length > 0 && <KnowledgeList knowledge={context.knowledge} sessionId={sessionId} />}
-            {context.tool_sets?.length > 0 && <ToolList sets={context.tool_sets} />}
-            {rows.slice(0, pinned).map(row => row.kind === 'prompt' && (
-              <PromptView key={row.digest} prompt={row} leading />
-            ))}
-            {hidden > 0 && (
-              <div className="text-center">
-                <button
-                  onClick={() => setShowAll(true)}
-                  className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
-                >
-                  Show {hidden} earlier {hidden === 1 ? 'message' : 'messages'}
-                </button>
-              </div>
-            )}
-            {rest.slice(hidden).map((row, idx) => row.kind === 'prompt' ? (
-              <PromptView key={`${row.digest}-${idx}`} prompt={row} leading={false} />
-            ) : (
-              <MessageView
-                key={row.message.id ?? idx}
-                message={row.message}
-                me={me}
-                participants={participants}
-                attachments={attachments}
-                className={cn('max-w-full', row.sets_label && 'ring-2 ring-amber-400 dark:ring-amber-500')}
-                badges={[
-                  ...(row.message.internal ? ['internal'] : []),
-                  ...(row.message.role === 'Tool' ? ['tool result'] : []),
-                  ...(row.message.classification ? [classificationLabel(row.message.classification)] : []),
-                  ...(row.sets_label ? ['set the label'] : []),
-                ]}
-              />
-            ))}
-            {rest.length === 0 && (
-              <div className="text-sm text-gray-500 dark:text-gray-400">The context was empty.</div>
-            )}
-          </>
-        )}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {notice && <div className="text-sm text-gray-500 dark:text-gray-400">{notice}</div>}
+          {!context && !notice && <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>}
+          {context && (
+            <>
+              {context.knowledge?.length > 0 && <KnowledgeList knowledge={context.knowledge} sessionId={sessionId} />}
+              {context.tool_sets?.length > 0 && <ToolList sets={context.tool_sets} />}
+              {rows.slice(0, pinned).map(row => row.kind === 'prompt' && (
+                <PromptView key={row.digest} prompt={row} leading />
+              ))}
+              {hidden > 0 && (
+                <div className="text-center">
+                  <button
+                    onClick={() => setShowAll(true)}
+                    className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    Show {hidden} earlier {hidden === 1 ? 'message' : 'messages'}
+                  </button>
+                </div>
+              )}
+              {rest.slice(hidden).map((row, idx) => row.kind === 'prompt' ? (
+                <PromptView key={`${row.digest}-${idx}`} prompt={row} leading={false} />
+              ) : (
+                <MessageView
+                  key={row.message.id ?? idx}
+                  message={row.message}
+                  me={me}
+                  participants={participants}
+                    className={cn('max-w-full', row.sets_label && 'ring-2 ring-amber-400 dark:ring-amber-500')}
+                  badges={[
+                    ...(row.message.internal ? ['internal'] : []),
+                    ...(row.message.role === 'Tool' ? ['tool result'] : []),
+                    ...(row.message.classification ? [classificationLabel(row.message.classification)] : []),
+                    ...(row.sets_label ? ['set the label'] : []),
+                  ]}
+                />
+              ))}
+              {rest.length === 0 && (
+                <div className="text-sm text-gray-500 dark:text-gray-400">The context was empty.</div>
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
+    </ShownChannelContext>
   );
 };

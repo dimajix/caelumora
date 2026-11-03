@@ -85,6 +85,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
+import {ShownChannelContext, type ShownChannel} from '../shownChannel';
 import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
@@ -1344,6 +1345,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     }
   };
 
+  // What the messages of the chat need of the channel (issue 536).
+  const shownChannel: ShownChannel = {
+    attachments: channelAttachments,
+    files: workspaceFiles ?? undefined,
+    filesVersion: workspaceVersion,
+    artifacts: channelArtifacts,
+    onSelectPage,
+    onKillCommand: workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined,
+    endedCommands: ended,
+    digestsByTurn,
+  };
+
   /**
    * Asks for another answer instead of `answer`, still under way (issue
    * 235): offered once its turn is known and where its answerer's
@@ -1609,15 +1622,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       message={msg}
       me={me}
       participants={participants}
-      files={workspaceFiles ?? undefined}
-      filesVersion={workspaceVersion}
-      artifacts={channelArtifacts}
-      attachments={channelAttachments}
-      onSelectPage={onSelectPage}
       onInterruptCall={mayInterruptCallsOf(msg) ? (call) => void interruptCall(msg, call) : undefined}
-      onKillCommand={workspace?.can_write ? (commandId) => void killCommand(commandId) : undefined}
-      endedCommands={ended}
-      attachedInTurn={msg.turn_id ? digestsByTurn.get(msg.turn_id) : undefined}
       inTurn={inTurn}
       badges={[channel && msg.classification ? labelOtherThan(msg.classification, channel.classification) : null]
         .flatMap(released => released ? [`released: ${released}`] : [])}
@@ -1780,66 +1785,68 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         }}
         className={cn("flex-1 flex flex-col min-w-0", dragging && "ring-2 ring-inset ring-blue-500")}
       >
-        <div ref={chatRef} onScroll={chatScrolled} className="flex-1 overflow-y-auto p-4 space-y-4">
-          {earlier !== null && (
-            <div className="text-center">
-              <button
-                onClick={loadEarlier}
-                disabled={isLoadingHistory}
-                className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
-              >
-                {isLoadingHistory ? 'Loading…' : 'Load earlier messages'}
-              </button>
-            </div>
-          )}
-          {groups.map(group => {
-            const trailing = group === groups[groups.length - 1] ? answers.filter(continuesLast) : [];
-            const together = group.turnId !== null && (turnSizes.get(group.turnId) ?? 0) > 1;
-            return [group.start === newFrom && (
-              <div key="new-messages" role="separator" aria-label="New messages" className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
-                <div className="flex-1 border-t border-red-400 dark:border-red-500" />
-                New messages
-                <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+        <ShownChannelContext value={shownChannel}>
+          <div ref={chatRef} onScroll={chatScrolled} className="flex-1 overflow-y-auto p-4 space-y-4">
+            {earlier !== null && (
+              <div className="text-center">
+                <button
+                  onClick={loadEarlier}
+                  disabled={isLoadingHistory}
+                  className="text-xs px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
+                >
+                  {isLoadingHistory ? 'Loading…' : 'Load earlier messages'}
+                </button>
               </div>
-            ), (
-              <div
-                key={`turn-${rowKey(rows[group.start], group.start)}`}
-                onMouseEnter={together ? () => setPointedTurn(group.turnId) : undefined}
-                onMouseLeave={together ? () => setPointedTurn(null) : undefined}
-                className={cn(
-                  "space-y-1",
-                  // Indented as a whole, its frame flush with the messages alone and as
-                  // far from its messages as they are from their content.
-                  together && "p-3 rounded-lg transition-colors",
-                  together && pointedTurn === group.turnId && "bg-gray-200/70 dark:bg-gray-700/50 ring-1 ring-gray-300 dark:ring-gray-600",
-                )}
-              >
-                {rows.slice(group.start, group.end).map((row, offset) => {
-                  const idx = group.start + offset;
-                  const inTurn = {first: idx === group.start, last: idx === group.end - 1 && trailing.length === 0};
-                  if (row.kind === 'message') return renderMessage(row.message, rowKey(row, idx), inTurn);
-                  const current = currentSteps.get(row.turnId) === idx;
-                  const streaming = current ? answers.filter(a => a.turnId === row.turnId && inStep(a)) : [];
-                  return (
-                    <PlanSteps
-                      key={rowKey(row, idx)}
-                      name={row.sender || 'Assistant'}
-                      step={row.step}
-                      count={row.messages.length}
-                      underWay={row.turnId !== null && current && answers.some(a => a.turnId === row.turnId)}
-                      streaming={streaming.length > 0}
-                    >
-                      {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`, {first: false, last: i === row.messages.length - 1 && streaming.length === 0}))}
-                      {streaming.map(answer => renderAnswer(answer, true))}
-                    </PlanSteps>
-                  );
-                })}
-                {trailing.map(answer => renderAnswer(answer, true))}
-              </div>
-            )];
-          })}
-          {answers.filter(answer => !inStep(answer) && !continuesLast(answer)).map(answer => renderAnswer(answer))}
-        </div>
+            )}
+            {groups.map(group => {
+              const trailing = group === groups[groups.length - 1] ? answers.filter(continuesLast) : [];
+              const together = group.turnId !== null && (turnSizes.get(group.turnId) ?? 0) > 1;
+              return [group.start === newFrom && (
+                <div key="new-messages" role="separator" aria-label="New messages" className="flex items-center gap-2 text-xs font-semibold text-red-600 dark:text-red-400">
+                  <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+                  New messages
+                  <div className="flex-1 border-t border-red-400 dark:border-red-500" />
+                </div>
+              ), (
+                <div
+                  key={`turn-${rowKey(rows[group.start], group.start)}`}
+                  onMouseEnter={together ? () => setPointedTurn(group.turnId) : undefined}
+                  onMouseLeave={together ? () => setPointedTurn(null) : undefined}
+                  className={cn(
+                    "space-y-1",
+                    // Indented as a whole, its frame flush with the messages alone and as
+                    // far from its messages as they are from their content.
+                    together && "p-3 rounded-lg transition-colors",
+                    together && pointedTurn === group.turnId && "bg-gray-200/70 dark:bg-gray-700/50 ring-1 ring-gray-300 dark:ring-gray-600",
+                  )}
+                >
+                  {rows.slice(group.start, group.end).map((row, offset) => {
+                    const idx = group.start + offset;
+                    const inTurn = {first: idx === group.start, last: idx === group.end - 1 && trailing.length === 0};
+                    if (row.kind === 'message') return renderMessage(row.message, rowKey(row, idx), inTurn);
+                    const current = currentSteps.get(row.turnId) === idx;
+                    const streaming = current ? answers.filter(a => a.turnId === row.turnId && inStep(a)) : [];
+                    return (
+                      <PlanSteps
+                        key={rowKey(row, idx)}
+                        name={row.sender || 'Assistant'}
+                        step={row.step}
+                        count={row.messages.length}
+                        underWay={row.turnId !== null && current && answers.some(a => a.turnId === row.turnId)}
+                        streaming={streaming.length > 0}
+                      >
+                        {row.messages.map((msg, i) => renderMessage(msg, msg.id ?? `local-${i}`, {first: false, last: i === row.messages.length - 1 && streaming.length === 0}))}
+                        {streaming.map(answer => renderAnswer(answer, true))}
+                      </PlanSteps>
+                    );
+                  })}
+                  {trailing.map(answer => renderAnswer(answer, true))}
+                </div>
+              )];
+            })}
+            {answers.filter(answer => !inStep(answer) && !continuesLast(answer)).map(answer => renderAnswer(answer))}
+          </div>
+        </ShownChannelContext>
 
         {braveMode && (
           <div role="status" className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 border-t border-amber-300 dark:border-amber-800 text-xs text-amber-900 dark:text-amber-200 flex items-center gap-2">

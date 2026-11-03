@@ -337,7 +337,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [483](483-the-sidebar-edits-a-session-name-by-hand.md) | done | The field in which the sidebar renames a session repeats what `EditInPlace` does, without what that has since learned: Escape is followed by a save, and a name that differs only by spaces is sent. |
 | [488](488-the-sidebar-offers-to-rename-any-session.md) | done | A session's menu in the sidebar offers "Rename" also to who may not change the session, who types a name and only then sees it refused; "Language" and "Time zone" beside it are offered only under `can_change`. |
 | [509](509-channel-attachments-panel.md) | done | The files said in a channel - uploaded by users, attached by agents, given by tools - are shown only at the message that carried them, so finding one again means scrolling through the history, and nothing lists them together. |
-| [536](536-message-cards-take-the-channel-through-props.md) | open | `MessageView` takes eight props of the channel only to hand them on to `ToolCallView`, which hands most of them on to the handler of a presentation, so that whatever a card needs to know of the channel adds a prop to three components. |
+| [536](536-message-cards-take-the-channel-through-props.md) | done | `MessageView` takes eight props of the channel only to hand them on to `ToolCallView`, which hands most of them on to the handler of a presentation, so that whatever a card needs to know of the channel adds a prop to three components. |
 
 ## Context and knowledge
 

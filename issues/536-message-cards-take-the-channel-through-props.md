@@ -1,6 +1,6 @@
 # 536 — The cards of a message are handed what they know of the channel prop by prop
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -48,3 +48,9 @@ A is chosen: it removes the passing on rather than packing it.
 
 - **2026-11-03** — Issue created, from the review of issue
   [535](535-tool-media-attached-kept-and-shown-twice.md), which added the eighth such prop.
+- **2026-11-03** — Done as A. The context is `ShownChannel` (`src/shownChannel.ts`, read by
+  `useShownChannel`) - not `MessageChannel`, which the browser has already, so that the name would
+  have shadowed it without an import. `ChatView` provides all of it, `ContextPanel` and
+  `HistoryPanel` the attachments alone; `MessageView` and `ToolCallView` lost the eight props, and
+  `ToolCallView` takes the turn of its message instead of the digests of it; the handlers of the
+  presentations take their call and result. WEB-UI.md says so.

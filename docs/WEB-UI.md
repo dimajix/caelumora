@@ -61,9 +61,17 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/globalEvents.ts` | What the session list does with a global event |
 | `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the domain |
 | `src/actor.ts` | Who an `ActorId` names, and the `ActorId` of a user or an agent |
+| `src/shownChannel.ts` | What the messages shown of a channel need of it, as a React context |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel, and the lists in the sidebar it is opened from |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
 | `src/components/` | One component per file, named after what it shows |
+
+What a subtree shares and reads deep below is a React context, provided once at its top and read
+where it is used, not a prop each component on the way takes only to hand it on; what is a
+component's own - its message, its call - stays a prop. `ShownChannel` is such a context: what a
+message and its cards need of the channel - its attachments, the workspace's files, the artifacts,
+the commands ended, what each turn carries, opening a page and ending a command. The chat provides
+all of it; the context and history panels, a record, provide the attachments alone.
 
 ## Talking to the server
 
