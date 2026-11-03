@@ -1,10 +1,21 @@
+//! The facet `ToolProvider` of `mcp_server` (issues 32, 126, 161, 188, 194, 246): the tools of
+//! the component's MCP server, described as configured or as the server describes itself, and
+//! unavailable - with why, in general terms - if the server could not be asked for them.
+//!
+//! Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid collisions with
+//! built-in tools or other MCP servers, since an agent's tools are found by name across all its
+//! providers. No connection is held open between calls: the tools are discovered when they are
+//! first offered, in the name of whoever acts, and again once what was discovered is older than
+//! the endpoint's `refresh_secs`, or after the server did not know a tool that was called (issue
+//! 126); `execute()` opens a fresh connection per call (the Streamable HTTP transport supports
+//! stateless operation), which keeps the component free of any stale-connection state. Its
+//! credential it resolves of the secrets of whoever asks it (`Situation::secrets`, issue 516).
+
+use super::{McpServerComponent, McpServerParams};
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
-use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_api::cache::ExpiringCache;
-use caelumora_api::component::Params;
-use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::RemoteEndpoint;
@@ -15,14 +26,9 @@ use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
-use serde::Deserialize;
 use serde_json::Value;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::time;
 use tracing::warn;
-
-pub const MCP_SERVER_KIND: &str = "mcp_server";
 
 #[derive(Debug, thiserror::Error)]
 enum McpError {
@@ -39,47 +45,6 @@ enum McpError {
 }
 
 type McpResult<T> = Result<T, McpError>;
-
-/// How long a call or the discovery of the tools may take unless the
-/// endpoint says otherwise.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// How long the tools discovered are kept before the server is asked for
-/// them again, unless the endpoint says otherwise (issue 126).
-const DEFAULT_REFRESH: Duration = Duration::from_secs(300);
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct McpServerParams {
-    /// The MCP server. Its timeout is how long a call of one of its tools,
-    /// or the discovery of them, may take; its `refresh_secs` how long the
-    /// tools discovered are kept.
-    pub endpoint: RemoteEndpoint,
-    /// Whether calls to this MCP server's tools require human approval.
-    /// Left out, they do: a server may act outside, and what makes an agent
-    /// call it may be a consent nobody gave (issue 150).
-    #[serde(default)]
-    pub requires_approval: ApprovalMode,
-    /// How the results of this server's tools are classified (issue 133):
-    /// a result that may not flow into the agent's channel is withheld
-    /// from the agent. Left out, as the channel.
-    #[serde(default)]
-    pub classification: Option<Classification>,
-    /// What this server's tools are for, written for a model: the
-    /// description of their tool set (issue 194). Left out, what the server
-    /// says of itself in its `instructions`, else a text naming the
-    /// component.
-    #[serde(default)]
-    pub description: Option<String>,
-    /// What the server is cleared for (issue 180): where the arguments of
-    /// its tools go. Its tools are not offered in a channel that may not
-    /// flow there. Left out, public: the server's word is trusted only
-    /// where it is configured.
-    #[serde(default)]
-    pub destination: Option<Classification>,
-}
-
-impl Params for McpServerParams {}
 
 impl McpError {
     /// Why the server's tools are unavailable after this error, in general
@@ -105,52 +70,11 @@ fn read_only(annotations: Option<&ToolAnnotations>) -> bool {
     annotations.and_then(|a| a.read_only_hint).unwrap_or(false)
 }
 
-impl McpServerParams {
-    fn timeout(&self) -> Duration {
-        self.endpoint.timeout_or(DEFAULT_TIMEOUT)
-    }
-
-    fn refresh(&self) -> Duration {
-        self.endpoint.refresh_or(DEFAULT_REFRESH)
-    }
-}
-
-/// Exposes the tools of a single remote MCP server (reached over the
-/// Streamable HTTP transport) as a `ToolProvider`: one tool set, described
-/// as configured or as the server describes itself, and unavailable - with
-/// why, in general terms - if the server could not be asked for its tools.
-///
-/// Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid
-/// collisions with built-in tools or other MCP servers, since an agent's
-/// tools are found by name across all its providers. No connection is held
-/// open between calls: the tools are discovered when they are first offered,
-/// in the name of whoever acts, and again once what was discovered is older
-/// than the endpoint's `refresh_secs`, or after the server did not know a
-/// tool that was called (issue 126); `execute()` opens a fresh connection
-/// per call (the Streamable HTTP transport supports stateless operation),
-/// which keeps this provider free of any stale-connection state.
-#[derive(Debug)]
-pub struct McpServerComponent {
-    descriptor_id: String,
-    params: McpServerParams,
-    /// The server's tools, and what it says of itself (`instructions`) if
-    /// it does, as last discovered.
-    discovered: ExpiringCache<(Vec<Tool>, Option<String>)>,
-}
-
 /// Between the component id and the remote name of a tool: an MCP tool is
 /// offered as `<component id>__<remote name>`.
 const NAME_SEPARATOR: &str = "__";
 
 impl McpServerComponent {
-    /// The provider of the component `descriptor_id` with `params`; its
-    /// tools are not discovered yet. Its credential it resolves of the
-    /// secrets of whoever asks it (`Situation::secrets`, issue 516).
-    fn new(descriptor_id: String, params: McpServerParams) -> Self {
-        let discovered = ExpiringCache::new(params.refresh());
-        Self { descriptor_id, params, discovered }
-    }
-
     fn strip_prefix<'a>(&self, name: &'a str) -> ToolResult<&'a str> {
         name.strip_prefix(self.descriptor_id.as_str())
             .and_then(|rest| rest.strip_prefix(NAME_SEPARATOR))
@@ -399,29 +323,23 @@ impl ToolProvider for McpServerComponent {
     }
 }
 
-pub fn register(registry: &mut LibraryComponents<'_>) {
-    registry.register(
-        ComponentKind::new(MCP_SERVER_KIND)
-            .params::<McpServerParams>()
-            .provides::<dyn ToolProvider>(),
-        |descriptor, _context| {
-            let params = McpServerParams::read(&descriptor.params)?;
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(McpServerComponent::new(
-                descriptor.id.clone(),
-                params,
-            )));
-            Ok(facets)
-        },
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_agents::tool::ApprovalMode;
     use caelumora_domain::confidentiality::Confidentiality;
-    use caelumora_domain::remote::RemoteAuthConfig;
     use serde_json::json;
+
+    /// The params of a server configured with nothing but its endpoint, and no approval.
+    fn unconfigured() -> McpServerParams {
+        McpServerParams {
+            endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
+            requires_approval: ApprovalMode::Never,
+            classification: None,
+            description: None,
+            destination: None,
+        }
+    }
 
     #[tokio::test]
     async fn an_unreachable_server_is_named_without_what_may_carry_a_credential() {
@@ -431,55 +349,10 @@ mod tests {
         assert!(error.contains("'http://127.0.0.1:1/mcp'") && !error.contains("secret"), "{error}");
     }
 
+    /// A tool asks for approval as configured: all, none, or all but those the server says only
+    /// read.
     #[test]
-    fn parses_bearer_auth_config() {
-        let value = json!({ "endpoint": {
-            "url": "http://127.0.0.1:1234/mcp",
-            "auth": { "type": "bearer", "secret": "MY_TOKEN" },
-            "timeout_secs": 5
-        } });
-        let params: McpServerParams = serde_json::from_value(value).unwrap();
-        assert_eq!(params.endpoint.url, "http://127.0.0.1:1234/mcp");
-        assert_eq!(params.timeout(), Duration::from_secs(5));
-        match params.endpoint.auth {
-            Some(RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
-            _ => panic!("Expected Bearer auth"),
-        }
-    }
-
-    #[test]
-    fn parses_config_without_auth_using_defaults() {
-        let value = json!({ "endpoint": { "url": "http://127.0.0.1:1234/mcp" } });
-        let params: McpServerParams = serde_json::from_value(value).unwrap();
-        assert!(params.endpoint.auth.is_none());
-        assert_eq!(params.timeout(), Duration::from_secs(10));
-        assert_eq!(params.refresh(), Duration::from_secs(300));
-        assert_eq!(
-            params.requires_approval,
-            ApprovalMode::Always,
-            "approval unless configured otherwise"
-        );
-        assert!(
-            serde_json::from_value::<McpServerParams>(
-                json!({ "endpoint": { "url": "http://mcp.example" }, "requires_aproval": true })
-            )
-            .is_err(),
-            "nothing unknown"
-        );
-    }
-
-    #[test]
-    fn approval_is_configured_for_all_none_or_all_but_the_read_only_tools() {
-        let configured = |approval: Value| {
-            serde_json::from_value::<McpServerParams>(
-                json!({ "endpoint": { "url": "http://mcp.example" }, "requires_approval": approval }),
-            )
-            .map(|c| c.requires_approval)
-        };
-        assert_eq!(configured(json!("unless_read_only")).unwrap(), ApprovalMode::UnlessReadOnly);
-        let refused = configured(json!("hints")).unwrap_err().to_string();
-        assert!(refused.contains("requires_approval must be"), "names the field: {refused}");
-
+    fn a_tool_asks_for_approval_as_configured_and_as_its_server_says_it_only_reads() {
         let read_only = ToolAnnotations::new().read_only(true);
         let writes = ToolAnnotations::new().read_only(false);
         let unannotated = ToolAnnotations::new().destructive(false);
@@ -499,21 +372,16 @@ mod tests {
 
     #[test]
     fn namespacing_round_trips_through_prefix_stripping() {
-        let params = McpServerParams {
-            endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
-            requires_approval: ApprovalMode::Never,
-            classification: None,
-            description: None,
-            destination: None,
-        };
-        let provider = McpServerComponent::new("github-mcp".to_string(), params);
-
+        let provider = McpServerComponent::new("github-mcp".to_string(), unconfigured());
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
         assert!(provider.strip_prefix("unrelated_tool").is_err());
+    }
 
-        // Issue 180: the server is cleared for what is configured, public
-        // unless configured.
+    /// Issue 180: the server is cleared for what is configured, public unless configured.
+    #[test]
+    fn the_server_is_cleared_for_what_is_configured_and_public_unless() {
+        let provider = McpServerComponent::new("github-mcp".to_string(), unconfigured());
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         let internal = Classification::general(Confidentiality::Internal);
         let cleared = McpServerComponent::new(
@@ -521,11 +389,6 @@ mod tests {
             McpServerParams { destination: Some(internal.clone()), ..provider.params.clone() },
         );
         assert_eq!(cleared.destination(), Some(internal));
-        let configured: McpServerParams = serde_json::from_value(
-            json!({ "endpoint": { "url": "http://mcp.example" }, "destination": { "level": "confidential" } }),
-        )
-        .unwrap();
-        assert!(configured.destination.is_some(), "read from the params");
     }
 
     #[test]

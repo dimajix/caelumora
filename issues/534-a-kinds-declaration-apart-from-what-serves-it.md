@@ -115,3 +115,9 @@ Proposed by the maintainer on 2026-11-03, in the discussion of issue
   where the graph is asked for the models, and `new` takes them as not empty. Its test builds the
   component through a kernel of a test, with `caelumora-kernel` and `caelumora-security` as
   dev-dependencies of the crate.
+- **2026-11-03** — Step 2: `caelumora-tool-mcp` laid out so. The `McpError` of talking to the
+  server, the namespacing of its tools and their discovery are its `tool.rs`; the `McpServerParams`
+  with their defaults its `mod.rs`, the fields no longer `pub`, the `McpServerComponent` and
+  `register` no longer public. The tests of reading the params are the `mod.rs`'s; the two tests
+  that read the params and judged the tools - their approval, their namespacing and destination -
+  are split, each subject a test of its own. The module had no module docs and has them now.
