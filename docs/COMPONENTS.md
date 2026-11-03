@@ -412,10 +412,12 @@ Components follow one convention:
     rendered when it is made (`new`, which fails if one is missing) and kept with its tools
     ([TOOLS.md](TOOLS.md)).
 *   **Construction:** the factory builds the struct literally; there is a `new` only where building
-    can fail - a text that cannot be had -, and it fails with the error of what it does itself, such
-    as the `PromptError` of that text, never with a `ComponentError` (issue 534): whether the
-    configuration holds is said by `…Params::read` and its `check` in `register`, which translates
-    what `new` reports with `?`.
+    can fail - a text that cannot be had -, or where the struct holds state of its own that starts
+    empty, which neither the factory nor a test should have to know of: the tools an `mcp_server`
+    discovered, whether `compaction` told that no context size is known. A `new` that can fail fails
+    with the error of what it does itself, such as the `PromptError` of a text, never with a
+    `ComponentError` (issue 534): whether the configuration holds is said by `…Params::read` and its
+    `check` in `register`, which translates what `new` reports with `?`.
 *   **Params:** what a kind takes is a struct named after the kind with `Params`
     (`CompactionParams`, `WorkspaceParams`), `#[serde(deny_unknown_fields)]`, declared with
     `ComponentKind::params`; it implements `Params`, and a check beyond its fields' types is its

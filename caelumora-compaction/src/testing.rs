@@ -19,6 +19,11 @@ pub(crate) fn prompts() -> PromptTexts {
     testing::prompts_with(NAMESPACE, PROMPTS)
 }
 
+/// A message heard, saying `text`.
+pub(crate) fn heard(text: &str) -> Message {
+    Message { content: Some(text.to_string()), ..Message::new(Classification::PUBLIC) }
+}
+
 /// The text the strategy puts in the place of a part, unless it fails.
 pub(crate) const SUMMARY: &str = "They want release notes.";
 

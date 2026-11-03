@@ -1,6 +1,6 @@
 # 534 — A component kind's declaration lies in one file with the type that serves its facets
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -151,3 +151,16 @@ Proposed by the maintainer on 2026-11-03, in the discussion of issue
   `SkillsParams` no longer derives `Default`, which nothing used. COMPONENTS.md says that what
   several facets share is the `mod.rs`'s, and that the names and presentations the crate's tests
   use are public too, as in steps 3 and 5.
+- **2026-11-03** — Step 6: `caelumora-compaction` laid out so, with two facets: `activity`, the
+  compaction on its own, and `command`, `/compact`. What both share - compacting and what the
+  channel is told when there was nothing to compact - is the `mod.rs`'s, the component the tests
+  of both build `component::testing`'s. The `CompactionComponent` and `register` are no longer
+  public, nor the command's name, which nothing outside used. `summary_compaction`, a role, stays
+  as it is; the message heard its tests and the component's make is the crate's `testing`'s. Decided
+  with the maintainer: the rule **Construction** in COMPONENTS.md allows a `new` where the struct
+  holds state of its own that starts empty, as `McpServerComponent` and `CompactionComponent` do.
+- **2026-11-03** — Done. Every crate that brings a contributing component kind lays it out so:
+  `caelumora-tool-attachment`, `caelumora-tool-image`, `caelumora-tool-mcp`, `caelumora-artifacts`,
+  `caelumora-tool-workspace`, `caelumora-skills` and `caelumora-compaction`. The steps 7 and 8 the
+  considerations planned - `caelumora-decision` and `caelumora-a2a` - fell away with the decision:
+  `DecisionPolicy` and `A2aAgent` are roles, as `SummaryCompaction` is, and keep their modules.
