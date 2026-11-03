@@ -10,11 +10,11 @@
 
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_agents::prompt::{PromptPosition, PromptProvider};
+use caelumora_agents::prompt::PromptProvider;
 use caelumora_agents::testing::{
     self as agent_testing, activities_until_the_turn_ends, register_scripted, saying,
 };
-use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_compaction::component::COMPACTION_KIND;
 use caelumora_compaction::library::CompactionLibrary;
@@ -29,7 +29,6 @@ use caelumora_domain::history::testing::{items_of, messages_of};
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::privacy::SessionPrivacy;
-use caelumora_domain::prompt_catalogue::PromptTexts;
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
@@ -41,14 +40,15 @@ use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::{asked_for, shown, TestKernel, World, STAFF};
 use caelumora_kernel::view::Viewer;
 use caelumora_security::{Policies, SecurityContext};
 use caelumora_skills::component::{
-    SkillsComponent, CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME,
-    SKILLS_KIND, SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,
+    CREATE_SKILL_TOOL_NAME, LIST_SKILLS_TOOL_NAME, LOAD_SKILL_TOOL_NAME, SKILLS_KIND,
+    SKILL_COMMAND_NAME, UPDATE_SKILL_TOOL_NAME,
 };
 use caelumora_skills::extension::{SkillError, SkillReader, SkillWriter};
 use caelumora_skills::library::SkillsLibrary;
@@ -77,13 +77,10 @@ fn store(world: &World) -> Arc<dyn EntityStore<Skill>> {
     world.entity_store::<Skill>()
 }
 
-fn component(world: &World) -> SkillsComponent {
-    SkillsComponent::new(
-        PromptPosition::Start,
-        ApprovalMode::Always,
-        PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
-    )
-    .unwrap()
+/// The facet `T` of a `skills` component configured with `params`, as an agent's components are
+/// built.
+async fn skills<T: ?Sized + Send + Sync + 'static>(world: &World, params: Value) -> Arc<T> {
+    built(&world.kernel, descriptor("skills", SKILLS_KIND, params)).await.unwrap()
 }
 
 /// A session of alice and bob with alice's agent `helper`, in a channel
@@ -95,12 +92,12 @@ async fn with_an_agent(world: &World) -> (Arc<SessionLoop>, AgentId) {
 }
 
 async fn call(
-    component: &SkillsComponent,
+    provider: &dyn ToolProvider,
     turn: &mut Turn<'_>,
     name: &str,
     params: Value,
 ) -> ToolResult<ToolOutput> {
-    ToolProvider::execute(component, name, &params, None, turn).await
+    ToolProvider::execute(provider, name, &params, None, turn).await
 }
 
 // --- The component --------------------------------------------------------
@@ -109,9 +106,10 @@ async fn call(
 async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as_knowledge() {
     let world = world().await;
     let (session, helper) = with_an_agent(&world).await;
-    let component = component(&world);
+    let provider = skills::<dyn ToolProvider>(&world, json!({})).await;
     let mut state = AgentChannelState::default();
-    let prompt = component
+    let prompt = skills::<dyn PromptProvider>(&world, json!({}))
+        .await
         .get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).situation())
         .await
         .unwrap();
@@ -130,7 +128,8 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
         .await
         .unwrap();
     let mut state = AgentChannelState::default();
-    let prompt = component
+    let prompt = skills::<dyn PromptProvider>(&world, json!({}))
+        .await
         .get_prompt(&agent_testing::turn(&session, helper, world.alice, &mut state).situation())
         .await
         .unwrap();
@@ -144,8 +143,9 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     assert_eq!(prompt.classification, Some(internal.clone()));
 
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    let listed =
-        call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, serde_json::json!({})).await.unwrap();
+    let listed = call(provider.as_ref(), &mut turn, LIST_SKILLS_TOOL_NAME, serde_json::json!({}))
+        .await
+        .unwrap();
     assert_eq!(
         listed.value,
         serde_json::json!({ "skills": [{ "name": "release-notes", "description": "How we write a release note", "skill_id": made.id }] }),
@@ -156,7 +156,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
 
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let loaded = call(
-        &component,
+        provider.as_ref(),
         &mut turn,
         LOAD_SKILL_TOOL_NAME,
         serde_json::json!({ "name": "release-notes" }),
@@ -189,9 +189,13 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     );
 
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    let absent =
-        call(&component, &mut turn, LOAD_SKILL_TOOL_NAME, serde_json::json!({ "name": "nothing" }))
-            .await;
+    let absent = call(
+        provider.as_ref(),
+        &mut turn,
+        LOAD_SKILL_TOOL_NAME,
+        serde_json::json!({ "name": "nothing" }),
+    )
+    .await;
     assert!(matches!(absent, Err(ToolError::InvalidParameter(_))), "the model's to correct");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -201,26 +205,26 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
 {
     let world = world().await;
     let (session, helper) = with_an_agent(&world).await;
-    let component = component(&world);
+    let provider = skills::<dyn ToolProvider>(&world, json!({})).await;
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    let created = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.", "scope": "session" })).await.unwrap();
+    let created = call(provider.as_ref(), &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.", "scope": "session" })).await.unwrap();
     assert_eq!(created.value["status"], "created");
     let created_id = created.value["skill_id"].clone();
     let global = call(
-        &component,
+        provider.as_ref(),
         &mut turn,
         CREATE_SKILL_TOOL_NAME,
         serde_json::json!({ "name": "other", "description": "d", "body": "b", "scope": "global" }),
     )
     .await;
     assert!(matches!(global, Err(ToolError::InvalidParameter(_))), "never global");
-    let twice = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "Deploy", "description": "d", "body": "b", "scope": "session" })).await;
+    let twice = call(provider.as_ref(), &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "Deploy", "description": "d", "body": "b", "scope": "session" })).await;
     assert!(
         matches!(twice, Err(ToolError::InvalidParameter(ref m)) if m.contains("update it instead")),
         "{twice:?}"
     );
-    let mine = call(&component, &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "notes", "description": "How we take notes", "body": "Short.", "scope": "user" })).await;
+    let mine = call(provider.as_ref(), &mut turn, CREATE_SKILL_TOOL_NAME, serde_json::json!({ "name": "notes", "description": "How we take notes", "body": "Short.", "scope": "user" })).await;
     assert!(mine.is_ok(), "{mine:?}");
     drop(turn);
 
@@ -250,7 +254,7 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     turn.see(&internal);
     let updated = call(
-        &component,
+        provider.as_ref(),
         &mut turn,
         UPDATE_SKILL_TOOL_NAME,
         serde_json::json!({ "name": "deploy", "body": "1. Build.\n2. Ship." }),
@@ -263,7 +267,7 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
         "the skill it changed, for a frontend to link to"
     );
     let nothing = call(
-        &component,
+        provider.as_ref(),
         &mut turn,
         UPDATE_SKILL_TOOL_NAME,
         serde_json::json!({ "name": "deploy" }),
@@ -284,10 +288,10 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
 #[tokio::test]
 async fn an_approver_is_shown_the_skill_whole() {
     let world = world().await;
-    let component = component(&world);
-    let shown = component.describe(CREATE_SKILL_TOOL_NAME, &serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap();
+    let provider = skills::<dyn ToolProvider>(&world, json!({})).await;
+    let shown = provider.describe(CREATE_SKILL_TOOL_NAME, &serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap();
     assert_eq!(shown, "Write the skill \"deploy\" (for every session of the agent's owner): How we deploy\n\n1. Build.\n2. Ship.");
-    let tools = component.tools();
+    let tools = provider.tools();
     assert!(
         tools
             .iter()
@@ -295,13 +299,8 @@ async fn an_approver_is_shown_the_skill_whole() {
             .all(|t| t.requires_approval),
         "approved by default"
     );
-    let unapproved = SkillsComponent::new(
-        PromptPosition::Start,
-        ApprovalMode::Never,
-        PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
-    )
-    .unwrap()
-    .tools();
+    let unapproved =
+        skills::<dyn ToolProvider>(&world, json!({ "requires_approval": false })).await.tools();
     assert!(unapproved.iter().all(|t| !t.requires_approval), "unless configured otherwise");
 }
 
@@ -309,7 +308,7 @@ async fn an_approver_is_shown_the_skill_whole() {
 async fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
     let world = world().await;
     use caelumora_skills::component::{SKILL_LIST_PRESENTATION, SKILL_PRESENTATION};
-    let tools = component(&world).tools();
+    let tools = skills::<dyn ToolProvider>(&world, json!({})).await.tools();
     let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
     assert_eq!(
         load.visibility,
@@ -374,7 +373,7 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     AgentCommandProvider::execute(
-        &component(&world),
+        skills::<dyn AgentCommandProvider>(&world, json!({})).await.as_ref(),
         SKILL_COMMAND_NAME,
         "release-notes",
         &mut turn,
@@ -384,7 +383,11 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     manager.rewrite(&SecurityContext::system(), kept.id, "1. Collect.\n2. Group.").await.unwrap();
     manager.delete(&SecurityContext::system(), gone.id).await.unwrap();
 
-    let again = component(&world).give_again(&mut turn, &[gone.id.0, kept.id.0]).await.unwrap();
+    let again = skills::<dyn KnowledgeRestorer>(&world, json!({}))
+        .await
+        .give_again(&mut turn, &[gone.id.0, kept.id.0])
+        .await
+        .unwrap();
     let again: Vec<_> =
         again.iter().map(|given| (given.name.as_str(), given.text.as_str())).collect();
     assert_eq!(
@@ -606,15 +609,16 @@ async fn an_agent_lists_the_skills_its_owners_roles_clear_it_for_as_they_are_at_
         )
         .await
         .expect("hers");
-    let component = component(&world);
+    let provider = skills::<dyn ToolProvider>(&world, json!({})).await;
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let listed = |output: ToolOutput| output.value["skills"].as_array().unwrap().len();
 
-    let before = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
+    let before =
+        call(provider.as_ref(), &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
     assert_eq!(listed(before), 1, "cleared for it by her role");
     world.take_roles(world.alice).await;
-    let after = call(&component, &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
+    let after = call(provider.as_ref(), &mut turn, LIST_SKILLS_TOOL_NAME, json!({})).await.unwrap();
     assert_eq!(listed(after), 0, "not any more, at the next call");
     drop(turn);
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();

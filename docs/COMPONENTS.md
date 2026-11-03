@@ -373,15 +373,17 @@ beside the `component` of `caelumora-compaction`).
 
 The module `component` keeps what a kind is apart from what it does (issue 534), as in
 `caelumora-tool-attachment`. Its `mod.rs` holds what the kind is configured with and built of: its
-constant, its `…Params`, its `…Component` with its `new`, where it has one, and `register`, with the
-tests of these. Each facet the component serves is a child module of it, named after the facet -
-`tool.rs` for the `ToolProvider`, `prompt.rs` for the `PromptProvider` -, which holds the facet's
-`impl` for the `…Component`, what only that facet uses - the tools' names and arguments, the
-helpers of its `impl` - and its tests; it may have children of its own, as the `tool` of
-`caelumora-tool-workspace` has `files` and `shell`. A child, not a module beside it, so that it
-reaches the private fields of the `…Component` without their being opened to the crate. The module
-`component` is public only where the kind's name is used outside the crate - by a program, or by
-the crate's tests in `tests/` - and then with that name alone public, as in `caelumora-tool-mcp`.
+constant, its `…Params`, its `…Component` with its `new`, where it has one, `register`, and what
+several of its facets share, with the tests of these. Each facet the component serves is a child
+module of it, named after the facet - `tool.rs` for the `ToolProvider`, `prompt.rs` for the
+`PromptProvider` -, which holds the facet's `impl` for the `…Component`, what only that facet uses -
+the tools' names and arguments, the helpers of its `impl` - and its tests; it may have children of
+its own, as the `tool` of `caelumora-tool-workspace` has `files` and `shell`. A child, not a module
+beside it, so that it reaches the private fields of the `…Component` without their being opened to
+the crate. The module `component` is public only where the kind's name is used outside the crate -
+by a program, or by the crate's tests in `tests/` - and then with nothing public but that name and
+the names and presentations of its tools and commands that those tests use (`caelumora-tool-mcp`,
+`caelumora-skills`).
 
 Components follow one convention:
 

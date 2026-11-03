@@ -141,3 +141,13 @@ Proposed by the maintainer on 2026-11-03, in the discussion of issue
   `mod.rs`'s. The component the tests of every facet build is `component::testing`'s.
   `WorkspaceParams` no longer derives `Clone`, which nothing used. COMPONENTS.md says that a
   facet's module may have children, and when the module `component` is public.
+- **2026-11-03** — Step 5: `caelumora-skills` laid out so, with four facets: `prompt` (the
+  catalogue), `tool`, `command` and `knowledge` (the `KnowledgeRestorer`). What several of them
+  share - the text of a skill as it is given, the reader of the skills, the classification of
+  several - is the `mod.rs`'s. `SkillsComponent::new` takes its `SkillsParams` whole now, as the
+  other kinds do. The component is no longer public: the crate's tests, which built it
+  themselves, build the facet each needs through the kernel's registry (`built`), as in step 3;
+  the tools' and the command's names and the presentations stay public, as the tests use them.
+  `SkillsParams` no longer derives `Default`, which nothing used. COMPONENTS.md says that what
+  several facets share is the `mod.rs`'s, and that the names and presentations the crate's tests
+  use are public too, as in steps 3 and 5.
