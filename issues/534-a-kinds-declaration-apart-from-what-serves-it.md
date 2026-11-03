@@ -121,3 +121,12 @@ Proposed by the maintainer on 2026-11-03, in the discussion of issue
   `register` no longer public. The tests of reading the params are the `mod.rs`'s; the two tests
   that read the params and judged the tools - their approval, their namespacing and destination -
   are split, each subject a test of its own. The module had no module docs and has them now.
+- **2026-11-03** — Step 3: `caelumora-artifacts` laid out so. `ArtifactsComponent::new` read its
+  params from JSON itself and failed with a `ComponentError`; it takes the `ArtifactsParams` now,
+  which `register` reads, and fails with a `PromptError`. The component is no longer public: the
+  crate's tests, which built it themselves, build it through the kernel's registry, as an agent's
+  components are built, with `caelumora_kernel::component::testing::built`, which the test of
+  `caelumora-tool-image` of step 1 and the integration tests of `caelumora-tool-mcp`, which built
+  their component the same way by hand, use too. The tool's name and presentation stay public,
+  from `tool.rs` through `component`, as the tests use them. `ArtifactsParams` no longer derives
+  `Clone`, which nothing used.

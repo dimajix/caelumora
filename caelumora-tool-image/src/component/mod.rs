@@ -118,11 +118,8 @@ mod tests {
     use super::*;
     use crate::library::ImageToolLibrary;
     use caelumora_agents::library::AgentsLibrary;
-    use caelumora_domain::type_map::TypeKey;
-    use caelumora_kernel::component::testing::config;
-    use caelumora_kernel::component::BuildContext;
+    use caelumora_kernel::component::testing::{built, descriptor};
     use caelumora_kernel::testing::TestKernel;
-    use caelumora_security::SecurityContext;
     use serde_json::json;
 
     /// A component without an image model is not built, nor one with a parameter it does not take.
@@ -131,15 +128,8 @@ mod tests {
         let kernel =
             TestKernel { libraries: vec![&AgentsLibrary, &ImageToolLibrary], ..Default::default() }
                 .build();
-        let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
-        let refused = Arc::clone(kernel.component_registry())
-            .build(
-                &config(&[("images", IMAGE_GENERATION_KIND)]),
-                &[TypeKey::of::<dyn ToolProvider>()],
-                &context,
-            )
-            .await
-            .unwrap_err();
+        let images = descriptor("images", IMAGE_GENERATION_KIND, json!({}));
+        let refused = built::<dyn ToolProvider>(&kernel, images).await.unwrap_err();
         assert!(refused.to_string().contains("no image model"), "{refused}");
         assert!(
             ImageGenerationParams::read(&json!({ "endpoint": "x" })).is_err(),

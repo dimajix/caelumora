@@ -880,7 +880,6 @@ dependencies = [
  "caelumora-api",
  "caelumora-domain",
  "caelumora-kernel",
- "caelumora-security",
  "rand 0.10.3",
  "serde",
  "serde_json",
