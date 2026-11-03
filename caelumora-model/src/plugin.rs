@@ -47,7 +47,7 @@ impl Plugin for ModelPlugin {
         let language =
             kernel.make_named::<dyn LanguageModelProvider>("language model", &section.language)?;
         let image = kernel.make_named::<dyn ImageModelProvider>("image model", &section.image)?;
-        kernel.provide(Arc::new(ModelManager::new(language, image)));
+        kernel.provide(Arc::new(ModelManager::new(language, image)))?;
         language_model::register_all(kernel.components());
         image_model::register_all(kernel.components());
         Ok(())

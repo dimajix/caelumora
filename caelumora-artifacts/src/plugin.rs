@@ -29,7 +29,7 @@ impl Plugin for ArtifactsPlugin {
         // Bound only where something can be published: a storage of content is configured.
         let configured = manager.is_configured();
         let manager = Arc::new(manager);
-        kernel.provide(Arc::clone(&manager));
+        kernel.provide(Arc::clone(&manager))?;
         kernel.scope_member(manager);
         kernel.extend_writers::<dyn ArtifactPublisher, _, _>(move |session| async move {
             configured.then(|| Arc::new(session.views().clone()) as Arc<dyn ArtifactPublisher>)

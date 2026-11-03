@@ -37,14 +37,16 @@ pub trait LibraryBuilder {
     fn components(&mut self) -> LibraryComponents<'_>;
 
     /// Registers the agents of personalities of `kind` (issue 370): their actor is built by
-    /// `factory` from the agent's runtime, their components are asked for `facets` (issue 337). A
-    /// kind registered before is replaced.
+    /// `factory` from the agent's runtime, their components are asked for `facets` (issue 337).
+    ///
+    /// # Errors
+    /// If `kind` is registered already, by this library or another: none replaces it (issue 521).
     fn register_agent_kind(
         &mut self,
         kind: PersonalityKind,
         facets: &'static [TypeKey],
         factory: AgentFactory,
-    );
+    ) -> Result<()>;
 
     /// Adds the library's texts given to models (issue 57), `yaml`, under its `namespace` - and
     /// nothing else of the catalogue: the variants are the configuration's.

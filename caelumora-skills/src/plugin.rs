@@ -35,7 +35,7 @@ impl Plugin for SkillsPlugin {
             Arc::clone(kernel.event_bus()),
             Arc::clone(kernel.confidentiality()),
         ));
-        kernel.provide(Arc::clone(&manager));
+        kernel.provide(Arc::clone(&manager))?;
         kernel.scope_member(manager);
         kernel.extend_readers::<dyn SkillReader, _, _>(|session| async move {
             Some(Arc::new(session.views().clone()) as Arc<dyn SkillReader>)

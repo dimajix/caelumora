@@ -60,7 +60,8 @@ it registers, a plugin
     store over the same storage - and a kind whose name another kind has is refused;
 *   reaches the kernel's services it needs for its manager - the event bus, the policies, the
     secrets, the controllers - and offers its manager as a service (`provide`), which its views read
-    through (`Views::service`) and its routes take when they are built; what an agent's work does
+    through (`Views::service`) and its routes take when they are built - a service of a type
+    offered already, by whomever, is refused, not replaced; what an agent's work does
     with its kind it binds to the views of that work (`extend_readers`, `extend_writers`, below);
 *   registers its component kinds (`components()`), as `register_all` does for the kernel's;
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
@@ -134,7 +135,8 @@ and nothing of the kernel - no store, no policy, no secret, no controller:
 *   its kinds of agent (`register_agent_kind`): for a kind of personality, what builds its agents'
     actors - an `AgentFactory`, from the agent's `ActorRuntime` alone (`agent_factory`) - and which
     facets their components are asked for. Kinds of agent are the agent side's: a plugin registers
-    none. The agents' library registers both kinds there are; a program without it runs no agent;
+    none. The agents' library registers both kinds there are; a program without it runs no agent.
+    A kind registered again is refused, not replaced;
 *   its texts (`add_prompts`), under a namespace of its own, as a plugin adds its - and nothing else
     of the catalogue: its variants are the configuration's;
 *   its section of the configuration (`config::<C>(name)`, over `section`), under `libraries`;

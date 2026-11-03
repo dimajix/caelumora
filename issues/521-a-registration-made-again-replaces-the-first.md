@@ -76,3 +76,10 @@ nothing is declared.
   (`ComponentRegistry::registered_once`), naming who made both. A test's kernel registers its model
   that is not to be asked after its plugins and libraries, where none of them declares one; the
   tests without a kernel declared nothing twice and stay as they were.
+- **2026-11-03** — At the maintainer's request, from the review of the change above: the two
+  registries of the `KernelBuilder` that still replaced what was registered before refuse it too,
+  at once, as their neighbours do (`provide_of_library`, `add_prompts`, `seed_section`). A kind of
+  agent registered again (`AgentKinds::register`, `LibraryBuilder::register_agent_kind`) and a
+  service of a type offered already (`KernelBuilder::provide`, now through the same check as
+  `provide_of_library` and the kernel's texts as it is built) are refused, and both now answer a
+  `Result`.

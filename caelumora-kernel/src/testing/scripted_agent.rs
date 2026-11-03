@@ -51,7 +51,7 @@ impl Library for ScriptedAgents {
                 let script = script.clone();
                 async move { Ok(Box::new(ScriptedAgent::new(runtime, script)) as Box<dyn Actor>) }
             });
-            library.register_agent_kind(kind, &[], factory);
+            library.register_agent_kind(kind, &[], factory)?;
         }
         Ok(())
     }

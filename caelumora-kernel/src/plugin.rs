@@ -161,7 +161,7 @@ mod tests {
                 notes: kernel.entity_store::<Note>()?,
                 greeting: config.greeting,
             });
-            kernel.provide(Arc::clone(&notebook));
+            kernel.provide(Arc::clone(&notebook))?;
             kernel.seed_section("notes", notebook)?;
             kernel.components().register(
                 ComponentKind::new("notebook").provides::<Notebook>().uses::<Notebook>(),

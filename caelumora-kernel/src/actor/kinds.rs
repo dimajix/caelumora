@@ -8,11 +8,12 @@
 use crate::channel::ChannelError;
 use crate::controller::{AgentController, PersonalityController};
 use crate::kernel::{AgentRuntime, ParticipantRuntime};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use caelumora_api::actor::{Actor, AgentFactory};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::PersonalityKind;
 use caelumora_domain::type_map::TypeKey;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
@@ -40,14 +41,23 @@ impl fmt::Debug for AgentKinds {
 impl AgentKinds {
     /// Registers the agents of personalities of `kind`: their actor is built
     /// by `factory` from the agent's runtime (issue 516), their components are asked for `facets`
-    /// (issue 337). A kind registered before is replaced.
+    /// (issue 337).
+    ///
+    /// # Errors
+    /// If `kind` is registered already: the first registration is kept (issue 521).
     pub fn register(
         &mut self,
         kind: PersonalityKind,
         facets: &'static [TypeKey],
         factory: AgentFactory,
-    ) {
-        self.kinds.insert(kind, Registration { facets, factory });
+    ) -> Result<()> {
+        match self.kinds.entry(kind) {
+            Entry::Occupied(_) => bail!("The kind of agent {kind:?} is registered already"),
+            Entry::Vacant(place) => {
+                place.insert(Registration { facets, factory });
+                Ok(())
+            }
+        }
     }
 
     /// The facets the components of an agent of `kind` are asked for;
@@ -218,16 +228,23 @@ mod tests {
         );
     }
 
-    /// The actor of an agent is built by its personality's kind, as it
-    /// was registered last.
+    /// The actor of an agent is built by its personality's kind, as it was registered; a kind
+    /// registered again is refused, and the first registration kept (issue 521).
     #[tokio::test]
     async fn an_agent_is_built_by_the_kind_of_its_personality() {
         let mut kinds = AgentKinds::default();
         assert!(kinds.facets(PersonalityKind::Internal).is_none(), "none unless registered");
         let failing = |why: &'static str| agent_factory(move |_| async move { Err(anyhow!(why)) });
-        kinds.register(PersonalityKind::Internal, &[], failing("built as first registered"));
-        kinds.register(PersonalityKind::External, &[], failing("built as first registered"));
-        kinds.register(PersonalityKind::External, &[], failing("built as registered again"));
+        kinds.register(PersonalityKind::Internal, &[], failing("built as internal")).unwrap();
+        kinds.register(PersonalityKind::External, &[], failing("built as external")).unwrap();
+        let refused = kinds
+            .register(PersonalityKind::External, &[], failing("built as registered again"))
+            .expect_err("registered already");
+        assert_eq!(
+            refused.to_string(),
+            "The kind of agent External is registered already",
+            "{refused:#}"
+        );
 
         let error = built(
             &kinds,
@@ -235,11 +252,11 @@ mod tests {
         )
         .await
         .expect_err("the stand-in builds nothing");
-        assert_eq!(error.to_string(), "built as registered again", "replaced");
+        assert_eq!(error.to_string(), "built as external", "the first kept");
         let error = built(&kinds, make_personality("plain"))
             .await
             .expect_err("the stand-in builds nothing");
-        assert_eq!(error.to_string(), "built as first registered", "by its own kind");
+        assert_eq!(error.to_string(), "built as internal", "by its own kind");
         assert_eq!(names(kinds.facets(PersonalityKind::External)), Some(Vec::new()));
     }
 
@@ -252,7 +269,7 @@ mod tests {
         let helping = agent_factory(|runtime| async move {
             Ok(Box::new(Helping(runtime.actor_id())) as Box<dyn Actor>)
         });
-        kinds.register(PersonalityKind::Internal, &[], helping);
+        kinds.register(PersonalityKind::Internal, &[], helping).unwrap();
         let help = |policy| {
             let help = ComponentImpl {
                 id: "help".to_string(),

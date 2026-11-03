@@ -42,15 +42,14 @@ impl Library for AgentsLibrary {
             agent_factory(|runtime| async move {
                 Ok(Box::new(AgentActor::new(runtime).await?) as Box<dyn Actor>)
             }),
-        );
+        )?;
         library.register_agent_kind(
             PersonalityKind::External,
             ExternalAgentActor::COMPONENT_FACETS,
             agent_factory(|runtime| async move {
                 Ok(Box::new(ExternalAgentActor::new(runtime).await?) as Box<dyn Actor>)
             }),
-        );
-        Ok(())
+        )
     }
 }
 

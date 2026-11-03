@@ -48,6 +48,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::future::Future;
+use std::mem;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -521,8 +522,12 @@ impl KernelBuilder {
 
     /// Offers `service` - a plugin's manager, say - to the component kinds
     /// that use it, to the views and to the routes (`Services`).
-    pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) {
-        self.services.insert(service);
+    ///
+    /// # Errors
+    /// If a service of its type is offered already - by the kernel, a plugin or a library: none
+    /// replaces it (issue 521).
+    pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) -> Result<()> {
+        self.offer(TypeKey::of::<T>(), ErasedArc::of(service))
     }
 
     /// Offers `service`, a library's - an `Arc` of the type `key` names -, as `provide` offers a
@@ -530,13 +535,18 @@ impl KernelBuilder {
     /// 516).
     ///
     /// # Errors
-    /// If a service of its type is offered already - by the kernel, a plugin or a library: a
-    /// library replaces none.
+    /// As `provide`.
     pub(crate) fn provide_of_library(&mut self, key: TypeKey, service: ErasedArc) -> Result<()> {
-        if self.services.contains(key) {
-            bail!("The service {} is offered already, and a library replaces none", key.name());
-        }
+        self.offer(key, service)?;
         self.services_of_libraries.push(key);
+        Ok(())
+    }
+
+    /// Offers `service`, of the type `key` names, unless a service of that type is offered already.
+    fn offer(&mut self, key: TypeKey, service: ErasedArc) -> Result<()> {
+        if self.services.contains(key) {
+            bail!("The service {} is offered already", key.name());
+        }
         self.services.insert_of(key, service);
         Ok(())
     }
@@ -662,8 +672,8 @@ impl KernelBuilder {
         for (variant, dir) in defaults.into_iter().chain(variants) {
             self.prompts.add_variant(variant, dir)?;
         }
-        let prompts = Arc::new(self.prompts);
-        self.services.insert(Arc::clone(&prompts));
+        let prompts = Arc::new(mem::take(&mut self.prompts));
+        self.offer(TypeKey::of::<PromptCatalogue>(), ErasedArc::of(Arc::clone(&prompts)))?;
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
         let participation = Arc::new(Participation::new(
             Arc::clone(&self.entity_stores.agents),
@@ -706,7 +716,7 @@ mod tests {
     use super::*;
     use crate::command::ChannelCommandProvider;
     use crate::moderator::{Moderator, ResponderPolicy};
-    use crate::testing::TestKernel;
+    use crate::testing::{Script, ScriptedAgents, TestKernel};
     use crate::user_provider::Credential;
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
@@ -909,6 +919,47 @@ mod tests {
         assert_eq!(
             refused.to_string(),
             "The component kind 'help' is registered by the kernel and again by the test",
+            "{refused:#}"
+        );
+    }
+
+    /// Issue 521: a service of a type offered already, and a kind of agent registered already, are
+    /// refused, naming the plugin or the library that offered or registered it again.
+    #[test]
+    fn a_service_or_a_kind_of_agent_registered_again_is_refused() {
+        /// A service of a plugin.
+        #[derive(Debug)]
+        struct Offered;
+        /// Offers `Offered`.
+        struct Offers(&'static str);
+        impl Plugin for Offers {
+            fn name(&self) -> &'static str {
+                self.0
+            }
+            fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
+                kernel.provide(Arc::new(Offered))
+            }
+        }
+        let refused =
+            TestKernel { plugins: vec![&Offers("first"), &Offers("second")], ..Default::default() }
+                .try_build()
+                .map(drop)
+                .expect_err("offered twice");
+        assert_eq!(
+            format!("{refused:#}"),
+            "Cannot register the plugin second: The service Offered is offered already",
+            "{refused:#}"
+        );
+
+        let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+        let refused = TestKernel { libraries: vec![&answering, &answering], ..Default::default() }
+            .try_build()
+            .map(drop)
+            .expect_err("registered twice");
+        assert_eq!(
+            format!("{refused:#}"),
+            "Cannot register the library scripted_agents: The kind of agent Internal is registered \
+             already",
             "{refused:#}"
         );
     }

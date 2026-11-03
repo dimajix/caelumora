@@ -24,8 +24,8 @@ impl LibraryBuilder for ForLibrary<'_> {
         kind: PersonalityKind,
         facets: &'static [TypeKey],
         factory: AgentFactory,
-    ) {
-        self.0.agent_kinds().register(kind, facets, factory);
+    ) -> Result<()> {
+        self.0.agent_kinds().register(kind, facets, factory)
     }
 
     fn add_prompts(&mut self, namespace: &str, yaml: &str) -> Result<(), PromptError> {
