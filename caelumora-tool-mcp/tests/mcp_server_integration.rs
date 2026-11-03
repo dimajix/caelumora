@@ -10,7 +10,6 @@ use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{agent_runtime, offered_anywhere};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_api::component::ComponentContainer;
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
@@ -27,6 +26,7 @@ use caelumora_domain::tool::Tool;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_domain::work::Work;
+use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::component::BuildContext;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::kernel::Kernel;
@@ -135,11 +135,10 @@ fn kernel(store: &Persistence) -> Arc<Kernel> {
         .build()
 }
 
-/// The tool provider of the one MCP tool component configured with
-/// `params`.
+/// The tool provider of the one MCP tool component, `test-echo`, configured with `params`.
 async fn provider(params: Value) -> Arc<dyn ToolProvider> {
-    let container = build_container(params).await;
-    Arc::clone(&container.get_all::<dyn ToolProvider>(None).unwrap()[0].facet)
+    let kernel = kernel(&Persistence::in_memory());
+    built(&kernel, descriptor("test-echo", MCP_SERVER_KIND, params)).await.unwrap()
 }
 
 /// What `provider` gives for the call of its tool `name` with `params`, in
@@ -154,25 +153,6 @@ async fn executed(
     let mut turn =
         Turn::of(&mut state, detached_actor_runtime(AgentId::default())).expect("a turn was begun");
     provider.execute(name, &params, None, &mut turn).await
-}
-
-/// A container with one MCP tool component configured with `params`.
-async fn build_container(params: Value) -> ComponentContainer {
-    let kernel = kernel(&Persistence::in_memory());
-    let registry = kernel.component_registry();
-    let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
-
-    let config = ComponentConfig {
-        component_nodes: vec![ComponentDescriptor {
-            id: "test-echo".to_string(),
-            kind: MCP_SERVER_KIND.to_string(),
-            params,
-            tags: vec![],
-            fail_policy: ComponentFailPolicy::FailOpen,
-        }],
-    };
-
-    registry.build(&config, &[TypeKey::of::<dyn ToolProvider>()], &context).await.unwrap()
 }
 
 /// What a turn outside of a running session acts through: the runtime of
@@ -197,10 +177,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
     let (addr, _server) = start_test_server().await;
     let url = format!("http://{}/mcp", addr);
 
-    let container = build_container(json!({ "endpoint": { "url": url } })).await;
-    let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
-    assert_eq!(providers.len(), 1);
-    let provider = Arc::clone(&providers[0].facet);
+    let provider = provider(json!({ "endpoint": { "url": url } })).await;
     assert!(provider.tools().is_empty(), "not discovered while built (issue 126)");
     assert_eq!(provider.description(), "The tools of the MCP server 'test-echo'.");
 
@@ -342,17 +319,14 @@ async fn unreachable_server_degrades_gracefully_instead_of_failing_construction(
     // Port 1 is reserved and nothing will ever listen there, guaranteeing a
     // connection failure without depending on OS-specific "closed port"
     // behavior.
-    let container =
-        build_container(json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } })).await;
-    let providers = container.get_all::<dyn ToolProvider>(None).unwrap();
-    assert_eq!(providers.len(), 1);
+    let provider = provider(json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } })).await;
     assert_eq!(
-        offered_anywhere(providers[0].facet.as_ref()).await,
+        offered_anywhere(provider.as_ref()).await,
         Err("its server cannot be reached".to_string()),
         "its tool set says so, without the error (issue 32)"
     );
-    assert_eq!(providers[0].tools().len(), 0);
-    assert_eq!(providers[0].description(), "The tools of the MCP server 'test-echo'.");
+    assert_eq!(provider.tools().len(), 0);
+    assert_eq!(provider.description(), "The tools of the MCP server 'test-echo'.");
 }
 
 #[tokio::test]

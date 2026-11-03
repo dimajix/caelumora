@@ -1,11 +1,17 @@
-//! What the tests of the module share: facets, kinds of components that
-//! provide them, configurations and the context they are built with.
-#![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
+//! What tests share to build components: for the tests of the module, facets, kinds of components
+//! that provide them, configurations and the context they are built with; for the tests of a kind
+//! that a library or a plugin registers, a component of it built through a kernel (`built`).
+#![expect(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test code: what fails here fails the test that runs it"
+)]
 
 use super::BuildContext;
 use super::ComponentRegistry;
+use crate::kernel::Kernel;
 use caelumora_api::component::Services;
-use caelumora_api::component::{ComponentError, Params};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_domain::type_map::TypeKey;
@@ -36,6 +42,28 @@ pub fn descriptor(id: &str, kind: &str, params: Value) -> ComponentDescriptor {
         tags: vec![],
         fail_policy: ComponentFailPolicy::FailOpen,
     }
+}
+
+/// The facet `T` of `component` (`descriptor`), built alone by the registry of `kernel` in
+/// nobody's name, as the owner of a container that asks for `T` builds it - for a test of a kind
+/// that a library or a plugin registers.
+///
+/// # Errors
+/// What building it reports.
+///
+/// # Panics
+/// If the component's kind does not provide `T`.
+pub async fn built<T: ?Sized + Send + Sync + 'static>(
+    kernel: &Kernel,
+    component: ComponentDescriptor,
+) -> ComponentResult<Arc<T>> {
+    let config = ComponentConfig { component_nodes: vec![component] };
+    let context = BuildContext::new(SecurityContext::default(), kernel.services().clone());
+    let container = Arc::clone(kernel.component_registry())
+        .build(&config, &[TypeKey::of::<T>()], &context)
+        .await?;
+    let built = container.get_all::<T>(None)?.into_iter().next();
+    Ok(built.expect("the component provides what it is asked for").facet)
 }
 
 /// A facet that says which component it came from.

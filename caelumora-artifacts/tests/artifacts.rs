@@ -26,7 +26,7 @@ use caelumora_api::error::StorageGone;
 use caelumora_api::terminal::{ByteStream, WorkspacePath};
 use caelumora_artifacts::artifact::{Artifact, ArtifactId, PublicationSnapshot};
 use caelumora_artifacts::component::{
-    ArtifactsComponent, ARTIFACTS_KIND, ARTIFACT_PUBLISH_PRESENTATION, PUBLISH_ARTIFACT,
+    ARTIFACTS_KIND, ARTIFACT_PUBLISH_PRESENTATION, PUBLISH_ARTIFACT,
 };
 use caelumora_artifacts::extension::ArtifactError;
 use caelumora_artifacts::library::ArtifactsLibrary;
@@ -44,7 +44,6 @@ use caelumora_domain::digest;
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::project::Project;
-use caelumora_domain::prompt_catalogue::PromptTexts;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{AclEntry, Grant, Refused, Secured, SecurityAttributes, Subject};
 use caelumora_domain::session::SessionId;
@@ -52,6 +51,7 @@ use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::workspace::Workspace;
+use caelumora_kernel::component::testing::{built, descriptor};
 use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::plugin::Plugin;
@@ -129,7 +129,7 @@ async fn hears<const N: usize>(events: &mut EventSubscription, wanted: [GlobalEv
 async fn with_the_tool(
     world: &World,
     params: Value,
-) -> (Arc<SessionLoop>, AgentId, Workspace, ArtifactsComponent) {
+) -> (Arc<SessionLoop>, AgentId, Workspace, Arc<dyn ToolProvider>) {
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
     let helper = world.agent("helper", world.alice, &personality).await;
@@ -148,11 +148,10 @@ async fn with_the_tool(
         .unwrap();
     let session = world.shared_session(&[helper], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let tool = ArtifactsComponent::new(
-        &params,
-        &PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
-    )
-    .expect("parameters it takes");
+    let tool =
+        built::<dyn ToolProvider>(&world.kernel, descriptor("artifacts", ARTIFACTS_KIND, params))
+            .await
+            .expect("parameters it takes");
     (session, helper, docs, tool)
 }
 
@@ -323,32 +322,27 @@ async fn the_tool_is_not_offered_without_a_storage_of_content() {
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;
     let tool = |params: Value| {
-        ArtifactsComponent::new(
-            &params,
-            &PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
-        )
-        .unwrap()
+        built::<dyn ToolProvider>(&world.kernel, descriptor("artifacts", ARTIFACTS_KIND, params))
     };
-    let asks =
-        |mode: Value| tool(json!({ "requires_approval": mode })).tools()[0].requires_approval;
-    assert!(asks(json!(true)) && asks(json!("unless_read_only")), "it changes what is kept");
-    assert!(!asks(json!(false)));
-    assert!(tool(json!({})).tools()[0].requires_approval, "unless configured");
-    assert_eq!(tool(json!({})).tools()[0].presentation, ARTIFACT_PUBLISH_PRESENTATION);
+    let asks = async |mode: Value| {
+        tool(json!({ "requires_approval": mode })).await.unwrap().tools()[0].requires_approval
+    };
+    assert!(
+        asks(json!(true)).await && asks(json!("unless_read_only")).await,
+        "it changes what is kept"
+    );
+    assert!(!asks(json!(false)).await);
+    let unconfigured = tool(json!({})).await.unwrap();
+    assert!(unconfigured.tools()[0].requires_approval, "unless configured");
+    assert_eq!(unconfigured.tools()[0].presentation, ARTIFACT_PUBLISH_PRESENTATION);
     assert_eq!(
-        tool(json!({}))
+        unconfigured
             .describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" }))
             .unwrap(),
         "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'"
     );
-    assert!(
-        ArtifactsComponent::new(
-            &json!({ "requires": true }),
-            &PromptTexts::new(Arc::clone(world.kernel.prompts()), None)
-        )
-        .is_err(),
-        "nor parameters it does not take"
-    );
+    let refused = tool(json!({ "requires": true })).await.unwrap_err().to_string();
+    assert!(refused.contains("requires"), "nor parameters it does not take: {refused}");
 }
 
 // --- The plugin -----------------------------------------------------------

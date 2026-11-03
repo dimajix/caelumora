@@ -366,12 +366,26 @@ facet. Each file holds the kind constant, its `register` function and its tests;
 file of its own and a line in its module's `register_all`; `components` holds components only.
 
 A crate of its own that brings a kind - a library or a plugin - names the module after the kind's
-part in it, since the crate already names the subject: a component that contributes lies in
-`component.rs`, beside `library.rs` or `plugin.rs` (`caelumora-skills`, `caelumora-tool-workspace`);
-a struct that is what a facet asks for lies in a module named after that role (`policy.rs` of
-`caelumora-decision`, `summary_compaction.rs` beside the `component.rs` of `caelumora-compaction`).
+part in it, since the crate already names the subject: a component that contributes lies in the
+module `component`, beside `library.rs` or `plugin.rs`; a struct that is what a facet asks for lies
+in a module named after that role (`policy.rs` of `caelumora-decision`, `summary_compaction.rs`
+beside the `component` of `caelumora-compaction`).
 
-They follow one convention:
+The module `component` keeps what a kind is apart from what it does (issue 534), as in
+`caelumora-tool-attachment`. Its `mod.rs` holds what the kind is configured with and built of: its
+constant, its `…Params`, its `…Component` with its `new`, where it has one, `register`, and what
+several of its facets share, with the tests of these. Each facet the component serves is a child
+module of it, named after the facet - `tool.rs` for the `ToolProvider`, `prompt.rs` for the
+`PromptProvider` -, which holds the facet's `impl` for the `…Component`, what only that facet uses -
+the tools' names and arguments, the helpers of its `impl` - and its tests; it may have children of
+its own, as the `tool` of `caelumora-tool-workspace` has `files` and `shell`. A child, not a module
+beside it, so that it reaches the private fields of the `…Component` without their being opened to
+the crate. The module `component` is public only where the kind's name is used outside the crate -
+by a program, or by the crate's tests in `tests/` - and then with nothing public but that name and
+the names and presentations of its tools and commands that those tests use (`caelumora-tool-mcp`,
+`caelumora-skills`).
+
+Components follow one convention:
 
 *   **Kind:** named after what the component gives, never after a facet it serves (issue 532):
     `calculator`, `planning`, `current_time`, `help`, not `calculator_tool`,
@@ -397,8 +411,13 @@ They follow one convention:
     [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)); so are the descriptions of its tools,
     rendered when it is made (`new`, which fails if one is missing) and kept with its tools
     ([TOOLS.md](TOOLS.md)).
-*   **Construction:** the factory builds the struct literally; there is a `new` only where
-    something is checked.
+*   **Construction:** the factory builds the struct literally; there is a `new` only where building
+    can fail - a text that cannot be had -, or where the struct holds state of its own that starts
+    empty, which neither the factory nor a test should have to know of: the tools an `mcp_server`
+    discovered, whether `compaction` told that no context size is known. A `new` that can fail fails
+    with the error of what it does itself, such as the `PromptError` of a text, never with a
+    `ComponentError` (issue 534): whether the configuration holds is said by `…Params::read` and its
+    `check` in `register`, which translates what `new` reports with `?`.
 *   **Params:** what a kind takes is a struct named after the kind with `Params`
     (`CompactionParams`, `WorkspaceParams`), `#[serde(deny_unknown_fields)]`, declared with
     `ComponentKind::params`; it implements `Params`, and a check beyond its fields' types is its

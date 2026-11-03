@@ -1,9 +1,7 @@
-//! The `artifacts` component (issue 271): artifacts, for the agents of
-//! the personalities that include it - so far `publish_artifact`, which
-//! publishes a file of the session's workspace as a version of an artifact:
-//! a fixed copy, kept beyond the workspace, downloaded at the message that
-//! published it. Beside it, `publish_file` of `workspace` offers a file
-//! as a link to it as it is now (issue 273).
+//! The facet `ToolProvider` of `artifacts` (issue 271): `publish_artifact`, which publishes a
+//! file of the session's workspace as a version of an artifact: a fixed copy, kept beyond the
+//! workspace, downloaded at the message that published it. Beside it, `publish_file` of
+//! `workspace` offers a file as a link to it as it is now (issue 273).
 //!
 //! The workspace is reached as `workspace` reaches it to read, through the reader of it the
 //! situation hands out (`WorkspaceReader`, issues 344, 516); the file read is handed to the
@@ -12,23 +10,18 @@
 //! storage of content is configured; a call is checked again all the same, and fails and says so.
 //! The result is classified as the artifact, which is classified as the workspace.
 
-use crate::extension::ArtifactError;
-use crate::extension::ArtifactPublisher;
+use super::{ArtifactsComponent, ARTIFACTS_KIND};
+use crate::extension::{ArtifactError, ArtifactPublisher};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    arguments, described, tool_text, workspace_reader, ApprovalMode, ToolError, ToolOutput,
-    ToolProvider, ToolResult,
+    arguments, described, workspace_reader, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_api::component::{ComponentResult, Params};
 use caelumora_api::error::ContentError;
 use caelumora_api::terminal::WorkspacePath;
-use caelumora_api::workspace::WorkspaceReader;
-use caelumora_domain::prompt_catalogue::PromptTexts;
+use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::store::StoreError;
@@ -36,7 +29,6 @@ use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibil
 use caelumora_domain::value::name::ScopedName;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 /// A file published as a version of an artifact (issue 271): its
 /// `name`, `version`, `size`, `description` and the `artifact` it is
@@ -44,32 +36,8 @@ use std::sync::Arc;
 pub const ARTIFACT_PUBLISH_PRESENTATION: ToolPresentation =
     ToolPresentation::new("artifact_publish");
 
-pub const ARTIFACTS_KIND: &str = "artifacts";
+/// The one tool of the component.
 pub const PUBLISH_ARTIFACT: &str = "publish_artifact";
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ArtifactsParams {
-    /// Whether a publication needs approval: unless configured, it does -
-    /// it hands a copy of a file to whoever reads the channel, beyond the
-    /// workspace. `"unless_read_only"` asks too: it changes what is kept.
-    #[serde(default)]
-    requires_approval: ApprovalMode,
-    /// What the tool set is for, written for a model (issue 194); a text of
-    /// its own unless configured.
-    #[serde(default)]
-    description: Option<String>,
-}
-
-impl Params for ArtifactsParams {}
-
-#[derive(Debug)]
-pub struct ArtifactsComponent {
-    /// What its tool set is for and its tool, as the configuration or the
-    /// prompt catalogue words them (issue 57).
-    description: String,
-    tools: Vec<Tool>,
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -81,35 +49,28 @@ struct Publish {
     description: Option<String>,
 }
 
-impl ArtifactsComponent {
-    /// The tool of a component configured with `params`, publishing a file
-    /// of the turn's workspace, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `ComponentError::InvalidConfig` for parameters it does not take;
-    /// `ComponentError::Prompt` if a text cannot be had.
-    pub fn new(params: &Value, prompts: &PromptTexts) -> ComponentResult<Self> {
-        let params = ArtifactsParams::read(params)?;
-        let string = ToolParameters::string;
-        let tool = Tool {
-            name: PUBLISH_ARTIFACT.to_string(),
-            description: String::new(),
-            parameters: ToolParameters::object(
-                [("path", string()), ("name", string()), ("description", string())],
-                ["path"],
-            ),
-            requires_approval: params.requires_approval.required(false),
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: ARTIFACT_PUBLISH_PRESENTATION,
-        };
-        let tools = vec![described(prompts, NAMESPACE, ARTIFACTS_KIND, tool, ())?];
-        let description = match &params.description {
-            Some(description) => description.clone(),
-            None => tool_text(prompts, NAMESPACE, ARTIFACTS_KIND, "description", ())?,
-        };
-        Ok(Self { description, tools })
-    }
+/// The tool `publish_artifact`, asked for as `requires_approval` says, its texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of its texts cannot be had.
+pub(super) fn publish_artifact(
+    prompts: &PromptTexts,
+    requires_approval: bool,
+) -> Result<Tool, PromptError> {
+    let string = ToolParameters::string;
+    let tool = Tool {
+        name: PUBLISH_ARTIFACT.to_string(),
+        description: String::new(),
+        parameters: ToolParameters::object(
+            [("path", string()), ("name", string()), ("description", string())],
+            ["path"],
+        ),
+        requires_approval,
+        visibility: ToolVisibility::SHOWN,
+        classification: None,
+        presentation: ARTIFACT_PUBLISH_PRESENTATION,
+    };
+    described(prompts, NAMESPACE, ARTIFACTS_KIND, tool, ())
 }
 
 /// What publishing failed of, as the model is told it: what it can correct - a name, a file, a
@@ -212,25 +173,4 @@ impl ToolProvider for ArtifactsComponent {
         }
         Ok(ToolOutput::classified(result, artifact.classification.clone()))
     }
-}
-
-pub fn register(registry: &mut LibraryComponents<'_>) {
-    registry.register_async(
-        writing_for_the_model(
-            ComponentKind::new(ARTIFACTS_KIND)
-                .params::<ArtifactsParams>()
-                .provides::<dyn ToolProvider>()
-                .reads::<dyn WorkspaceReader>()
-                .writes::<dyn ArtifactPublisher>(),
-        ),
-        |descriptor, context| async move {
-            let texts = texts_of(&context).await?;
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactsComponent::new(
-                &descriptor.params,
-                &texts,
-            )?));
-            Ok(facets)
-        },
-    );
 }

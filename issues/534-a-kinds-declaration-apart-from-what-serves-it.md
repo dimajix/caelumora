@@ -1,6 +1,6 @@
 # 534 — A component kind's declaration lies in one file with the type that serves its facets
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -94,3 +94,73 @@ Proposed by the maintainer on 2026-11-03, in the discussion of issue
 
 - **2026-11-03** — Opened at the maintainer's request, from the discussion of issue
   [533](533-attachment-tools-in-a-crate-of-their-own.md).
+- **2026-11-03** — Decided with the maintainer, in place of the cut and the renaming the
+  considerations propose: the struct that takes the configuration in its `new` keeps its name
+  `…Component`, as issue [532](532-component-kinds-named-after-their-facet.md) decided; what moves
+  out of `component.rs` is the `impl` of each facet it serves. The module `component` becomes a
+  directory: its `mod.rs` holds the kind's constant, its `…Params`, the `…Component` with `new`, and
+  `register`; a child module per facet - `tool.rs`, `prompt.rs`, … - holds that facet's `impl`,
+  what only it uses, and its tests, a child so that it reaches the private fields of the
+  `…Component`. Set aside: a type of its own per facet without any dependency on the components -
+  its configuration would have had to be passed apart from the `…Params`, and nothing uses such a
+  type outside a component. Taken from it: `new` fails with the error of what it does itself,
+  never with a `ComponentError`; whether the configuration holds is said by `…Params::read` and
+  `check` in `register`. The types already named after their role - `SummaryCompaction`,
+  `DecisionPolicy`, `A2aAgent` - are no contributing component and stay as they are. One step per
+  crate, the first with the rule in COMPONENTS.md.
+- **2026-11-03** — Step 1: the rule in COMPONENTS.md - the layout of the module `component`, and
+  the error rule in its point **Construction** -; `caelumora-tool-attachment` and
+  `caelumora-tool-image` laid out so. `ImageGenerationComponent::new` refused an agent without an
+  image model with a `ComponentError`; decided with the maintainer, `register` refuses it now,
+  where the graph is asked for the models, and `new` takes them as not empty. Its test builds the
+  component through a kernel of a test, with `caelumora-kernel` and `caelumora-security` as
+  dev-dependencies of the crate.
+- **2026-11-03** — Step 2: `caelumora-tool-mcp` laid out so. The `McpError` of talking to the
+  server, the namespacing of its tools and their discovery are its `tool.rs`; the `McpServerParams`
+  with their defaults its `mod.rs`, the fields no longer `pub`, the `McpServerComponent` and
+  `register` no longer public. The tests of reading the params are the `mod.rs`'s; the two tests
+  that read the params and judged the tools - their approval, their namespacing and destination -
+  are split, each subject a test of its own. The module had no module docs and has them now.
+- **2026-11-03** — Step 3: `caelumora-artifacts` laid out so. `ArtifactsComponent::new` read its
+  params from JSON itself and failed with a `ComponentError`; it takes the `ArtifactsParams` now,
+  which `register` reads, and fails with a `PromptError`. The component is no longer public: the
+  crate's tests, which built it themselves, build it through the kernel's registry, as an agent's
+  components are built, with `caelumora_kernel::component::testing::built`, which the test of
+  `caelumora-tool-image` of step 1 and the integration tests of `caelumora-tool-mcp`, which built
+  their component the same way by hand, use too. The tool's name and presentation stay public,
+  from `tool.rs` through `component`, as the tests use them. `ArtifactsParams` no longer derives
+  `Clone`, which nothing used.
+- **2026-11-03** — Step 4: `caelumora-tool-workspace` laid out so, with two facets: `tool` - its
+  `files` and `shell` children of it now, no longer modules of the crate's root - and `prompt`,
+  with the instruction files found at the root and what the agent is told. `WorkspaceComponent::new`
+  failed with a `ComponentError` for an instruction file not at the root, which `check` had refused
+  already; `check` says so alone now, and `new` fails with a `PromptError`. Only the kind's name is
+  public, as `caelumora-tool-mcp` exposes it: the component, `register`, the params, the tools'
+  names, `NAMESPACE` and `PROMPTS` are the crate's, what only `tool` uses `pub(super)`. The test
+  of the instruction files configured is split: the refusal of a name not at the root is the
+  `mod.rs`'s. The component the tests of every facet build is `component::testing`'s.
+  `WorkspaceParams` no longer derives `Clone`, which nothing used. COMPONENTS.md says that a
+  facet's module may have children, and when the module `component` is public.
+- **2026-11-03** — Step 5: `caelumora-skills` laid out so, with four facets: `prompt` (the
+  catalogue), `tool`, `command` and `knowledge` (the `KnowledgeRestorer`). What several of them
+  share - the text of a skill as it is given, the reader of the skills, the classification of
+  several - is the `mod.rs`'s. `SkillsComponent::new` takes its `SkillsParams` whole now, as the
+  other kinds do. The component is no longer public: the crate's tests, which built it
+  themselves, build the facet each needs through the kernel's registry (`built`), as in step 3;
+  the tools' and the command's names and the presentations stay public, as the tests use them.
+  `SkillsParams` no longer derives `Default`, which nothing used. COMPONENTS.md says that what
+  several facets share is the `mod.rs`'s, and that the names and presentations the crate's tests
+  use are public too, as in steps 3 and 5.
+- **2026-11-03** — Step 6: `caelumora-compaction` laid out so, with two facets: `activity`, the
+  compaction on its own, and `command`, `/compact`. What both share - compacting and what the
+  channel is told when there was nothing to compact - is the `mod.rs`'s, the component the tests
+  of both build `component::testing`'s. The `CompactionComponent` and `register` are no longer
+  public, nor the command's name, which nothing outside used. `summary_compaction`, a role, stays
+  as it is; the message heard its tests and the component's make is the crate's `testing`'s. Decided
+  with the maintainer: the rule **Construction** in COMPONENTS.md allows a `new` where the struct
+  holds state of its own that starts empty, as `McpServerComponent` and `CompactionComponent` do.
+- **2026-11-03** — Done. Every crate that brings a contributing component kind lays it out so:
+  `caelumora-tool-attachment`, `caelumora-tool-image`, `caelumora-tool-mcp`, `caelumora-artifacts`,
+  `caelumora-tool-workspace`, `caelumora-skills` and `caelumora-compaction`. The steps 7 and 8 the
+  considerations planned - `caelumora-decision` and `caelumora-a2a` - fell away with the decision:
+  `DecisionPolicy` and `A2aAgent` are roles, as `SummaryCompaction` is, and keep their modules.

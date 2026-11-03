@@ -20,7 +20,8 @@
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
 //! changed the file in between is overwritten.
 
-use crate::component::{tool, WorkspaceComponent, WorkspaceParams};
+use super::tool;
+use crate::component::{WorkspaceComponent, WorkspaceParams};
 use bytes::Bytes;
 use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
 use caelumora_agents::turn::Turn;
@@ -75,17 +76,17 @@ const FILE_MOVE_PRESENTATION: ToolPresentation = ToolPresentation::new("file_mov
 /// still as it was (`size`, `modified`) or gone.
 const FILE_PUBLISH_PRESENTATION: ToolPresentation = ToolPresentation::new("file_publish");
 
-pub const LIST_FILES: &str = "list_files";
-pub const READ_FILE: &str = "read_file";
-pub const GREP_FILES: &str = "grep_files";
-pub const WRITE_FILE: &str = "write_file";
-pub const REPLACE_IN_FILE: &str = "replace_in_file";
-pub const MOVE_FILE: &str = "move_file";
-pub const DELETE_FILE: &str = "delete_file";
-pub const PUBLISH_FILE: &str = "publish_file";
+pub(super) const LIST_FILES: &str = "list_files";
+pub(in crate::component) const READ_FILE: &str = "read_file";
+pub(super) const GREP_FILES: &str = "grep_files";
+pub(super) const WRITE_FILE: &str = "write_file";
+pub(super) const REPLACE_IN_FILE: &str = "replace_in_file";
+pub(super) const MOVE_FILE: &str = "move_file";
+pub(super) const DELETE_FILE: &str = "delete_file";
+pub(super) const PUBLISH_FILE: &str = "publish_file";
 
 /// The file tools, by name.
-pub(crate) const TOOLS: [&str; 8] = [
+pub(super) const TOOLS: [&str; 8] = [
     LIST_FILES,
     READ_FILE,
     GREP_FILES,
@@ -114,7 +115,7 @@ const MAX_PATTERN_CHARS: usize = 500;
 const MAX_COMPILED_PATTERN_BYTES: usize = 1 << 20;
 
 /// Whether the file tool `name` only reads.
-pub(crate) fn read_only(name: &str) -> bool {
+pub(super) fn read_only(name: &str) -> bool {
     matches!(name, LIST_FILES | READ_FILE | GREP_FILES | PUBLISH_FILE)
 }
 
@@ -196,7 +197,7 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
     WorkspacePath::parse(text).map_err(ToolError::from)
 }
 
-pub(crate) fn tools(
+pub(super) fn tools(
     params: &WorkspaceParams,
     prompts: &PromptTexts,
 ) -> Result<Vec<Tool>, PromptError> {
@@ -289,7 +290,7 @@ pub(crate) fn tools(
 }
 
 /// What an approver reads: what is read, or the change whole.
-pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
+pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     Ok(match name {
         LIST_FILES => {
             format!("List '{}' in the workspace", arguments::<At>(params)?.path.unwrap_or_default())
@@ -327,7 +328,7 @@ pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
 /// For a change, the calls changing the same file - for a move, the same
 /// move, since it changes two places; `None` for the others, which are
 /// alike when exactly alike.
-pub(crate) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
+pub(super) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
     if !TOOLS.contains(&name) || read_only(name) {
         return None;
     }
@@ -495,7 +496,7 @@ fn known(
 /// Runs the file tool `name` of `component` that only reads (`read_only`) with `params` on
 /// `terminal`, the files of `workspace` - its id and its classification -, as `component` is
 /// configured, with the texts its results give, recording in `turn` what was read.
-pub(crate) async fn read(
+pub(super) async fn read(
     component: &WorkspaceComponent,
     name: &str,
     params: &Value,
@@ -592,7 +593,7 @@ pub(crate) async fn read(
 
 /// Runs the file tool `name` that changes the files with `params` on `terminal`, the files of
 /// `workspace` - its id and its classification -, recording in `turn` what was read.
-pub(crate) async fn change(
+pub(super) async fn change(
     name: &str,
     params: &Value,
     terminal: &dyn Terminal,
@@ -658,7 +659,7 @@ pub(crate) async fn change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::tests::component;
+    use crate::component::testing::component;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;

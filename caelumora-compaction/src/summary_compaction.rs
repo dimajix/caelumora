@@ -207,11 +207,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::prompts;
+    use crate::testing::{heard, prompts};
     use caelumora_agents::testing::workspace_turn;
     use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
     use caelumora_domain::agent::AgentChannelState;
-    use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::tool::Tool;
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use futures::stream;
@@ -272,10 +271,6 @@ mod tests {
 
     fn strategy(model: &Arc<Summariser>) -> SummaryCompaction {
         SummaryCompaction { model_client: Arc::<Summariser>::clone(model), prompts: prompts() }
-    }
-
-    fn heard(text: &str) -> Message {
-        Message { content: Some(text.to_string()), ..Message::new(Classification::PUBLIC) }
     }
 
     /// What can be given again in the tests: two skills.
