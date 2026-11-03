@@ -130,3 +130,14 @@ Proposed by the maintainer on 2026-11-03, in the discussion of issue
   their component the same way by hand, use too. The tool's name and presentation stay public,
   from `tool.rs` through `component`, as the tests use them. `ArtifactsParams` no longer derives
   `Clone`, which nothing used.
+- **2026-11-03** — Step 4: `caelumora-tool-workspace` laid out so, with two facets: `tool` - its
+  `files` and `shell` children of it now, no longer modules of the crate's root - and `prompt`,
+  with the instruction files found at the root and what the agent is told. `WorkspaceComponent::new`
+  failed with a `ComponentError` for an instruction file not at the root, which `check` had refused
+  already; `check` says so alone now, and `new` fails with a `PromptError`. Only the kind's name is
+  public, as `caelumora-tool-mcp` exposes it: the component, `register`, the params, the tools'
+  names, `NAMESPACE` and `PROMPTS` are the crate's, what only `tool` uses `pub(super)`. The test
+  of the instruction files configured is split: the refusal of a name not at the root is the
+  `mod.rs`'s. The component the tests of every facet build is `component::testing`'s.
+  `WorkspaceParams` no longer derives `Clone`, which nothing used. COMPONENTS.md says that a
+  facet's module may have children, and when the module `component` is public.

@@ -11,7 +11,8 @@
 //! through the same shell of the channel (`WorkspaceController::shell_in`)
 //! as the REST server does for them.
 
-use crate::component::{next, tool, WorkspaceComponent, WorkspaceParams};
+use super::{next, tool};
+use crate::component::{WorkspaceComponent, WorkspaceParams};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
 use caelumora_api::terminal::{CommandState, Shell};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -30,12 +31,12 @@ use tracing::warn;
 /// `output` as a terminal shows it, and its exit code.
 const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
 
-pub const RUN_COMMAND: &str = "run_command";
-pub const COMMAND_OUTPUT: &str = "command_output";
-pub const KILL_COMMAND: &str = "kill_command";
+pub(super) const RUN_COMMAND: &str = "run_command";
+pub(super) const COMMAND_OUTPUT: &str = "command_output";
+pub(super) const KILL_COMMAND: &str = "kill_command";
 
 /// The shell tools, by name.
-pub(crate) const TOOLS: [&str; 3] = [RUN_COMMAND, COMMAND_OUTPUT, KILL_COMMAND];
+pub(super) const TOOLS: [&str; 3] = [RUN_COMMAND, COMMAND_OUTPUT, KILL_COMMAND];
 
 /// The longest a call may follow a command - Open Terminal's own bound.
 const MAX_WAIT_SECS: u64 = 300;
@@ -128,7 +129,7 @@ struct Follow {
     wait_secs: Option<f64>,
 }
 
-pub(crate) fn tools(
+pub(super) fn tools(
     params: &WorkspaceParams,
     prompts: &PromptTexts,
 ) -> Result<Vec<Tool>, PromptError> {
@@ -173,7 +174,7 @@ pub(crate) fn tools(
 }
 
 /// What an approver reads: the command, whole.
-pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
+pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     match name {
         RUN_COMMAND => {
             let Run { command, .. } = arguments(params)?;
@@ -188,7 +189,7 @@ pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
 
 /// Runs the shell tool `name` of `component` with `params` on `shell`, the workspace's as
 /// the turn's channel sees it.
-pub(crate) async fn execute(
+pub(super) async fn execute(
     component: &WorkspaceComponent,
     name: &str,
     params: &Value,
@@ -223,7 +224,7 @@ pub(crate) async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::tests::component;
+    use crate::component::testing::component;
     use crate::component::WorkspaceComponent;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
