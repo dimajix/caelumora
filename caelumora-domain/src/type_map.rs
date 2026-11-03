@@ -42,33 +42,41 @@ fn short_name<T: ?Sized + 'static>() -> &'static str {
 }
 
 /// An `Arc<T>` of a trait object or a type, with `T` forgotten until it is asked for again
-/// (`get`): what is kept of a value found by its type, here and wherever else one is
-/// (issue 516).
+/// (`get`) but for its key: what is kept of a value found by its type, here and wherever else one
+/// is (issues 516, 519).
 #[derive(Clone)]
-pub struct ErasedArc(Arc<dyn Any + Send + Sync>);
+pub struct ErasedArc {
+    key: TypeKey,
+    value: Arc<dyn Any + Send + Sync>,
+}
 
 impl ErasedArc {
-    /// `value`, its type forgotten.
+    /// `value`, its type forgotten but for its key.
     pub fn of<T: ?Sized + Send + Sync + 'static>(value: Arc<T>) -> Self {
-        Self(Arc::new(value))
+        Self { key: TypeKey::of::<T>(), value: Arc::new(value) }
+    }
+
+    /// The key of the type it was made of.
+    pub fn key(&self) -> TypeKey {
+        self.key
     }
 
     /// The value, if it is an `Arc<T>`.
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
-        self.0.downcast_ref::<Arc<T>>()
+        self.value.downcast_ref::<Arc<T>>()
     }
 }
 
 impl Debug for ErasedArc {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str("ErasedArc")
+        write!(f, "ErasedArc({})", self.key.name())
     }
 }
 
 /// Values by their type, each an `Arc<T>` of a trait object or a type.
 #[derive(Default, Debug, Clone)]
 pub struct TypeMap {
-    map: HashMap<TypeId, (&'static str, ErasedArc)>,
+    map: HashMap<TypeId, ErasedArc>,
 }
 
 impl TypeMap {
@@ -77,12 +85,12 @@ impl TypeMap {
     }
 
     pub fn insert<T: ?Sized + Send + Sync + 'static>(&mut self, value: Arc<T>) {
-        self.insert_of(TypeKey::of::<T>(), ErasedArc::of(value));
+        self.insert_erased(ErasedArc::of(value));
     }
 
-    /// Inserts `value`, an `Arc` of the type `key` names, its type forgotten (issue 516).
-    pub fn insert_of(&mut self, key: TypeKey, value: ErasedArc) {
-        self.map.insert(key.id, (key.name(), value));
+    /// Inserts `value`, its type forgotten, under the key of its type (issues 516, 519).
+    pub fn insert_erased(&mut self, value: ErasedArc) {
+        self.map.insert(value.key().id, value);
     }
 
     /// Whether it holds a value of the type `key` names.
@@ -97,7 +105,7 @@ impl TypeMap {
     }
 
     pub fn get<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
-        self.map.get(&TypeId::of::<T>()).and_then(|(_, erased)| erased.get::<T>())
+        self.map.get(&TypeId::of::<T>()).and_then(ErasedArc::get::<T>)
     }
 
     /// It with the values of `keys` alone.
@@ -111,7 +119,7 @@ impl TypeMap {
 
     /// The names of the values' types, sorted - for messages.
     pub fn names(&self) -> Vec<&'static str> {
-        let mut names: Vec<_> = self.map.values().map(|(name, _)| *name).collect();
+        let mut names: Vec<_> = self.map.values().map(|value| value.key().name()).collect();
         names.sort_unstable();
         names
     }
@@ -127,6 +135,20 @@ mod tests {
         assert_eq!(map.get::<u32>().map(|v| **v), Some(7));
         assert!(map.get::<dyn Debug + Send + Sync>().is_none(), "by the type it was put in as");
         assert_eq!(map.names(), ["u32"]);
+    }
+
+    /// A value whose type is forgotten keeps its key, and is found by its type alone.
+    #[test]
+    fn an_erased_value_is_kept_under_the_key_of_its_type() {
+        trait Facet: Send + Sync {}
+        impl Facet for u32 {}
+        let value = ErasedArc::of(Arc::new(7u32) as Arc<dyn Facet>);
+        assert_eq!(value.key().id, TypeId::of::<dyn Facet>());
+        let mut map = TypeMap::empty();
+        map.insert_erased(value);
+        assert!(map.get::<dyn Facet>().is_some());
+        assert!(map.get::<u32>().is_none(), "by the type it was made of");
+        assert_eq!(map.names(), ["Facet"]);
     }
 
     /// A list of types can be a constant, and each is named without its path.

@@ -36,7 +36,7 @@ impl LibraryBuilder for ForLibrary<'_> {
         self.0.library_section(name)
     }
 
-    fn provide_of(&mut self, key: TypeKey, service: ErasedArc) -> Result<()> {
-        self.0.provide_of_library(key, service)
+    fn provide_erased(&mut self, service: ErasedArc) -> Result<()> {
+        self.0.provide_of_library(service)
     }
 }

@@ -1,6 +1,6 @@
 # 519 — A value with its type forgotten is handed on apart from the key of its type
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -52,3 +52,12 @@ check and the class of error at once.
 - **2026-11-01** — Opened from a finding of the review of step 6.1 of issue
   [516](516-the-runtime-trusts-the-agents-linked-into-it.md), where `TypeMap::insert_of` and
   `LibraryBuilder::provide_of` joined `reader_of` in taking a key beside the value.
+- **2026-11-03** — Done. `ErasedArc` keeps the `TypeKey` of the type it was made of
+  (`ErasedArc::key`), and the erased calls take the value alone, renamed for it: `_of` names a call
+  by key (`reader_of`, `single_of`), which these no longer are - `TypeMap::insert_erased(value)`
+  and `LibraryBuilder::provide_erased(service)`; the kernel's `offer` and `provide_of_library`
+  take the value alone as well. The `TypeMap` keeps the name of a value's type no longer beside it
+  but reads it from its key. The bindings of the readers and writers needed no change: they were
+  typed already (`Extensions::insert<T>` makes the key from `T` and the value from an `Arc<T>`),
+  and `reader_of(key)` keeps its key as the question, the answer checked by `get::<T>()`. The
+  module is `caelumora-domain/src/type_map.rs`, not `caelumora-model`'s as the description says.

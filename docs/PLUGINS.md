@@ -140,15 +140,15 @@ and nothing of the kernel - no store, no policy, no secret, no controller:
 *   its texts (`add_prompts`), under a namespace of its own, as a plugin adds its - and nothing else
     of the catalogue: its variants are the configuration's;
 *   its section of the configuration (`config::<C>(name)`, over `section`), under `libraries`;
-*   a service of its own to its own kinds (`provide`, over `provide_of`), which decides nothing of
-    the kernel's.
+*   a service of its own to its own kinds (`provide`, over `provide_erased`), which decides nothing
+    of the kernel's.
 
 No library uses the last two today (issue 525). They are kept as a library's counterpart of a
 plugin's section and service, so that a library whose kinds share a setting or a service of their
 own need not become a plugin for it.
 
 The typed calls (`config`, `provide`) lie on `dyn LibraryBuilder`, the trait's erased ones beside
-them (`section`, `provide_of`), as `ActorRuntime::reader` lies over `reader_of`.
+them (`section`, `provide_erased`), as `ActorRuntime::reader` lies over `reader_of`.
 
 The kernel is not built where a kind of a library provides a facet the kernel builds in its own
 name, a moderator of a channel or a command of a session, or uses a service that is neither a

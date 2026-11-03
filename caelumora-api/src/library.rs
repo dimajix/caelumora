@@ -62,13 +62,13 @@ pub trait LibraryBuilder {
     /// If another library claimed it.
     fn section(&mut self, name: &str) -> Result<Option<Value>>;
 
-    /// Offers `service`, an `Arc` of the type `key` names, to the kinds of the libraries that use
-    /// it.
+    /// Offers `service`, its type forgotten, to the kinds of the libraries that use it, under the
+    /// key of its type.
     ///
     /// # Errors
     /// If a service of its type is offered already - by the kernel, a plugin or a library: a
     /// library replaces none.
-    fn provide_of(&mut self, key: TypeKey, service: ErasedArc) -> Result<()>;
+    fn provide_erased(&mut self, service: ErasedArc) -> Result<()>;
 }
 
 impl dyn LibraryBuilder + '_ {
@@ -87,11 +87,11 @@ impl dyn LibraryBuilder + '_ {
     }
 
     /// Offers `service`, the library's own - which decides nothing of the kernel's -, to the kinds
-    /// of the libraries that use it (`provide_of`).
+    /// of the libraries that use it (`provide_erased`).
     ///
     /// # Errors
-    /// As `provide_of`.
+    /// As `provide_erased`.
     pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) -> Result<()> {
-        self.provide_of(TypeKey::of::<T>(), ErasedArc::of(service))
+        self.provide_erased(ErasedArc::of(service))
     }
 }

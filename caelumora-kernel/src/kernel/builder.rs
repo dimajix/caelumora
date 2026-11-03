@@ -527,27 +527,29 @@ impl KernelBuilder {
     /// If a service of its type is offered already - by the kernel, a plugin or a library: none
     /// replaces it (issue 521).
     pub fn provide<T: ?Sized + Send + Sync + 'static>(&mut self, service: Arc<T>) -> Result<()> {
-        self.offer(TypeKey::of::<T>(), ErasedArc::of(service))
+        self.offer(ErasedArc::of(service))
     }
 
-    /// Offers `service`, a library's - an `Arc` of the type `key` names -, as `provide` offers a
-    /// plugin's: one that the kinds of the libraries may use (`LibraryBuilder::provide_of`, issue
-    /// 516).
+    /// Offers `service`, a library's, its type forgotten, as `provide` offers a plugin's: one that
+    /// the kinds of the libraries may use (`LibraryBuilder::provide_erased`, issue 516).
     ///
     /// # Errors
     /// As `provide`.
-    pub(crate) fn provide_of_library(&mut self, key: TypeKey, service: ErasedArc) -> Result<()> {
-        self.offer(key, service)?;
+    pub(crate) fn provide_of_library(&mut self, service: ErasedArc) -> Result<()> {
+        let key = service.key();
+        self.offer(service)?;
         self.services_of_libraries.push(key);
         Ok(())
     }
 
-    /// Offers `service`, of the type `key` names, unless a service of that type is offered already.
-    fn offer(&mut self, key: TypeKey, service: ErasedArc) -> Result<()> {
+    /// Offers `service` under the key of its type, unless a service of that type is offered
+    /// already.
+    fn offer(&mut self, service: ErasedArc) -> Result<()> {
+        let key = service.key();
         if self.services.contains(key) {
             bail!("The service {} is offered already", key.name());
         }
-        self.services.insert_of(key, service);
+        self.services.insert_erased(service);
         Ok(())
     }
 
@@ -673,7 +675,7 @@ impl KernelBuilder {
             self.prompts.add_variant(variant, dir)?;
         }
         let prompts = Arc::new(mem::take(&mut self.prompts));
-        self.offer(TypeKey::of::<PromptCatalogue>(), ErasedArc::of(Arc::clone(&prompts)))?;
+        self.provide(Arc::clone(&prompts))?;
         let scoped = Arc::new(ScopedEntities::new(self.scope_members));
         let participation = Arc::new(Participation::new(
             Arc::clone(&self.entity_stores.agents),
