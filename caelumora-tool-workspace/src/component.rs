@@ -58,7 +58,7 @@ use caelumora_agents::tool::{
     ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::terminal::{TerminalError, WorkspacePath};
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
@@ -429,7 +429,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let params: WorkspaceParams = config_of_params(&descriptor.params)?;
+            let params = WorkspaceParams::read(&descriptor.params)?;
             let component = Arc::new(WorkspaceComponent::new(params, prompts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<WorkspaceComponent>::clone(&component));
@@ -738,10 +738,7 @@ pub(crate) mod tests {
         for invalid in ["", "docs/AGENTS.md", "../AGENTS.md", "/AGENTS.md"] {
             let params = json!({ "instruction_files": [invalid] });
             assert!(
-                matches!(
-                    config_of_params::<WorkspaceParams>(&params),
-                    Err(ComponentError::InvalidConfig(_))
-                ),
+                matches!(WorkspaceParams::read(&params), Err(ComponentError::InvalidConfig(_))),
                 "{invalid:?}"
             );
         }

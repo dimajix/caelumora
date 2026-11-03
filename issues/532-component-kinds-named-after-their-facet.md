@@ -115,3 +115,6 @@ the tools (`caelumora-tool-workspace`, `caelumora-tool-mcp`).
   `ArtifactsConfig`; and a crate of its own keeps a contributing kind in `component.rs`, a role in
   a module named after it - so the kinds of `caelumora-tool-workspace`, `caelumora-tool-image` and
   `caelumora-tool-mcp` moved into `component.rs`.
+- **2026-11-03** — Step 3, decided with the maintainer: the free function `config_of_params`,
+  whose name contradicted `…Params`, is `Params::read`, provided by the trait beside the `check` it
+  runs, so that a factory reads its parameters as `WorkspaceParams::read(&descriptor.params)`.

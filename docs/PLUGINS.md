@@ -201,7 +201,7 @@ plugin or a library depends on:
     (`ComponentRegistry::register` for a plugin's), `ComponentKind` with the parameters it takes
     (`params`, a struct that implements `Params`), the facets it `provides`, those of others it
     `needs`, the services it `uses` and the extensions it `reads` and `writes` by,
-    `ComponentFacets`, and `config_of_params` to read its `params`. A kind that declares no
+    `ComponentFacets`, and `Params::read` to read its `params`. A kind that declares no
     parameters takes none: every one it is given is refused
     ([COMPONENTS.md](COMPONENTS.md#parameters)).
 *   **While it is built:** the `ComponentContext` - which holds no name: the graph keeps the one it

@@ -11,7 +11,7 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_api::component::{config_of_params, ComponentError, Params};
+use caelumora_api::component::{ComponentError, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{context, PromptTexts};
@@ -71,7 +71,7 @@ impl SystemPromptComponent {
     /// titled part cannot be had.
     fn of_params(params: &Value, prompts: &PromptTexts) -> Result<Self, ComponentError> {
         let SystemPromptParams { prompt, title, position, classification } =
-            config_of_params(params)?;
+            SystemPromptParams::read(params)?;
         let prompt = match title {
             // A part that says nothing is no part.
             Some(title) if !prompt.is_empty() => prompts

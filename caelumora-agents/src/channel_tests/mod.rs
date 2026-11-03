@@ -23,7 +23,7 @@ use caelumora_api::command::CommandError;
 use caelumora_api::command::{CommandResult, ProvidesCommands};
 use caelumora_api::component::ComponentFacets;
 use caelumora_api::component::ComponentKind;
-use caelumora_api::component::{config_of_params, Params};
+use caelumora_api::component::Params;
 use caelumora_api::model::{LanguageModelClient, ModelProfileProvider, ModelResult};
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_domain::actor::{EventContext, RetryTarget};
@@ -517,7 +517,7 @@ fn register_asking_tool(registry: &mut ComponentRegistry) {
             .params::<AskingParams>()
             .provides::<dyn ToolProvider>(),
         |descriptor, _context| {
-            let AskingParams { sensitive } = config_of_params(&descriptor.params)?;
+            let AskingParams { sensitive } = AskingParams::read(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(Asking { sensitive }));
             Ok(facets)

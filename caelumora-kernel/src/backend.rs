@@ -6,7 +6,7 @@
 //! type for the service: the kernel's (`Backends::built_in`) or a plugin's (`Plugin::backends`).
 //!
 //! Built to look like the `ComponentRegistry` where the two do the same: a type is a name, its
-//! parameters are read by `config_of_params` - one it does not take refused, a type that takes none
+//! parameters are read by `Params::read` - one it does not take refused, a type that takes none
 //! reading `NoParams` -, and what a backend needs of the kernel it asks the services it is given
 //! for. Unlike a component, a backend is made once for the process, from the configuration, before
 //! any container exists - which is why it is none.
@@ -21,9 +21,7 @@
 use crate::plugin::Plugin;
 use crate::{content, secret, terminal, user_provider};
 use caelumora_api::component::Services;
-use caelumora_api::component::{
-    config_of_params, ComponentError, ComponentResult, NoParams, Params,
-};
+use caelumora_api::component::{ComponentError, ComponentResult, NoParams, Params};
 use caelumora_api::error::StorageGone;
 use caelumora_domain::config::BackendConfig;
 use caelumora_domain::type_map::TypeKey;
@@ -156,7 +154,7 @@ impl Backends {
 
     /// Registers `factory` as what makes the backends of the type `kind` for the service `T`, from
     /// its parameters `C` (`Params`) - `NoParams` for one that takes none -, in place of one
-    /// registered before. The parameters are read and checked with `config_of_params` before
+    /// registered before. The parameters are read and checked with `Params::read` before
     /// `factory` is called.
     pub fn register<T, C, F>(&mut self, kind: &str, factory: F)
     where
@@ -164,9 +162,8 @@ impl Backends {
         C: Params + 'static,
         F: Fn(&str, C, &Services) -> ComponentResult<Arc<T>> + Send + Sync + 'static,
     {
-        let factory: BackendFactory<T> = Box::new(move |name, params, services| {
-            factory(name, config_of_params(params)?, services)
-        });
+        let factory: BackendFactory<T> =
+            Box::new(move |name, params, services| factory(name, C::read(params)?, services));
         let (_, factories) = self
             .factories
             .entry(TypeId::of::<T>())

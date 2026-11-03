@@ -23,7 +23,7 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_api::component::config_of_params;
+use caelumora_api::component::Params;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::actor::{ActorDescription, ActorId};
 use caelumora_domain::confidentiality::Classification;
@@ -153,7 +153,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
             let ChannelPartParams { position, changes_only } =
-                config_of_params(&descriptor.params)?;
+                ChannelPartParams::read(&descriptor.params)?;
             let provider = if changes_only {
                 ChannelParticipantsComponent::changes_only(position, prompts)
             } else {

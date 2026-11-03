@@ -1007,7 +1007,6 @@ pub(crate) fn register_backend(backends: &mut Backends) {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use caelumora_api::component::config_of_params;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::tool::ToolCall;
@@ -1123,20 +1122,19 @@ mod tests {
             serde_json::from_value(json!({ "model": "qwen3:8b", "think": true })).unwrap();
         assert_eq!((config.model.as_str(), config.think), ("qwen3:8b", Some(true)));
         assert!(
-            config_of_params::<OllamaModelConfig>(&json!({ "sender_format": "xml" })).is_err(),
+            OllamaModelConfig::read(&json!({ "sender_format": "xml" })).is_err(),
             "how the context is framed is the agent's model's, not the backend's"
         );
     }
 
     #[test]
     fn a_misspelt_parameter_is_refused() {
-        assert!(config_of_params::<OllamaModelConfig>(&json!({ "modle": "qwen3:8b" })).is_err());
+        assert!(OllamaModelConfig::read(&json!({ "modle": "qwen3:8b" })).is_err());
         assert!(
-            config_of_params::<OllamaModelConfig>(&json!({ "base_url": DEFAULT_BASE_URL }))
-                .is_err(),
+            OllamaModelConfig::read(&json!({ "base_url": DEFAULT_BASE_URL })).is_err(),
             "the server is the endpoint's url"
         );
-        assert!(config_of_params::<OllamaModelConfig>(
+        assert!(OllamaModelConfig::read(
             &json!({ "endpoint": { "url": DEFAULT_BASE_URL, "timeout": 5 } })
         )
         .is_err());
@@ -1144,7 +1142,7 @@ mod tests {
 
     #[test]
     fn the_server_is_reached_as_the_endpoint_says_but_without_authentication() {
-        let config = config_of_params::<OllamaModelConfig>(
+        let config = OllamaModelConfig::read(
             &json!({ "endpoint": { "url": "http://gpu:11434", "timeout_secs": 5 } }),
         )
         .unwrap();
@@ -1152,7 +1150,7 @@ mod tests {
             (config.endpoint.url.as_str(), config.endpoint.timeout_secs),
             ("http://gpu:11434", Some(5))
         );
-        let refused = config_of_params::<OllamaModelConfig>(
+        let refused = OllamaModelConfig::read(
             &json!({ "endpoint": { "url": "http://gpu:11434", "auth": { "type": "bearer", "secret": "TOKEN" } } }),
         );
         assert!(refused.is_err_and(|e| e.to_string().contains("not supported")));
@@ -1245,7 +1243,7 @@ mod tests {
     }
 
     fn client_with(params: Value) -> OllamaModel {
-        OllamaModel::new(config_of_params(&params).unwrap(), Arc::new(Known::default()))
+        OllamaModel::new(OllamaModelConfig::read(&params).unwrap(), Arc::new(Known::default()))
     }
 
     /// The context size of the complete message of a call of `client`.
@@ -1310,7 +1308,7 @@ mod tests {
         let url = serve(fake.clone()).await;
         let known = Arc::new(Known::default());
         let model = |params: Value| {
-            OllamaModel::new(config_of_params(&params).unwrap(), Arc::clone(&known))
+            OllamaModel::new(OllamaModelConfig::read(&params).unwrap(), Arc::clone(&known))
         };
         let gemma = json!({ "endpoint": { "url": url }, "model": "gemma4:26b" });
         assert!(model(gemma.clone()).sees_images().await, "as its capabilities say");
@@ -1390,11 +1388,9 @@ mod tests {
 
     #[test]
     fn a_context_size_of_nothing_is_refused() {
-        assert!(config_of_params::<OllamaModelConfig>(&json!({ "context_size": 0 })).is_err());
+        assert!(OllamaModelConfig::read(&json!({ "context_size": 0 })).is_err());
         assert_eq!(
-            config_of_params::<OllamaModelConfig>(&json!({ "context_size": 65536 }))
-                .unwrap()
-                .context_size,
+            OllamaModelConfig::read(&json!({ "context_size": 65536 })).unwrap().context_size,
             Some(65536)
         );
     }

@@ -23,8 +23,8 @@ use caelumora_agents::tool::{
     ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::component::{config_of_params, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::component::{ComponentResult, Params};
 use caelumora_api::error::ContentError;
 use caelumora_api::terminal::WorkspacePath;
 use caelumora_api::workspace::WorkspaceReader;
@@ -89,7 +89,7 @@ impl ArtifactsComponent {
     /// `ComponentError::InvalidConfig` for parameters it does not take;
     /// `ComponentError::Prompt` if a text cannot be had.
     pub fn new(params: &Value, prompts: &PromptTexts) -> ComponentResult<Self> {
-        let params: ArtifactsParams = config_of_params(params)?;
+        let params = ArtifactsParams::read(params)?;
         let string = ToolParameters::string;
         let tool = Tool {
             name: PUBLISH_ARTIFACT.to_string(),

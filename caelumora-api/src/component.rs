@@ -103,9 +103,53 @@ impl ComponentError {
 pub type ComponentResult<T> = Result<T, ComponentError>;
 
 /// What a component kind or a backend type takes as its parameters (issue 515): a struct
-/// `#[serde(deny_unknown_fields)]`, read from its params by `config_of_params` - which refuses a
-/// parameter it does not know - and checked there beyond the types of its fields.
+/// `#[serde(deny_unknown_fields)]`, read from its params by `read` - which refuses a parameter it
+/// does not know - and checked there beyond the types of its fields.
 pub trait Params: DeserializeOwned {
+    /// `params` read as these parameters; left out, they are read as an empty object, so that
+    /// parameters whose fields all have a default are built from them.
+    ///
+    /// A parameter is given a value or left out, never `null`: written without a value in YAML, it
+    /// is more likely a mistake than meant as left out, and a field that may be left out (`Option`)
+    /// would take it as left out where another field refuses it.
+    ///
+    /// Not to be overridden: the registry and the backends rely on it; parameters check their
+    /// values in `check`.
+    ///
+    /// # Errors
+    /// `ComponentError::InvalidConfig` if they are no object - a list would be read by the order
+    /// of the fields -, a parameter is `null`, they are not these parameters, naming the parameter
+    /// that is not what it should be, where it is one, or `check` finds them wrong.
+    fn read(params: &Value) -> ComponentResult<Self> {
+        let empty = Value::Object(Map::new());
+        let params = match params {
+            Value::Null => &empty,
+            Value::Object(given) => {
+                if let Some((name, _)) = given.iter().find(|(_, value)| value.is_null()) {
+                    return Err(ComponentError::InvalidConfig(format!(
+                        "invalid parameter '{name}': it has no value"
+                    )));
+                }
+                params
+            }
+            _ => {
+                return Err(ComponentError::InvalidConfig(
+                    "invalid parameters: they must be an object".to_string(),
+                ))
+            }
+        };
+        let read: Self = serde_path_to_error::deserialize(params).map_err(|e| {
+            let path = e.path().to_string();
+            let message = match path.as_str() {
+                "." => format!("invalid parameters: {}", e.inner()),
+                parameter => format!("invalid parameter '{parameter}': {}", e.inner()),
+            };
+            ComponentError::InvalidConfig(message)
+        })?;
+        read.check()?;
+        Ok(read)
+    }
+
     /// Whether the values go together - a share within its bounds, a number at least 1 -, beyond
     /// what the types of the fields say; nothing to check unless its kind or type says otherwise.
     ///
@@ -114,50 +158,6 @@ pub trait Params: DeserializeOwned {
     fn check(&self) -> ComponentResult<()> {
         Ok(())
     }
-}
-
-/// A component's `params` read as its configuration `T`; left out, they are
-/// read as an empty object, so that a `T` whose fields all have a default
-/// is built from them.
-///
-/// A parameter is given a value or left out, never `null`: written without
-/// a value in YAML, it is more likely a mistake than meant as left out, and
-/// a field of `T` that may be left out (`Option`) would take it as left out
-/// where another field refuses it.
-///
-/// # Errors
-/// `ComponentError::InvalidConfig` if they are no object - a list would be
-/// read by the order of `T`'s fields -, a parameter is `null`, they are
-/// not a `T`, naming the parameter that is not what it should be, where it
-/// is one, or `T` finds them wrong (`Params::check`).
-pub fn config_of_params<T: Params>(params: &Value) -> ComponentResult<T> {
-    let empty = Value::Object(Map::new());
-    let params = match params {
-        Value::Null => &empty,
-        Value::Object(given) => {
-            if let Some((name, _)) = given.iter().find(|(_, value)| value.is_null()) {
-                return Err(ComponentError::InvalidConfig(format!(
-                    "invalid parameter '{name}': it has no value"
-                )));
-            }
-            params
-        }
-        _ => {
-            return Err(ComponentError::InvalidConfig(
-                "invalid parameters: they must be an object".to_string(),
-            ))
-        }
-    };
-    let config: T = serde_path_to_error::deserialize(params).map_err(|e| {
-        let path = e.path().to_string();
-        let message = match path.as_str() {
-            "." => format!("invalid parameters: {}", e.inner()),
-            parameter => format!("invalid parameter '{parameter}': {}", e.inner()),
-        };
-        ComponentError::InvalidConfig(message)
-    })?;
-    config.check()?;
-    Ok(config)
 }
 
 /// The parameters of what takes none - a component kind that declares none
@@ -270,7 +270,7 @@ type ParamsCheck = fn(&Value) -> ComponentResult<()>;
 
 /// Whether `params` are a `C` whose values it finds right.
 fn check_params<C: Params>(params: &Value) -> ComponentResult<()> {
-    config_of_params::<C>(params).map(drop)
+    C::read(params).map(drop)
 }
 
 impl ComponentKind {
@@ -337,7 +337,7 @@ impl ComponentKind {
     }
 
     /// Declares that components of this kind take the parameters `C` (`Params`), which their
-    /// factory reads with `config_of_params`. A kind that declares none takes none. The registry
+    /// factory reads with `Params::read`. A kind that declares none takes none. The registry
     /// checks a component's params before anything is built.
     pub fn params<C: Params>(mut self) -> Self {
         self.params = check_params::<C>;
@@ -710,31 +710,27 @@ mod tests {
     fn params_left_out_give_the_defaults() {
         #[derive(Debug, Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct Config {
+        struct LimitParams {
             #[serde(default)]
             limit: u32,
         }
-        impl Params for Config {}
-        assert_eq!(
-            config_of_params::<Config>(&Value::Null).unwrap().limit,
-            0,
-            "left out: all defaults"
-        );
-        assert_eq!(config_of_params::<Config>(&json!({ "limit": 3 })).unwrap().limit, 3);
-        let message = config_of_params::<Config>(&json!({ "limti": 3 })).unwrap_err().to_string();
+        impl Params for LimitParams {}
+        assert_eq!(LimitParams::read(&Value::Null).unwrap().limit, 0, "left out: all defaults");
+        assert_eq!(LimitParams::read(&json!({ "limit": 3 })).unwrap().limit, 3);
+        let message = LimitParams::read(&json!({ "limti": 3 })).unwrap_err().to_string();
         assert!(
             message.starts_with(
                 "invalid configuration: invalid parameter 'limti': unknown field `limti`"
             ),
             "{message}"
         );
-        let message = config_of_params::<Config>(&json!({ "limit": -1 })).unwrap_err().to_string();
+        let message = LimitParams::read(&json!({ "limit": -1 })).unwrap_err().to_string();
         assert!(
             message.starts_with("invalid configuration: invalid parameter 'limit': invalid value"),
             "the parameter named: {message}"
         );
         assert!(
-            config_of_params::<Config>(&json!([3])).is_err(),
+            LimitParams::read(&json!([3])).is_err(),
             "a list is not read by the order of the fields"
         );
     }
@@ -743,14 +739,13 @@ mod tests {
     fn a_parameter_without_a_value_is_refused_whether_it_may_be_left_out_or_not() {
         #[derive(Debug, Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct Config {
+        struct TitleParams {
             #[serde(default)]
             title: Option<String>,
         }
-        impl Params for Config {}
-        assert!(config_of_params::<Config>(&json!({})).unwrap().title.is_none());
-        let message =
-            config_of_params::<Config>(&json!({ "title": null })).unwrap_err().to_string();
+        impl Params for TitleParams {}
+        assert!(TitleParams::read(&json!({})).unwrap().title.is_none());
+        let message = TitleParams::read(&json!({ "title": null })).unwrap_err().to_string();
         assert!(
             message.contains("invalid parameter 'title': it has no value"),
             "not taken as left out: {message}"

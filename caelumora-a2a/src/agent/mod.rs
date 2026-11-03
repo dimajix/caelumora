@@ -28,7 +28,7 @@ use async_trait::async_trait;
 use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalStream, OutboundMessage,
 };
-use caelumora_api::component::{config_of_params, ComponentError, Params};
+use caelumora_api::component::{ComponentError, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::model::ModelProfileProvider;
 use caelumora_domain::confidentiality::Classification;
@@ -290,7 +290,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             .provides::<dyn ModelProfileProvider>()
             .uses::<PromptCatalogue>(),
         |descriptor, context| {
-            let params: A2aAgentParams = config_of_params(&descriptor.params)?;
+            let params = A2aAgentParams::read(&descriptor.params)?;
             context.service::<PromptCatalogue>()?.require_variant(params.prompt_texts)?;
             let component = Arc::new(A2aAgent::new(descriptor.id.clone(), params)?);
             let mut facets = ComponentFacets::empty();

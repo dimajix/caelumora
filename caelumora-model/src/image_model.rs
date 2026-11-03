@@ -6,7 +6,7 @@
 //! parameter is refused, so that a misspelt one does not silently fall back to its default.
 
 use crate::manager::ModelManager;
-use caelumora_api::component::{config_of_params, ComponentFacets, ComponentKind, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, Params};
 use caelumora_api::image::ImageModelClient;
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::kernel::Acting;
@@ -35,7 +35,7 @@ pub(crate) fn register_all(registry: &mut ComponentRegistry) {
             .uses::<ModelManager>()
             .uses::<Acting>(),
         |descriptor, context| {
-            let params = config_of_params::<ImageModelParams>(&descriptor.params)?;
+            let params = ImageModelParams::read(&descriptor.params)?;
             // For the agent its components are built for, in its name at each call.
             let acting = Acting::clone(context.service::<Acting>()?);
             let models = context.service::<ModelManager>()?;

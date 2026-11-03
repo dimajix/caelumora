@@ -3,7 +3,7 @@ use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::cache::ExpiringCache;
-use caelumora_api::component::{config_of_params, Params};
+use caelumora_api::component::Params;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::question::Answers;
@@ -405,7 +405,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             .params::<McpServerParams>()
             .provides::<dyn ToolProvider>(),
         |descriptor, _context| {
-            let params: McpServerParams = config_of_params(&descriptor.params)?;
+            let params = McpServerParams::read(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(McpServerComponent::new(
                 descriptor.id.clone(),

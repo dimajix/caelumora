@@ -627,7 +627,6 @@ mod tests {
     use super::*;
     use crate::plugin::OpenTerminalPlugin;
     use bytes::Bytes;
-    use caelumora_api::component::config_of_params;
     use caelumora_api::component::Services;
     use caelumora_api::terminal::{ByteStream, WorkspacePath};
     use caelumora_domain::config::BackendConfig;
@@ -842,9 +841,10 @@ mod tests {
 
     #[test]
     fn its_parameters_name_its_image_and_take_the_rest_by_default() {
-        let config: DockerStorageConfig =
-            config_of_params(&json!({ "image": "ghcr.io/open-webui/open-terminal:0.14.0" }))
-                .expect("a container per workspace");
+        let config = DockerStorageConfig::read(
+            &json!({ "image": "ghcr.io/open-webui/open-terminal:0.14.0" }),
+        )
+        .expect("a container per workspace");
         assert_eq!(
             (
                 config.image.as_str(),
@@ -863,7 +863,7 @@ mod tests {
         ] {
             let mut params = json!({ "image": "ghcr.io/open-webui/open-terminal:0.14.0" });
             params.as_object_mut().unwrap().extend(wrong.as_object().unwrap().clone());
-            let refused = config_of_params::<DockerStorageConfig>(&params).unwrap_err().to_string();
+            let refused = DockerStorageConfig::read(&params).unwrap_err().to_string();
             assert!(refused.contains(why), "{refused}");
         }
         let storages = [(

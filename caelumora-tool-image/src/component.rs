@@ -9,7 +9,7 @@ use caelumora_agents::tool::{
     arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::image::{ImageModelClient, ImageRequest};
 use caelumora_domain::confidentiality::Classification;
@@ -225,7 +225,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let params: ImageGenerationParams = config_of_params(&descriptor.params)?;
+            let params = ImageGenerationParams::read(&descriptor.params)?;
             let models = context
                 .all::<dyn ImageModelClient>()
                 .await?
@@ -291,7 +291,11 @@ mod tests {
 
     fn built(params: Value, models: &[Arc<Painter>]) -> ComponentResult<ImageGenerationComponent> {
         let models = models.iter().map(|m| Arc::<Painter>::clone(m) as Arc<dyn ImageModelClient>);
-        ImageGenerationComponent::new(config_of_params(&params)?, models.collect(), &prompts())
+        ImageGenerationComponent::new(
+            ImageGenerationParams::read(&params)?,
+            models.collect(),
+            &prompts(),
+        )
     }
 
     /// What `tool` gives for a call of `generate_image` with `params`, in a turn that reaches no

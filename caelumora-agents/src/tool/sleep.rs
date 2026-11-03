@@ -11,7 +11,7 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
@@ -161,7 +161,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let SleepParams { seconds, requires_approval } = config_of_params(&descriptor.params)?;
+            let SleepParams { seconds, requires_approval } = SleepParams::read(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(SleepComponent::new(
                 seconds,

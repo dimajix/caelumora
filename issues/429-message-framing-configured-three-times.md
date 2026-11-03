@@ -29,7 +29,7 @@ them without anything noticing, and the defaults can drift apart.
   the serde form of the framing fields with their defaults, which already live there
   (`SenderFormat::configured_default`, `message_times_by_default`), and the one conversion into the
   profile's fields. All three crates depend on the model; `caelumora-decision` does not depend on
-  `caelumora-agents`. Not in the runtime's component helpers (`config_of_params`), which know no
+  `caelumora-agents`. Not in the runtime's component helpers (`Params::read`), which know no
   models.
 - **Embedded with `#[serde(flatten)]`**, so that the parameters in a configuration stay as they are.
   `ollama_client` keeps `reasoning_history` and `system_messages` beside it.

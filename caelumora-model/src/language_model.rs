@@ -16,7 +16,7 @@
 //! to its default.
 
 use crate::manager::ModelManager;
-use caelumora_api::component::{config_of_params, ComponentFacets, ComponentKind, Params};
+use caelumora_api::component::{ComponentFacets, ComponentKind, Params};
 use caelumora_api::model::{LanguageModelClient, ModelProfileProvider};
 use caelumora_domain::context::{
     message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle,
@@ -78,7 +78,7 @@ pub(crate) fn register_all(registry: &mut ComponentRegistry) {
             .uses::<Acting>()
             .uses::<PromptCatalogue>(),
         |descriptor, context| async move {
-            let params = config_of_params::<LanguageModelParams>(&descriptor.params)?;
+            let params = LanguageModelParams::read(&descriptor.params)?;
             context.service::<PromptCatalogue>()?.require_variant(params.prompt_texts)?;
             // For the agent its components are built for, in its name at each call.
             let acting = Acting::clone(context.service::<Acting>()?);

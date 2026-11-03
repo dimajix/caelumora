@@ -28,7 +28,7 @@
 use crate::client::{Answer, DecisionClient, DecisionError, Question, MAX_OPTIONS, MAX_QUESTIONS};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::actor::{ActorDescription, ActorId, Envelope};
 use caelumora_domain::confidentiality::Classification;
@@ -414,7 +414,7 @@ pub fn register(registry: &mut ComponentRegistry) {
             .uses::<PromptCatalogue>()
             .operator_only(),
         |descriptor, context| {
-            let params: DecisionPolicyParams = config_of_params(&descriptor.params)?;
+            let params = DecisionPolicyParams::read(&descriptor.params)?;
             let catalogue = context.service::<PromptCatalogue>()?;
             catalogue.require_variant(params.prompt_texts)?;
             let prompts = PromptTexts::new(Arc::clone(catalogue), params.prompt_texts);
@@ -509,7 +509,7 @@ mod tests {
 
     /// A policy asking the model at `url`, as `params` configure it.
     fn policy(url: &str, params: Value) -> DecisionPolicy {
-        let mut params: DecisionPolicyParams = config_of_params(&params).unwrap();
+        let mut params = DecisionPolicyParams::read(&params).unwrap();
         params.endpoint = RemoteEndpoint::new(url);
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
         let profile = params.profile();
@@ -840,7 +840,7 @@ mod tests {
 
     #[test]
     fn its_parameters_are_checked() {
-        let checked = |params: Value| config_of_params::<DecisionPolicyParams>(&params).map(drop);
+        let checked = |params: Value| DecisionPolicyParams::read(&params).map(drop);
         assert!(checked(json!({})).is_ok(), "every one has a default");
         assert!(checked(json!({ "threshold": 1.5 })).is_err());
         assert!(checked(json!({ "max_responders": 0 })).is_err());

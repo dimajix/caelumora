@@ -226,7 +226,6 @@ mod tests {
     use super::*;
     use crate::stand_in::{self, StandIn, KEY, MOUNT};
     use bytes::Bytes;
-    use caelumora_api::component::config_of_params;
     use caelumora_api::terminal::{ByteStream, TerminalReader};
     use caelumora_domain::remote::RemoteAuthConfig;
     use caelumora_domain::secret::SecretResult;
@@ -647,8 +646,8 @@ mod tests {
     #[test]
     fn its_parameters_name_the_instance_and_where_it_has_the_storage() {
         let params = |mount: &str| json!({ "endpoint": { "url": "http://open-terminal:8000", "auth": { "type": "bearer", "secret": "OPEN_TERMINAL_API_KEY" } }, "mount": mount });
-        let config: SharedStorageConfig =
-            config_of_params(&params("/workspaces")).expect("a shared Open Terminal");
+        let config =
+            SharedStorageConfig::read(&params("/workspaces")).expect("a shared Open Terminal");
         assert_eq!(
             (
                 config.endpoint.url.as_str(),
@@ -659,22 +658,21 @@ mod tests {
             ("http://open-terminal:8000", "/workspaces", &None, DEFAULT_MAX_RUN_SECS)
         );
         for mount in ["workspaces", "/a/../b"] {
-            let refused =
-                config_of_params::<SharedStorageConfig>(&params(mount)).unwrap_err().to_string();
+            let refused = SharedStorageConfig::read(&params(mount)).unwrap_err().to_string();
             assert!(refused.contains("mount"), "{refused}");
         }
         let mut never = params("/workspaces");
         never["max_run_secs"] = json!(0);
-        let refused = config_of_params::<SharedStorageConfig>(&never).unwrap_err().to_string();
+        let refused = SharedStorageConfig::read(&never).unwrap_err().to_string();
         assert!(refused.contains("max_run_secs"), "{refused}");
         let mut nowhere = params("/workspaces");
         nowhere["endpoint"]["url"] = json!("open-terminal?key=secret");
-        let refused = config_of_params::<SharedStorageConfig>(&nowhere).unwrap_err().to_string();
+        let refused = SharedStorageConfig::read(&nowhere).unwrap_err().to_string();
         assert!(
             refused.contains("'endpoint.url'") && !refused.contains("secret"),
             "named, without what it says: {refused}"
         );
         let without = json!({ "endpoint": { "url": "http://open-terminal:8000" } });
-        assert!(config_of_params::<SharedStorageConfig>(&without).is_err(), "a mount is needed");
+        assert!(SharedStorageConfig::read(&without).is_err(), "a mount is needed");
     }
 }

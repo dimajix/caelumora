@@ -23,8 +23,8 @@ pub mod turn_context;
 
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_api::component::{config_of_params, ComponentImpl, ComponentResult, Params};
 use caelumora_api::component::{ComponentContext, ComponentKind, LibraryComponents};
+use caelumora_api::component::{ComponentImpl, ComponentResult, Params};
 use caelumora_api::model::ModelProfileProvider;
 use caelumora_api::reader::ViewError;
 use caelumora_domain::confidentiality::Classification;
@@ -78,7 +78,7 @@ impl PositionParams {
         params: &Value,
         default: PromptPosition,
     ) -> ComponentResult<PromptPosition> {
-        let Self { position } = config_of_params(params)?;
+        let Self { position } = Self::read(params)?;
         Ok(position.unwrap_or(default))
     }
 }

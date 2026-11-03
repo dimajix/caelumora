@@ -46,7 +46,7 @@ use caelumora_agents::tool::{
 };
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_api::component::{config_of_params, Params};
+use caelumora_api::component::Params;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
 use caelumora_domain::actor::ActorId;
@@ -643,7 +643,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let SkillsParams { position, requires_approval } =
-                config_of_params(&descriptor.params)?;
+                SkillsParams::read(&descriptor.params)?;
             let component = Arc::new(SkillsComponent::new(position, requires_approval, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));

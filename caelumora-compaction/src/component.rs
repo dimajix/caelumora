@@ -21,7 +21,7 @@ use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_api::component::{config_of_params, ComponentError, ComponentResult, Params};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::command::{Command, CommandOutput};
 use serde::Deserialize;
@@ -194,8 +194,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             .needs::<dyn CompactionStrategy>()
             .needs::<dyn KnowledgeRestorer>(),
         |descriptor, context| async move {
-            let CompactionParams { threshold, keep } =
-                config_of_params::<CompactionParams>(&descriptor.params)?;
+            let CompactionParams { threshold, keep } = CompactionParams::read(&descriptor.params)?;
             let strategy = context.one::<dyn CompactionStrategy>().await?.facet;
             // What the agent's components give again, each of its kind.
             let restorers = context
@@ -360,8 +359,7 @@ mod tests {
 
     #[test]
     fn what_it_keeps_and_when_it_compacts_are_shares_of_the_context_size() {
-        let read =
-            |params| config_of_params::<CompactionParams>(&params).map(|c| (c.threshold, c.keep));
+        let read = |params| CompactionParams::read(&params).map(|c| (c.threshold, c.keep));
         assert_eq!(read(Value::Null).ok(), Some((DEFAULT_THRESHOLD, DEFAULT_KEEP)));
         assert_eq!(
             read(serde_json::json!({ "threshold": 0.5, "keep": 0.2 })).ok(),

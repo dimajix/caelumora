@@ -28,9 +28,7 @@ use crate::component::ComponentRegistry;
 use crate::moderator::{Moderator, Notice, ResponderPolicy, Routing, Undecided};
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
-use caelumora_api::component::{
-    config_of_params, ComponentError, ComponentImpl, ComponentResult, Params,
-};
+use caelumora_api::component::{ComponentError, ComponentImpl, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RequestReason,
@@ -525,7 +523,7 @@ pub fn register(registry: &mut ComponentRegistry) {
                 mentions_replace_policy,
                 on_undecided,
                 context_messages,
-            } = config_of_params::<PolicyModeratorParams>(&descriptor.params)?;
+            } = PolicyModeratorParams::read(&descriptor.params)?;
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
@@ -1016,9 +1014,7 @@ mod tests {
 
     #[test]
     fn whose_mentions_replace_the_policy_is_configured() {
-        let of = |params| {
-            config_of_params::<PolicyModeratorParams>(&params).map(|c| c.mentions_replace_policy)
-        };
+        let of = |params| PolicyModeratorParams::read(&params).map(|c| c.mentions_replace_policy);
         assert_eq!(
             of(serde_json::json!({})).unwrap(),
             MentionsReplacePolicy::Anyone,
@@ -1233,8 +1229,7 @@ mod tests {
 
     #[test]
     fn whom_to_ask_when_the_policy_could_not_choose_is_configured() {
-        let of =
-            |params| config_of_params::<PolicyModeratorParams>(&params).map(|c| c.on_undecided);
+        let of = |params| PolicyModeratorParams::read(&params).map(|c| c.on_undecided);
         assert_eq!(of(serde_json::json!({})).unwrap(), OnUndecided::None, "nobody by default");
         assert_eq!(of(serde_json::json!({ "on_undecided": "all" })).unwrap(), OnUndecided::All);
         assert!(of(serde_json::json!({ "on_undecided": "some" })).is_err());
