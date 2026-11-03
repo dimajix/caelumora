@@ -1,4 +1,4 @@
-//! The `tool_sets_prompt_provider` component (issues 32, 194): tells the
+//! The `tool_sets` component (issues 32, 194): tells the
 //! agent's model which of its tool sets are unavailable, and why in general
 //! terms. The model is given its tools natively, so it needs no prompt to
 //! learn of them - but a source whose tools are missing leaves no trace
@@ -11,7 +11,7 @@
 //! available it contributes nothing.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
@@ -22,19 +22,19 @@ use caelumora_domain::prompt_catalogue::{context, PromptTexts};
 use caelumora_domain::tool::ToolSet;
 use std::sync::Arc;
 
-pub const TOOL_SETS_PROMPT_PROVIDER_KIND: &str = "tool_sets_prompt_provider";
+pub const TOOL_SETS_KIND: &str = "tool_sets";
 
 /// Its text in the prompt catalogue.
 const TEXT: &str = "agents.tool_sets";
 
 #[derive(Debug)]
-pub struct ToolSetsPromptProvider {
+pub struct ToolSetsComponent {
     pub position: PromptPosition,
     pub prompts: PromptTexts,
 }
 
 #[async_trait]
-impl PromptProvider for ToolSetsPromptProvider {
+impl PromptProvider for ToolSetsComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -45,7 +45,7 @@ impl PromptProvider for ToolSetsPromptProvider {
     }
 }
 
-impl ToolSetsPromptProvider {
+impl ToolSetsComponent {
     /// The text naming the unavailable sets among `sets`, empty if there
     /// are none.
     fn render(&self, sets: &[ToolSet]) -> Result<String, ContextError> {
@@ -67,15 +67,15 @@ fn one_line(text: &str) -> String {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(TOOL_SETS_PROMPT_PROVIDER_KIND)
-                .params::<PositionConfig>()
+            ComponentKind::new(TOOL_SETS_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let position = PositionConfig::position_of(&descriptor.params, PromptPosition::Start)?;
+            let position = PositionParams::position_of(&descriptor.params, PromptPosition::Start)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsPromptProvider {
+            facets.insert::<dyn PromptProvider>(Arc::new(ToolSetsComponent {
                 position,
                 prompts: texts,
             }));
@@ -120,7 +120,7 @@ mod tests {
         state.offer_tools(sets);
         let turn = Turn::under_way(AgentId::new(), &mut state);
         let provider =
-            ToolSetsPromptProvider { position: PromptPosition::Start, prompts: testing::prompts() };
+            ToolSetsComponent { position: PromptPosition::Start, prompts: testing::prompts() };
         provider.get_prompt(&turn.situation()).await.unwrap()
     }
 

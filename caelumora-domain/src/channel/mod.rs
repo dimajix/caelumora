@@ -109,7 +109,7 @@ pub struct Channel {
     pub summary: Option<Summary>,
     /// What an agent should know before it works here (issue 245), given to
     /// the agents whose personality wires in the
-    /// `channel_briefing_prompt_provider`; `None` if nobody wrote one.
+    /// component `channel_briefing`; `None` if nobody wrote one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub briefing: Option<Briefing>,
     /// The channel's components (issue 174): its moderator and the policy

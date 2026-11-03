@@ -87,7 +87,7 @@ enum OnUndecided {
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PolicyModeratorConfig {
+struct PolicyModeratorParams {
     #[serde(default = "default_max_agent_hops")]
     max_agent_hops: u32,
     #[serde(default = "default_max_span_depth")]
@@ -112,7 +112,7 @@ fn default_context_messages() -> usize {
     DEFAULT_CONTEXT_MESSAGES
 }
 
-impl Params for PolicyModeratorConfig {
+impl Params for PolicyModeratorParams {
     /// # Errors
     /// `InvalidConfig` if `max_span_depth` is negative.
     fn check(&self) -> ComponentResult<()> {
@@ -515,17 +515,17 @@ impl ModeratorActors {
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register_async(
         ComponentKind::new(POLICY_MODERATOR_KIND)
-            .params::<PolicyModeratorConfig>()
+            .params::<PolicyModeratorParams>()
             .provides::<dyn Moderator>()
             .needs::<dyn ResponderPolicy>(),
         |descriptor, context| async move {
-            let PolicyModeratorConfig {
+            let PolicyModeratorParams {
                 max_agent_hops,
                 max_span_depth,
                 mentions_replace_policy,
                 on_undecided,
                 context_messages,
-            } = config_of_params::<PolicyModeratorConfig>(&descriptor.params)?;
+            } = config_of_params::<PolicyModeratorParams>(&descriptor.params)?;
             // The channel's policy, or the default one.
             let policy = context.one::<dyn ResponderPolicy>().await?;
             let mut facets = ComponentFacets::empty();
@@ -1017,7 +1017,7 @@ mod tests {
     #[test]
     fn whose_mentions_replace_the_policy_is_configured() {
         let of = |params| {
-            config_of_params::<PolicyModeratorConfig>(&params).map(|c| c.mentions_replace_policy)
+            config_of_params::<PolicyModeratorParams>(&params).map(|c| c.mentions_replace_policy)
         };
         assert_eq!(
             of(serde_json::json!({})).unwrap(),
@@ -1234,7 +1234,7 @@ mod tests {
     #[test]
     fn whom_to_ask_when_the_policy_could_not_choose_is_configured() {
         let of =
-            |params| config_of_params::<PolicyModeratorConfig>(&params).map(|c| c.on_undecided);
+            |params| config_of_params::<PolicyModeratorParams>(&params).map(|c| c.on_undecided);
         assert_eq!(of(serde_json::json!({})).unwrap(), OnUndecided::None, "nobody by default");
         assert_eq!(of(serde_json::json!({ "on_undecided": "all" })).unwrap(), OnUndecided::All);
         assert!(of(serde_json::json!({ "on_undecided": "some" })).is_err());

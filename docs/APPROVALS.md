@@ -73,7 +73,7 @@ permissions (`CallTool`), never under those of whom the model takes for the spea
 marker gains the agent nothing it could not do anyway - but it can make the agent do it. What needs
 approval follows from that:
 
-*   **A tool that acts outside** needs it. `mcp_tool` requires approval for every tool of its
+*   **A tool that acts outside** needs it. `mcp_server` requires approval for every tool of its
     server unless configured otherwise: `false` for none, which fits a server that only reads, or
     `"unless_read_only"` for all but the tools the server marks read-only. A tool without that mark
     counts as one that changes something. The mark is the server's word: trusted only where the

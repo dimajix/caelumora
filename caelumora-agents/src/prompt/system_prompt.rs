@@ -1,4 +1,4 @@
-//! The `static_system_prompt_provider` component: a fixed prompt part, the
+//! The `system_prompt` component: a fixed prompt part, the
 //! system prompt by default (parameters `prompt`, `position` and
 //! `classification`), under the title `title` if it names one (issue 249),
 //! in the form of every part the agents write (`agents.titled` of the
@@ -19,12 +19,12 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub const STATIC_SYSTEM_PROMPT_PROVIDER_KIND: &str = "static_system_prompt_provider";
+pub const SYSTEM_PROMPT_KIND: &str = "system_prompt";
 
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StaticSystemPromptConfig {
+struct SystemPromptParams {
     prompt: String,
     #[serde(default)]
     title: Option<String>,
@@ -34,14 +34,14 @@ struct StaticSystemPromptConfig {
     classification: Classification,
 }
 
-impl Params for StaticSystemPromptConfig {}
+impl Params for SystemPromptParams {}
 
 fn default_classification() -> Classification {
     Classification::PUBLIC
 }
 
 #[derive(Debug)]
-pub struct StaticSystemPromptProvider {
+pub struct SystemPromptComponent {
     pub prompt: String,
     pub position: PromptPosition,
     /// How the prompt is classified (issue 168): public unless configured
@@ -51,7 +51,7 @@ pub struct StaticSystemPromptProvider {
 }
 
 #[async_trait]
-impl PromptProvider for StaticSystemPromptProvider {
+impl PromptProvider for SystemPromptComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -60,7 +60,7 @@ impl PromptProvider for StaticSystemPromptProvider {
     }
 }
 
-impl StaticSystemPromptProvider {
+impl SystemPromptComponent {
     /// The provider its configuration `params` describe: `prompt`, under
     /// `title` if named - as `prompts` puts a part under its title -, at
     /// `position`, classified `classification`.
@@ -70,7 +70,7 @@ impl StaticSystemPromptProvider {
     /// is not what it should be; `ComponentError::Prompt` if the form of a
     /// titled part cannot be had.
     fn of_params(params: &Value, prompts: &PromptTexts) -> Result<Self, ComponentError> {
-        let StaticSystemPromptConfig { prompt, title, position, classification } =
+        let SystemPromptParams { prompt, title, position, classification } =
             config_of_params(params)?;
         let prompt = match title {
             // A part that says nothing is no part.
@@ -85,14 +85,14 @@ impl StaticSystemPromptProvider {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(STATIC_SYSTEM_PROMPT_PROVIDER_KIND)
-                .params::<StaticSystemPromptConfig>()
+            ComponentKind::new(SYSTEM_PROMPT_KIND)
+                .params::<SystemPromptParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(StaticSystemPromptProvider::of_params(
+            facets.insert::<dyn PromptProvider>(Arc::new(SystemPromptComponent::of_params(
                 &descriptor.params,
                 &texts,
             )?));
@@ -110,35 +110,33 @@ mod tests {
     #[test]
     fn the_prompt_is_titled_only_where_a_title_is_named() {
         let prompts = testing::prompts();
-        let titled = StaticSystemPromptProvider::of_params(
+        let titled = SystemPromptComponent::of_params(
             &json!({ "prompt": "You quiz.", "title": "Who you are" }),
             &prompts,
         )
         .unwrap();
         assert_eq!(titled.prompt, "[Who you are]\nYou quiz.\n");
-        let ended = StaticSystemPromptProvider::of_params(
+        let ended = SystemPromptComponent::of_params(
             &json!({ "prompt": "You quiz.\n", "title": "Who you are" }),
             &prompts,
         )
         .unwrap();
         assert_eq!(ended.prompt, "[Who you are]\nYou quiz.\n", "one line break at the end");
-        let empty = StaticSystemPromptProvider::of_params(
+        let empty = SystemPromptComponent::of_params(
             &json!({ "prompt": "", "title": "Who you are" }),
             &prompts,
         )
         .unwrap();
         assert_eq!(empty.prompt, "", "a part that says nothing is no part");
-        let plain = StaticSystemPromptProvider::of_params(
-            &json!({ "prompt": "[Frame]\nBe brief." }),
-            &prompts,
-        )
-        .unwrap();
+        let plain =
+            SystemPromptComponent::of_params(&json!({ "prompt": "[Frame]\nBe brief." }), &prompts)
+                .unwrap();
         assert_eq!(
             plain.prompt, "[Frame]\nBe brief.",
             "as written: it may carry a title of its own"
         );
         assert!(matches!(
-            StaticSystemPromptProvider::of_params(&json!({ "prompt": "x", "title": 1 }), &prompts),
+            SystemPromptComponent::of_params(&json!({ "prompt": "x", "title": 1 }), &prompts),
             Err(ComponentError::InvalidConfig(_))
         ));
     }

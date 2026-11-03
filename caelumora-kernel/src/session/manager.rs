@@ -1339,7 +1339,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_session_has_the_global_commands_and_its_own_but_no_name_twice() {
-        use caelumora_domain::command::HELP_COMMAND_KIND;
+        use caelumora_domain::command::HELP_KIND;
         use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
         let kernel = test_kernel();
         let names = |executor: CommandExecutor| async move {
@@ -1362,7 +1362,7 @@ mod tests {
         session.commands = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 id: "help".to_string(),
-                kind: HELP_COMMAND_KIND.to_string(),
+                kind: HELP_KIND.to_string(),
                 params: Value::Null,
                 tags: Vec::new(),
                 fail_policy: Default::default(),

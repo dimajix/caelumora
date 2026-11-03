@@ -4,14 +4,14 @@
 //! built-in tool components, one file per component kind. A component that offers tools along with
 //! another facet - a prompt part, say - stays in `components`.
 
-pub mod ask_user_tool;
-pub mod attachment_tool;
-pub mod calculator_tool;
-pub mod echo_tool;
+pub mod ask_user;
+pub mod attachments;
+pub mod calculator;
+pub mod echo;
 mod page;
 mod providers;
-pub mod sleep_tool;
-pub mod stop_tool;
+pub mod sleep;
+pub mod turn_end;
 
 pub use page::{page_of, TextPage};
 
@@ -1062,12 +1062,12 @@ impl ToolExecutor {
 
 /// Registers the tool kinds with `registry`.
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
-    ask_user_tool::register(registry);
-    attachment_tool::register(registry);
-    calculator_tool::register(registry);
-    echo_tool::register(registry);
-    sleep_tool::register(registry);
-    stop_tool::register(registry);
+    ask_user::register(registry);
+    attachments::register(registry);
+    calculator::register(registry);
+    echo::register(registry);
+    sleep::register(registry);
+    turn_end::register(registry);
 }
 
 #[cfg(test)]

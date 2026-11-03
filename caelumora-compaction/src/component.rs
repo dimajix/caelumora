@@ -61,7 +61,7 @@ pub struct CompactionComponent {
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CompactionConfig {
+struct CompactionParams {
     #[serde(default = "default_threshold")]
     threshold: f64,
     #[serde(default = "default_keep")]
@@ -76,7 +76,7 @@ fn default_keep() -> f64 {
     DEFAULT_KEEP
 }
 
-impl Params for CompactionConfig {
+impl Params for CompactionParams {
     /// # Errors
     /// `InvalidConfig` if `keep` and `threshold` are no shares of the context size with `keep`
     /// below `threshold`: kept as much as it compacts at, a compaction would free too little.
@@ -188,14 +188,14 @@ impl ActivityProvider for CompactionComponent {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         ComponentKind::new(COMPACTION_KIND)
-            .params::<CompactionConfig>()
+            .params::<CompactionParams>()
             .provides::<dyn AgentCommandProvider>()
             .provides::<dyn ActivityProvider>()
             .needs::<dyn CompactionStrategy>()
             .needs::<dyn KnowledgeRestorer>(),
         |descriptor, context| async move {
-            let CompactionConfig { threshold, keep } =
-                config_of_params::<CompactionConfig>(&descriptor.params)?;
+            let CompactionParams { threshold, keep } =
+                config_of_params::<CompactionParams>(&descriptor.params)?;
             let strategy = context.one::<dyn CompactionStrategy>().await?.facet;
             // What the agent's components give again, each of its kind.
             let restorers = context
@@ -360,21 +360,21 @@ mod tests {
 
     #[test]
     fn what_it_keeps_and_when_it_compacts_are_shares_of_the_context_size() {
-        let config =
-            |params| config_of_params::<CompactionConfig>(&params).map(|c| (c.threshold, c.keep));
-        assert_eq!(config(Value::Null).ok(), Some((DEFAULT_THRESHOLD, DEFAULT_KEEP)));
+        let read =
+            |params| config_of_params::<CompactionParams>(&params).map(|c| (c.threshold, c.keep));
+        assert_eq!(read(Value::Null).ok(), Some((DEFAULT_THRESHOLD, DEFAULT_KEEP)));
         assert_eq!(
-            config(serde_json::json!({ "threshold": 0.5, "keep": 0.2 })).ok(),
+            read(serde_json::json!({ "threshold": 0.5, "keep": 0.2 })).ok(),
             Some((0.5, 0.2))
         );
         assert!(
-            config(serde_json::json!({ "threshold": 0.5, "keep": 0.5 })).is_err(),
+            read(serde_json::json!({ "threshold": 0.5, "keep": 0.5 })).is_err(),
             "kept as much as it compacts at, it would free too little"
         );
-        assert!(config(serde_json::json!({ "threshold": 1.5 })).is_err(), "at most all of it");
-        assert!(config(serde_json::json!({ "keep": -0.1 })).is_err(), "nothing less than nothing");
+        assert!(read(serde_json::json!({ "threshold": 1.5 })).is_err(), "at most all of it");
+        assert!(read(serde_json::json!({ "keep": -0.1 })).is_err(), "nothing less than nothing");
         assert!(
-            config(serde_json::json!({ "keep_last": 10 })).is_err(),
+            read(serde_json::json!({ "keep_last": 10 })).is_err(),
             "what it does not take is refused"
         );
     }

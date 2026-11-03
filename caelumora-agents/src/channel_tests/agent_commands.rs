@@ -2,7 +2,7 @@
 //! 269): an agent's, which move with the agents' logic (issue 370).
 
 use super::*;
-use crate::tool::stop_tool::STOP_TOOL_KIND;
+use crate::tool::turn_end::TURN_END_KIND;
 use caelumora_api::command::CommandError;
 use caelumora_domain::chain::Node;
 use caelumora_domain::transcript::TranscriptEntry;
@@ -37,7 +37,7 @@ async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep
     let components = ComponentConfig {
         component_nodes: vec![
             ComponentDescriptor::new("marking", "test_marking"),
-            ComponentDescriptor::new("stop", STOP_TOOL_KIND),
+            ComponentDescriptor::new("stop", TURN_END_KIND),
         ],
     };
     let mut stuck =
@@ -273,9 +273,9 @@ async fn help_lists_the_commands_of_the_agents_with_their_handles() {
     let issuer = channel.user_actor(alice_of(&context)).expect("alice takes part");
     let help = CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
 
-    let all = HelpCommandProvider.execute("help", "", &help).await.expect("/help runs").text;
+    let all = HelpComponent.execute("help", "", &help).await.expect("/help runs").text;
     assert!(all.contains("`/mark @agent [text]` — Marks. (@helper)"), "{all}");
-    let one = HelpCommandProvider.execute("help", "mark", &help).await.expect("/help runs").text;
+    let one = HelpComponent.execute("help", "mark", &help).await.expect("/help runs").text;
     assert!(one.contains("Carried out by @helper"), "{one}");
     running.abort();
 }

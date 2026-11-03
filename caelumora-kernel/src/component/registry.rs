@@ -612,7 +612,7 @@ impl ComponentRegistry {
     /// name `context` of whichever component graph is referencing it.
     /// This ensures things like secret resolution run under the actual
     /// caller's name rather than a synthetic one, at the cost of not sharing
-    /// a single instance across references (e.g. an `mcp_tool` of a bundle
+    /// a single instance across references (e.g. an `mcp_server` of a bundle
     /// re-runs discovery for every personality that references it).
     async fn resolve(
         &self,
@@ -1150,11 +1150,11 @@ mod tests {
     async fn a_value_its_kind_finds_wrong_is_refused_before_anything_is_built() {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
-        struct BoundedConfig {
+        struct BoundedParams {
             #[serde(default)]
             limit: u32,
         }
-        impl Params for BoundedConfig {
+        impl Params for BoundedParams {
             fn check(&self) -> ComponentResult<()> {
                 if self.limit == 0 {
                     return Err(ComponentError::InvalidConfig(
@@ -1167,7 +1167,7 @@ mod tests {
         let (mut registry, built) = choices();
         let counted = Arc::clone(&built);
         registry.register(
-            ComponentKind::new("bounded").params::<BoundedConfig>().provides::<dyn Choice>(),
+            ComponentKind::new("bounded").params::<BoundedParams>().provides::<dyn Choice>(),
             move |descriptor, _| {
                 counted.fetch_add(1, Ordering::SeqCst);
                 let mut facets = ComponentFacets::empty();
@@ -1574,7 +1574,7 @@ mod tests {
         let (mut registry, _) = choices();
         registry.register(
             ComponentKind::new("operated")
-                .params::<ModelConfig>()
+                .params::<ModelParams>()
                 .provides::<dyn Choice>()
                 .operator_only(),
             |descriptor, _| {

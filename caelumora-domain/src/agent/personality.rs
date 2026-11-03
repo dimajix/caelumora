@@ -226,7 +226,7 @@ pub struct Personality {
     /// Whether the agent first analyzes the request and proposes a
     /// structured plan requiring user approval before executing it, instead
     /// of answering directly, is derived from whether `components` wires in
-    /// the `create_plan_tool` component - not a separate flag here, since
+    /// the `planning` component - not a separate flag here, since
     /// extended planning is just another tool a personality opts into.
     #[serde(default)]
     pub components: ComponentConfig,

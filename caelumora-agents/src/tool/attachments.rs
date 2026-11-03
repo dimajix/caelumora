@@ -1,4 +1,4 @@
-//! The `attachment_tool` component (issue 282): the tools with which an agent reaches the
+//! The `attachments` component (issue 282): the tools with which an agent reaches the
 //! attachments it heard, by the numbers its transcript gave them (`a3`) - shows its model an image
 //! again, reads a text a page at a time, copies one into the workspace it may use to work on it
 //! there, or attaches one to its next message. Each reads the message that carries the attachment
@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::error;
 
-pub const ATTACHMENT_TOOL_KIND: &str = "attachment_tool";
+pub const ATTACHMENTS_KIND: &str = "attachments";
 
 pub const VIEW_ATTACHMENT: &str = "view_attachment";
 pub const READ_ATTACHMENT: &str = "read_attachment";
@@ -71,7 +71,7 @@ struct CopyTo {
 }
 
 #[derive(Debug)]
-pub struct AttachmentTool {
+pub struct AttachmentsComponent {
     /// What its tool set is for and its tools, as the prompt catalogue words them.
     description: String,
     tools: Vec<Tool>,
@@ -79,7 +79,7 @@ pub struct AttachmentTool {
     prompts: PromptTexts,
 }
 
-impl AttachmentTool {
+impl AttachmentsComponent {
     /// The provider, its texts from `prompts`. What it attaches it has its turn copy
     /// (`Turn::copy_attachment`); the workspace's terminal writes no larger file into a workspace
     /// than a workspace takes (issue 516).
@@ -92,7 +92,7 @@ impl AttachmentTool {
             described(
                 &prompts,
                 NAMESPACE,
-                ATTACHMENT_TOOL_KIND,
+                ATTACHMENTS_KIND,
                 Tool {
                     name: name.to_string(),
                     description: String::new(),
@@ -135,14 +135,14 @@ impl AttachmentTool {
                 ..tool(ATTACH, ToolParameters::object([reference()], ["ref"]), false)?
             },
         ];
-        let description = tool_text(&prompts, NAMESPACE, ATTACHMENT_TOOL_KIND, "description", ())?;
+        let description = tool_text(&prompts, NAMESPACE, ATTACHMENTS_KIND, "description", ())?;
         Ok(Self { description, tools, prompts })
     }
 
     /// The text `key` of its results, rendered with `values`; `None`, logged, if it cannot be had -
     /// the result is given without it.
     fn text(&self, key: &str, values: impl Serialize) -> Option<String> {
-        tool_text(&self.prompts, NAMESPACE, ATTACHMENT_TOOL_KIND, key, values)
+        tool_text(&self.prompts, NAMESPACE, ATTACHMENTS_KIND, key, values)
             .inspect_err(|e| {
                 error!("A result of the attachment tools is given without saying what it did: {e}")
             })
@@ -199,7 +199,7 @@ async fn attachment_content(
 }
 
 #[async_trait]
-impl ToolProvider for AttachmentTool {
+impl ToolProvider for AttachmentsComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -329,7 +329,7 @@ impl ToolProvider for AttachmentTool {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(ATTACHMENT_TOOL_KIND)
+            ComponentKind::new(ATTACHMENTS_KIND)
                 .provides::<dyn ToolProvider>()
                 .reads::<dyn WorkspaceReader>()
                 .writes::<dyn WorkspaceWriter>(),
@@ -337,7 +337,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentTool::new(texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentsComponent::new(texts)?));
             Ok(facets)
         },
     );
@@ -441,8 +441,8 @@ mod tests {
         .expect("said")
     }
 
-    fn tool() -> AttachmentTool {
-        AttachmentTool::new(testing::prompts()).unwrap()
+    fn tool() -> AttachmentsComponent {
+        AttachmentsComponent::new(testing::prompts()).unwrap()
     }
 
     #[tokio::test]

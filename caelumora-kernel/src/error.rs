@@ -138,7 +138,7 @@ mod tests {
     fn component_errors_name_the_component() {
         let error = anyhow::Error::new(ComponentError::Build {
             component: "github-mcp".to_string(),
-            kind: "mcp_tool".to_string(),
+            kind: "mcp_server".to_string(),
             cause: Box::new(ComponentError::InvalidConfig(
                 "invalid parameters: missing field `url`".to_string(),
             )),
@@ -147,7 +147,7 @@ mod tests {
         let message = user_message(&error).unwrap();
         assert!(
             message.contains("'github-mcp'")
-                && message.contains("mcp_tool")
+                && message.contains("mcp_server")
                 && message.contains("missing field `url`"),
             "{message}"
         );

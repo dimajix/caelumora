@@ -72,7 +72,7 @@ pub struct Session {
     /// What an agent should know before it works in any of
     /// the session's channels (issue 245), given to
     /// the agents whose personality wires in the
-    /// `channel_briefing_prompt_provider`; `None` if nobody wrote one.
+    /// component `channel_briefing`; `None` if nobody wrote one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub briefing: Option<Briefing>,
     /// The language its channels are held in where they hold none of their

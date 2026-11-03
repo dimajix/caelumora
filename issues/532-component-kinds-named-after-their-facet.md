@@ -1,6 +1,6 @@
 # 532 — Component kinds are named after their facet
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -100,3 +100,18 @@ the tools (`caelumora-tool-workspace`, `caelumora-tool-mcp`).
   `workspace` (`WorkspaceComponent`, `WorkspaceConfig`, in `workspace.rs` of
   `caelumora-tool-workspace`), which provides the tools and the prompt part; its texts are keyed
   `tools.workspace`.
+- **2026-11-03** — Step 2: every other kind is renamed as decided - the tools, the prompt parts
+  (`system_prompt`, `channel_participants`, …), the context providers (`turn_context`,
+  `external_context`) and the commands (`help`, `wakeup`, `nudge`) -, with their constants, files,
+  structs (`…Component`), configurations and texts; in the example seed, the components of the
+  renamed kinds have ids after their kinds. COMPONENTS.md states the rule in place of the
+  tool/feature distinction, and a test of the program refuses a kind ending in a suffix of a facet.
+  Decided with the maintainer: only a struct that contributes is named `…Component`; one that is
+  what a facet asks for - moderator, responder policy, compaction strategy, model client, external
+  agent, context provider - is named after that role (`PolicyModerator`, `SummaryCompaction`,
+  `A2aAgent`, `TurnContextProvider`, `ExternalContextProvider`). Also decided: what a kind takes
+  is named `…Params` (`WorkspaceParams`), `…Config` stays for the sections and backends of the
+  configuration file, since `artifacts` and the section of its plugin would both have been
+  `ArtifactsConfig`; and a crate of its own keeps a contributing kind in `component.rs`, a role in
+  a module named after it - so the kinds of `caelumora-tool-workspace`, `caelumora-tool-image` and
+  `caelumora-tool-mcp` moved into `component.rs`.

@@ -1,4 +1,4 @@
-//! The `mcp_tool` component against an MCP server of the test's own, over streamable HTTP.
+//! The `mcp_server` component against an MCP server of the test's own, over streamable HTTP.
 #![expect(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -34,8 +34,8 @@ use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::testing::{asked_for, TestKernel, World};
 use caelumora_security::{Policies, SecurityContext};
 use caelumora_store::{EntityStores, Persistence};
+use caelumora_tool_mcp::component::MCP_SERVER_KIND;
 use caelumora_tool_mcp::library::McpToolLibrary;
-use caelumora_tool_mcp::tool::MCP_TOOL_KIND;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{CallToolResult, ContentBlock, ServerConfig};
@@ -165,7 +165,7 @@ async fn build_container(params: Value) -> ComponentContainer {
     let config = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "test-echo".to_string(),
-            kind: MCP_TOOL_KIND.to_string(),
+            kind: MCP_SERVER_KIND.to_string(),
             params,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailOpen,
@@ -290,7 +290,7 @@ async fn shared_component_via_ref_reuses_config_but_builds_independently_per_con
                 ComponentConfig {
                     component_nodes: vec![ComponentDescriptor {
                         id: "shared-echo".to_string(),
-                        kind: MCP_TOOL_KIND.to_string(),
+                        kind: MCP_SERVER_KIND.to_string(),
                         params: json!({ "endpoint": { "url": url } }),
                         tags: vec![],
                         fail_policy: ComponentFailPolicy::FailOpen,
@@ -472,7 +472,7 @@ async fn the_tools_are_discovered_in_the_name_of_whoever_acts() {
     let world = World::with(&[], &[&AgentsLibrary, &McpToolLibrary], |_| {}).await;
     let mcp = ComponentDescriptor {
         params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp", "auth": { "type": "bearer", "secret": "MCP_TOKEN" } } }),
-        ..ComponentDescriptor::new("tools", MCP_TOOL_KIND)
+        ..ComponentDescriptor::new("tools", MCP_SERVER_KIND)
     };
     let personality = world.personality("working", None, &[]).await;
     let mut working =

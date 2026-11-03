@@ -1,9 +1,9 @@
-//! The `external_context_provider` component (issue 214): what an external
+//! The `external_context` component (issue 214): what an external
 //! agent's remote agent is given besides what was said - the prompt parts of
 //! every `PromptProvider` of its personality, such as who is in the channel
 //! (issue 204). The default `ContextProvider` of an external agent.
 //!
-//! Unlike a turn's (`turn_context_provider`), it neither joins the parts nor
+//! Unlike a turn's (`turn_context`), it neither joins the parts nor
 //! places them: the remote agent keeps its conversation, so its actor gives
 //! each part only when it changed, and tells them apart by the component
 //! they came from (`PromptPart::source`). Every part goes first, as text of
@@ -18,7 +18,7 @@ use caelumora_domain::context::{KnowledgeRef, PromptPart};
 use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
-pub const EXTERNAL_CONTEXT_PROVIDER_KIND: &str = "external_context_provider";
+pub const EXTERNAL_CONTEXT_KIND: &str = "external_context";
 
 /// The prompt parts of `prompt_providers`, each on its own, with the
 /// component it came from.
@@ -56,7 +56,7 @@ impl ContextProvider for ExternalContextProvider {
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
-        ComponentKind::new(EXTERNAL_CONTEXT_PROVIDER_KIND)
+        ComponentKind::new(EXTERNAL_CONTEXT_KIND)
             .provides::<dyn ContextProvider>()
             .needs::<dyn PromptProvider>(),
         |_descriptor, context| async move {
@@ -75,7 +75,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
+    use crate::prompt::system_prompt::SystemPromptComponent;
     use crate::prompt::PromptPosition;
     use crate::testing::detached_actor_runtime;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
@@ -88,7 +88,7 @@ mod tests {
         prompt: &str,
         position: PromptPosition,
     ) -> ComponentImpl<dyn PromptProvider> {
-        let provider = StaticSystemPromptProvider {
+        let provider = SystemPromptComponent {
             prompt: prompt.to_string(),
             position,
             classification: Classification::PUBLIC,

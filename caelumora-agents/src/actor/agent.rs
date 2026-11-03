@@ -650,7 +650,7 @@ impl AgentActor {
 
         let cancelled = self.body.control.token();
         // The turn's context - prompt parts, a planning nudge among them if
-        // `create_plan_tool` is wired in, and the tools the turn began with
+        // `planning` is wired in, and the tools the turn began with
         // (issue 137); it fails if it cannot be resolved.
         let (messages, tools) = turn.full_context().await?;
         let initiator = turn.situation().initiator();
@@ -834,7 +834,7 @@ impl AgentActor {
             // the step it now points at (or finalize immediately for an
             // empty plan) now that the tool-result message reporting the
             // create_plan call is already in place - this must not happen
-            // inside CreatePlanToolProvider::execute itself, since that
+            // inside PlanningComponent::execute itself, since that
             // would land a message between the assistant's tool-call message
             // and its own tool result.
             let progress_after = turn.plan_progress();

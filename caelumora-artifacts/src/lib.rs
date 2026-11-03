@@ -6,7 +6,7 @@
 //! `kernel` adds the one owner of artifacts and their content (`manager`), kept in the storages of
 //! content of the kernel (issue 282), how a viewer reaches them, and an agent's work through them
 //! (`view`), the questions of who may change, read and add to one (`access`) and the plugin that
-//! joins all of it to the kernel (`plugin`); `library` adds the `artifact_tool` component and the
+//! joins all of it to the kernel (`plugin`); `library` adds the `artifacts` component and the
 //! library that registers it (`library`); `server` adds the routes.
 
 pub mod artifact;

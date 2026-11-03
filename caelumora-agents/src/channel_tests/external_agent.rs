@@ -834,7 +834,7 @@ async fn what_an_external_agent_could_not_send_is_sent_with_its_next_call() {
 /// 204): a fixed one, and one that changes with what it hears.
 fn external_components_with_prompts() -> ComponentConfig {
     let mut components = external_components();
-    let mut frame = ComponentDescriptor::new("frame", "static_system_prompt_provider");
+    let mut frame = ComponentDescriptor::new("frame", "system_prompt");
     frame.params =
         serde_json::json!({ "prompt": "[Frame]\nBe brief.", "position": "before_turn_input" });
     components.component_nodes.push(frame);
@@ -1946,8 +1946,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
     let participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
-    let mut roster =
-        ComponentDescriptor::new("participants", "channel_participants_prompt_provider");
+    let mut roster = ComponentDescriptor::new("participants", "channel_participants");
     roster.params = serde_json::json!({ "changes_only": true });
     let hermes = stored_agent(
         kernel.entity_stores(),

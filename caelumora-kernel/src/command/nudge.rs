@@ -7,7 +7,7 @@ use crate::error::user_message;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_domain::command::{Command, CommandOutput, NUDGE_COMMAND_KIND};
+use caelumora_domain::command::{Command, CommandOutput, NUDGE_KIND};
 use std::sync::Arc;
 
 pub const NUDGE_COMMAND_NAME: &str = "nudge";
@@ -18,9 +18,9 @@ pub const NUDGE_COMMAND_NAME: &str = "nudge";
 /// Only the issuer is told, and the one asked: the history keeps nothing of
 /// it, and the others see the answer.
 #[derive(Debug)]
-pub struct NudgeCommandProvider;
+pub struct NudgeComponent;
 
-impl ProvidesCommands for NudgeCommandProvider {
+impl ProvidesCommands for NudgeComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
             name: NUDGE_COMMAND_NAME.to_string(),
@@ -32,7 +32,7 @@ impl ProvidesCommands for NudgeCommandProvider {
 }
 
 #[async_trait]
-impl ChannelCommandProvider for NudgeCommandProvider {
+impl ChannelCommandProvider for NudgeComponent {
     async fn execute(
         &self,
         _name: &str,
@@ -70,10 +70,10 @@ impl ChannelCommandProvider for NudgeCommandProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(NUDGE_COMMAND_KIND).provides::<dyn ChannelCommandProvider>(),
+        ComponentKind::new(NUDGE_KIND).provides::<dyn ChannelCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ChannelCommandProvider>(Arc::new(NudgeCommandProvider));
+            facets.insert::<dyn ChannelCommandProvider>(Arc::new(NudgeComponent));
             Ok(facets)
         },
     );

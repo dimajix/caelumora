@@ -2736,7 +2736,7 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
     let world = World::new().await;
     let mut tools = ComponentBundle::new(
         ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(),
-        ComponentConfig { component_nodes: vec![ComponentDescriptor::new("echo", "echo_tool")] },
+        ComponentConfig { component_nodes: vec![ComponentDescriptor::new("echo", "echo")] },
         attributes(Some(world.bob), &[world.alice]),
     );
     world

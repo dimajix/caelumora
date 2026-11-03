@@ -1,4 +1,4 @@
-//! The `channel_briefing_prompt_provider` component (issue 245): tells the
+//! The `channel_briefing` component (issue 245): tells the
 //! agent what its session and its channel are for - their summaries and
 //! briefings, as whoever may change them wrote them - so that it need not be
 //! told again in every request.
@@ -20,7 +20,7 @@
 //! `changes_only`), as the roster and the language are.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ChannelPartConfig, ContextError, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ChannelPartParams, ContextError, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
@@ -32,7 +32,7 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::value::text::{Briefing, Summary};
 use std::sync::{Arc, Mutex};
 
-pub const CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND: &str = "channel_briefing_prompt_provider";
+pub const CHANNEL_BRIEFING_KIND: &str = "channel_briefing";
 
 /// Its texts in the prompt catalogue: the descriptions, and that what was
 /// told of them no longer holds.
@@ -40,7 +40,7 @@ const TEXT: &str = "agents.channel_briefing";
 const WITHDRAWN: &str = "agents.channel_briefing_withdrawn";
 
 #[derive(Debug)]
-pub struct ChannelBriefingPromptProvider {
+pub struct ChannelBriefingComponent {
     pub position: PromptPosition,
     /// Whether it tells only of changes: then what it told last, `None`
     /// before it told anything. A plain lock, never held across an await.
@@ -48,7 +48,7 @@ pub struct ChannelBriefingPromptProvider {
     prompts: PromptTexts,
 }
 
-impl ChannelBriefingPromptProvider {
+impl ChannelBriefingComponent {
     /// The descriptions at `position`, told every time it is asked.
     pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: None, prompts }
@@ -85,7 +85,7 @@ impl ChannelBriefingPromptProvider {
 }
 
 #[async_trait]
-impl PromptProvider for ChannelBriefingPromptProvider {
+impl PromptProvider for ChannelBriefingComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -136,18 +136,18 @@ fn render(prompts: &PromptTexts, places: &[Place<'_>]) -> Result<String, PromptE
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(CHANNEL_BRIEFING_PROMPT_PROVIDER_KIND)
-                .params::<ChannelPartConfig>()
+            ComponentKind::new(CHANNEL_BRIEFING_KIND)
+                .params::<ChannelPartParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let ChannelPartConfig { position, changes_only } =
+            let ChannelPartParams { position, changes_only } =
                 config_of_params(&descriptor.params)?;
             let provider = if changes_only {
-                ChannelBriefingPromptProvider::changes_only(position, prompts)
+                ChannelBriefingComponent::changes_only(position, prompts)
             } else {
-                ChannelBriefingPromptProvider::new(position, prompts)
+                ChannelBriefingComponent::new(position, prompts)
             };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
@@ -205,7 +205,7 @@ mod tests {
 
     #[test]
     fn told_every_time_unless_only_changes_are_told() {
-        let always = ChannelBriefingPromptProvider::new(PromptPosition::Start, testing::prompts());
+        let always = ChannelBriefingComponent::new(PromptPosition::Start, testing::prompts());
         assert_eq!(
             always.text("a".to_string()).unwrap(),
             always.text("a".to_string()).unwrap(),
@@ -213,7 +213,7 @@ mod tests {
         );
 
         let changes =
-            ChannelBriefingPromptProvider::changes_only(PromptPosition::Start, testing::prompts());
+            ChannelBriefingComponent::changes_only(PromptPosition::Start, testing::prompts());
         assert_eq!(
             changes.text(String::new()).unwrap(),
             "",
@@ -273,8 +273,7 @@ mod tests {
             channel.classification.clone(),
             Default::default(),
         ));
-        let provider =
-            ChannelBriefingPromptProvider::new(PromptPosition::Start, testing::prompts());
+        let provider = ChannelBriefingComponent::new(PromptPosition::Start, testing::prompts());
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(
             prompt.text.contains("In short: Release 2.0")
@@ -319,7 +318,7 @@ mod tests {
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.
     async fn told(
-        provider: &ChannelBriefingPromptProvider,
+        provider: &ChannelBriefingComponent,
         agent: AgentId,
         session_loop: &Arc<SessionLoop>,
         state: &mut AgentChannelState,

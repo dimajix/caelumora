@@ -1,4 +1,4 @@
-//! The `calculator_tool` component: a tool that evaluates mathematical
+//! The `calculator` component: a tool that evaluates mathematical
 //! expressions.
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
@@ -15,19 +15,19 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub const CALCULATOR_TOOL_KIND: &str = "calculator_tool";
+pub const CALCULATOR_KIND: &str = "calculator";
 
 pub const CALCULATE_TOOL_NAME: &str = "calculate";
 
 #[derive(Debug)]
-pub struct CalculatorToolProvider {
+pub struct CalculatorComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
     tools: Vec<Tool>,
 }
 
-impl CalculatorToolProvider {
+impl CalculatorComponent {
     /// The provider, its texts from `prompts`.
     ///
     /// # Errors
@@ -36,7 +36,7 @@ impl CalculatorToolProvider {
         let tools = vec![described(
             prompts,
             NAMESPACE,
-            CALCULATOR_TOOL_KIND,
+            CALCULATOR_KIND,
             Tool {
                 name: CALCULATE_TOOL_NAME.to_string(),
                 description: String::new(),
@@ -52,14 +52,14 @@ impl CalculatorToolProvider {
             (),
         )?];
         Ok(Self {
-            description: tool_text(prompts, NAMESPACE, CALCULATOR_TOOL_KIND, "description", ())?,
+            description: tool_text(prompts, NAMESPACE, CALCULATOR_KIND, "description", ())?,
             tools,
         })
     }
 }
 
 #[async_trait]
-impl ToolProvider for CalculatorToolProvider {
+impl ToolProvider for CalculatorComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -98,13 +98,11 @@ impl ToolProvider for CalculatorToolProvider {
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
-        writing_for_the_model(
-            ComponentKind::new(CALCULATOR_TOOL_KIND).provides::<dyn ToolProvider>(),
-        ),
+        writing_for_the_model(ComponentKind::new(CALCULATOR_KIND).provides::<dyn ToolProvider>()),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(CalculatorToolProvider::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(CalculatorComponent::new(&texts)?));
             Ok(facets)
         },
     );
@@ -119,7 +117,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculator_tool() {
-        let provider = CalculatorToolProvider::new(&testing::prompts()).unwrap();
+        let provider = CalculatorComponent::new(&testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -149,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculator_tool_invalid_expression() {
-        let provider = CalculatorToolProvider::new(&testing::prompts()).unwrap();
+        let provider = CalculatorComponent::new(&testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 

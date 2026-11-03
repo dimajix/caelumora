@@ -1,12 +1,12 @@
 //! What an agent is given to work on the session's workspace (issues 428, 532): the component kind
-//! `workspace` (`workspace`), with the tools on its files (`files`) and those of its shell
+//! `workspace` (`component`), with the tools on its files (`files`) and those of its shell
 //! (`shell`), and the prompt part that tells the agent which workspace it works on, and the library
 //! that registers it (`library`). Workspaces themselves are the kernel's (issue 333); this is built
 //! on the terminal's public API and the agents' tools and prompt parts, as the tools of any other
 //! subject are.
 
+pub mod component;
 pub mod library;
-pub mod workspace;
 
 mod files;
 mod shell;

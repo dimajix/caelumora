@@ -20,7 +20,7 @@
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
 //! changed the file in between is overwritten.
 
-use crate::workspace::{tool, WorkspaceComponent, WorkspaceConfig};
+use crate::component::{tool, WorkspaceComponent, WorkspaceParams};
 use bytes::Bytes;
 use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
 use caelumora_agents::turn::Turn;
@@ -197,10 +197,10 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
 }
 
 pub(crate) fn tools(
-    config: &WorkspaceConfig,
+    params: &WorkspaceParams,
     prompts: &PromptTexts,
 ) -> Result<Vec<Tool>, PromptError> {
-    let asks = |name: &str| config.requires_approval.required(read_only(name));
+    let asks = |name: &str| params.requires_approval.required(read_only(name));
     let values = context! { max_matches => MAX_MATCHES, default_matches => DEFAULT_MATCHES };
     let tool = |name: &str, parameters, requires_approval, presentation| {
         tool(prompts, name, parameters, requires_approval, presentation, &values)
@@ -503,7 +503,6 @@ pub(crate) async fn read(
     workspace: (WorkspaceId, &Classification),
     turn: &mut Turn<'_>,
 ) -> ToolResult<Value> {
-    let config = &component.config;
     let prompts = &component.prompts;
     let read = |turn: &mut Turn<'_>, digest| known(turn, workspace, digest);
     match name {
@@ -526,7 +525,7 @@ pub(crate) async fn read(
                 &format!("'{at}'"),
                 start_line,
                 line_count,
-                config.max_output_bytes,
+                component.params.max_output_bytes,
             )?
             .value(prompts);
             result["path"] = json!(at.to_string());
@@ -659,7 +658,7 @@ pub(crate) async fn change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::tests::component;
+    use crate::component::tests::component;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;

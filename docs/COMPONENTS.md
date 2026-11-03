@@ -43,7 +43,7 @@ than the global one; it stands for all of the bundle's components, in their orde
 written. The bundle is found by its name in exactly that scope, afresh every time the `ref` is
 built, in the context of the graph that refers to it, so secrets are resolved as that caller and a
 bundle the caller may not read cannot be built. The price is that the components are not shared
-between references: an `mcp_tool` of a bundle discovers its tools on its own for every personality
+between references: an `mcp_server` of a bundle discovers its tools on its own for every personality
 that uses it.
 
 A descriptor of the reserved kind `default` builds on one of the defaults of the singles, with
@@ -59,12 +59,12 @@ component_bundles:               # of the seed: entities, found by name
 - id: 3b1f7e52-6a0c-4d8e-9f21-5c7a2b9d4e10
   name: channel-context
   components:
-  - { id: channel-participants, kind: channel_participants_prompt_provider }
-  - { id: channel-language, kind: channel_language_prompt_provider }
+  - { id: channel-participants, kind: channel_participants }
+  - { id: channel-language, kind: channel_language }
 personalities:
 - name: jonathan-assistant
   components:
-  - { id: system-prompt, kind: static_system_prompt_provider, params: { ... } }
+  - { id: system-prompt, kind: system_prompt, params: { ... } }
   - { id: channel-context, kind: ref, params: { name: channel-context } }
   - { id: memory, kind: agent_memory }
 ```
@@ -200,7 +200,7 @@ it (issue 337):
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
 | a session's commands | `ChannelCommandProvider` | `Kernel::new_command_executor` |
 
-An agent's closure thus holds the `PromptProvider`s its default `turn_context_provider` needs, and,
+An agent's closure thus holds the `PromptProvider`s its default `turn_context` needs, and,
 if it lists `compaction`, the `CompactionStrategy` and the `KnowledgeRestorer`s that component
 needs - its default strategy `summary_compaction` - and the `LanguageModelClient` that one needs in
 turn.
@@ -232,7 +232,7 @@ built, and keeps it with every turn.
     unless the container refers to a component bundle, which might provide it.
 *   The default comes from, in this order: the container's own component; the defaults the container
     was built with (an external agent's actor gives its `ContextProvider` so,
-    `external_context_provider`); the configuration (`AppConfig::component_defaults`, see
+    `external_context`); the configuration (`AppConfig::component_defaults`, see
     [CONFIGURATION.md](CONFIGURATION.md)); and finally the kind it was registered with. Declared
     again, a single's declaration replaces the one before - a test that builds an agent's
     components without a kernel declares a model of its own so.
@@ -343,7 +343,7 @@ only the initiator of the work, and the kernel builds the context of the call (i
 ## Writing a component
 
 The built-in components live **one file per component kind**, named after the kind
-(`calculator_tool.rs`, `notes.rs`, ...), in the module of the facet that is their purpose. Those of
+(`calculator.rs`, `notes.rs`, ...), in the module of the facet that is their purpose. Those of
 `command/` and `moderator/` are the kernel's own, in `caelumora-kernel/src/`
 (`ComponentRegistry::built_in`); the others are an agent's, in `caelumora-agents/src/`, registered
 by the agents' library (`caelumora_agents::library::register_components`, issue 370). That module's
@@ -352,25 +352,44 @@ by the agents' library (`caelumora_agents::library::register_components`, issue 
 
 | Module | Components |
 |---|---|
-| `tool/` | tool providers (`calculator_tool`, `ask_user_tool`, ...) |
-| `command/` | command providers (`help_command`, `wakeup_command`, `nudge_command`) |
-| `prompt/` | prompt providers (`static_system_prompt_provider`, `channel_participants_prompt_provider`, ...) and the context providers (`turn_context_provider`, `external_context_provider`), with what their parts share (`Prompt`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
+| `tool/` | tool providers (`calculator`, `ask_user`, ...) |
+| `command/` | command providers (`help`, `wakeup`, `nudge`) |
+| `prompt/` | prompt providers (`system_prompt`, `channel_participants`, ...) and the context providers (`turn_context`, `external_context`), with what their parts share (`Prompt`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
 | `moderator/` | the moderator and its responder policies |
 | `external/` | the facet through which an external agent is reached, and no kind: each protocol is a library (`a2a_agent` in `caelumora-a2a`) |
 | `components/` | everything else, and every component that offers several facets |
 
-A component that offers several facets - `create_plan_tool`, `notes` and the other memory components
+A component that offers several facets - `planning`, `notes` and the other memory components
 provide tools and a prompt part - stays in `components`, because it cannot be sorted by one
 facet. Each file holds the kind constant, its `register` function and its tests; each module's
 `register_all` registers its kinds and the singles it holds the default for. A new component gets a
 file of its own and a line in its module's `register_all`; `components` holds components only.
 
+A crate of its own that brings a kind - a library or a plugin - names the module after the kind's
+part in it, since the crate already names the subject: a component that contributes lies in
+`component.rs`, beside `library.rs` or `plugin.rs` (`caelumora-skills`, `caelumora-tool-workspace`);
+a struct that is what a facet asks for lies in a module named after that role (`policy.rs` of
+`caelumora-decision`, `summary_compaction.rs` beside the `component.rs` of `caelumora-compaction`).
+
 They follow one convention:
 
-*   **Kind constant:** the kind in capitals with `_KIND` (`CALCULATOR_TOOL_KIND`). Only the command
+*   **Kind:** named after what the component gives, never after a facet it serves (issue 532):
+    `calculator`, `planning`, `current_time`, `help`, not `calculator_tool`,
+    `current_time_prompt_provider` or `help_command`. A component is built whole, and its owner
+    takes every facet it asks for, so a name after one facet would hide the others - `skills` gives
+    tools, a prompt part, commands and a `KnowledgeRestorer`. A suffix that says what the component
+    is - `policy_moderator`, `round_robin_policy`, `language_model` - names no facet. A test of the
+    program refuses a kind ending in `_tool`, `_prompt_provider`, `_context_provider` or
+    `_command`.
+*   **Kind constant:** the kind in capitals with `_KIND` (`CALCULATOR_KIND`). Only the command
     kinds live in the domain, because `AppConfig`'s default names them.
-*   **Struct:** the kind in CamelCase, with `Provider` for a `_tool` or `_command` kind
-    (`CalculatorToolProvider`) and `Component` for a feature (`NotesComponent`).
+*   **Struct:** a struct that only contributes - to facets whose consumer collects them from every
+    component, such as tools, prompt parts, commands, activities or knowledge to restore - is the
+    kind in CamelCase with `Component` (`CalculatorComponent`, `NotesComponent`). A struct that is
+    what a facet asks for - the moderator, a responder policy, the compaction strategy, a model's
+    client, the external agent, the context provider - is named after that role, never with
+    `Component` (`PolicyModerator`, `RoundRobinPolicy`, `SummaryCompaction`, `A2aAgent`,
+    `TurnContextProvider`), even where it contributes beside it.
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
 *   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
     (`TEXT`), rendered from the texts the component takes when it is made, in the variant of its
@@ -380,12 +399,13 @@ They follow one convention:
     ([TOOLS.md](TOOLS.md)).
 *   **Construction:** the factory builds the struct literally; there is a `new` only where
     something is checked.
-*   **Configuration:** what a kind takes is a struct named after the kind, without `Provider`, with
-    `Config` (`CompactionConfig`, `WorkspaceConfig`), `#[serde(deny_unknown_fields)]`,
-    declared with `ComponentKind::params`; it implements `Params`, and a check beyond its fields'
-    types is its `Params::check` (`CompactionConfig`), which `config_of_params` runs. Prompt
-    providers that take only their position share `PositionConfig`, those that tell of their
-    channel `ChannelPartConfig`.
+*   **Params:** what a kind takes is a struct named after the kind with `Params`
+    (`CompactionParams`, `WorkspaceParams`), `#[serde(deny_unknown_fields)]`, declared with
+    `ComponentKind::params`; it implements `Params`, and a check beyond its fields' types is its
+    `Params::check` (`CompactionParams`), which `config_of_params` runs. Prompt providers that take
+    only their position share `PositionParams`, those that tell of their channel
+    `ChannelPartParams`. `…Config` is what the configuration file holds - a section or a backend
+    (`ArtifactsConfig`, `OllamaModelConfig`) -, never what a component's `params` hold.
 *   **Parameters:** the turn is always the parameter `turn`.
 
 What components share lives beside the facet: `tool::text_argument` and `id_argument` for tool
@@ -431,32 +451,32 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 
 | Kind | Facets | Params | What it does |
 |---|---|---|---|
-| `attachment_tool` | `ToolProvider` | - | The tools `view_attachment`, `read_attachment`, `copy_attachment` - always asked - and `attach`, with which an agent reaches the attachments it heard by their numbers ([TOOLS.md](TOOLS.md#attachments)); offered where its transcript numbered any. |
-| `echo_tool` | `ToolProvider` | - | The tool `echo`, for testing. |
-| `sleep_tool` | `ToolProvider` | `seconds` (5), `requires_approval` (`false`) | The tool `sleep`, which waits - the model may ask for at most 60 s -, for testing what happens while a tool runs. |
-| `calculator_tool` | `ToolProvider` | - | The tool `calculate`. |
-| `stop_tool` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn: asleep after `stop` and `bye`, idle and without an answer after `silence` ([TOOLS.md](TOOLS.md#built-in-tools)). |
-| `ask_user_tool` | `ToolProvider` | - | The tool `ask_user`, with which the agent asks users of its channel and waits for their answers. |
-| `create_plan_tool` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
-| `mcp_tool` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery; the tools kept for 300 s), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | Of the library `caelumora-tool-mcp`, registered where it is joined. The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
-| `image_tool` | `ToolProvider` | `requires_approval` (`false`), `destination` (`public`), `description` (the catalogue's) | Of the library `caelumora-tool-image` (issue 525). The tool `generate_image`, which generates an image with one of the agent's image models - those of its `image_model` components, the first the default - and gives it the agent's model to see ([TOOLS.md](TOOLS.md#images)). Not built where the agent has no image model. |
+| `attachments` | `ToolProvider` | - | The tools `view_attachment`, `read_attachment`, `copy_attachment` - always asked - and `attach`, with which an agent reaches the attachments it heard by their numbers ([TOOLS.md](TOOLS.md#attachments)); offered where its transcript numbered any. |
+| `echo` | `ToolProvider` | - | The tool `echo`, for testing. |
+| `sleep` | `ToolProvider` | `seconds` (5), `requires_approval` (`false`) | The tool `sleep`, which waits - the model may ask for at most 60 s -, for testing what happens while a tool runs. |
+| `calculator` | `ToolProvider` | - | The tool `calculate`. |
+| `turn_end` | `ToolProvider` | - | The tools `stop`, `bye` and `silence`, with which the agent ends its turn: asleep after `stop` and `bye`, idle and without an answer after `silence` ([TOOLS.md](TOOLS.md#built-in-tools)). |
+| `ask_user` | `ToolProvider` | - | The tool `ask_user`, with which the agent asks users of its channel and waits for their answers. |
+| `planning` | `ToolProvider`, `PromptProvider` | - | The tool `create_plan` and a system prompt part telling the model when to plan. |
+| `mcp_server` | `ToolProvider` | `endpoint` (timeout 10 s, per call or discovery; the tools kept for 300 s), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but the tools the server marks read-only), `classification` (the channel's), `description` (the server's `instructions`), `destination` (`public`) | Of the library `caelumora-tool-mcp`, registered where it is joined. The tools of a remote MCP server. `classification` is how their results are classified, `description` what they are for, as their tool set tells it, `destination` what the server is cleared for - its tools are not offered in a channel that may not flow there. |
+| `image_generation` | `ToolProvider` | `requires_approval` (`false`), `destination` (`public`), `description` (the catalogue's) | Of the library `caelumora-tool-image` (issue 525). The tool `generate_image`, which generates an image with one of the agent's image models - those of its `image_model` components, the first the default - and gives it the agent's model to see ([TOOLS.md](TOOLS.md#images)). Not built where the agent has no image model. |
 | `notes` | `ToolProvider`, `PromptProvider` | - | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `private_notes` | `ToolProvider`, `PromptProvider` | - | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `agent_memory` | `ToolProvider`, `PromptProvider` | - | What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, and a prompt part ([MEMORY.md](MEMORY.md)). |
 | `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Of the library of `caelumora-skills` (`SkillsLibrary`), registered where it is joined. Skills: the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
 | `workspace` | `ToolProvider`, `PromptProvider` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in), `position` (`start`), `instruction_files` (`["AGENTS.md", "CLAUDE.md"]`) | Of the library `caelumora-tool-workspace`, registered where it is joined. The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS.md](TOOLS.md#the-workspace)). What it can do is what the workspace's terminal can; a turn is offered what its access list lets the agent call there. A system prompt part tells the agent the workspace it may use in its channel, and which instruction files lie at its root, to be read first - or that there is none ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). |
-| `artifact_tool` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | Of the library of `caelumora-artifacts` (`ArtifactsLibrary`), registered where it is joined. `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Offered where the turn may use a workspace in its channel and a storage of content is configured. |
-| `static_system_prompt_provider` | `PromptProvider` | `prompt` (required), `title` (none), `position` (`start`), `classification` (public) | A fixed prompt part, under `[title]` if one is named. |
-| `channel_briefing_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent what its session and channel are for, as their owners wrote it ([AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)). |
-| `channel_language_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent the language its channel's conversation is held in ([AGENT-TURN.md](AGENT-TURN.md#the-channels-language)). |
-| `current_time_prompt_provider` | `PromptProvider` | `position` (`before_turn_input`) | Tells the agent the current date and time in its session's time zone ([AGENT-TURN.md](AGENT-TURN.md#the-current-time)). |
-| `request_reason_prompt_provider` | `PromptProvider` | `position` (`before_turn_input`) | Tells an agent only the responder policy chose that nobody mentioned it, and that with nothing to add it stays silent - by `silence` where it is offered; nothing to an agent asked for another reason ([AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)). |
-| `channel_participants_prompt_provider` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent its own name and handle and who else is in its channel, with their introductions, and when to write an @handle and when a name ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
-| `channel_mentions_prompt_provider` | `PromptProvider` | `position` (`before_turn_input`) | Reminds the agent, where another agent is in its channel, to write an @handle only for an answer or an action needed now, and a name everywhere else ([AGENT-TURN.md](AGENT-TURN.md#when-to-mention)). |
-| `tool_sets_prompt_provider` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
-| `turn_context_provider` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
-| `external_context_provider` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
+| `artifacts` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | Of the library of `caelumora-artifacts` (`ArtifactsLibrary`), registered where it is joined. `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Offered where the turn may use a workspace in its channel and a storage of content is configured. |
+| `system_prompt` | `PromptProvider` | `prompt` (required), `title` (none), `position` (`start`), `classification` (public) | A fixed prompt part, under `[title]` if one is named. |
+| `channel_briefing` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent what its session and channel are for, as their owners wrote it ([AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)). |
+| `channel_language` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent the language its channel's conversation is held in ([AGENT-TURN.md](AGENT-TURN.md#the-channels-language)). |
+| `current_time` | `PromptProvider` | `position` (`before_turn_input`) | Tells the agent the current date and time in its session's time zone ([AGENT-TURN.md](AGENT-TURN.md#the-current-time)). |
+| `request_reason` | `PromptProvider` | `position` (`before_turn_input`) | Tells an agent only the responder policy chose that nobody mentioned it, and that with nothing to add it stays silent - by `silence` where it is offered; nothing to an agent asked for another reason ([AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)). |
+| `channel_participants` | `PromptProvider` | `position` (`start`), `changes_only` (`false`; for external agents) | Tells the agent its own name and handle and who else is in its channel, with their introductions, and when to write an @handle and when a name ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
+| `channel_mentions` | `PromptProvider` | `position` (`before_turn_input`) | Reminds the agent, where another agent is in its channel, to write an @handle only for an answer or an action needed now, and a name everywhere else ([AGENT-TURN.md](AGENT-TURN.md#when-to-mention)). |
+| `tool_sets` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
+| `turn_context` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
+| `external_context` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed ([CHANNELS.md](CHANNELS.md)). |
 | `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the library `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
 | `language_model` | `LanguageModelClient`, `ModelProfileProvider` | `name` (the one model of `plugins.model.language`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-model`, registered where it is joined; the default model of an agent: a model the platform offers (`plugins.model.language`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
 | `image_model` | `ImageModelClient` | `name` (the one model of `plugins.model.image`; needed among several) | Of the plugin `caelumora-model`, registered where it is joined (issue 525): an image model the platform offers ([CONFIGURATION.md](CONFIGURATION.md#image-models)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then. An agent may have several, which a tool that generates images offers. |
@@ -469,9 +489,9 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `decision_policy` | `ResponderPolicy` | `endpoint`, `model` (`nimble`), `keep_alive`, `threshold` (`0.3`), `max_responders` (`1`), `destination` (`public`) | Of the plugin `caelumora-decision`, registered where it is joined; configured by an operator alone. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
 | `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the library `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it had been given there; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
 | `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LanguageModelClient`. |
-| `help_command` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
-| `wakeup_command` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
-| `nudge_command` | `ChannelCommandProvider` | - | The user command `/nudge`. |
+| `help` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
+| `wakeup` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
+| `nudge` | `ChannelCommandProvider` | - | The user command `/nudge`. |
 
 `position` is `start` or `before_turn_input`; the default is given in parentheses. Every tool is
 `SHOWN` unless its row says otherwise. This table is the one list of what comes with Caelumora; the

@@ -1,4 +1,4 @@
-//! Artifacts as a library (issue 516): the `artifact_tool` component, which publishes through the
+//! Artifacts as a library (issue 516): the `artifacts` component, which publishes through the
 //! `ArtifactPublisher` the plugin binds, and its texts.
 
 use crate::component;

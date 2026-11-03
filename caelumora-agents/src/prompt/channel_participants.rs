@@ -1,7 +1,7 @@
-//! The `channel_participants_prompt_provider` component (issue 176): tells the
+//! The `channel_participants` component (issue 176): tells the
 //! agent who it is and who else is in its channel - every current user and
 //! agent, by name, `@` handle and introduction. A prompt part of its own
-//! rather than a variant of `static_system_prompt_provider`, so that the
+//! rather than a variant of `system_prompt`, so that the
 //! personality's text and the roster are configured and recorded
 //! independently (parameter `position`).
 //!
@@ -18,7 +18,7 @@
 //! again after a restart.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ChannelPartConfig, ContextError, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ChannelPartParams, ContextError, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
@@ -31,13 +31,13 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::value::text::Introduction;
 use std::sync::{Arc, Mutex};
 
-pub const CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND: &str = "channel_participants_prompt_provider";
+pub const CHANNEL_PARTICIPANTS_KIND: &str = "channel_participants";
 
 /// Its text in the prompt catalogue.
 const TEXT: &str = "agents.channel_participants";
 
 #[derive(Debug)]
-pub struct ChannelParticipantsPromptProvider {
+pub struct ChannelParticipantsComponent {
     pub position: PromptPosition,
     /// Whether it tells only of changes: then what it told last, `None`
     /// before it told anything. A plain lock, never held across an await.
@@ -45,7 +45,7 @@ pub struct ChannelParticipantsPromptProvider {
     prompts: PromptTexts,
 }
 
-impl ChannelParticipantsPromptProvider {
+impl ChannelParticipantsComponent {
     /// The roster at `position`, told every time it is asked.
     pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: None, prompts }
@@ -72,7 +72,7 @@ impl ChannelParticipantsPromptProvider {
 }
 
 #[async_trait]
-impl PromptProvider for ChannelParticipantsPromptProvider {
+impl PromptProvider for ChannelParticipantsComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -146,18 +146,18 @@ fn one_line(introduction: &Introduction) -> String {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(CHANNEL_PARTICIPANTS_PROMPT_PROVIDER_KIND)
-                .params::<ChannelPartConfig>()
+            ComponentKind::new(CHANNEL_PARTICIPANTS_KIND)
+                .params::<ChannelPartParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let ChannelPartConfig { position, changes_only } =
+            let ChannelPartParams { position, changes_only } =
                 config_of_params(&descriptor.params)?;
             let provider = if changes_only {
-                ChannelParticipantsPromptProvider::changes_only(position, prompts)
+                ChannelParticipantsComponent::changes_only(position, prompts)
             } else {
-                ChannelParticipantsPromptProvider::new(position, prompts)
+                ChannelParticipantsComponent::new(position, prompts)
             };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
@@ -246,10 +246,8 @@ mod tests {
 
     #[test]
     fn telling_only_of_changes_tells_the_roster_again_only_when_it_changed() {
-        let changes = ChannelParticipantsPromptProvider::changes_only(
-            PromptPosition::Start,
-            testing::prompts(),
-        );
+        let changes =
+            ChannelParticipantsComponent::changes_only(PromptPosition::Start, testing::prompts());
         let prompts = testing::prompts();
         let roster = |others: &[ActorDescription]| render(&prompts, None, others, None).unwrap();
         let (kaya, bob) = (participant("Kaya", true, None), participant("Bob", true, None));
@@ -263,7 +261,7 @@ mod tests {
             "all of it again, without an account of what changed (issue 410)"
         );
         assert_eq!(
-            ChannelParticipantsPromptProvider::new(PromptPosition::Start, testing::prompts())
+            ChannelParticipantsComponent::new(PromptPosition::Start, testing::prompts())
                 .text(first.clone()),
             first,
             "told every time without it"
@@ -385,11 +383,10 @@ mod tests {
         )
         .expect("a turn was begun");
 
-        let prompt =
-            ChannelParticipantsPromptProvider::new(PromptPosition::Start, testing::prompts())
-                .get_prompt(&turn.situation())
-                .await
-                .unwrap();
+        let prompt = ChannelParticipantsComponent::new(PromptPosition::Start, testing::prompts())
+            .get_prompt(&turn.situation())
+            .await
+            .unwrap();
         assert_eq!(prompt.text, "[Who is in this channel]\n\
             You are Jonathan (@jonathan).\n\
             About you: A quiz master.\n\
@@ -428,10 +425,9 @@ mod tests {
             matches!(turn.situation().session().await, Err(ViewError::SessionNotFound(_))),
             "reached, but not to be read (issue 399)"
         );
-        let failed =
-            ChannelParticipantsPromptProvider::new(PromptPosition::Start, testing::prompts())
-                .get_prompt(&turn.situation())
-                .await;
+        let failed = ChannelParticipantsComponent::new(PromptPosition::Start, testing::prompts())
+            .get_prompt(&turn.situation())
+            .await;
         assert!(
             matches!(failed, Err(ContextError::View(ViewError::SessionNotFound(_)))),
             "left to its fail policy: {failed:?}"

@@ -26,7 +26,7 @@ use caelumora_api::error::StorageGone;
 use caelumora_api::terminal::{ByteStream, WorkspacePath};
 use caelumora_artifacts::artifact::{Artifact, ArtifactId, PublicationSnapshot};
 use caelumora_artifacts::component::{
-    ArtifactTool, ARTIFACT_PUBLISH_PRESENTATION, ARTIFACT_TOOL_KIND, PUBLISH_ARTIFACT,
+    ArtifactsComponent, ARTIFACTS_KIND, ARTIFACT_PUBLISH_PRESENTATION, PUBLISH_ARTIFACT,
 };
 use caelumora_artifacts::extension::ArtifactError;
 use caelumora_artifacts::library::ArtifactsLibrary;
@@ -129,7 +129,7 @@ async fn hears<const N: usize>(events: &mut EventSubscription, wanted: [GlobalEv
 async fn with_the_tool(
     world: &World,
     params: Value,
-) -> (Arc<SessionLoop>, AgentId, Workspace, ArtifactTool) {
+) -> (Arc<SessionLoop>, AgentId, Workspace, ArtifactsComponent) {
     let alice = World::as_user(world.alice);
     let personality = world.personality("plain", None, &[]).await;
     let helper = world.agent("helper", world.alice, &personality).await;
@@ -148,9 +148,11 @@ async fn with_the_tool(
         .unwrap();
     let session = world.shared_session(&[helper], &[]).await;
     session.update_workspace(&alice, Some(docs.id), Some(Grant::Write)).await.unwrap();
-    let tool =
-        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.kernel.prompts()), None))
-            .expect("parameters it takes");
+    let tool = ArtifactsComponent::new(
+        &params,
+        &PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
+    )
+    .expect("parameters it takes");
     (session, helper, docs, tool)
 }
 
@@ -321,8 +323,11 @@ async fn the_tool_is_not_offered_without_a_storage_of_content() {
 async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     let world = world().await;
     let tool = |params: Value| {
-        ArtifactTool::new(&params, &PromptTexts::new(Arc::clone(world.kernel.prompts()), None))
-            .unwrap()
+        ArtifactsComponent::new(
+            &params,
+            &PromptTexts::new(Arc::clone(world.kernel.prompts()), None),
+        )
+        .unwrap()
     };
     let asks =
         |mode: Value| tool(json!({ "requires_approval": mode })).tools()[0].requires_approval;
@@ -337,7 +342,7 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
         "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'"
     );
     assert!(
-        ArtifactTool::new(
+        ArtifactsComponent::new(
             &json!({ "requires": true }),
             &PromptTexts::new(Arc::clone(world.kernel.prompts()), None)
         )
@@ -696,8 +701,8 @@ async fn the_routes_serve_artifacts_as_the_web_ui_knows_them() {
 // --- Who may do what (issues 271, 23, 316, the security suite) -------------
 
 /// Publishes the file `at` of the workspace of channel `channel` as a
-/// version of the artifact `name`, in `ctx`'s name, as `artifact_tool` does
-/// (issue 296): the workspace reached there for reading, the file read, and
+/// version of the artifact `name`, in `ctx`'s name, as the component
+/// `artifacts` does (issue 296): the workspace reached there for reading, the file read, and
 /// what was read handed to the `ArtifactManager`, named in the scope of the
 /// session's project (issue 467).
 async fn publish(
@@ -1560,8 +1565,7 @@ async fn an_agents_artifact_is_published_for_its_owner() {
         fs::read_dir(files.join("content").join("artifacts"))
             .is_ok_and(|mut entries| entries.next().is_some())
     };
-    let asked =
-        asked_for_a_call(&world, ARTIFACT_TOOL_KIND, &["notes/a.md"], kept, world.alice).await;
+    let asked = asked_for_a_call(&world, ARTIFACTS_KIND, &["notes/a.md"], kept, world.alice).await;
     asked_as_a_call_on_the_workspace(&asked);
     assert!(
         asked.contains(&"alice as helper, asked by bob: CreateArtifact(alice's) yes".to_string()),

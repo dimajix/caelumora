@@ -342,7 +342,7 @@ and both are stored with what applied then. Which built-in tools use which flags
 
 A tool result carries a classification of its own. In this order: a tool classifies a result by
 what it read or the source it drew on; a tool can be configured with one for all its results (e.g.
-the `classification` of an `mcp_tool`); otherwise a result is the channel's.
+the `classification` of an `mcp_server`); otherwise a result is the channel's.
 
 **Before the model, not after it.** A result that may not flow into the channel - `may_publish`, in
 the agent's name, since the result enters its context in the channel - is withheld from the agent:
@@ -365,7 +365,7 @@ web UI say why, and a call of a tool the turn was not offered is answered as unk
 As for an external agent, the remote side is judged at the door, not per call: nothing in the
 channel is classified above it.
 
-An `mcp_tool` is cleared for what its `destination` says, `public` unless configured: the server's
+An `mcp_server` is cleared for what its `destination` says, `public` unless configured: the server's
 word is trusted only where an operator gave it. A set without a destination keeps its arguments in
 the system, or is bounded otherwise - `workspace`'s storage by its own ceiling, the workspace by
 the flow rule at every call. A turn keeps the tools it began with; a channel raised during it
@@ -431,10 +431,10 @@ it starts at `public` and rises with
 *   every message of the transcript - those it began with, and what others said while it ran - and
     every tool result in them,
 *   every prompt part, as its `PromptProvider` classifies it: a part that holds only knowledge, such
-    as the notes or what is recalled from memory, by that knowledge; the system prompt of
-    `static_system_prompt_provider` by its parameter `classification`, `public` if left out - who
-    writes something confidential into a personality's prompt classifies it; a part that does not
-    say counts as the channel,
+    as the notes or what is recalled from memory, by that knowledge; the system prompt of the
+    component `system_prompt` by its parameter `classification`, `public` if left out - who writes
+    something confidential into a personality's prompt classifies it; a part that does not say
+    counts as the channel,
 *   every piece of knowledge read: notes, private notes and memory by the join of the entries read,
     another channel's history by the join of the messages given,
 *   every tool result, once the model is given it. A built-in tool whose answer is derived only from

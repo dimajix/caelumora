@@ -60,7 +60,7 @@ mod tests {
     use crate::actor::agent::AgentActor;
     use crate::actor::external_agent::ExternalAgentActor;
     use crate::testing::{self, test_registry};
-    use crate::tool::echo_tool::ECHO_TOOL_KIND;
+    use crate::tool::echo::ECHO_KIND;
     use caelumora_api::component::Services;
     use caelumora_domain::agent::PersonalityKind;
     use caelumora_domain::component::ComponentConfig;
@@ -114,7 +114,7 @@ mod tests {
             .build(&channel, ChannelLoop::COMPONENT_FACETS, &context)
             .await
             .expect("its moderator and what it needs");
-        let with_tool = config(&[("policy", ROUND_ROBIN_POLICY_KIND), ("echo", ECHO_TOOL_KIND)]);
+        let with_tool = config(&[("policy", ROUND_ROBIN_POLICY_KIND), ("echo", ECHO_KIND)]);
         let error = registry
             .build(&with_tool, ChannelLoop::COMPONENT_FACETS, &context)
             .await
@@ -125,11 +125,10 @@ mod tests {
         );
 
         registry
-            .build(&config(&[("echo", ECHO_TOOL_KIND)]), AgentActor::COMPONENT_FACETS, &context)
+            .build(&config(&[("echo", ECHO_KIND)]), AgentActor::COMPONENT_FACETS, &context)
             .await
             .expect("an agent's tool");
-        let with_moderator =
-            config(&[("echo", ECHO_TOOL_KIND), ("moderator", POLICY_MODERATOR_KIND)]);
+        let with_moderator = config(&[("echo", ECHO_KIND), ("moderator", POLICY_MODERATOR_KIND)]);
         let error = registry
             .build(&with_moderator, AgentActor::COMPONENT_FACETS, &context)
             .await
@@ -152,9 +151,8 @@ mod tests {
             .try_build()
         };
         // As in `examples/config.yaml`.
-        assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context_provider"}]))
-            .is_ok());
-        let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator_tool"}]))
+        assert!(manager(serde_json::json!([{"id": "context", "kind": "turn_context"}])).is_ok());
+        let refused = manager(serde_json::json!([{"id": "context", "kind": "calculator"}]))
             .expect_err("provides no context");
         assert!(
             refused.to_string().contains("provides no facet of which there is one"),

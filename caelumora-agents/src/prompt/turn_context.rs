@@ -1,4 +1,4 @@
-//! The `turn_context_provider` component: what the model of an agent run
+//! The `turn_context` component: what the model of an agent run
 //! here is given in a turn besides the conversation - the prompt parts of
 //! every `PromptProvider` of the agent, placed around its transcript
 //! (issues 47, 99). The default `ContextProvider` of an agent run here.
@@ -14,7 +14,7 @@ use caelumora_domain::context::{KnowledgeRef, PromptPart};
 use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
-pub const TURN_CONTEXT_PROVIDER_KIND: &str = "turn_context_provider";
+pub const TURN_CONTEXT_KIND: &str = "turn_context";
 
 /// The prompt parts of `prompt_providers` around the transcript: those at
 /// `Start` joined into the system prompt before everything, those at
@@ -103,7 +103,7 @@ fn joined(parts: Vec<(String, Option<Classification>)>) -> (String, Option<Class
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
-        ComponentKind::new(TURN_CONTEXT_PROVIDER_KIND)
+        ComponentKind::new(TURN_CONTEXT_KIND)
             .provides::<dyn ContextProvider>()
             .needs::<dyn PromptProvider>(),
         |_descriptor, context| async move {
@@ -124,7 +124,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompt::static_system_prompt_provider::StaticSystemPromptProvider;
+    use crate::prompt::system_prompt::SystemPromptComponent;
     use crate::prompt::Prompt;
     use crate::turn::Turn;
     use anyhow::Result;
@@ -176,7 +176,7 @@ mod tests {
         let mut turn = Turn::begun(AgentId::new(), &mut agent_channel_state);
         let brief = || {
             part(
-                Arc::new(StaticSystemPromptProvider {
+                Arc::new(SystemPromptComponent {
                     prompt: "Be brief.".to_string(),
                     position: PromptPosition::Start,
                     classification: Classification::PUBLIC,
@@ -217,7 +217,7 @@ mod tests {
         let provider = TurnContextProvider {
             prompt_providers: vec![
                 part(
-                    Arc::new(StaticSystemPromptProvider {
+                    Arc::new(SystemPromptComponent {
                         prompt: "Be brief.".to_string(),
                         position: PromptPosition::Start,
                         classification: Classification::PUBLIC,
@@ -225,7 +225,7 @@ mod tests {
                     ComponentFailPolicy::FailClosed,
                 ),
                 part(
-                    Arc::new(StaticSystemPromptProvider {
+                    Arc::new(SystemPromptComponent {
                         prompt: "Notes: none.".to_string(),
                         position: PromptPosition::BeforeTurnInput,
                         classification: Classification::PUBLIC,

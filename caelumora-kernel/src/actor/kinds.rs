@@ -98,7 +98,7 @@ impl AgentKinds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::help_command::{HelpCommandProvider, HELP_COMMAND_NAME};
+    use crate::command::help::{HelpComponent, HELP_COMMAND_NAME};
     use crate::command::{ChannelCommandProvider, CommandExecutor};
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
@@ -257,7 +257,7 @@ mod tests {
             let help = ComponentImpl {
                 id: "help".to_string(),
                 fail_policy: Default::default(),
-                facet: Arc::new(HelpCommandProvider) as Arc<dyn ChannelCommandProvider>,
+                facet: Arc::new(HelpComponent) as Arc<dyn ChannelCommandProvider>,
             };
             CommandExecutor::new(policy, vec![help]).unwrap()
         };

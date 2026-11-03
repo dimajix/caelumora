@@ -12,7 +12,7 @@ use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
     about_agent_commands, activities_until_the_turn_ends, register_scripted, saying,
 };
-use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
+use caelumora_agents::tool::sleep::SLEEP_KIND;
 use caelumora_api::command::CommandError;
 use caelumora_compaction::component::COMPACTION_KIND;
 use caelumora_compaction::library::CompactionLibrary;
@@ -103,7 +103,7 @@ async fn napping_with(
     let world = world(script).await;
     let sleep = ComponentDescriptor {
         params: json!({ "requires_approval": false }),
-        ..ComponentDescriptor::new("sleep", SLEEP_TOOL_KIND)
+        ..ComponentDescriptor::new("sleep", SLEEP_KIND)
     };
     let (session, main, helper) = helper_with(&world, [vec![sleep], listed].concat()).await;
     let mut events = main.observe();

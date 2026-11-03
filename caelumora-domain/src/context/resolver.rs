@@ -937,7 +937,7 @@ mod tests {
             classification: None,
             presentation: Default::default(),
         };
-        let offered = vec![ToolSet::new("echo_tool", "echoes", vec![echo])];
+        let offered = vec![ToolSet::new("echo", "echoes", vec![echo])];
         let digest = digest::tool_sets(&offered);
         state.offered_tools.keep(digest, || offered.clone());
 

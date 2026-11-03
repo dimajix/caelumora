@@ -22,7 +22,7 @@ use std::time::Duration;
 use tokio::time;
 use tracing::warn;
 
-pub const MCP_TOOL_KIND: &str = "mcp_tool";
+pub const MCP_SERVER_KIND: &str = "mcp_server";
 
 #[derive(Debug, thiserror::Error)]
 enum McpError {
@@ -50,7 +50,7 @@ const DEFAULT_REFRESH: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct McpToolConfig {
+struct McpServerParams {
     /// The MCP server. Its timeout is how long a call of one of its tools,
     /// or the discovery of them, may take; its `refresh_secs` how long the
     /// tools discovered are kept.
@@ -79,7 +79,7 @@ struct McpToolConfig {
     pub destination: Option<Classification>,
 }
 
-impl Params for McpToolConfig {}
+impl Params for McpServerParams {}
 
 impl McpError {
     /// Why the server's tools are unavailable after this error, in general
@@ -105,7 +105,7 @@ fn read_only(annotations: Option<&ToolAnnotations>) -> bool {
     annotations.and_then(|a| a.read_only_hint).unwrap_or(false)
 }
 
-impl McpToolConfig {
+impl McpServerParams {
     fn timeout(&self) -> Duration {
         self.endpoint.timeout_or(DEFAULT_TIMEOUT)
     }
@@ -130,9 +130,9 @@ impl McpToolConfig {
 /// per call (the Streamable HTTP transport supports stateless operation),
 /// which keeps this provider free of any stale-connection state.
 #[derive(Debug)]
-pub struct McpToolProvider {
+pub struct McpServerComponent {
     descriptor_id: String,
-    config: McpToolConfig,
+    params: McpServerParams,
     /// The server's tools, and what it says of itself (`instructions`) if
     /// it does, as last discovered.
     discovered: ExpiringCache<(Vec<Tool>, Option<String>)>,
@@ -142,13 +142,13 @@ pub struct McpToolProvider {
 /// offered as `<component id>__<remote name>`.
 const NAME_SEPARATOR: &str = "__";
 
-impl McpToolProvider {
-    /// The provider of the component `descriptor_id` with `config`; its
+impl McpServerComponent {
+    /// The provider of the component `descriptor_id` with `params`; its
     /// tools are not discovered yet. Its credential it resolves of the
     /// secrets of whoever asks it (`Situation::secrets`, issue 516).
-    fn new(descriptor_id: String, config: McpToolConfig) -> Self {
-        let discovered = ExpiringCache::new(config.refresh());
-        Self { descriptor_id, config, discovered }
+    fn new(descriptor_id: String, params: McpServerParams) -> Self {
+        let discovered = ExpiringCache::new(params.refresh());
+        Self { descriptor_id, params, discovered }
     }
 
     fn strip_prefix<'a>(&self, name: &'a str) -> ToolResult<&'a str> {
@@ -161,13 +161,13 @@ impl McpToolProvider {
     /// the name `secrets` are bound to, within the endpoint's timeout.
     async fn discover(&self, secrets: &dyn Secrets) -> McpResult<(Vec<Tool>, Option<String>)> {
         let discover = async {
-            let auth_header = self.config.endpoint.bearer_token(secrets).await?;
-            discover_tools(&self.descriptor_id, &self.config, auth_header).await
+            let auth_header = self.params.endpoint.bearer_token(secrets).await?;
+            discover_tools(&self.descriptor_id, &self.params, auth_header).await
         };
-        time::timeout(self.config.timeout(), discover).await.unwrap_or_else(|_| {
+        time::timeout(self.params.timeout(), discover).await.unwrap_or_else(|_| {
             Err(McpError::Timeout(format!(
                 "Timed out discovering tools from MCP server at '{}'",
-                self.config.endpoint.shown()
+                self.params.endpoint.shown()
             )))
         })
     }
@@ -192,16 +192,16 @@ async fn connect(
     Ok(service)
 }
 
-/// The tools of the MCP server `config` names, namespaced by `descriptor_id`
-/// and requiring approval as `config` says (issue 78) - tool by tool, from
+/// The tools of the MCP server `params` names, namespaced by `descriptor_id`
+/// and requiring approval as `params` says (issue 78) - tool by tool, from
 /// what the server says of each (issue 246) - with what the server
 /// says of itself in its `instructions`, if anything (issue 194).
 async fn discover_tools(
     descriptor_id: &str,
-    config: &McpToolConfig,
+    params: &McpServerParams,
     auth_header: Option<String>,
 ) -> McpResult<(Vec<Tool>, Option<String>)> {
-    let endpoint = &config.endpoint;
+    let endpoint = &params.endpoint;
     let service = connect(endpoint, auth_header).await?;
     let instructions = service
         .peer_info()
@@ -224,11 +224,11 @@ async fn discover_tools(
                 name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
                 parameters: schema_to_tool_parameters(&schema),
-                requires_approval: config
+                requires_approval: params
                     .requires_approval
                     .required(read_only(t.annotations.as_ref())),
                 visibility: ToolVisibility::SHOWN,
-                classification: config.classification.clone(),
+                classification: params.classification.clone(),
                 presentation: Default::default(),
             }
         })
@@ -315,9 +315,9 @@ fn call_tool_result_to_value(name: &str, result: CallToolResult) -> McpResult<Va
 }
 
 #[async_trait]
-impl ToolProvider for McpToolProvider {
+impl ToolProvider for McpServerComponent {
     fn description(&self) -> String {
-        self.config
+        self.params
             .description
             .clone()
             .or_else(|| self.discovered.current().and_then(|discovered| discovered.1.clone()))
@@ -352,7 +352,7 @@ impl ToolProvider for McpToolProvider {
     }
 
     fn destination(&self) -> Option<Classification> {
-        Some(self.config.destination.clone().unwrap_or(Classification::PUBLIC))
+        Some(self.params.destination.clone().unwrap_or(Classification::PUBLIC))
     }
 
     async fn execute(
@@ -366,9 +366,9 @@ impl ToolProvider for McpToolProvider {
         let secrets = turn.situation().secrets();
 
         let call_result: McpResult<Value> = async {
-            let auth_header = self.config.endpoint.bearer_token(&*secrets).await?;
+            let auth_header = self.params.endpoint.bearer_token(&*secrets).await?;
 
-            let service = connect(&self.config.endpoint, auth_header).await?;
+            let service = connect(&self.params.endpoint, auth_header).await?;
             let mut request = CallToolRequestParams::new(remote_name.clone());
             if let Some(arguments) = params.as_object().cloned() {
                 request = request.with_arguments(arguments);
@@ -379,7 +379,7 @@ impl ToolProvider for McpToolProvider {
             // as much as `notifications/cancelled` would.
             let call = service.call_tool(request);
 
-            let result = time::timeout(self.config.timeout(), call).await;
+            let result = time::timeout(self.params.timeout(), call).await;
             let _ = service.cancel().await;
 
             let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
@@ -389,7 +389,7 @@ impl ToolProvider for McpToolProvider {
                     if matches!(&e, ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS) {
                         self.discovered.invalidate();
                     }
-                    McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, self.config.endpoint.redact_in(&e.to_string())))
+                    McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, self.params.endpoint.redact_in(&e.to_string())))
                 })?;
 
             call_tool_result_to_value(name, result)
@@ -401,13 +401,15 @@ impl ToolProvider for McpToolProvider {
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register(
-        ComponentKind::new(MCP_TOOL_KIND).params::<McpToolConfig>().provides::<dyn ToolProvider>(),
+        ComponentKind::new(MCP_SERVER_KIND)
+            .params::<McpServerParams>()
+            .provides::<dyn ToolProvider>(),
         |descriptor, _context| {
-            let config: McpToolConfig = config_of_params(&descriptor.params)?;
+            let params: McpServerParams = config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(McpToolProvider::new(
+            facets.insert::<dyn ToolProvider>(Arc::new(McpServerComponent::new(
                 descriptor.id.clone(),
-                config,
+                params,
             )));
             Ok(facets)
         },
@@ -436,10 +438,10 @@ mod tests {
             "auth": { "type": "bearer", "secret": "MY_TOKEN" },
             "timeout_secs": 5
         } });
-        let config: McpToolConfig = serde_json::from_value(value).unwrap();
-        assert_eq!(config.endpoint.url, "http://127.0.0.1:1234/mcp");
-        assert_eq!(config.timeout(), Duration::from_secs(5));
-        match config.endpoint.auth {
+        let params: McpServerParams = serde_json::from_value(value).unwrap();
+        assert_eq!(params.endpoint.url, "http://127.0.0.1:1234/mcp");
+        assert_eq!(params.timeout(), Duration::from_secs(5));
+        match params.endpoint.auth {
             Some(RemoteAuthConfig::Bearer { secret }) => assert_eq!(secret, "MY_TOKEN"),
             _ => panic!("Expected Bearer auth"),
         }
@@ -448,17 +450,17 @@ mod tests {
     #[test]
     fn parses_config_without_auth_using_defaults() {
         let value = json!({ "endpoint": { "url": "http://127.0.0.1:1234/mcp" } });
-        let config: McpToolConfig = serde_json::from_value(value).unwrap();
-        assert!(config.endpoint.auth.is_none());
-        assert_eq!(config.timeout(), Duration::from_secs(10));
-        assert_eq!(config.refresh(), Duration::from_secs(300));
+        let params: McpServerParams = serde_json::from_value(value).unwrap();
+        assert!(params.endpoint.auth.is_none());
+        assert_eq!(params.timeout(), Duration::from_secs(10));
+        assert_eq!(params.refresh(), Duration::from_secs(300));
         assert_eq!(
-            config.requires_approval,
+            params.requires_approval,
             ApprovalMode::Always,
             "approval unless configured otherwise"
         );
         assert!(
-            serde_json::from_value::<McpToolConfig>(
+            serde_json::from_value::<McpServerParams>(
                 json!({ "endpoint": { "url": "http://mcp.example" }, "requires_aproval": true })
             )
             .is_err(),
@@ -469,7 +471,7 @@ mod tests {
     #[test]
     fn approval_is_configured_for_all_none_or_all_but_the_read_only_tools() {
         let configured = |approval: Value| {
-            serde_json::from_value::<McpToolConfig>(
+            serde_json::from_value::<McpServerParams>(
                 json!({ "endpoint": { "url": "http://mcp.example" }, "requires_approval": approval }),
             )
             .map(|c| c.requires_approval)
@@ -497,14 +499,14 @@ mod tests {
 
     #[test]
     fn namespacing_round_trips_through_prefix_stripping() {
-        let config = McpToolConfig {
+        let params = McpServerParams {
             endpoint: RemoteEndpoint::new("http://example.invalid/mcp"),
             requires_approval: ApprovalMode::Never,
             classification: None,
             description: None,
             destination: None,
         };
-        let provider = McpToolProvider::new("github-mcp".to_string(), config);
+        let provider = McpServerComponent::new("github-mcp".to_string(), params);
 
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
@@ -514,12 +516,12 @@ mod tests {
         // unless configured.
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         let internal = Classification::general(Confidentiality::Internal);
-        let cleared = McpToolProvider::new(
+        let cleared = McpServerComponent::new(
             "github-mcp".to_string(),
-            McpToolConfig { destination: Some(internal.clone()), ..provider.config.clone() },
+            McpServerParams { destination: Some(internal.clone()), ..provider.params.clone() },
         );
         assert_eq!(cleared.destination(), Some(internal));
-        let configured: McpToolConfig = serde_json::from_value(
+        let configured: McpServerParams = serde_json::from_value(
             json!({ "endpoint": { "url": "http://mcp.example" }, "destination": { "level": "confidential" } }),
         )
         .unwrap();

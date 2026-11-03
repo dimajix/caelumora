@@ -5,8 +5,8 @@ mod commands;
 pub(super) use crate::channel::testing::*;
 
 use super::*;
-use crate::command::help_command::HelpCommandProvider;
-use crate::command::wakeup_command::WakeupCommandProvider;
+use crate::command::help::HelpComponent;
+use crate::command::wakeup::WakeupComponent;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::ComponentRegistry;
 use crate::kernel::ChannelRuntime;
@@ -85,8 +85,8 @@ async fn channel_built(
     let executor = CommandExecutor::new(
         Arc::clone(kernel.access_policy()),
         vec![
-            builtin("help", Arc::new(HelpCommandProvider)),
-            builtin("wakeup", Arc::new(WakeupCommandProvider)),
+            builtin("help", Arc::new(HelpComponent)),
+            builtin("wakeup", Arc::new(WakeupComponent)),
         ],
     )
     .unwrap();

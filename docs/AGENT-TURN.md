@@ -661,9 +661,8 @@ what it was handed. A part is never stored in the transcript, which stays a stab
 
 Every part the agents write has one form: a short title in brackets on a line of its own -
 `[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content; a
-part configured with a title (`static_system_prompt_provider`) is given the same form
-(`agents.titled`). A part that says nothing is no part. The personality's own system prompt stays as
-written.
+part configured with a title (`system_prompt`) is given the same form (`agents.titled`). A part that
+says nothing is no part. The personality's own system prompt stays as written.
 
 ### The prompt catalogue
 
@@ -737,8 +736,8 @@ keeps its conversation, the first three take `changes_only`: told once, then onl
 
 ### Who is in the channel
 
-`channel_participants_prompt_provider` lists the agent itself and every other current user or agent,
-with their introductions, read at the start of every turn - each as the views describe it
+`channel_participants` lists the agent itself and every other current user or agent, with their
+introductions, read at the start of every turn - each as the views describe it
 (`ParticipantView::describe`), in the same `ActorDescription` a responder policy is given of a
 running actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
@@ -746,18 +745,17 @@ also explains how the others' messages are marked. Where the others include an a
 to write an `@handle` - or `@all` - and when a name (issues 438, 442): a handle only when that
 participant's answer or action is needed now, since it makes an agent take a turn of its own; the
 name, without `@`, to greet, thank, praise, agree, answer or speak about someone. It does not offer
-the handles as the way to address the others: to a model a mention reads as a form of address,
-and agents that greet each other with `@` keep asking the next one to answer.
+the handles as the way to address the others: to a model a mention reads as a form of address, and
+agents that greet each other with `@` keep asking the next one to answer.
 
 ### When to mention
 
 Said once in the system prompt, the rule changes little: by the time the model writes, everything
-said since stands between, full of handles. `channel_mentions_prompt_provider` says it again before
-the turn's input, every turn - an `@handle` only for an answer or an action needed from that
-participant now; never to greet, thank, praise, agree with or refer to someone, but the name - and
-only where another agent is in the channel: a mention of a person asks no agent. Read last, it
-keeps the mentions that hand over work and drops those of courtesy
-([work/quiet_agents](../work/quiet_agents/MENTIONS.md)).
+said since stands between, full of handles. `channel_mentions` says it again before the turn's
+input, every turn - an `@handle` only for an answer or an action needed from that participant now;
+never to greet, thank, praise, agree with or refer to someone, but the name - and only where another
+agent is in the channel: a mention of a person asks no agent. Read last, it keeps the mentions that
+hand over work and drops those of courtesy ([work/quiet_agents](../work/quiet_agents/MENTIONS.md)).
 
 That the roster changed is told where it happened: a transcript entry of someone who joined or left
 is given to the model as the channel's notice - "Channel notice: @alice added @bob to the channel.",
@@ -771,24 +769,24 @@ notices' (issue 410).
 
 ### The channel's language
 
-`channel_language_prompt_provider` tells the agent the language its channel is held in - its own,
-else its session's (see [CHANNELS.md](CHANNELS.md#its-language)) -, by name rather than by tag
-alone, since a model follows a name more surely. Nothing is translated.
+`channel_language` tells the agent the language its channel is held in - its own, else its session's
+(see [CHANNELS.md](CHANNELS.md#its-language)) -, by name rather than by tag alone, since a model
+follows a name more surely. Nothing is translated.
 
 ### The current time
 
-`current_time_prompt_provider` tells the agent the date and time as its turn's context is built, in
-the time zone the turn records (see [who said what](#who-said-what)). With the times of messages
-alone a model takes the last one's for now, which is wrong for a turn that comes later - after
-`/wakeup`, after a long queue. It changes with every turn, so it goes before the turn's input, not
-into the system prompt, whose every change invalidates the cache. Within a turn it stays as it was
-read when the turn began, also through a long plan.
+`current_time` tells the agent the date and time as its turn's context is built, in the time zone
+the turn records (see [who said what](#who-said-what)). With the times of messages alone a model
+takes the last one's for now, which is wrong for a turn that comes later - after `/wakeup`, after a
+long queue. It changes with every turn, so it goes before the turn's input, not into the system
+prompt, whose every change invalidates the cache. Within a turn it stays as it was read when the
+turn began, also through a long plan.
 
 ### What the session and channel are for
 
-`channel_briefing_prompt_provider` gives the summary and briefing of the session and the channel
-(see [CHANNELS.md](CHANNELS.md#what-it-is-for)). It steers what the agent says, never what it may
-do: permissions and approvals are untouched by it.
+`channel_briefing` gives the summary and briefing of the session and the channel (see
+[CHANNELS.md](CHANNELS.md#what-it-is-for)). It steers what the agent says, never what it may do:
+permissions and approvals are untouched by it.
 
 ### Its workspace
 
@@ -809,15 +807,15 @@ again within its turn, never to later turns, which see the plan through the `cre
 Every turn records why it was asked (`Work::asked`, issue 439): the reason of the request it
 answers, the strongest of those it took in - `mentioned`, `nudged`, `undecided` when the channel's
 responder policy could not choose, `chosen` by it (see [CHANNELS.md](CHANNELS.md#moderators)) -,
-none for an answer given again. `request_reason_prompt_provider` reads it (`Situation::asked`) and
-tells an agent that was only chosen so, before the turn's input: that it is asked because what was
-said last might concern it, and that with nothing to add - nothing new, only agreement, a greeting,
-thanks, that it waits - it calls `silence` and writes nothing, or, where `silence` is not offered,
-writes nothing. Without it, a model takes every request for an order to answer, and greets back or
-writes that it has nothing to say. A mentioned or nudged agent, or one asked because the policy
-could not choose, is told nothing: told when to stay silent, a mentioned agent judged the message
-that mentioned it rather than what was its own to do, and stopped working where it was only cheered
-on ([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
+none for an answer given again. `request_reason` reads it (`Situation::asked`) and tells an agent
+that was only chosen so, before the turn's input: that it is asked because what was said last might
+concern it, and that with nothing to add - nothing new, only agreement, a greeting, thanks, that it
+waits - it calls `silence` and writes nothing, or, where `silence` is not offered, writes nothing.
+Without it, a model takes every request for an order to answer, and greets back or writes that it
+has nothing to say. A mentioned or nudged agent, or one asked because the policy could not choose,
+is told nothing: told when to stay silent, a mentioned agent judged the message that mentioned it
+rather than what was its own to do, and stopped working where it was only cheered on
+([work/quiet_agents](../work/quiet_agents/RESULTS.md)).
 
 ### System messages
 

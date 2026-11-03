@@ -1,4 +1,4 @@
-//! The `stop_tool` component: tools with which an agent ends its part in a
+//! The `turn_end` component: tools with which an agent ends its part in a
 //! conversation - `stop`, `bye` and `silence`.
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
@@ -14,21 +14,21 @@ use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
 
-pub const STOP_TOOL_KIND: &str = "stop_tool";
+pub const TURN_END_KIND: &str = "turn_end";
 
 pub const STOP_TOOL_NAME: &str = "stop";
 pub const BYE_TOOL_NAME: &str = "bye";
 pub const SILENCE_TOOL_NAME: &str = "silence";
 
 #[derive(Debug)]
-pub struct StopToolProvider {
+pub struct TurnEndComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
     tools: Vec<Tool>,
 }
 
-impl StopToolProvider {
+impl TurnEndComponent {
     /// The provider, its texts from `prompts`.
     ///
     /// # Errors
@@ -38,7 +38,7 @@ impl StopToolProvider {
             described(
                 prompts,
                 NAMESPACE,
-                STOP_TOOL_KIND,
+                TURN_END_KIND,
                 Tool {
                     name: name.to_string(),
                     description: String::new(),
@@ -56,14 +56,14 @@ impl StopToolProvider {
         };
         let tools = vec![tool(STOP_TOOL_NAME)?, tool(BYE_TOOL_NAME)?, tool(SILENCE_TOOL_NAME)?];
         Ok(Self {
-            description: tool_text(prompts, NAMESPACE, STOP_TOOL_KIND, "description", ())?,
+            description: tool_text(prompts, NAMESPACE, TURN_END_KIND, "description", ())?,
             tools,
         })
     }
 }
 
 #[async_trait]
-impl ToolProvider for StopToolProvider {
+impl ToolProvider for TurnEndComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -104,11 +104,11 @@ impl ToolProvider for StopToolProvider {
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(STOP_TOOL_KIND).provides::<dyn ToolProvider>()),
+        writing_for_the_model(ComponentKind::new(TURN_END_KIND).provides::<dyn ToolProvider>()),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(StopToolProvider::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(TurnEndComponent::new(&texts)?));
             Ok(facets)
         },
     );
@@ -123,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_tool() {
-        let provider = StopToolProvider::new(&testing::prompts()).unwrap();
+        let provider = TurnEndComponent::new(&testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 

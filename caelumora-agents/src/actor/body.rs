@@ -363,7 +363,7 @@ pub(super) fn retry_target(retry: &Envelope) -> Option<RetryTarget> {
 #[cfg(test)]
 mod testing {
     use super::*;
-    use crate::prompt::external_context_provider::ExternalContextProvider;
+    use crate::prompt::external_context::ExternalContextProvider;
     use crate::testing::{detached_actor_runtime, detached_participant};
     use caelumora_domain::agent::Personality;
     use caelumora_kernel::agent::state::AgentStateHandle;

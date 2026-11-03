@@ -34,33 +34,33 @@ component_bundles:
   name: channel-context
   components:
   - id: channel-participants
-    kind: channel_participants_prompt_provider
+    kind: channel_participants
     fail_policy: FailClosed
   - id: channel-language
-    kind: channel_language_prompt_provider
+    kind: channel_language
     fail_policy: FailClosed
   - id: channel-briefing
-    kind: channel_briefing_prompt_provider
+    kind: channel_briefing
     fail_policy: FailClosed
   - id: current-time
-    kind: current_time_prompt_provider
+    kind: current_time
     fail_policy: FailClosed
   - id: request-reason
-    kind: request_reason_prompt_provider
+    kind: request_reason
     fail_policy: FailClosed
   - id: channel-mentions
-    kind: channel_mentions_prompt_provider
+    kind: channel_mentions
     fail_policy: FailClosed
 # What every agent run here needs to take part in a channel - `compaction` among it: an agent
 # compacts its context only if it lists that.
 - id: 8d4c2a91-0e57-4b3f-a6d8-17f9c3e5b204
   name: agent-basics
   components:
-  - id: stop-tool
-    kind: stop_tool
+  - id: turn-end
+    kind: turn_end
     fail_policy: FailClosed
-  - id: ask-user-tool
-    kind: ask_user_tool
+  - id: ask-user
+    kind: ask_user
     fail_policy: FailClosed
   - id: notes
     kind: notes
@@ -89,7 +89,7 @@ personalities:
     others: when_asked
   components:
   - id: system-prompt
-    kind: static_system_prompt_provider
+    kind: system_prompt
     params:
       title: Who you are
       prompt: You are a self-made millionaire. You always wanted to be a quiz-master. You are polite
@@ -103,11 +103,11 @@ personalities:
     kind: ref
     params:
       name: agent-basics
-  - id: create-plan-tool
-    kind: create_plan_tool
+  - id: planning
+    kind: planning
     fail_policy: FailClosed
-  - id: calculator-tool
-    kind: calculator_tool
+  - id: calculator
+    kind: calculator
     fail_policy: FailClosed
   - id: memory
     kind: agent_memory
@@ -115,8 +115,8 @@ personalities:
   - id: workspace
     kind: workspace
     fail_policy: FailClosed
-  - id: artifact-tool
-    kind: artifact_tool
+  - id: artifacts
+    kind: artifacts
     fail_policy: FailClosed
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   name: sassy-assistant
@@ -129,7 +129,7 @@ personalities:
     others: hear
   components:
   - id: system-prompt
-    kind: static_system_prompt_provider
+    kind: system_prompt
     params:
       title: Who you are
       prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
@@ -142,11 +142,11 @@ personalities:
     kind: ref
     params:
       name: agent-basics
-  - id: create-plan-tool
-    kind: create_plan_tool
+  - id: planning
+    kind: planning
     fail_policy: FailClosed
-  - id: calculator-tool
-    kind: calculator_tool
+  - id: calculator
+    kind: calculator
     fail_policy: FailClosed
   - id: private-notes
     kind: private_notes
@@ -176,7 +176,7 @@ personalities:
     others: when_asked
   components:
   - id: system-prompt
-    kind: static_system_prompt_provider
+    kind: system_prompt
     params:
       title: Who you are
       prompt: You are a calm and cheerful painter in the spirit of Bob Ross. When someone asks for a
@@ -194,8 +194,8 @@ personalities:
     params:
       name: agent-basics
   # The attachments it heard, and `attach`, by which it shows what it painted.
-  - id: attachment-tool
-    kind: attachment_tool
+  - id: attachments
+    kind: attachments
     fail_policy: FailClosed
   # The image model it paints with, and the tool that offers it.
   - id: image-model
@@ -203,8 +203,8 @@ personalities:
     params:
       name: z_image_turbo
     fail_policy: FailClosed
-  - id: image-tool
-    kind: image_tool
+  - id: image-generation
+    kind: image_generation
     params:
       destination:
         level: internal
@@ -226,17 +226,17 @@ personalities:
   - staff
   components:
   - id: channel-participants
-    kind: channel_participants_prompt_provider
+    kind: channel_participants
     params:
       changes_only: true
     fail_policy: FailClosed
   - id: channel-language
-    kind: channel_language_prompt_provider
+    kind: channel_language
     params:
       changes_only: true
     fail_policy: FailClosed
   - id: channel-briefing
-    kind: channel_briefing_prompt_provider
+    kind: channel_briefing
     params:
       changes_only: true
     fail_policy: FailClosed
@@ -259,7 +259,7 @@ personalities:
     what fails.
   components:
   - id: system-prompt
-    kind: static_system_prompt_provider
+    kind: system_prompt
     params:
       title: Who you are
       prompt: You are the coder of a small software team. You write and fix code in the session's
@@ -277,8 +277,8 @@ personalities:
   - id: workspace
     kind: workspace
     fail_policy: FailClosed
-  - id: create-plan-tool
-    kind: create_plan_tool
+  - id: planning
+    kind: planning
     fail_policy: FailClosed
 - id: c0bb5f0c-d731-4cf6-bef0-aabe69ea44d5
   name: team-reviewer
@@ -292,7 +292,7 @@ personalities:
     others: wait
   components:
   - id: system-prompt
-    kind: static_system_prompt_provider
+    kind: system_prompt
     params:
       title: Who you are
       prompt: You are the reviewer of a small software team. You review changes before they are
@@ -325,7 +325,7 @@ personalities:
     others: when_asked
   components:
   - id: system-prompt
-    kind: static_system_prompt_provider
+    kind: system_prompt
     params:
       title: Who you are
       prompt: You are the planner of a small software team. You keep the backlog, split work into
@@ -339,8 +339,8 @@ personalities:
     kind: ref
     params:
       name: agent-basics
-  - id: create-plan-tool
-    kind: create_plan_tool
+  - id: planning
+    kind: planning
     fail_policy: FailClosed
 session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9

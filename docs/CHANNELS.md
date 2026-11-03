@@ -1029,10 +1029,10 @@ A `Routing` also says why it asks (`RequestReason`, issue 439): `mentioned` - by
 or `@all` -, `nudged` by a user (see [Nudging someone](#nudging-someone)), `chosen` by the policy,
 or `undecided`, asked under `on_undecided: all` because the policy could not choose (issue 441). The
 request to respond carries it, and the history records it with the request. An agent whose
-personality has the `request_reason_prompt_provider` is told, when only chosen, that it may stay
-silent (see [AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)): what a policy chooses is a
-guess whether the agent has anything to add. Asked as undecided, it is told nothing, so that what
-was said is answered as `all` intends.
+personality has the component `request_reason` is told, when only chosen, that it may stay silent
+(see [AGENT-TURN.md](AGENT-TURN.md#why-the-agent-was-asked)): what a policy chooses is a guess
+whether the agent has anything to add. Asked as undecided, it is told nothing, so that what was said
+is answered as `all` intends.
 
 ### Choosing by what was said
 

@@ -25,12 +25,12 @@ pub(crate) const COMFYUI_BACKEND: &str = "comfyui";
 /// The parameters of a model of the backend `comfyui`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ComfyUiParams {
+struct ComfyUiModelConfig {
     endpoint: RemoteEndpoint,
     workflow: PathBuf,
 }
 
-impl Params for ComfyUiParams {
+impl Params for ComfyUiModelConfig {
     /// # Errors
     /// `InvalidConfig` for an endpoint with authentication.
     fn check(&self) -> ComponentResult<()> {
@@ -97,7 +97,7 @@ impl ImageModelProvider for ComfyUiModel {
 /// Registers the backend `comfyui` of the image models with `backends`: each model its workflow,
 /// read and checked as the kernel is built.
 pub(crate) fn register_backend(backends: &mut Backends) {
-    backends.register::<dyn ImageModelProvider, ComfyUiParams, _>(
+    backends.register::<dyn ImageModelProvider, ComfyUiModelConfig, _>(
         COMFYUI_BACKEND,
         |name, params, _| {
             let workflow = Workflow::read(&params.workflow)

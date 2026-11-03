@@ -2,13 +2,13 @@
 //! it is cancelled, removed or lowered.
 
 use super::*;
-use crate::components::create_plan_tool::CREATE_PLAN_TOOL_KIND;
+use crate::components::planning::PLANNING_KIND;
 use crate::message::testing::given_up_turns;
-use crate::prompt::request_reason_prompt_provider::REQUEST_REASON_PROMPT_PROVIDER_KIND;
+use crate::prompt::request_reason::REQUEST_REASON_KIND;
 use crate::testing::{activities_until_the_turn_ends, saying};
-use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
-use crate::tool::sleep_tool::SLEEP_TOOL_KIND;
-use crate::tool::stop_tool::STOP_TOOL_KIND;
+use crate::tool::calculator::CALCULATOR_KIND;
+use crate::tool::sleep::SLEEP_KIND;
+use crate::tool::turn_end::TURN_END_KIND;
 use crate::turn::MAX_MODEL_CALLS;
 use anyhow::Result;
 use caelumora_api::model::{LanguageModelClient, ModelError, ModelProfileProvider, ModelResult};
@@ -759,8 +759,8 @@ async fn an_agent_that_hears_nobody_during_a_turn_answers_what_was_said_after_it
     running.abort();
 }
 
-/// Issue 439: an agent whose personality has the `request_reason_prompt_provider`, chosen by the
-/// channel's policy, is told so before the message it answers - and how to stay silent; one
+/// Issue 439: an agent whose personality has the component `request_reason`, chosen by
+/// the channel's policy, is told so before the message it answers - and how to stay silent; one
 /// mentioned is told nothing.
 #[tokio::test]
 async fn an_agent_only_chosen_is_told_so_and_one_mentioned_is_not() {
@@ -773,8 +773,8 @@ async fn an_agent_only_chosen_is_told_so_and_one_mentioned_is_not() {
     };
     let components = ComponentConfig {
         component_nodes: vec![
-            component("stop", STOP_TOOL_KIND),
-            component("reason", REQUEST_REASON_PROMPT_PROVIDER_KIND),
+            component("stop", TURN_END_KIND),
+            component("reason", REQUEST_REASON_KIND),
         ],
     };
     let model = Arc::new(Gated::saying(&["Hi.", "Yes."], 1));
@@ -1134,7 +1134,7 @@ async fn a_sleeping_agent_woken_by_a_mention_answers_it() {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: STOP_TOOL_KIND.to_string(),
+            kind: TURN_END_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1186,7 +1186,7 @@ async fn an_agent_that_calls_stop_ends_its_turn_with_the_call_and_sleeps() {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: STOP_TOOL_KIND.to_string(),
+            kind: TURN_END_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1233,7 +1233,7 @@ async fn an_agent_tells_the_users_where_it_stands_and_that_it_was_woken() {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "stop".to_string(),
-            kind: STOP_TOOL_KIND.to_string(),
+            kind: TURN_END_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1328,7 +1328,7 @@ async fn a_plan_whose_steps_need_more_calls_than_a_turn_runs_to_its_end() {
     let components = ComponentConfig {
         component_nodes: [ComponentDescriptor {
             id: "plan".to_string(),
-            kind: CREATE_PLAN_TOOL_KIND.to_string(),
+            kind: PLANNING_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1386,7 +1386,7 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "plan".to_string(),
-            kind: CREATE_PLAN_TOOL_KIND.to_string(),
+            kind: PLANNING_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1514,7 +1514,7 @@ async fn every_message_of_a_turn_carries_the_turn_its_start_announced() {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "plan".to_string(),
-            kind: CREATE_PLAN_TOOL_KIND.to_string(),
+            kind: PLANNING_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1600,7 +1600,7 @@ async fn a_turn_is_stored_with_the_step_that_comes_next() {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: CALCULATOR_TOOL_KIND.to_string(),
+            kind: CALCULATOR_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1867,7 +1867,7 @@ async fn a_turn_that_fails_after_a_tool_ran_keeps_what_it_said_and_the_agent_is_
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: CALCULATOR_TOOL_KIND.to_string(),
+            kind: CALCULATOR_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -1940,7 +1940,7 @@ async fn an_agent_removed_during_a_turn_gives_it_up() {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: CALCULATOR_TOOL_KIND.to_string(),
+            kind: CALCULATOR_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2019,7 +2019,7 @@ fn calculator() -> (Message, ComponentConfig) {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "calculator".to_string(),
-            kind: CALCULATOR_TOOL_KIND.to_string(),
+            kind: CALCULATOR_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2213,7 +2213,7 @@ fn a_call_needing_approval() -> (Message, ComponentConfig) {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "sleep".to_string(),
-            kind: SLEEP_TOOL_KIND.to_string(),
+            kind: SLEEP_KIND.to_string(),
             params: serde_json::json!({ "requires_approval": true }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2355,7 +2355,7 @@ async fn with_an_agent_in_long_tools(calls: &[&str]) -> (Stuck, Arc<Scripted>) {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "sleep".to_string(),
-            kind: SLEEP_TOOL_KIND.to_string(),
+            kind: SLEEP_KIND.to_string(),
             params: serde_json::json!({ "seconds": 60 }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -2783,7 +2783,7 @@ async fn a_call_with_invalid_arguments_is_answered_without_asking_anyone() {
     let components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "plan".to_string(),
-            kind: CREATE_PLAN_TOOL_KIND.to_string(),
+            kind: PLANNING_KIND.to_string(),
             params: Value::Null,
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,
@@ -3092,7 +3092,7 @@ async fn asked_to_nap(listed: Vec<ComponentDescriptor>, afterwards: Vec<Message>
     let mut components = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
             id: "sleep".to_string(),
-            kind: SLEEP_TOOL_KIND.to_string(),
+            kind: SLEEP_KIND.to_string(),
             params: serde_json::json!({ "requires_approval": false }),
             tags: vec![],
             fail_policy: ComponentFailPolicy::FailClosed,

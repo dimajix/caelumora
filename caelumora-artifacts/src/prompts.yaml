@@ -8,7 +8,7 @@
 # look now: a tool of another plugin, which this one does not know by its
 # name.
 tools:
-  artifact_tool:
+  artifacts:
     description: >-
       Artifacts: results published from the session's workspace as fixed versions, kept beyond the
       workspace and downloaded where they were published.

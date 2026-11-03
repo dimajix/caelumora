@@ -87,7 +87,7 @@ pub const NAMED: &[TypeKey] = &[TypeKey::of::<dyn Named>()];
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[expect(dead_code, reason = "read only to be checked")]
-pub struct ModelConfig {
+pub struct ModelParams {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
@@ -96,10 +96,10 @@ pub struct ModelConfig {
     prompt_texts: Option<String>,
 }
 
-impl Params for ModelConfig {}
+impl Params for ModelParams {}
 
 /// A registry with the single `Choice`, the kinds `declared` and `other` that provide it - `other`
-/// configured with `ModelConfig` -, and how often `declared` was built.
+/// configured with `ModelParams` -, and how often `declared` was built.
 pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
     let mut registry = ComponentRegistry::new(
         EntityStores::open(&Persistence::in_memory(), &Policies::permitting_all())
@@ -121,7 +121,7 @@ pub fn choices() -> (ComponentRegistry, Arc<AtomicUsize>) {
         },
     );
     registry.register(
-        ComponentKind::new("other").params::<ModelConfig>().provides::<dyn Choice>(),
+        ComponentKind::new("other").params::<ModelParams>().provides::<dyn Choice>(),
         move |descriptor, _| Ok(choice(&descriptor.id)),
     );
     registry.register(ComponentKind::new("part").provides::<dyn Named>(), |descriptor, _| {

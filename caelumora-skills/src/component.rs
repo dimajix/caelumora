@@ -97,14 +97,14 @@ pub struct SkillsComponent {
 /// What the component is configured with.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SkillsConfig {
+struct SkillsParams {
     #[serde(default)]
     position: PromptPosition,
     #[serde(default)]
     requires_approval: ApprovalMode,
 }
 
-impl Params for SkillsConfig {}
+impl Params for SkillsParams {}
 
 /// The classification of what `skills` hold together, within `bound` -
 /// the turn's: their join where it surely flows there, else the bound.
@@ -632,7 +632,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(SKILLS_KIND)
-                .params::<SkillsConfig>()
+                .params::<SkillsParams>()
                 .provides::<dyn PromptProvider>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn AgentCommandProvider>()
@@ -642,7 +642,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let SkillsConfig { position, requires_approval } =
+            let SkillsParams { position, requires_approval } =
                 config_of_params(&descriptor.params)?;
             let component = Arc::new(SkillsComponent::new(position, requires_approval, texts)?);
             let mut facets = ComponentFacets::empty();

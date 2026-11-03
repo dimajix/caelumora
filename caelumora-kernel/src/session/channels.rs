@@ -691,7 +691,7 @@ mod tests {
     use caelumora_domain::channel::moderation_components;
     use caelumora_domain::channel::testing::main_channel;
     use caelumora_domain::channel::{Channel, InternalActor, STARTED, STOPPED};
-    use caelumora_domain::command::HELP_COMMAND_KIND;
+    use caelumora_domain::command::HELP_KIND;
     use caelumora_domain::component::ComponentBundle;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::event::EntityChange;
@@ -1012,9 +1012,8 @@ mod tests {
             ),
             "a channel has one policy"
         );
-        let command = ComponentConfig {
-            component_nodes: vec![ComponentDescriptor::new("help", HELP_COMMAND_KIND)],
-        };
+        let command =
+            ComponentConfig { component_nodes: vec![ComponentDescriptor::new("help", HELP_KIND)] };
         assert!(matches!(refusal(session.create_channel(&ctx, ChannelSpec { components: command, ..spec("x", vec![]) }).await), SessionError::InvalidComponents(_)), "a channel takes no component it does not ask for, a command of the session (issue 337)");
 
         assert_eq!(session.channels().len(), 1);

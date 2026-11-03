@@ -172,7 +172,7 @@ mod tests {
         let components = ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("search", "web_search"),
-                ComponentDescriptor::new("stop", "stop_tool"),
+                ComponentDescriptor::new("stop", "turn_end"),
             ],
         };
         let bundle = ComponentBundle::new(
@@ -185,7 +185,7 @@ mod tests {
         assert_eq!(json["name"], "basics", "its name and scope flattened, as a definition's are");
         assert!(json["scope"]["UserScope"].is_object(), "{json}");
         assert_eq!(
-            json["components"][1]["kind"], "stop_tool",
+            json["components"][1]["kind"], "turn_end",
             "the list directly under its key (issue 201)"
         );
         assert_eq!(json["security_attributes"]["owner_id"], serde_json::to_value(owner).unwrap());

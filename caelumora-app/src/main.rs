@@ -281,7 +281,7 @@ mod tests {
     use caelumora_security::{AllowAllPolicy, Policies, SecurityContext};
     use caelumora_skills::skill::Skill;
     use caelumora_store::Persistence;
-    use caelumora_tool_mcp::tool::MCP_TOOL_KIND;
+    use caelumora_tool_mcp::component::MCP_SERVER_KIND;
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::path::Path;
@@ -374,6 +374,20 @@ mod tests {
             assert!(
                 refused.contains("invalid parameter 'no_kind_takes_this'"),
                 "{kind}: {refused}"
+            );
+        }
+    }
+
+    /// Every component kind of the program is named after what it gives, never after a facet it
+    /// serves (issue 532).
+    #[test]
+    fn no_component_kind_is_named_after_a_facet() {
+        let kernel = kernel(&Persistence::in_memory());
+        let facets = ["_tool", "_prompt_provider", "_context_provider", "_command"];
+        for kind in kernel.component_registry().registered_kinds() {
+            assert!(
+                !facets.iter().any(|facet| kind.ends_with(facet)),
+                "the kind '{kind}' is named after a facet"
             );
         }
     }
@@ -600,7 +614,7 @@ mod tests {
         }
     }
 
-    /// A personality that names `mcp_tool` is built as before the kind
+    /// A personality that names `mcp_server` is built as before the kind
     /// moved into its plugin (issue 325): its tool set, unavailable while
     /// nobody answers at the endpoint.
     #[tokio::test]
@@ -610,7 +624,7 @@ mod tests {
         let config = ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: json!({ "endpoint": { "url": "http://127.0.0.1:1/mcp" } }),
-                ..ComponentDescriptor::new("tracker", MCP_TOOL_KIND)
+                ..ComponentDescriptor::new("tracker", MCP_SERVER_KIND)
             }],
         };
         let container = kernel

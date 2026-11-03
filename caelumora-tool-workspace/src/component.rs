@@ -22,7 +22,7 @@
 //! (issues 344, 516) -, before anything is sent, in its context (issue 296): as a participant of
 //! the channel, where the channel uses it, its access list lets the agent read it - change it, for
 //! the shell and the tools that write (issue 23) - and it and the channel flow both ways. A result
-//! is classified as the workspace. Which calls need approval is configured as for `mcp_tool`
+//! is classified as the workspace. Which calls need approval is configured as for `mcp_server`
 //! (`requires_approval`, an `ApprovalMode`): all, none, or all but those that only read;
 //! `command_output`, `kill_command` and `publish_file` never ask.
 //!
@@ -90,7 +90,7 @@ fn default_instruction_files() -> Vec<String> {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct WorkspaceConfig {
+pub(crate) struct WorkspaceParams {
     /// How long a call follows a command at most, in seconds: 60 unless
     /// configured, never more than 300.
     #[serde(default = "default_wait_secs")]
@@ -120,7 +120,7 @@ pub(crate) struct WorkspaceConfig {
     instruction_files: Vec<String>,
 }
 
-impl WorkspaceConfig {
+impl WorkspaceParams {
     /// Its `instruction_files`, each as a file at a workspace's root.
     ///
     /// # Errors
@@ -138,7 +138,7 @@ impl WorkspaceConfig {
     }
 }
 
-impl Params for WorkspaceConfig {
+impl Params for WorkspaceParams {
     /// # Errors
     /// `InvalidConfig` for an instruction file that is not one at a workspace's root.
     fn check(&self) -> ComponentResult<()> {
@@ -148,7 +148,7 @@ impl Params for WorkspaceConfig {
 
 #[derive(Debug)]
 pub struct WorkspaceComponent {
-    pub(crate) config: WorkspaceConfig,
+    pub(crate) params: WorkspaceParams,
     /// What its tool set is for and its tools, as the configuration or the
     /// prompt catalogue words them (issue 57).
     description: String,
@@ -161,20 +161,20 @@ pub struct WorkspaceComponent {
 }
 
 impl WorkspaceComponent {
-    /// The component, configured by `config`, its texts from `prompts`.
+    /// The component, configured by `params`, its texts from `prompts`.
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` for an instruction file that is not one at a workspace's
     /// root, `ComponentError::Prompt` if one of its texts cannot be had.
-    pub(crate) fn new(config: WorkspaceConfig, prompts: PromptTexts) -> ComponentResult<Self> {
-        let mut tools = shell::tools(&config, &prompts)?;
-        tools.extend(files::tools(&config, &prompts)?);
-        let description = match &config.description {
+    pub(crate) fn new(params: WorkspaceParams, prompts: PromptTexts) -> ComponentResult<Self> {
+        let mut tools = shell::tools(&params, &prompts)?;
+        tools.extend(files::tools(&params, &prompts)?);
+        let description = match &params.description {
             Some(description) => description.clone(),
             None => tool_text(&prompts, NAMESPACE, WORKSPACE_KIND, "description", ())?,
         };
-        let instruction_files = config.instruction_files()?;
-        Ok(Self { config, description, tools, instruction_files, prompts })
+        let instruction_files = params.instruction_files()?;
+        Ok(Self { params, description, tools, instruction_files, prompts })
     }
 
     /// Those of the instruction files that lie at the root of `workspace`, the one the work may use
@@ -390,7 +390,7 @@ fn told(
 #[async_trait]
 impl PromptProvider for WorkspaceComponent {
     fn position(&self) -> PromptPosition {
-        self.config.position
+        self.params.position
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
@@ -421,7 +421,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(WORKSPACE_KIND)
-                .params::<WorkspaceConfig>()
+                .params::<WorkspaceParams>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>()
                 .reads::<dyn WorkspaceReader>()
@@ -429,8 +429,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let config: WorkspaceConfig = config_of_params(&descriptor.params)?;
-            let component = Arc::new(WorkspaceComponent::new(config, prompts)?);
+            let params: WorkspaceParams = config_of_params(&descriptor.params)?;
+            let component = Arc::new(WorkspaceComponent::new(params, prompts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<WorkspaceComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -739,7 +739,7 @@ pub(crate) mod tests {
             let params = json!({ "instruction_files": [invalid] });
             assert!(
                 matches!(
-                    config_of_params::<WorkspaceConfig>(&params),
+                    config_of_params::<WorkspaceParams>(&params),
                     Err(ComponentError::InvalidConfig(_))
                 ),
                 "{invalid:?}"

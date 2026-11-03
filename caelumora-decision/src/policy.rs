@@ -63,7 +63,7 @@ const MAX_STATE_TOKENS: u64 = 4096;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DecisionPolicyConfig {
+struct DecisionPolicyParams {
     /// The server; its timeout bounds a decision, 5 s unless written.
     #[serde(default = "default_endpoint")]
     endpoint: RemoteEndpoint,
@@ -95,7 +95,7 @@ struct DecisionPolicyConfig {
     prompt_texts: Option<PromptVariant>,
 }
 
-impl DecisionPolicyConfig {
+impl DecisionPolicyParams {
     /// How the model is given what was said - without the times of the
     /// messages (issue 424), which who is to respond does not depend on.
     fn profile(&self) -> ModelProfile {
@@ -108,7 +108,7 @@ impl DecisionPolicyConfig {
     }
 }
 
-impl Params for DecisionPolicyConfig {
+impl Params for DecisionPolicyParams {
     /// # Errors
     /// `ComponentError::InvalidConfig` if the threshold is no probability or nobody may be asked
     /// to respond.
@@ -407,31 +407,31 @@ fn nouls(
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(DECISION_POLICY_KIND)
-            .params::<DecisionPolicyConfig>()
+            .params::<DecisionPolicyParams>()
             .provides::<dyn ResponderPolicy>()
             .uses::<SecretManager>()
             .uses::<dyn ConfidentialityPolicy>()
             .uses::<PromptCatalogue>()
             .operator_only(),
         |descriptor, context| {
-            let config: DecisionPolicyConfig = config_of_params(&descriptor.params)?;
+            let params: DecisionPolicyParams = config_of_params(&descriptor.params)?;
             let catalogue = context.service::<PromptCatalogue>()?;
-            catalogue.require_variant(config.prompt_texts)?;
-            let prompts = PromptTexts::new(Arc::clone(catalogue), config.prompt_texts);
+            catalogue.require_variant(params.prompt_texts)?;
+            let prompts = PromptTexts::new(Arc::clone(catalogue), params.prompt_texts);
             let secret_manager = Arc::clone(context.service::<SecretManager>()?);
-            let profile = config.profile();
+            let profile = params.profile();
             let client = DecisionClient::new(
-                config.endpoint,
-                config.model,
-                config.keep_alive,
+                params.endpoint,
+                params.model,
+                params.keep_alive,
                 secret_manager,
             )
             .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
             let policy = DecisionPolicy {
                 client,
-                threshold: config.threshold,
-                max_responders: config.max_responders,
-                destination: config.destination.unwrap_or(Classification::PUBLIC),
+                threshold: params.threshold,
+                max_responders: params.max_responders,
+                destination: params.destination.unwrap_or(Classification::PUBLIC),
                 profile,
                 confidentiality: Arc::clone(context.service::<dyn ConfidentialityPolicy>()?),
                 prompts,
@@ -509,21 +509,21 @@ mod tests {
 
     /// A policy asking the model at `url`, as `params` configure it.
     fn policy(url: &str, params: Value) -> DecisionPolicy {
-        let mut config: DecisionPolicyConfig = config_of_params(&params).unwrap();
-        config.endpoint = RemoteEndpoint::new(url);
+        let mut params: DecisionPolicyParams = config_of_params(&params).unwrap();
+        params.endpoint = RemoteEndpoint::new(url);
         let secret_manager = Arc::new(SecretManager::new(vec![], Arc::new(AllowAllPolicy::new())));
-        let profile = config.profile();
+        let profile = params.profile();
         DecisionPolicy {
             client: DecisionClient::new(
-                config.endpoint,
-                config.model,
-                config.keep_alive,
+                params.endpoint,
+                params.model,
+                params.keep_alive,
                 secret_manager,
             )
             .unwrap(),
-            threshold: config.threshold,
-            max_responders: config.max_responders,
-            destination: config.destination.unwrap_or(Classification::PUBLIC),
+            threshold: params.threshold,
+            max_responders: params.max_responders,
+            destination: params.destination.unwrap_or(Classification::PUBLIC),
             profile,
             confidentiality: Arc::new(ConfidentialityRules::default()),
             prompts: prompts(),
@@ -840,7 +840,7 @@ mod tests {
 
     #[test]
     fn its_parameters_are_checked() {
-        let checked = |params: Value| config_of_params::<DecisionPolicyConfig>(&params).map(drop);
+        let checked = |params: Value| config_of_params::<DecisionPolicyParams>(&params).map(drop);
         assert!(checked(json!({})).is_ok(), "every one has a default");
         assert!(checked(json!({ "threshold": 1.5 })).is_err());
         assert!(checked(json!({ "max_responders": 0 })).is_err());

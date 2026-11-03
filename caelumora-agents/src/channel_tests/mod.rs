@@ -44,7 +44,7 @@ use caelumora_domain::work::TurnId;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::testing::*;
 use caelumora_kernel::channel::*;
-use caelumora_kernel::command::help_command::HelpCommandProvider;
+use caelumora_kernel::command::help::HelpComponent;
 use caelumora_kernel::command::CommandExecutor;
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::testing::TestKernel;
@@ -504,20 +504,20 @@ async fn command_events(watch: &mut ChannelWatch) -> (Option<Envelope>, Vec<Acto
 /// What `test_asking_tool` is configured with: whether its questions are sensitive.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AskingConfig {
+struct AskingParams {
     #[serde(default)]
     sensitive: bool,
 }
 
-impl Params for AskingConfig {}
+impl Params for AskingParams {}
 
 fn register_asking_tool(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new("test_asking_tool")
-            .params::<AskingConfig>()
+            .params::<AskingParams>()
             .provides::<dyn ToolProvider>(),
         |descriptor, _context| {
-            let AskingConfig { sensitive } = config_of_params(&descriptor.params)?;
+            let AskingParams { sensitive } = config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(Asking { sensitive }));
             Ok(facets)

@@ -1,7 +1,7 @@
 //! How the tools of the workspace are joined to the kernel (issues 428, 532): their texts and the
 //! component kind `workspace`.
 
-use crate::{workspace, NAMESPACE, PROMPTS};
+use crate::{component, NAMESPACE, PROMPTS};
 use anyhow::Result;
 use caelumora_api::library::{Library, LibraryBuilder};
 
@@ -16,7 +16,7 @@ impl Library for WorkspaceToolLibrary {
 
     fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         library.add_prompts(NAMESPACE, PROMPTS)?;
-        workspace::register(&mut library.components());
+        component::register(&mut library.components());
         Ok(())
     }
 }

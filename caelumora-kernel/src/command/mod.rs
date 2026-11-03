@@ -13,9 +13,9 @@
 //! are made of - `ProvidesCommands`, the `CommandSet`, the `CommandError` - is the API's
 //! (`caelumora_api::command`, issue 516).
 
-pub mod help_command;
-pub mod nudge_command;
-pub mod wakeup_command;
+pub mod help;
+pub mod nudge;
+pub mod wakeup;
 
 use crate::actor::user::UserActor;
 use crate::channel::{ChannelLoop, ChannelParticipant};
@@ -230,9 +230,9 @@ pub(crate) fn names(names: &[String]) -> String {
 
 /// Registers the command kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
-    help_command::register(registry);
-    nudge_command::register(registry);
-    wakeup_command::register(registry);
+    help::register(registry);
+    nudge::register(registry);
+    wakeup::register(registry);
 }
 
 #[cfg(test)]

@@ -30,7 +30,7 @@ use crate::command::AgentCommandProvider;
 use crate::error::failure_message;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use crate::message::PerceiveInProcessor;
-use crate::prompt::external_context_provider::EXTERNAL_CONTEXT_PROVIDER_KIND;
+use crate::prompt::external_context::EXTERNAL_CONTEXT_KIND;
 use crate::prompt::ContextProvider;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -75,7 +75,7 @@ pub(crate) struct ExternalAgentActor {
     /// its next call. Its context provider gives the remote agent what it
     /// is given besides what was said - the frame of it, such as who is in
     /// the channel (issues 204, 214) -, by default
-    /// `external_context_provider`. Where it stands is its run control's
+    /// `external_context`. Where it stands is its run control's
     /// (issue 363): `Planning` while the remote agent works on an answer -
     /// a turn of its own, which `cancel` and `stop` end -, else `Idle`.
     body: AgentBody,
@@ -139,8 +139,8 @@ impl ExternalAgentActor {
         // Its context provider is, unless it configures one, not a turn's.
         let defaults = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new(
-                EXTERNAL_CONTEXT_PROVIDER_KIND,
-                EXTERNAL_CONTEXT_PROVIDER_KIND,
+                EXTERNAL_CONTEXT_KIND,
+                EXTERNAL_CONTEXT_KIND,
             )],
         };
         // It resumes no answer: the remote agent's tasks are followed again

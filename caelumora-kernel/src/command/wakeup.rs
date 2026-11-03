@@ -7,7 +7,7 @@ use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_domain::command::{Command, CommandOutput, WAKEUP_COMMAND_KIND};
+use caelumora_domain::command::{Command, CommandOutput, WAKEUP_KIND};
 use std::sync::Arc;
 
 pub const WAKEUP_COMMAND_NAME: &str = "wakeup";
@@ -15,7 +15,7 @@ pub const WAKEUP_COMMAND_NAME: &str = "wakeup";
 /// `/wakeup [agent]`: wakes the sleeping agents of the channel, or one of
 /// them. Everybody in the channel is told, since it changes who answers.
 #[derive(Debug)]
-pub struct WakeupCommandProvider;
+pub struct WakeupComponent;
 
 /// A refusal from the channel is the command being refused; anything else is
 /// a failure, described only as far as `user_message` allows.
@@ -31,7 +31,7 @@ fn channel_error(error: Error) -> CommandError {
     CommandError::Failed { command: WAKEUP_COMMAND_NAME.to_string(), reason }
 }
 
-impl ProvidesCommands for WakeupCommandProvider {
+impl ProvidesCommands for WakeupComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
             name: WAKEUP_COMMAND_NAME.to_string(),
@@ -43,7 +43,7 @@ impl ProvidesCommands for WakeupCommandProvider {
 }
 
 #[async_trait]
-impl ChannelCommandProvider for WakeupCommandProvider {
+impl ChannelCommandProvider for WakeupComponent {
     async fn execute(
         &self,
         _name: &str,
@@ -84,10 +84,10 @@ impl ChannelCommandProvider for WakeupCommandProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(WAKEUP_COMMAND_KIND).provides::<dyn ChannelCommandProvider>(),
+        ComponentKind::new(WAKEUP_KIND).provides::<dyn ChannelCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ChannelCommandProvider>(Arc::new(WakeupCommandProvider));
+            facets.insert::<dyn ChannelCommandProvider>(Arc::new(WakeupComponent));
             Ok(facets)
         },
     );

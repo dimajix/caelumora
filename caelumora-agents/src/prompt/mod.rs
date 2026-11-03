@@ -10,16 +10,16 @@
 //! (`PROMPTS`, issue 57): a provider gets the catalogue when it is made and
 //! renders its text from it.
 
-pub mod channel_briefing_prompt_provider;
-pub mod channel_language_prompt_provider;
-pub mod channel_mentions_prompt_provider;
-pub mod channel_participants_prompt_provider;
-pub mod current_time_prompt_provider;
-pub mod external_context_provider;
-pub mod request_reason_prompt_provider;
-pub mod static_system_prompt_provider;
-pub mod tool_sets_prompt_provider;
-pub mod turn_context_provider;
+pub mod channel_briefing;
+pub mod channel_language;
+pub mod channel_mentions;
+pub mod channel_participants;
+pub mod current_time;
+pub mod external_context;
+pub mod request_reason;
+pub mod system_prompt;
+pub mod tool_sets;
+pub mod turn_context;
 
 use crate::situation::Situation;
 use async_trait::async_trait;
@@ -61,14 +61,14 @@ pub enum PromptPosition {
 /// with: where its part goes, its kind's default if left out.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PositionConfig {
+pub(crate) struct PositionParams {
     #[serde(default)]
     position: Option<PromptPosition>,
 }
 
-impl Params for PositionConfig {}
+impl Params for PositionParams {}
 
-impl PositionConfig {
+impl PositionParams {
     /// The position `params` configure, `default` - the kind's - if they
     /// name none.
     ///
@@ -88,14 +88,14 @@ impl PositionConfig {
 /// external agent, which keeps what it was told.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ChannelPartConfig {
+pub(crate) struct ChannelPartParams {
     #[serde(default)]
     pub(crate) position: PromptPosition,
     #[serde(default)]
     pub(crate) changes_only: bool,
 }
 
-impl Params for ChannelPartConfig {}
+impl Params for ChannelPartParams {}
 
 /// What a [`PromptProvider`] contributes: the text of its part, the
 /// knowledge from other places it contains, recorded with the turn's
@@ -174,7 +174,7 @@ pub(crate) async fn prompt_for(
 /// `Turn::set_context`, an external agent's work with
 /// `Work::take_in_context` (issue 285). An agent has exactly one
 /// (`ComponentRegistry::single`, issue 98): the component of its
-/// personality that provides it, or the default - `turn_context_provider`,
+/// personality that provides it, or the default - `turn_context`,
 /// unless the configuration names another (`AppConfig::component_defaults`).
 /// Two would each answer for the whole, so a personality with two is
 /// refused.
@@ -245,27 +245,27 @@ pub enum ContextError {
 /// `ContextProvider` as a facet of which an agent has exactly one, with its
 /// default kind (issue 99).
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
-    registry.single::<dyn ContextProvider>(Some(turn_context_provider::TURN_CONTEXT_PROVIDER_KIND));
+    registry.single::<dyn ContextProvider>(Some(turn_context::TURN_CONTEXT_KIND));
 
-    channel_briefing_prompt_provider::register(registry);
-    channel_language_prompt_provider::register(registry);
-    channel_mentions_prompt_provider::register(registry);
-    channel_participants_prompt_provider::register(registry);
-    current_time_prompt_provider::register(registry);
-    external_context_provider::register(registry);
-    request_reason_prompt_provider::register(registry);
-    static_system_prompt_provider::register(registry);
-    tool_sets_prompt_provider::register(registry);
-    turn_context_provider::register(registry);
+    channel_briefing::register(registry);
+    channel_language::register(registry);
+    channel_mentions::register(registry);
+    channel_participants::register(registry);
+    current_time::register(registry);
+    external_context::register(registry);
+    request_reason::register(registry);
+    system_prompt::register(registry);
+    tool_sets::register(registry);
+    turn_context::register(registry);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::library::AgentsLibrary;
-    use crate::prompt::current_time_prompt_provider::CURRENT_TIME_PROMPT_PROVIDER_KIND;
+    use crate::prompt::current_time::CURRENT_TIME_KIND;
     use crate::testing::agent_runtime;
-    use crate::tool::calculator_tool::CALCULATOR_TOOL_KIND;
+    use crate::tool::calculator::CALCULATOR_KIND;
     use crate::tool::{denied_result, ToolProvider};
     use caelumora_api::component::ComponentFacets;
     use caelumora_api::model::{LanguageModelClient, ModelResult};
@@ -326,7 +326,7 @@ mod tests {
     #[tokio::test]
     async fn the_texts_are_given_in_the_variant_of_the_model() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator_tool:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
+        fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
         let store = Persistence::in_memory();
         let components = |registry: &mut ComponentRegistry| {
             registry.register(
@@ -358,8 +358,8 @@ mod tests {
         let components = ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "gemma"),
-                ComponentDescriptor::new("time", CURRENT_TIME_PROMPT_PROVIDER_KIND),
-                ComponentDescriptor::new("calculator", CALCULATOR_TOOL_KIND),
+                ComponentDescriptor::new("time", CURRENT_TIME_KIND),
+                ComponentDescriptor::new("calculator", CALCULATOR_KIND),
             ],
         };
         let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());

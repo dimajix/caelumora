@@ -1,7 +1,7 @@
 //! Questions an agent's tool call puts to the users of a running channel.
 
 use super::*;
-use crate::tool::ask_user_tool::ASK_USER_TOOL_KIND;
+use crate::tool::ask_user::ASK_USER_KIND;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::question::{QuestionError, QuestionRequest};
 use caelumora_domain::tool::{ToolCallResult, ToolResultStatus};
@@ -227,9 +227,8 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
         content: Some("Done.".to_string()),
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
-    let components = ComponentConfig {
-        component_nodes: vec![ComponentDescriptor::new("ask", ASK_USER_TOOL_KIND)],
-    };
+    let components =
+        ComponentConfig { component_nodes: vec![ComponentDescriptor::new("ask", ASK_USER_KIND)] };
     let model = Scripted(Mutex::new([ask("1", "@carol"), ask("2", "@alice"), done].into()));
     let Stuck { channel, context, agent, helper, mut events, running } =
         with_an_agent(Arc::new(model), components).await;

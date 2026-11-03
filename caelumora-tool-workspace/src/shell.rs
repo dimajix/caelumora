@@ -11,7 +11,7 @@
 //! through the same shell of the channel (`WorkspaceController::shell_in`)
 //! as the REST server does for them.
 
-use crate::workspace::{next, tool, WorkspaceComponent, WorkspaceConfig};
+use crate::component::{next, tool, WorkspaceComponent, WorkspaceParams};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
 use caelumora_api::terminal::{CommandState, Shell};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -72,18 +72,18 @@ impl Drop for KillOnDrop {
     }
 }
 
-fn wait(config: &WorkspaceConfig, asked: Option<f64>) -> Duration {
-    let most = config.max_wait_secs.min(MAX_WAIT_SECS) as f64;
+fn wait(params: &WorkspaceParams, asked: Option<f64>) -> Duration {
+    let most = params.max_wait_secs.min(MAX_WAIT_SECS) as f64;
     Duration::from_secs_f64(asked.unwrap_or(most).clamp(0.0, most))
 }
 
 /// `state` as the model is given it: the output cut from the front to
 /// what a result may hold.
-fn result(config: &WorkspaceConfig, prompts: &PromptTexts, state: CommandState) -> Value {
+fn result(params: &WorkspaceParams, prompts: &PromptTexts, state: CommandState) -> Value {
     let mut output = state.output;
     let mut truncated = state.truncated;
-    if output.len() > config.max_output_bytes {
-        let mut cut = output.len() - config.max_output_bytes;
+    if output.len() > params.max_output_bytes {
+        let mut cut = output.len() - params.max_output_bytes;
         while !output.is_char_boundary(cut) {
             cut += 1;
         }
@@ -129,10 +129,10 @@ struct Follow {
 }
 
 pub(crate) fn tools(
-    config: &WorkspaceConfig,
+    params: &WorkspaceParams,
     prompts: &PromptTexts,
 ) -> Result<Vec<Tool>, PromptError> {
-    let most = config.max_wait_secs.min(MAX_WAIT_SECS);
+    let most = params.max_wait_secs.min(MAX_WAIT_SECS);
     let values = context! { most, run_command => RUN_COMMAND, command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND };
     Ok(vec![
         tool(
@@ -142,7 +142,7 @@ pub(crate) fn tools(
                 [("command", ToolParameters::shell()), ("wait_secs", ToolParameters::number())],
                 ["command"],
             ),
-            config.requires_approval.required(false),
+            params.requires_approval.required(false),
             SHELL_PRESENTATION,
             &values,
         )?,
@@ -194,7 +194,6 @@ pub(crate) async fn execute(
     params: &Value,
     shell: Arc<dyn Shell>,
 ) -> ToolResult<Value> {
-    let (config, prompts) = (&component.config, &component.prompts);
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
@@ -205,27 +204,27 @@ pub(crate) async fn execute(
             }
             let id = shell.start(&command).await?;
             let guard = KillOnDrop { shell: Arc::clone(&shell), id: id.clone(), armed: true };
-            let state = shell.output(&id, 0, wait(config, wait_secs)).await;
+            let state = shell.output(&id, 0, wait(&component.params, wait_secs)).await;
             guard.disarm();
             state
         }
         COMMAND_OUTPUT => {
             let Follow { id, offset, wait_secs } = arguments(params)?;
-            shell.output(&id, offset.unwrap_or(0), wait(config, wait_secs)).await
+            shell.output(&id, offset.unwrap_or(0), wait(&component.params, wait_secs)).await
         }
         _ => {
             let Follow { id, offset, .. } = arguments(params)?;
             shell.kill(&id, offset.unwrap_or(0)).await
         }
     }?;
-    Ok(result(config, prompts, state))
+    Ok(result(&component.params, &component.prompts, state))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workspace::tests::component;
-    use crate::workspace::WorkspaceComponent;
+    use crate::component::tests::component;
+    use crate::component::WorkspaceComponent;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;
@@ -357,7 +356,7 @@ mod tests {
 
     #[test]
     fn output_beyond_what_a_result_holds_is_cut_from_the_front() {
-        let config: WorkspaceConfig =
+        let params: WorkspaceParams =
             serde_json::from_value(json!({ "max_output_bytes": 2 })).unwrap();
         let state = CommandState {
             id: "x".to_string(),
@@ -369,7 +368,7 @@ mod tests {
         };
         // No text of how to go on is needed for a command that ended.
         let result =
-            result(&config, &PromptTexts::new(Arc::new(PromptCatalogue::new()), None), state);
+            result(&params, &PromptTexts::new(Arc::new(PromptCatalogue::new()), None), state);
         assert_eq!(
             (result["output"].as_str(), result["truncated"].as_bool()),
             (Some("f"), Some(true)),

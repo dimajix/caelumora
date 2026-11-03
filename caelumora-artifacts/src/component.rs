@@ -1,4 +1,4 @@
-//! The `artifact_tool` component (issue 271): artifacts, for the agents of
+//! The `artifacts` component (issue 271): artifacts, for the agents of
 //! the personalities that include it - so far `publish_artifact`, which
 //! publishes a file of the session's workspace as a version of an artifact:
 //! a fixed copy, kept beyond the workspace, downloaded at the message that
@@ -44,12 +44,12 @@ use std::sync::Arc;
 pub const ARTIFACT_PUBLISH_PRESENTATION: ToolPresentation =
     ToolPresentation::new("artifact_publish");
 
-pub const ARTIFACT_TOOL_KIND: &str = "artifact_tool";
+pub const ARTIFACTS_KIND: &str = "artifacts";
 pub const PUBLISH_ARTIFACT: &str = "publish_artifact";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ArtifactToolConfig {
+struct ArtifactsParams {
     /// Whether a publication needs approval: unless configured, it does -
     /// it hands a copy of a file to whoever reads the channel, beyond the
     /// workspace. `"unless_read_only"` asks too: it changes what is kept.
@@ -61,10 +61,10 @@ struct ArtifactToolConfig {
     description: Option<String>,
 }
 
-impl Params for ArtifactToolConfig {}
+impl Params for ArtifactsParams {}
 
 #[derive(Debug)]
-pub struct ArtifactTool {
+pub struct ArtifactsComponent {
     /// What its tool set is for and its tool, as the configuration or the
     /// prompt catalogue words them (issue 57).
     description: String,
@@ -81,7 +81,7 @@ struct Publish {
     description: Option<String>,
 }
 
-impl ArtifactTool {
+impl ArtifactsComponent {
     /// The tool of a component configured with `params`, publishing a file
     /// of the turn's workspace, its texts from `prompts`.
     ///
@@ -89,7 +89,7 @@ impl ArtifactTool {
     /// `ComponentError::InvalidConfig` for parameters it does not take;
     /// `ComponentError::Prompt` if a text cannot be had.
     pub fn new(params: &Value, prompts: &PromptTexts) -> ComponentResult<Self> {
-        let config: ArtifactToolConfig = config_of_params(params)?;
+        let params: ArtifactsParams = config_of_params(params)?;
         let string = ToolParameters::string;
         let tool = Tool {
             name: PUBLISH_ARTIFACT.to_string(),
@@ -98,15 +98,15 @@ impl ArtifactTool {
                 [("path", string()), ("name", string()), ("description", string())],
                 ["path"],
             ),
-            requires_approval: config.requires_approval.required(false),
+            requires_approval: params.requires_approval.required(false),
             visibility: ToolVisibility::SHOWN,
             classification: None,
             presentation: ARTIFACT_PUBLISH_PRESENTATION,
         };
-        let tools = vec![described(prompts, NAMESPACE, ARTIFACT_TOOL_KIND, tool, ())?];
-        let description = match &config.description {
+        let tools = vec![described(prompts, NAMESPACE, ARTIFACTS_KIND, tool, ())?];
+        let description = match &params.description {
             Some(description) => description.clone(),
-            None => tool_text(prompts, NAMESPACE, ARTIFACT_TOOL_KIND, "description", ())?,
+            None => tool_text(prompts, NAMESPACE, ARTIFACTS_KIND, "description", ())?,
         };
         Ok(Self { description, tools })
     }
@@ -130,7 +130,7 @@ impl From<ArtifactError> for ToolError {
 }
 
 #[async_trait]
-impl ToolProvider for ArtifactTool {
+impl ToolProvider for ArtifactsComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -217,8 +217,8 @@ impl ToolProvider for ArtifactTool {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(ARTIFACT_TOOL_KIND)
-                .params::<ArtifactToolConfig>()
+            ComponentKind::new(ARTIFACTS_KIND)
+                .params::<ArtifactsParams>()
                 .provides::<dyn ToolProvider>()
                 .reads::<dyn WorkspaceReader>()
                 .writes::<dyn ArtifactPublisher>(),
@@ -226,7 +226,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactTool::new(
+            facets.insert::<dyn ToolProvider>(Arc::new(ArtifactsComponent::new(
                 &descriptor.params,
                 &texts,
             )?));

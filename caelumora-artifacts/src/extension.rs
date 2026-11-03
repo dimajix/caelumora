@@ -2,7 +2,7 @@
 //! them, and what that fails with. The work publishes a file as a version of one - the plugin's
 //! service a library reaches, a writer bound by the plugin to the views of every piece of work
 //! where a storage of content is configured, and handed out where the work acts (`Turn::writer`),
-//! so that it acts in the work's context. The `artifact_tool` component names this trait, never the
+//! so that it acts in the work's context. The `artifacts` component names this trait, never the
 //! `ArtifactManager` or the views. Its error, `ArtifactError`, is the one error of artifacts, which
 //! the manager, the views and the routes answer in as well.
 

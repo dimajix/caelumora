@@ -86,11 +86,11 @@ So: `xml` for gemma4, `prefix` for gpt-oss and llama3.1 - which XML confuses - a
 granite4.2, phi4 and gemma3; for qwen3 `prefix` by `name`. llama2 cannot tell senders apart in any
 format. Only gemma4 was measured again with exactly what Caelumora sends (findings 19-20).
 
-Every model needs the format explained, which the roster part does
-(`channel_participants_prompt_provider`); without the explanation some imitate the marker in their
-answers. Whatever the format, a marker is a claim: a participant can write another's into their own
-message, and the models measured believe it (findings 8 and 12-18). Nothing with
-consequences may rest on whom the model believes said something.
+Every model needs the format explained, which the roster part does (`channel_participants`); without
+the explanation some imitate the marker in their answers. Whatever the format, a marker is a claim:
+a participant can write another's into their own message, and the models measured believe it
+(findings 8 and 12-18). Nothing with consequences may rest on whom the model believes said
+something.
 
 ## Telling when something was said
 

@@ -1,10 +1,10 @@
-//! The tool that generates images (issues 512, 525): the component kind `image_tool` (`tool`),
-//! whose tool generates an image with one of the image models its agent is given, and the library
-//! that joins it to the kernel (`library`). The image models are the platform's, of the plugin
-//! `caelumora-model`: the tool names no backend of them.
+//! The tool that generates images (issues 512, 525): the component kind `image_generation`
+//! (`component`), whose tool generates an image with one of the image models its agent is given,
+//! and the library that joins it to the kernel (`library`). The image models are the platform's, of
+//! the plugin `caelumora-model`: the tool names no backend of them.
 
+mod component;
 pub mod library;
-mod tool;
 
 #[cfg(test)]
 use caelumora_agents::testing;

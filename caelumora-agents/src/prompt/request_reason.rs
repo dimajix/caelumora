@@ -1,4 +1,4 @@
-//! The `request_reason_prompt_provider` component (issue 439): tells an
+//! The `request_reason` component (issue 439): tells an
 //! agent the channel's responder policy chose - nobody mentioned it, nobody
 //! nudged it - that it was only chosen, and that with nothing to add it
 //! stays silent. Without it, a model takes every request to respond for an
@@ -14,11 +14,11 @@
 //! answer whenever they are asked.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
-use crate::tool::stop_tool::SILENCE_TOOL_NAME;
+use crate::tool::turn_end::SILENCE_TOOL_NAME;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::actor::RequestReason;
@@ -26,19 +26,19 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{context, PromptTexts};
 use std::sync::Arc;
 
-pub const REQUEST_REASON_PROMPT_PROVIDER_KIND: &str = "request_reason_prompt_provider";
+pub const REQUEST_REASON_KIND: &str = "request_reason";
 
 /// Its text in the prompt catalogue.
 const TEXT: &str = "agents.request_reason";
 
 #[derive(Debug)]
-pub struct RequestReasonPromptProvider {
+pub struct RequestReasonComponent {
     pub position: PromptPosition,
     pub prompts: PromptTexts,
 }
 
 #[async_trait]
-impl PromptProvider for RequestReasonPromptProvider {
+impl PromptProvider for RequestReasonComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -65,16 +65,16 @@ impl PromptProvider for RequestReasonPromptProvider {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(REQUEST_REASON_PROMPT_PROVIDER_KIND)
-                .params::<PositionConfig>()
+            ComponentKind::new(REQUEST_REASON_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let position =
-                PositionConfig::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+                PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(RequestReasonPromptProvider {
+            facets.insert::<dyn PromptProvider>(Arc::new(RequestReasonComponent {
                 position,
                 prompts: texts,
             }));
@@ -119,7 +119,7 @@ mod tests {
             .collect();
         state.offer_tools(vec![ToolSet::new("stop", "", tools)]);
         let work: Work = state.turn.as_ref().map(|turn| turn.work.clone()).expect("begun");
-        let provider = RequestReasonPromptProvider {
+        let provider = RequestReasonComponent {
             position: PromptPosition::BeforeTurnInput,
             prompts: testing::prompts(),
         };

@@ -29,8 +29,8 @@ use caelumora_agents::testing as agent_testing;
 use caelumora_agents::testing::{
     about_agent_commands, calling, register_scripted, ONCE_MODEL_KIND,
 };
-use caelumora_agents::tool::echo_tool::ECHO_TOOL_KIND;
-use caelumora_agents::tool::sleep_tool::SLEEP_TOOL_KIND;
+use caelumora_agents::tool::echo::ECHO_KIND;
+use caelumora_agents::tool::sleep::SLEEP_KIND;
 use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
@@ -454,7 +454,7 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
     let mut tools = ComponentBundle::new(
         ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(),
         ComponentConfig {
-            component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")],
+            component_nodes: vec![ComponentDescriptor::new("calculator", "calculator")],
         },
         attributes(Some(world.bob), &[world.alice]),
     );
@@ -1002,7 +1002,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let mut tools = ComponentBundle::new(
         ScopedName::new("bobs-tools", Scope::GlobalScope).unwrap(),
         ComponentConfig {
-            component_nodes: vec![ComponentDescriptor::new("calculator", "calculator_tool")],
+            component_nodes: vec![ComponentDescriptor::new("calculator", "calculator")],
         },
         attributes(Some(world.bob), &[world.alice]),
     );
@@ -1016,7 +1016,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
     let mut hers = world.personality("hers", Some(world.alice), &[]).await;
     hers.components = ComponentConfig {
         component_nodes: vec![
-            ComponentDescriptor::new("stop", "stop_tool"),
+            ComponentDescriptor::new("stop", "turn_end"),
             ComponentDescriptor {
                 params: serde_json::json!({ "name": "bobs-tools" }),
                 ..ComponentDescriptor::new("tools", BUNDLE_REF_KIND)
@@ -1084,7 +1084,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
 async fn with_a_call_to_approve() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, AgentId) {
     let sleep = ComponentDescriptor {
         params: serde_json::json!({ "requires_approval": true }),
-        ..ComponentDescriptor::new("sleep", SLEEP_TOOL_KIND)
+        ..ComponentDescriptor::new("sleep", SLEEP_KIND)
     };
     with_a_call_of(calling("sleep", serde_json::json!({ "seconds": 0 })), sleep).await
 }
@@ -2079,7 +2079,7 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         "calling",
         vec![
             ComponentDescriptor::new("model", "calling"),
-            ComponentDescriptor::new("echo", ECHO_TOOL_KIND),
+            ComponentDescriptor::new("echo", ECHO_KIND),
         ],
     )
     .await;
@@ -2415,7 +2415,7 @@ async fn bob_speaks_while_alices_turn_works(
         components: ComponentConfig {
             component_nodes: vec![
                 ComponentDescriptor::new("model", "held"),
-                ComponentDescriptor::new("echo", ECHO_TOOL_KIND),
+                ComponentDescriptor::new("echo", ECHO_KIND),
             ],
         },
         hears_during_turn: HearsDuringTurn { from: HearsFrom::All, others },
@@ -3887,8 +3887,8 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
 /// its answer nothing more.
 #[tokio::test]
 async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel() {
-    use caelumora_agents::tool::attachment_tool::{
-        AttachmentTool, ATTACH, COPY_ATTACHMENT, READ_ATTACHMENT,
+    use caelumora_agents::tool::attachments::{
+        AttachmentsComponent, ATTACH, COPY_ATTACHMENT, READ_ATTACHMENT,
     };
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;
@@ -3958,7 +3958,7 @@ async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel(
     let mut state = AgentChannelState::default();
     state.perceive(vec![Message { role: MessageRole::User, ..said }]);
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    let tool = AttachmentTool::new(agent_testing::prompts()).unwrap();
+    let tool = AttachmentsComponent::new(agent_testing::prompts()).unwrap();
     let (_, read) =
         world.asked(tool.execute(READ_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn)).await;
     let (_, attached) =

@@ -1,8 +1,8 @@
-//! The `channel_mentions_prompt_provider` component (issue 442): reminds an
+//! The `channel_mentions` component (issue 442): reminds an
 //! agent, before the turn's input, when to write an @handle and when a
 //! name - an @handle only for an answer or an action needed from that
 //! participant now, never to greet, thank, praise, agree with or refer to
-//! someone. The roster says as much (`channel_participants_prompt_provider`),
+//! someone. The roster says as much (`channel_participants`),
 //! but in the system prompt, read before everything said since: there it
 //! changed little, and agents kept mentioning each other in every greeting,
 //! each mention asking the next one to answer. Read last, it does what the
@@ -13,9 +13,9 @@
 //! every turn, so it is not stored with the turn's context; it goes before
 //! the turn's input by default (parameter `position`).
 
-use crate::prompt::channel_participants_prompt_provider::participants;
+use crate::prompt::channel_participants::participants;
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
@@ -25,20 +25,20 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::PromptTexts;
 use std::sync::Arc;
 
-pub const CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND: &str = "channel_mentions_prompt_provider";
+pub const CHANNEL_MENTIONS_KIND: &str = "channel_mentions";
 
 /// Its text in the prompt catalogue, as the experiments worded it
 /// (`MENTIONS.md`, `test_names_turn`).
 const TEXT: &str = "agents.channel_mentions";
 
 #[derive(Debug)]
-pub struct ChannelMentionsPromptProvider {
+pub struct ChannelMentionsComponent {
     pub position: PromptPosition,
     pub prompts: PromptTexts,
 }
 
 #[async_trait]
-impl PromptProvider for ChannelMentionsPromptProvider {
+impl PromptProvider for ChannelMentionsComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -59,16 +59,16 @@ impl PromptProvider for ChannelMentionsPromptProvider {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(CHANNEL_MENTIONS_PROMPT_PROVIDER_KIND)
-                .params::<PositionConfig>()
+            ComponentKind::new(CHANNEL_MENTIONS_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
             let position =
-                PositionConfig::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+                PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(ChannelMentionsPromptProvider {
+            facets.insert::<dyn PromptProvider>(Arc::new(ChannelMentionsComponent {
                 position,
                 prompts,
             }));
@@ -89,7 +89,7 @@ mod tests {
         let personality = world.personality("plain", None, &[]).await;
         let jonathan = world.agent("Jonathan", world.alice, &personality).await;
         let sassy = world.agent("Sassy", world.alice, &personality).await;
-        let provider = ChannelMentionsPromptProvider {
+        let provider = ChannelMentionsComponent {
             position: PromptPosition::BeforeTurnInput,
             prompts: testing::prompts(),
         };

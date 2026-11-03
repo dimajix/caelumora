@@ -5,7 +5,7 @@ use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_domain::command::{Command, CommandOutput, HELP_COMMAND_KIND};
+use caelumora_domain::command::{Command, CommandOutput, HELP_KIND};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ pub const HELP_COMMAND_NAME: &str = "help";
 /// `/help [command]`: lists the commands the user may see, or describes one.
 /// The answer is for the user alone.
 #[derive(Debug)]
-pub struct HelpCommandProvider;
+pub struct HelpComponent;
 
 fn signature(command: &Command) -> String {
     match &command.usage {
@@ -23,7 +23,7 @@ fn signature(command: &Command) -> String {
     }
 }
 
-impl ProvidesCommands for HelpCommandProvider {
+impl ProvidesCommands for HelpComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
             name: HELP_COMMAND_NAME.to_string(),
@@ -62,7 +62,7 @@ async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Comm
 }
 
 #[async_trait]
-impl ChannelCommandProvider for HelpCommandProvider {
+impl ChannelCommandProvider for HelpComponent {
     async fn execute(
         &self,
         _name: &str,
@@ -116,10 +116,10 @@ impl ChannelCommandProvider for HelpCommandProvider {
 
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(HELP_COMMAND_KIND).provides::<dyn ChannelCommandProvider>(),
+        ComponentKind::new(HELP_KIND).provides::<dyn ChannelCommandProvider>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ChannelCommandProvider>(Arc::new(HelpCommandProvider));
+            facets.insert::<dyn ChannelCommandProvider>(Arc::new(HelpComponent));
             Ok(facets)
         },
     );

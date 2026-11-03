@@ -6,7 +6,7 @@
 # the component offers, each with its `name` and `description`, the first the default; `default`
 # its name.
 tools:
-  image_tool:
+  image_generation:
     description: >-
       Generates images from a description.
     generate_image: |-

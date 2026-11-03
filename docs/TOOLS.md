@@ -42,7 +42,7 @@ tool of a generic provider, an MCP server's, is described as it describes itself
 The tools of one provider are a *tool set* (`ToolSet`), named after its component, with the
 provider's description and, if it is unavailable, why. A model's backend is given the tools
 natively, without the sets; the sets are kept in the record of what the model was offered and shown
-in the web UI. Only a generic provider such as `mcp_tool` takes its description from its
+in the web UI. Only a generic provider such as `mcp_server` takes its description from its
 configuration.
 
 **What a turn is offered** depends on where it works (issue
@@ -58,9 +58,9 @@ checks, since what may be called can change while the turn runs. What the web UI
 agent's tools is what a turn would be offered now, in the agent's own name.
 
 The model needs no prompt to learn of its tools, but a source that is unavailable leaves no trace in
-what it is offered. The optional component `tool_sets_prompt_provider` names the unavailable sets of
-the turn, with why in general terms, and tells the model to say they are unavailable rather than
-that it cannot do what they do. A personality without it tells its model nothing of missing tools.
+what it is offered. The optional component `tool_sets` names the unavailable sets of the turn, with
+why in general terms, and tells the model to say they are unavailable rather than that it cannot do
+what they do. A personality without it tells its model nothing of missing tools.
 
 A set may say where the arguments of its calls go (`ToolSet::destination`): where the channel may
 not flow there, the set is offered as unavailable, and a call of a tool the turn was not offered is
@@ -134,7 +134,7 @@ at, and what the future holds is released. A tool therefore:
 *   ends on drop what it started outside the process and that would go on without it, in a task
     of its own, bounded and logged, which the drop does not await: the commands of
     `workspace`, which live with the storage, and the prompts an image model of the backend
-    `comfyui` runs for `image_tool`, which hold its server;
+    `comfyui` runs for `image_generation`, which hold its server;
 *   does not block: code that never reaches an `await` cannot be interrupted, and holds up the
     agent's whole task, which even the abort after the stop's grace does not end.
 
@@ -189,11 +189,11 @@ agent shows it to the others by `attach`. The card of the call shows it where th
 
 ## MCP servers
 
-An `mcp_tool` component exposes the tools of a remote MCP server, reached over the Streamable HTTP
+An `mcp_server` component exposes the tools of a remote MCP server, reached over the Streamable HTTP
 transport:
 
 ```json
-{ "id": "github-mcp", "kind": "mcp_tool", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
+{ "id": "github-mcp", "kind": "mcp_server", "params": { "endpoint": { "url": "https://mcp.example.com/mcp", "auth": { "type": "bearer", "secret": "GITHUB_MCP_TOKEN" } } } }
 ```
 
 The kind lives in the library `caelumora-tool-mcp` (issue 325), with `rmcp`, so that the kernel
@@ -226,10 +226,10 @@ the kind as before. What such a component kind may use of the kernel is said in
 
 ## Images
 
-An `image_tool` component (issue 525, library `caelumora-tool-image`) generates images with the
-image models its agent is given: those of its components of the kind `image_model`, each one of the
-image models the platform offers (see [CONFIGURATION.md](CONFIGURATION.md#image-models)). The tool
-names no backend; where and how a model generates is its backend's - ComfyUI's
+An `image_generation` component (issue 525, library `caelumora-tool-image`) generates images with
+the image models its agent is given: those of its components of the kind `image_model`, each one of
+the image models the platform offers (see [CONFIGURATION.md](CONFIGURATION.md#image-models)). The
+tool names no backend; where and how a model generates is its backend's - ComfyUI's
 ([CONFIGURATION.md](CONFIGURATION.md#comfyui)).
 
 ```yaml
@@ -237,8 +237,8 @@ names no backend; where and how a model generates is its backend's - ComfyUI's
   kind: image_model
   params:
     name: z_image_turbo
-- id: image-tool
-  kind: image_tool
+- id: image-generation
+  kind: image_generation
   params:
     destination: { level: internal }
 ```
@@ -293,7 +293,7 @@ workspace it may use in its channel - the set is unavailable, saying so -, none 
 the list grants reading alone, and no shell tool where its storage gives none; its prompt part says
 the same ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). The workspace is reached through the turn's
 views on every call all the same, before anything is sent: a call where there is none, or one the
-list does not grant, fails and says so. Which calls need approval is configured as for `mcp_tool`:
+list does not grant, fails and says so. Which calls need approval is configured as for `mcp_server`:
 all - the default -, none, or all but those that only read files.
 
 The kind lives in the library `caelumora-tool-workspace` (issue 428): the workspaces are the
@@ -340,7 +340,7 @@ command lives and when the kernel ends it is in [WORKSPACE.md](WORKSPACE.md#comm
 
 ### Attachments
 
-`view_attachment`, `read_attachment`, `copy_attachment` and `attach` (component `attachment_tool`,
+`view_attachment`, `read_attachment`, `copy_attachment` and `attach` (component `attachments`,
 issue 282) reach the attachments the agent heard, by the number its transcript gave each (`a3`, see
 [AGENT-TURN.md](AGENT-TURN.md#attachments)). A number resolves to the message that carries the
 attachment (`AttachmentIndex::named`), read through the view of the agent's channel as it stands
@@ -365,7 +365,7 @@ recorded as knowledge besides - the result in the transcript is what was read.
 
 ### Artifacts
 
-`publish_artifact` (component `artifact_tool`, of the library of `caelumora-artifacts`, issue 328)
+`publish_artifact` (component `artifacts`, of the library of `caelumora-artifacts`, issue 328)
 publishes a file of the session's workspace as a version of an artifact: a fixed copy, kept in a
 storage of content beyond the workspace, downloaded at the message that published it. `publish_file`
 offers a link to a file as it is now; a model is told the difference in their descriptions - a link

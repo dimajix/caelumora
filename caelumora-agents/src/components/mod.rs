@@ -7,8 +7,8 @@
 
 pub mod agent_memory;
 pub mod channel_history;
-pub mod create_plan_tool;
 pub mod notes;
+pub mod planning;
 pub mod private_notes;
 
 use caelumora_api::component::LibraryComponents;
@@ -17,7 +17,7 @@ use caelumora_api::component::LibraryComponents;
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
     agent_memory::register(registry);
     channel_history::register(registry);
-    create_plan_tool::register(registry);
+    planning::register(registry);
     notes::register(registry);
     private_notes::register(registry);
 }

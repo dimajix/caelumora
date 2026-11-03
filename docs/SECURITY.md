@@ -729,12 +729,12 @@ password.
 
 ## Secrets
 
-Component configuration - such as an `mcp_tool`'s `auth.secret` - may need to reference credentials
-without embedding them in persisted configuration. A `SecretProvider` is a pluggable source of
-secrets; the `SecretManager` tries its providers in turn and returns the first match. Built in are a
-JSON key/value file, re-read on every lookup so that secrets can rotate without a restart, and the
-process environment; the `secrets` section sets the chain, each provider a backend that a plugin may
-add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
+Component configuration - such as an `mcp_server`'s `auth.secret` - may need to reference
+credentials without embedding them in persisted configuration. A `SecretProvider` is a pluggable
+source of secrets; the `SecretManager` tries its providers in turn and returns the first match.
+Built in are a JSON key/value file, re-read on every lookup so that secrets can rotate without a
+restart, and the process environment; the `secrets` section sets the chain, each provider a backend
+that a plugin may add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
 
 Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted. A
 component of a library holds no `SecretManager`: it is handed the secrets that may be read in the

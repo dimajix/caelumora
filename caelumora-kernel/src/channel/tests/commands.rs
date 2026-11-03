@@ -150,12 +150,12 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 
 /// Runs `/nudge` with `args` in `channel` as alice.
 async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> CommandResult<CommandOutput> {
-    use crate::command::nudge_command::NudgeCommandProvider;
+    use crate::command::nudge::NudgeComponent;
     use crate::command::ChannelCommandProvider;
     let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice).expect("alice takes part");
     let context = CommandContext { issuer: &issuer, channel, executor: &executor };
-    NudgeCommandProvider.execute("nudge", args, &context).await
+    NudgeComponent.execute("nudge", args, &context).await
 }
 
 /// The next end of a turn of `agent` on `events`, with its envelope.

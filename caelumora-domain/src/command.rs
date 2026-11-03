@@ -14,11 +14,11 @@ use serde::{Deserialize, Serialize};
 // domain does not know the kernel (issue 101).
 
 /// Component kind of the built-in `/help` command.
-pub const HELP_COMMAND_KIND: &str = "help_command";
+pub const HELP_KIND: &str = "help";
 /// Component kind of the built-in `/wakeup` command.
-pub const WAKEUP_COMMAND_KIND: &str = "wakeup_command";
+pub const WAKEUP_KIND: &str = "wakeup";
 /// Component kind of the built-in `/nudge` command (issue 278).
-pub const NUDGE_COMMAND_KIND: &str = "nudge_command";
+pub const NUDGE_KIND: &str = "nudge";
 
 /// A command as users see it: in `/help` and in the frontends' completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,9 +94,9 @@ pub fn parse_input(input: &str) -> UserInput {
 pub fn default_commands() -> ComponentConfig {
     ComponentConfig {
         component_nodes: vec![
-            ComponentDescriptor::new("help", HELP_COMMAND_KIND),
-            ComponentDescriptor::new("wakeup", WAKEUP_COMMAND_KIND),
-            ComponentDescriptor::new("nudge", NUDGE_COMMAND_KIND),
+            ComponentDescriptor::new("help", HELP_KIND),
+            ComponentDescriptor::new("wakeup", WAKEUP_KIND),
+            ComponentDescriptor::new("nudge", NUDGE_KIND),
         ],
     }
 }
@@ -142,6 +142,6 @@ mod tests {
     fn the_default_commands_are_help_wakeup_and_nudge() {
         let kinds: Vec<String> =
             default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
-        assert_eq!(kinds, vec![HELP_COMMAND_KIND, WAKEUP_COMMAND_KIND, NUDGE_COMMAND_KIND]);
+        assert_eq!(kinds, vec![HELP_KIND, WAKEUP_KIND, NUDGE_KIND]);
     }
 }

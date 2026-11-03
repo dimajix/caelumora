@@ -1,4 +1,4 @@
-//! The `current_time_prompt_provider` component (issue 424): tells the agent
+//! The `current_time` component (issue 424): tells the agent
 //! the current date and time, in its session's time zone. Without it, a
 //! model takes the time of the last message for now - which is wrong for a
 //! turn that comes later, after `/wakeup` or a long queue - and, without the
@@ -14,7 +14,7 @@
 //! the component leaves its agents to the times of the messages.
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, PositionConfig, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
@@ -25,13 +25,13 @@ use caelumora_domain::prompt_catalogue::{context, PromptTexts};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
-pub const CURRENT_TIME_PROMPT_PROVIDER_KIND: &str = "current_time_prompt_provider";
+pub const CURRENT_TIME_KIND: &str = "current_time";
 
 /// Its text in the prompt catalogue.
 const TEXT: &str = "agents.current_time";
 
 #[derive(Debug)]
-pub struct CurrentTimePromptProvider {
+pub struct CurrentTimeComponent {
     pub position: PromptPosition,
     /// What it reads the time from: the system's clock, or a fixed one in
     /// tests.
@@ -39,7 +39,7 @@ pub struct CurrentTimePromptProvider {
     prompts: PromptTexts,
 }
 
-impl CurrentTimePromptProvider {
+impl CurrentTimeComponent {
     /// The current time at `position`, read from the system's clock.
     pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, clock: Utc::now, prompts }
@@ -47,7 +47,7 @@ impl CurrentTimePromptProvider {
 }
 
 #[async_trait]
-impl PromptProvider for CurrentTimePromptProvider {
+impl PromptProvider for CurrentTimeComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -66,18 +66,17 @@ impl PromptProvider for CurrentTimePromptProvider {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(CURRENT_TIME_PROMPT_PROVIDER_KIND)
-                .params::<PositionConfig>()
+            ComponentKind::new(CURRENT_TIME_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let position =
-                PositionConfig::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+                PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(CurrentTimePromptProvider::new(
-                position, texts,
-            )));
+            facets
+                .insert::<dyn PromptProvider>(Arc::new(CurrentTimeComponent::new(position, texts)));
             Ok(facets)
         },
     );
@@ -98,7 +97,7 @@ mod tests {
     }
 
     /// What `provider` tells in work whose context records `zone`.
-    async fn told(provider: &CurrentTimePromptProvider, zone: TimeZone) -> Prompt {
+    async fn told(provider: &CurrentTimeComponent, zone: TimeZone) -> Prompt {
         let mut work = Work::default();
         work.context.frame.time_zone = zone;
         let state = AgentChannelState::default();
@@ -110,7 +109,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_agent_is_told_the_time_in_the_time_zone_its_turn_records() {
-        let provider = CurrentTimePromptProvider {
+        let provider = CurrentTimeComponent {
             position: PromptPosition::BeforeTurnInput,
             clock: sunday,
             prompts: testing::prompts(),
@@ -133,7 +132,7 @@ mod tests {
     #[test]
     fn it_goes_before_the_turns_input_unless_configured_otherwise() {
         let position =
-            |params| PositionConfig::position_of(&params, PromptPosition::BeforeTurnInput);
+            |params| PositionParams::position_of(&params, PromptPosition::BeforeTurnInput);
         assert_eq!(
             position(serde_json::json!({})).unwrap(),
             PromptPosition::BeforeTurnInput,

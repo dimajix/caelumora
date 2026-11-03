@@ -1,4 +1,4 @@
-//! The `sleep_tool` component: a tool that takes its time, for testing what
+//! The `sleep` component: a tool that takes its time, for testing what
 //! happens while a tool runs - a cancel, a stop, a lowered channel.
 //!
 //! The tool `sleep` waits `seconds` - the call's, or the component's
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
 
-pub const SLEEP_TOOL_KIND: &str = "sleep_tool";
+pub const SLEEP_KIND: &str = "sleep";
 
 pub const SLEEP_TOOL_NAME: &str = "sleep";
 
@@ -34,7 +34,7 @@ pub const MAX_SECONDS: f64 = 60.0;
 /// What the component is configured with.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SleepToolConfig {
+struct SleepParams {
     #[serde(default = "default_seconds")]
     seconds: f64,
     #[serde(default)]
@@ -45,7 +45,7 @@ fn default_seconds() -> f64 {
     DEFAULT_SECONDS
 }
 
-impl Params for SleepToolConfig {
+impl Params for SleepParams {
     /// # Errors
     /// `InvalidConfig` if `seconds` is no time `sleep` waits.
     fn check(&self) -> ComponentResult<()> {
@@ -59,7 +59,7 @@ impl Params for SleepToolConfig {
 }
 
 #[derive(Debug)]
-pub struct SleepToolProvider {
+pub struct SleepComponent {
     /// How long a call without `seconds` waits.
     seconds: f64,
     /// What its tool set is for and its tools, as the prompt catalogue
@@ -68,7 +68,7 @@ pub struct SleepToolProvider {
     tools: Vec<Tool>,
 }
 
-impl SleepToolProvider {
+impl SleepComponent {
     /// The provider whose tool waits `seconds` unless told otherwise, and
     /// asks for approval if `requires_approval`; its texts from `prompts`.
     ///
@@ -85,7 +85,7 @@ impl SleepToolProvider {
         let tools = vec![described(
             prompts,
             NAMESPACE,
-            SLEEP_TOOL_KIND,
+            SLEEP_KIND,
             Tool {
                 name: SLEEP_TOOL_NAME.to_string(),
                 description: String::new(),
@@ -102,7 +102,7 @@ impl SleepToolProvider {
         )?];
         Ok(Self {
             seconds,
-            description: tool_text(prompts, NAMESPACE, SLEEP_TOOL_KIND, "description", &values)?,
+            description: tool_text(prompts, NAMESPACE, SLEEP_KIND, "description", &values)?,
             tools,
         })
     }
@@ -116,7 +116,7 @@ fn duration(seconds: f64) -> Option<Duration> {
 }
 
 #[async_trait]
-impl ToolProvider for SleepToolProvider {
+impl ToolProvider for SleepComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -157,16 +157,13 @@ impl ToolProvider for SleepToolProvider {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(SLEEP_TOOL_KIND)
-                .params::<SleepToolConfig>()
-                .provides::<dyn ToolProvider>(),
+            ComponentKind::new(SLEEP_KIND).params::<SleepParams>().provides::<dyn ToolProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let SleepToolConfig { seconds, requires_approval } =
-                config_of_params(&descriptor.params)?;
+            let SleepParams { seconds, requires_approval } = config_of_params(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(SleepToolProvider::new(
+            facets.insert::<dyn ToolProvider>(Arc::new(SleepComponent::new(
                 seconds,
                 requires_approval,
                 &texts,
@@ -185,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn sleep_waits_as_long_as_it_is_told_within_its_limit() {
-        let tool = SleepToolProvider::new(0.05, false, &testing::prompts()).unwrap();
+        let tool = SleepComponent::new(0.05, false, &testing::prompts()).unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut state);
 

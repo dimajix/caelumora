@@ -1,7 +1,7 @@
 //! How the tool that generates images is joined to the kernel (issue 525): its texts and the
-//! component kind `image_tool`.
+//! component kind `image_generation`.
 
-use crate::{tool, NAMESPACE, PROMPTS};
+use crate::{component, NAMESPACE, PROMPTS};
 use anyhow::Result;
 use caelumora_api::library::{Library, LibraryBuilder};
 
@@ -16,7 +16,7 @@ impl Library for ImageToolLibrary {
 
     fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
         library.add_prompts(NAMESPACE, PROMPTS)?;
-        tool::register(&mut library.components());
+        component::register(&mut library.components());
         Ok(())
     }
 }

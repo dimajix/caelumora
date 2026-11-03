@@ -71,7 +71,7 @@ drawn in [CRATES.md](CRATES.md):
     of a channel with what was published in it (issue 328), and the view of a project with what lies
     in it (issue 467). See [TOOLS.md](TOOLS.md#artifacts).
 *   **`caelumora-tool-mcp`** - the tools of MCP servers, a library that brings nothing but its
-    component kind `mcp_tool`, and with it `rmcp` (issue 325). See
+    component kind `mcp_server`, and with it `rmcp` (issue 325). See
     [TOOLS.md](TOOLS.md#mcp-servers).
 *   **`caelumora-compaction`** - compaction of an agent's context (issue 464), a library that brings
     the component `compaction` - an activity of the agent and `/compact` -, the strategies, with the
@@ -113,8 +113,8 @@ drawn in [CRATES.md](CRATES.md):
     shell, and the prompt part that names them (issues 428, 532). See
     [TOOLS.md](TOOLS.md#the-workspace).
 *   **`caelumora-tool-image`** - the tool that generates images, a library that brings nothing but
-    its component kind `image_tool`, whose tool generates an image with one of the image models its
-    agent is given (issue 525). See [TOOLS.md](TOOLS.md#images).
+    its component kind `image_generation`, whose tool generates an image with one of the image
+    models its agent is given (issue 525). See [TOOLS.md](TOOLS.md#images).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST API and
     served by `caelumora-app`. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the kernel in its own process.

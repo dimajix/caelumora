@@ -181,11 +181,11 @@ users:
 # built-in ones are used; an empty list switches them off.
 #commands:
 #  - id: help
-#    kind: help_command
+#    kind: help
 #  - id: wakeup
-#    kind: wakeup_command
+#    kind: wakeup
 #  - id: nudge
-#    kind: nudge_command
+#    kind: nudge
 
 # Components that replace a built-in default for every personality that does
 # not configure its own (issue 99): of some facets an agent has exactly one -
@@ -214,7 +214,7 @@ component_defaults:
       sender_format: xml
       sender_style: handle
 #  - id: context
-#    kind: turn_context_provider
+#    kind: turn_context
 
 # Variants of the texts given to models (issue 57, docs/CONFIGURATION.md):
 # each a directory with a file per namespace it changes - agents.yaml,

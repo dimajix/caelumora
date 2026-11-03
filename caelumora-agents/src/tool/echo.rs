@@ -1,4 +1,4 @@
-//! The `echo_tool` component: a tool that echoes its input, for testing.
+//! The `echo` component: a tool that echoes its input, for testing.
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -11,19 +11,19 @@ use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 
-pub const ECHO_TOOL_KIND: &str = "echo_tool";
+pub const ECHO_KIND: &str = "echo";
 
 pub const ECHO_TOOL_NAME: &str = "echo";
 
 #[derive(Debug)]
-pub struct EchoToolProvider {
+pub struct EchoComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
     tools: Vec<Tool>,
 }
 
-impl EchoToolProvider {
+impl EchoComponent {
     /// The provider, its texts from `prompts`.
     ///
     /// # Errors
@@ -32,7 +32,7 @@ impl EchoToolProvider {
         let tools = vec![described(
             prompts,
             NAMESPACE,
-            ECHO_TOOL_KIND,
+            ECHO_KIND,
             Tool {
                 name: ECHO_TOOL_NAME.to_string(),
                 description: String::new(),
@@ -48,14 +48,14 @@ impl EchoToolProvider {
             (),
         )?];
         Ok(Self {
-            description: tool_text(prompts, NAMESPACE, ECHO_TOOL_KIND, "description", ())?,
+            description: tool_text(prompts, NAMESPACE, ECHO_KIND, "description", ())?,
             tools,
         })
     }
 }
 
 #[async_trait]
-impl ToolProvider for EchoToolProvider {
+impl ToolProvider for EchoComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -82,11 +82,11 @@ impl ToolProvider for EchoToolProvider {
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
-        writing_for_the_model(ComponentKind::new(ECHO_TOOL_KIND).provides::<dyn ToolProvider>()),
+        writing_for_the_model(ComponentKind::new(ECHO_KIND).provides::<dyn ToolProvider>()),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(EchoToolProvider::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(EchoComponent::new(&texts)?));
             Ok(facets)
         },
     );

@@ -1,6 +1,6 @@
-//! The component kind `image_tool` (issues 512, 525): the tool `generate_image`, which generates an
-//! image with one of the image models its agent is given (`ImageModelClient`, of components of the
-//! kind `image_model`), and gives it the agent's model to see.
+//! The component kind `image_generation` (issues 512, 525): the tool `generate_image`, which
+//! generates an image with one of the image models its agent is given (`ImageModelClient`, of
+//! components of the kind `image_model`), and gives it the agent's model to see.
 
 use crate::NAMESPACE;
 use async_trait::async_trait;
@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 /// The kind of the component, and the path of its texts in the catalogue.
-pub(crate) const IMAGE_TOOL_KIND: &str = "image_tool";
+pub(crate) const IMAGE_GENERATION_KIND: &str = "image_generation";
 /// The one tool of the component.
 pub(crate) const GENERATE_IMAGE: &str = "generate_image";
 /// An image generated: the `prompt` and `negative_prompt` it was described by, its `width` and
@@ -33,7 +33,7 @@ const MAX_SEED: u64 = 1 << 53;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ImageToolConfig {
+struct ImageGenerationParams {
     /// Whether calls require approval. Left out, they do not: a call changes nothing but the
     /// server's time, and what leaves is its arguments, which `destination` bounds.
     #[serde(default = "approved_by_none")]
@@ -47,7 +47,7 @@ struct ImageToolConfig {
     description: Option<String>,
 }
 
-impl Params for ImageToolConfig {}
+impl Params for ImageGenerationParams {}
 
 fn approved_by_none() -> ApprovalMode {
     ApprovalMode::Never
@@ -77,7 +77,7 @@ fn random_seed() -> u64 {
 
 /// The tool `generate_image` over the image models its agent is given.
 #[derive(Debug)]
-struct ImageTool {
+struct ImageGenerationComponent {
     /// Every model offered, in the order of the agent's components; the first is the default.
     models: Vec<Arc<dyn ImageModelClient>>,
     destination: Classification,
@@ -85,13 +85,13 @@ struct ImageTool {
     tool: Tool,
 }
 
-impl ImageTool {
-    /// The tool configured by `config` over `models`, its texts from `prompts`.
+impl ImageGenerationComponent {
+    /// The tool configured by `params` over `models`, its texts from `prompts`.
     ///
     /// # Errors
     /// `InvalidConfig` where `models` is empty; what a text that cannot be had reports.
     fn new(
-        config: ImageToolConfig,
+        params: ImageGenerationParams,
         models: Vec<Arc<dyn ImageModelClient>>,
         prompts: &PromptTexts,
     ) -> ComponentResult<Self> {
@@ -109,14 +109,14 @@ impl ImageTool {
                 .collect::<Vec<_>>(),
             "default": default.name(),
         });
-        let tool = generate_image(prompts, config.requires_approval.required(false), &values)?;
-        let description = match config.description {
+        let tool = generate_image(prompts, params.requires_approval.required(false), &values)?;
+        let description = match params.description {
             Some(description) => description,
-            None => tool_text(prompts, NAMESPACE, IMAGE_TOOL_KIND, "description", ())?,
+            None => tool_text(prompts, NAMESPACE, IMAGE_GENERATION_KIND, "description", ())?,
         };
         Ok(Self {
             models,
-            destination: config.destination.unwrap_or(Classification::PUBLIC),
+            destination: params.destination.unwrap_or(Classification::PUBLIC),
             description,
             tool,
         })
@@ -167,11 +167,11 @@ fn generate_image(
         classification: None,
         presentation: IMAGE_PRESENTATION,
     };
-    described(prompts, NAMESPACE, IMAGE_TOOL_KIND, tool, values)
+    described(prompts, NAMESPACE, IMAGE_GENERATION_KIND, tool, values)
 }
 
 #[async_trait]
-impl ToolProvider for ImageTool {
+impl ToolProvider for ImageGenerationComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -213,26 +213,26 @@ impl ToolProvider for ImageTool {
     }
 }
 
-/// Registers the component kind `image_tool`, which needs the agent's image models and writes for
-/// the agent's model.
+/// Registers the component kind `image_generation`, which needs the agent's image models and
+/// writes for the agent's model.
 pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(IMAGE_TOOL_KIND)
-                .params::<ImageToolConfig>()
+            ComponentKind::new(IMAGE_GENERATION_KIND)
+                .params::<ImageGenerationParams>()
                 .provides::<dyn ToolProvider>()
                 .needs::<dyn ImageModelClient>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let config: ImageToolConfig = config_of_params(&descriptor.params)?;
+            let params: ImageGenerationParams = config_of_params(&descriptor.params)?;
             let models = context
                 .all::<dyn ImageModelClient>()
                 .await?
                 .into_iter()
                 .map(|model| model.facet)
                 .collect();
-            let tool = ImageTool::new(config, models, &prompts)?;
+            let tool = ImageGenerationComponent::new(params, models, &prompts)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(tool));
             Ok(facets)
@@ -289,14 +289,14 @@ mod tests {
         Ok(vec![Image { name: "drawn.png".to_string(), content: Bytes::from_static(PNG) }])
     }
 
-    fn built(params: Value, models: &[Arc<Painter>]) -> ComponentResult<ImageTool> {
+    fn built(params: Value, models: &[Arc<Painter>]) -> ComponentResult<ImageGenerationComponent> {
         let models = models.iter().map(|m| Arc::<Painter>::clone(m) as Arc<dyn ImageModelClient>);
-        ImageTool::new(config_of_params(&params)?, models.collect(), &prompts())
+        ImageGenerationComponent::new(config_of_params(&params)?, models.collect(), &prompts())
     }
 
     /// What `tool` gives for a call of `generate_image` with `params`, in a turn that reaches no
     /// channel.
-    async fn generated(tool: &ImageTool, params: Value) -> ToolResult<ToolOutput> {
+    async fn generated(tool: &ImageGenerationComponent, params: Value) -> ToolResult<ToolOutput> {
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             Default::default(),

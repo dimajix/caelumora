@@ -64,7 +64,7 @@ const DEFAULT_REFRESH: Duration = Duration::from_secs(300);
 /// The parameters of an `a2a_agent`, written by hand.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct A2aAgentConfig {
+struct A2aAgentParams {
     /// The agent: its base URL, below which its card is published - or the
     /// card's own URL, ending in `.json`. Its timeout is how long one
     /// request may take to be answered - a streamed one until its stream
@@ -92,9 +92,9 @@ struct A2aAgentConfig {
     prompt_texts: Option<PromptVariant>,
 }
 
-impl Params for A2aAgentConfig {}
+impl Params for A2aAgentParams {}
 
-impl A2aAgentConfig {
+impl A2aAgentParams {
     fn timeout(&self) -> Duration {
         self.endpoint.timeout_or(DEFAULT_TIMEOUT)
     }
@@ -107,28 +107,28 @@ impl A2aAgentConfig {
 /// An agent reached over A2A, as the `ExternalAgent` of an external
 /// personality: which method it is asked with, and what its answers tell.
 #[derive(Debug)]
-pub struct A2aAgentComponent {
+pub struct A2aAgent {
     client: Arc<A2aClient>,
     classification: Option<Classification>,
     profile: ModelProfile,
 }
 
-impl A2aAgentComponent {
-    /// The component `id` with `config`. Its card is read when the agent
+impl A2aAgent {
+    /// The component `id` with `params`. Its card is read when the agent
     /// is first asked, in the name of whoever asks (issue 126): an agent
     /// that cannot be reached yet does not keep its personality from being
     /// built, nor delays it.
-    fn new(id: String, config: A2aAgentConfig) -> Result<Self, ComponentError> {
-        let (timeout, refresh) = (config.timeout(), config.refresh());
-        let client = A2aClient::new(id, config.endpoint, timeout, refresh)?;
+    fn new(id: String, params: A2aAgentParams) -> Result<Self, ComponentError> {
+        let (timeout, refresh) = (params.timeout(), params.refresh());
+        let client = A2aClient::new(id, params.endpoint, timeout, refresh)?;
         let profile = ModelProfile {
-            sender_format: config.sender_format,
-            sender_style: config.sender_style,
-            message_times: config.message_times,
-            prompt_texts: config.prompt_texts,
+            sender_format: params.sender_format,
+            sender_style: params.sender_style,
+            message_times: params.message_times,
+            prompt_texts: params.prompt_texts,
             ..ModelProfile::default()
         };
-        Ok(Self { client: Arc::new(client), classification: config.classification, profile })
+        Ok(Self { client: Arc::new(client), classification: params.classification, profile })
     }
 
     /// The events of `task` on an agent without streaming, asked for with
@@ -203,7 +203,7 @@ fn translated(mut responses: Responses) -> ExternalStream {
 }
 
 #[async_trait]
-impl ExternalAgent for A2aAgentComponent {
+impl ExternalAgent for A2aAgent {
     async fn send(
         &self,
         secrets: Arc<dyn Secrets>,
@@ -276,7 +276,7 @@ impl ExternalAgent for A2aAgentComponent {
 /// How the remote agent is given what was said: of the profile, only how
 /// senders are marked matters to it (issue 135) - A2A has no place for a
 /// sender, so it is marked in the content, as for a model.
-impl ModelProfileProvider for A2aAgentComponent {
+impl ModelProfileProvider for A2aAgent {
     fn profile(&self) -> ModelProfile {
         self.profile
     }
@@ -285,16 +285,16 @@ impl ModelProfileProvider for A2aAgentComponent {
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register(
         ComponentKind::new(A2A_AGENT_KIND)
-            .params::<A2aAgentConfig>()
+            .params::<A2aAgentParams>()
             .provides::<dyn ExternalAgent>()
             .provides::<dyn ModelProfileProvider>()
             .uses::<PromptCatalogue>(),
         |descriptor, context| {
-            let config: A2aAgentConfig = config_of_params(&descriptor.params)?;
-            context.service::<PromptCatalogue>()?.require_variant(config.prompt_texts)?;
-            let component = Arc::new(A2aAgentComponent::new(descriptor.id.clone(), config)?);
+            let params: A2aAgentParams = config_of_params(&descriptor.params)?;
+            context.service::<PromptCatalogue>()?.require_variant(params.prompt_texts)?;
+            let component = Arc::new(A2aAgent::new(descriptor.id.clone(), params)?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ExternalAgent>(Arc::<A2aAgentComponent>::clone(&component));
+            facets.insert::<dyn ExternalAgent>(Arc::<A2aAgent>::clone(&component));
             facets.insert::<dyn ModelProfileProvider>(component);
             Ok(facets)
         },
@@ -391,7 +391,7 @@ mod tests {
         version: &str,
         streaming: bool,
         answers: Vec<(&str, bool, Value)>,
-    ) -> (A2aAgentComponent, Shared) {
+    ) -> (A2aAgent, Shared) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let stub: Shared = Arc::new(Mutex::new(Stub {
@@ -413,9 +413,9 @@ mod tests {
 
     /// The component that reaches the agent at `url`, its card kept for
     /// `refresh_secs` - by default if `None`.
-    fn component(url: &str, refresh_secs: Option<u64>) -> A2aAgentComponent {
-        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2, "refresh_secs": refresh_secs } })).unwrap();
-        A2aAgentComponent::new("hermes".to_string(), config).unwrap()
+    fn component(url: &str, refresh_secs: Option<u64>) -> A2aAgent {
+        let params: A2aAgentParams = serde_json::from_value(json!({ "endpoint": { "url": url, "auth": { "type": "bearer", "secret": "HERMES_TOKEN" }, "timeout_secs": 2, "refresh_secs": refresh_secs } })).unwrap();
+        A2aAgent::new("hermes".to_string(), params).unwrap()
     }
 
     /// The secrets a call is made with: `HERMES_TOKEN` among them, readable by anyone.
@@ -443,31 +443,31 @@ mod tests {
 
     #[test]
     fn the_parameters_name_the_agent_and_how_to_reach_it() {
-        let config: A2aAgentConfig =
+        let params: A2aAgentParams =
             serde_json::from_value(json!({ "endpoint": { "url": "https://hermes.example/" } }))
                 .unwrap();
-        assert_eq!(config.timeout(), Duration::from_secs(30));
-        assert_eq!(config.refresh(), Duration::from_secs(300));
+        assert_eq!(params.timeout(), Duration::from_secs(30));
+        assert_eq!(params.refresh(), Duration::from_secs(300));
         assert_eq!(
-            (config.sender_format, config.sender_style),
+            (params.sender_format, params.sender_style),
             (SenderFormat::Prefix, SenderStyle::Handle),
             "told who said what (issue 135)"
         );
-        assert!(config.message_times, "and when (issue 424)");
-        let config: A2aAgentConfig = serde_json::from_value(json!({ "endpoint": { "url": "http://agent.example" }, "sender_format": "none", "sender_style": "name", "message_times": false })).unwrap();
+        assert!(params.message_times, "and when (issue 424)");
+        let params: A2aAgentParams = serde_json::from_value(json!({ "endpoint": { "url": "http://agent.example" }, "sender_format": "none", "sender_style": "name", "message_times": false })).unwrap();
         assert_eq!(
-            (config.sender_format, config.sender_style, config.message_times),
+            (params.sender_format, params.sender_style, params.message_times),
             (SenderFormat::None, SenderStyle::Name, false)
         );
         assert!(
-            serde_json::from_value::<A2aAgentConfig>(
+            serde_json::from_value::<A2aAgentParams>(
                 json!({ "endpoint": { "url": "http://agent.example" }, "roles": [] })
             )
             .is_err(),
             "nothing unknown"
         );
         assert!(
-            serde_json::from_value::<A2aAgentConfig>(
+            serde_json::from_value::<A2aAgentParams>(
                 json!({ "endpoint": { "url": "http://agent.example", "timeout": 3 } })
             )
             .is_err(),

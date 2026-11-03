@@ -163,11 +163,11 @@ impl ArtifactManager {
     /// what is so classified. Where the content comes from is the caller's (issue 296): read before
     /// the artifact's own permission is asked, it gives nothing away to one who could read it. The
     /// caller vouches for `classification`, `channel` and the project of `name`: the workspace the
-    /// content was read from, the channel it was reached through and its session's project
-    /// (`artifact_tool` reads them through the turn) - never what a client names. The artifact is
-    /// read by the members of the project, a version by the participants of the channel alone. The
-    /// content is kept first, its digest taken as it is; a document that cannot be stored leaves no
-    /// content. Answers the artifact as it is now, and the number of the new version.
+    /// content was read from, the channel it was reached through and its session's project (the
+    /// component `artifacts` reads them through the turn) - never what a client names. The artifact
+    /// is read by the members of the project, a version by the participants of the channel alone.
+    /// The content is kept first, its digest taken as it is; a document that cannot be stored
+    /// leaves no content. Answers the artifact as it is now, and the number of the new version.
     ///
     /// # Errors
     /// `NotConfigured`, `OwnerNotAUser`, `InvalidScope` for a name in another scope than a

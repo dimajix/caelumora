@@ -1,4 +1,4 @@
-//! The `ask_user_tool` component (issue 165): the tool `ask_user`, with which
+//! The `ask_user` component (issue 165): the tool `ask_user`, with which
 //! an agent asks users of its channel and waits for their answers.
 //!
 //! The tool is the simplest one that asks: its arguments are its questions
@@ -28,19 +28,19 @@ use std::sync::Arc;
 /// the record of the answers every call that asked shows.
 pub const QUESTIONS_PRESENTATION: ToolPresentation = ToolPresentation::new("questions");
 
-pub const ASK_USER_TOOL_KIND: &str = "ask_user_tool";
+pub const ASK_USER_KIND: &str = "ask_user";
 
 pub const ASK_USER_TOOL_NAME: &str = "ask_user";
 
 #[derive(Debug)]
-pub struct AskUserToolProvider {
+pub struct AskUserComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
     tools: Vec<Tool>,
 }
 
-impl AskUserToolProvider {
+impl AskUserComponent {
     /// The provider, its texts from `prompts`, told the limits of a call.
     ///
     /// # Errors
@@ -67,7 +67,7 @@ impl AskUserToolProvider {
         let tools = vec![described(
             prompts,
             NAMESPACE,
-            ASK_USER_TOOL_KIND,
+            ASK_USER_KIND,
             Tool {
                 name: ASK_USER_TOOL_NAME.to_string(),
                 description: String::new(),
@@ -86,7 +86,7 @@ impl AskUserToolProvider {
             &limits,
         )?];
         Ok(Self {
-            description: tool_text(prompts, NAMESPACE, ASK_USER_TOOL_KIND, "description", &limits)?,
+            description: tool_text(prompts, NAMESPACE, ASK_USER_KIND, "description", &limits)?,
             tools,
         })
     }
@@ -101,7 +101,7 @@ struct AskUser {
 }
 
 #[async_trait]
-impl ToolProvider for AskUserToolProvider {
+impl ToolProvider for AskUserComponent {
     fn description(&self) -> String {
         self.description.clone()
     }
@@ -143,13 +143,11 @@ impl ToolProvider for AskUserToolProvider {
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
-        writing_for_the_model(
-            ComponentKind::new(ASK_USER_TOOL_KIND).provides::<dyn ToolProvider>(),
-        ),
+        writing_for_the_model(ComponentKind::new(ASK_USER_KIND).provides::<dyn ToolProvider>()),
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AskUserToolProvider::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(AskUserComponent::new(&texts)?));
             Ok(facets)
         },
     );
@@ -165,7 +163,7 @@ mod tests {
 
     #[test]
     fn its_arguments_are_its_questions_put_to_the_handles_named() {
-        let tool = AskUserToolProvider::new(&testing::prompts()).unwrap();
+        let tool = AskUserComponent::new(&testing::prompts()).unwrap();
         let params = serde_json::json!({
             "questions": [
                 { "header": "Database", "question": "Which one?", "choices": [{ "label": "Postgres", "recommended": true }, { "label": "SQLite" }] },
@@ -200,14 +198,14 @@ mod tests {
     #[test]
     fn its_calls_are_presented_as_questions() {
         assert_eq!(
-            AskUserToolProvider::new(&testing::prompts()).unwrap().tools().remove(0).presentation,
+            AskUserComponent::new(&testing::prompts()).unwrap().tools().remove(0).presentation,
             QUESTIONS_PRESENTATION
         );
     }
 
     #[tokio::test]
     async fn its_result_is_the_answers_as_given() {
-        let tool = AskUserToolProvider::new(&testing::prompts()).unwrap();
+        let tool = AskUserComponent::new(&testing::prompts()).unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         let params = serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }, { "header": "Ok", "question": "Go on?", "choices": [{ "label": "yes" }, { "label": "no" }] }], "ask": ["@alice"] });

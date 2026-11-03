@@ -11,13 +11,13 @@
 #   a line, a condition may also be an expression: `{{ ", a person" if person }}`.
 # - Names of tools are values, never written here: they are identifiers.
 
-# `static_system_prompt_provider` configured with a `title`: its `text`
+# `system_prompt` configured with a `title`: its `text`
 # under it, in the form of every part the agents write.
 titled: |-
   [{{ title }}]
   {{ text }}{{ "\n" if text is not endingwith "\n" }}
 
-# `channel_briefing_prompt_provider`: what the session and the channel are
+# `channel_briefing`: what the session and the channel are
 # for, each `place` as its owner describes it (`kind` "session" or
 # "channel"), the session's first.
 channel_briefing: |
@@ -41,7 +41,7 @@ channel_briefing_withdrawn: |
   [About this session and channel]
   What you were told of them before no longer holds: neither says anything about itself now.
 
-# `channel_language_prompt_provider`: the language of the channel by its
+# `channel_language`: the language of the channel by its
 # BCP 47 `tag`, and by its `english` and `native` names where they are known.
 channel_language: |
   [Language of this channel]
@@ -52,7 +52,7 @@ channel_language_withdrawn: |
   [Language of this channel]
   This channel's conversation is no longer held in a particular language.
 
-# `channel_participants_prompt_provider`: the agent itself (`me`, none if it
+# `channel_participants`: the agent itself (`me`, none if it
 # is not among them) and the `others`, each by `name`, `handle` (none if it
 # has none), whether a `person`, and `introduction` (none if none);
 # `example`, the name of the first agent among the others (none if there is
@@ -91,26 +91,26 @@ channel_participants: |
   {% endif %}
   {% endif %}
 
-# `channel_mentions_prompt_provider`, before the turn's input: read last, it
+# `channel_mentions`, before the turn's input: read last, it
 # does what the roster alone does not (`work/quiet_agents/MENTIONS.md`,
 # `test_names_turn`).
 channel_mentions: |
   [Before you write]
   Only use an @handle if you require an answer or an action from that participant now. Do NOT use one to greet, thank, praise, agree with or refer to someone - write their name.
 
-# `current_time_prompt_provider`: the `time`, written out in the `zone`.
+# `current_time`: the `time`, written out in the `zone`.
 current_time: |
   [Current date and time]
   It is {{ time }} ({{ zone }}).
 
-# `request_reason_prompt_provider`, for an agent the responder policy only
+# `request_reason`, for an agent the responder policy only
 # chose: how to stay silent - by the tool `silence` where it is offered
 # (none where it is not).
 request_reason: |
   [Why you are asked to respond]
   Nobody mentioned you. You are asked because what was said last might concern you - it may not. If you have nothing to add - nothing new, only agreement, a greeting, thanks, or that you are waiting - {% if silence %}call `{{ silence }}` and write nothing{% else %}write nothing{% endif %}.
 
-# `tool_sets_prompt_provider`: the tool sets `unavailable`, each by `name`,
+# `tool_sets`: the tool sets `unavailable`, each by `name`,
 # `description` and `why`.
 tool_sets: |
   [Unavailable tools]
@@ -173,13 +173,13 @@ agent_memory: |
 # objects have their fields under the list's path
 # (`ToolParameters::describe`).
 tools:
-  calculator_tool:
+  calculator:
     description: Evaluate mathematical expressions.
     calculate: Evaluates a mathematical expression
     calculate.expression: Mathematical expression to evaluate (e.g., '2 + 2', 'sin(pi/2)', 'exp(1)')
 
   # `max_questions`, `max_choices`, `max_header_chars`: the limits of a call.
-  ask_user_tool:
+  ask_user:
     description: Ask users of the channel and wait for their answers.
     ask_user: >-
       Asks users of the channel one or more questions and waits for their answer, then goes on with
@@ -203,7 +203,7 @@ tools:
     ask_user.ask: The users to ask, by their handles; at least one
     ask_user.ask.item: A handle
 
-  stop_tool:
+  turn_end:
     description: End your part in the conversation.
     stop: Signal that you have finished your task and have no further input.
     bye: Signal that you want to say good-bye and stop the conversation.
@@ -211,7 +211,7 @@ tools:
 
   # Issue 282. `copied_to`: where `copy_attachment` puts an attachment unless told; `attached`:
   # what `attach` tells of what it did.
-  attachment_tool:
+  attachments:
     description: Reach the attachments of this conversation by the `ref` their note names, such as a3.
     view_attachment: >-
       Look at an image attached in this conversation again, as it was attached. Only images can be
@@ -235,12 +235,12 @@ tools:
     attached: It will be attached to your next answer.
 
   # `max_seconds`: the longest it waits; `seconds`: how long it waits unless told.
-  sleep_tool:
+  sleep:
     description: Wait for a while, for testing.
     sleep: Waits the given number of seconds, at most {{ max_seconds }}, and then says so. For testing.
     sleep.seconds: How long to wait; {{ seconds }} unless given
 
-  echo_tool:
+  echo:
     description: Echo the input, for testing.
     echo: Echoes the input back
     echo.message: Input message to be echoed back
@@ -259,7 +259,7 @@ tools:
     read_history.query: Only messages containing this text, ignoring case
 
   # `max_steps`: the most steps a plan has.
-  create_plan_tool:
+  planning:
     description: Plan a larger piece of work in steps before doing it.
     create_plan: >-
       Submit your structured multi-step plan for the user's request. Call this once you have
@@ -417,7 +417,7 @@ results:
   invalid_arguments: "The arguments were invalid: {{ reason }}. Correct them and call the tool again."
   failed: "The tool failed: {{ reason }}"
 
-# `create_plan_tool`, in the system prompt: when to plan - by the tool
+# `planning`, in the system prompt: when to plan - by the tool
 # `create_plan`. It stays for the whole turn, also once a plan is carried
 # out: the instructions of its steps (`plan`) dominate by then.
 planning: |

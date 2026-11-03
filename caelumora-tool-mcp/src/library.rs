@@ -1,7 +1,7 @@
 //! How the tools of MCP servers are joined to the kernel (issue 325): by their component kind
 //! alone.
 
-use crate::tool;
+use crate::component;
 use anyhow::Result;
 use caelumora_api::library::{Library, LibraryBuilder};
 
@@ -15,7 +15,7 @@ impl Library for McpToolLibrary {
     }
 
     fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
-        tool::register(&mut library.components());
+        component::register(&mut library.components());
         Ok(())
     }
 }

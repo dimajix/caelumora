@@ -1,4 +1,4 @@
-//! The `channel_language_prompt_provider` component (issue 56): tells the
+//! The `channel_language` component (issue 56): tells the
 //! agent which language its channel's conversation is held in, so that it
 //! writes in it - although its instructions, its tools and the parts the
 //! agents add are in English, which pulls a model towards English.
@@ -16,10 +16,10 @@
 //! An agent that keeps its conversation itself - an external one (issue
 //! 204) - is told the language once and then only when it changed
 //! (parameter `changes_only`), as the roster is
-//! (`channel_participants_prompt_provider`).
+//! (`channel_participants`).
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ChannelPartConfig, ContextError, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ChannelPartParams, ContextError, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
@@ -31,7 +31,7 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::value::language::Language;
 use std::sync::{Arc, Mutex};
 
-pub const CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND: &str = "channel_language_prompt_provider";
+pub const CHANNEL_LANGUAGE_KIND: &str = "channel_language";
 
 /// Its texts in the prompt catalogue: the language, and that the channel
 /// is no longer held in one.
@@ -39,7 +39,7 @@ const TEXT: &str = "agents.channel_language";
 const WITHDRAWN: &str = "agents.channel_language_withdrawn";
 
 #[derive(Debug)]
-pub struct ChannelLanguagePromptProvider {
+pub struct ChannelLanguageComponent {
     pub position: PromptPosition,
     /// Whether it tells only of changes: then the language it told last,
     /// `None` before it told any. A plain lock, never held across an await.
@@ -47,7 +47,7 @@ pub struct ChannelLanguagePromptProvider {
     prompts: PromptTexts,
 }
 
-impl ChannelLanguagePromptProvider {
+impl ChannelLanguageComponent {
     /// The language at `position`, told every time it is asked.
     pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, told: None, prompts }
@@ -84,7 +84,7 @@ impl ChannelLanguagePromptProvider {
 }
 
 #[async_trait]
-impl PromptProvider for ChannelLanguagePromptProvider {
+impl PromptProvider for ChannelLanguageComponent {
     fn position(&self) -> PromptPosition {
         self.position
     }
@@ -114,18 +114,18 @@ fn render(prompts: &PromptTexts, language: Option<&Language>) -> Result<String, 
 pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
-            ComponentKind::new(CHANNEL_LANGUAGE_PROMPT_PROVIDER_KIND)
-                .params::<ChannelPartConfig>()
+            ComponentKind::new(CHANNEL_LANGUAGE_KIND)
+                .params::<ChannelPartParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let ChannelPartConfig { position, changes_only } =
+            let ChannelPartParams { position, changes_only } =
                 config_of_params(&descriptor.params)?;
             let provider = if changes_only {
-                ChannelLanguagePromptProvider::changes_only(position, prompts)
+                ChannelLanguageComponent::changes_only(position, prompts)
             } else {
-                ChannelLanguagePromptProvider::new(position, prompts)
+                ChannelLanguageComponent::new(position, prompts)
             };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     fn told_every_time_unless_only_changes_are_told() {
-        let always = ChannelLanguagePromptProvider::new(PromptPosition::Start, testing::prompts());
+        let always = ChannelLanguageComponent::new(PromptPosition::Start, testing::prompts());
         assert_eq!(
             always.text(language("de")).unwrap(),
             always.text(language("de")).unwrap(),
@@ -198,7 +198,7 @@ mod tests {
         );
 
         let changes =
-            ChannelLanguagePromptProvider::changes_only(PromptPosition::Start, testing::prompts());
+            ChannelLanguageComponent::changes_only(PromptPosition::Start, testing::prompts());
         assert_eq!(changes.text(None).unwrap(), "", "held in none from the start: nothing to tell");
         assert!(changes.text(language("de")).unwrap().contains("\"de\""), "the first language");
         assert_eq!(changes.text(language("de")).unwrap(), "", "not again while it stays");
@@ -252,8 +252,7 @@ mod tests {
             channel.classification.clone(),
             Default::default(),
         ));
-        let provider =
-            ChannelLanguagePromptProvider::new(PromptPosition::Start, testing::prompts());
+        let provider = ChannelLanguageComponent::new(PromptPosition::Start, testing::prompts());
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(prompt.text.contains("\"de\""), "{}", prompt.text);
         assert_eq!(prompt.classification, Some(Classification::PUBLIC));
@@ -277,7 +276,7 @@ mod tests {
 
     /// What `provider` tells agent `agent` in the turn begun in `state`.
     async fn told(
-        provider: &ChannelLanguagePromptProvider,
+        provider: &ChannelLanguageComponent,
         agent: AgentId,
         session_loop: &Arc<SessionLoop>,
         state: &mut AgentChannelState,
