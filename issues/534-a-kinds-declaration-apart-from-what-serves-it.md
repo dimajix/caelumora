@@ -1,6 +1,6 @@
 # 534 — A component kind's declaration lies in one file with the type that serves its facets
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -94,3 +94,24 @@ Proposed by the maintainer on 2026-11-03, in the discussion of issue
 
 - **2026-11-03** — Opened at the maintainer's request, from the discussion of issue
   [533](533-attachment-tools-in-a-crate-of-their-own.md).
+- **2026-11-03** — Decided with the maintainer, in place of the cut and the renaming the
+  considerations propose: the struct that takes the configuration in its `new` keeps its name
+  `…Component`, as issue [532](532-component-kinds-named-after-their-facet.md) decided; what moves
+  out of `component.rs` is the `impl` of each facet it serves. The module `component` becomes a
+  directory: its `mod.rs` holds the kind's constant, its `…Params`, the `…Component` with `new`, and
+  `register`; a child module per facet - `tool.rs`, `prompt.rs`, … - holds that facet's `impl`,
+  what only it uses, and its tests, a child so that it reaches the private fields of the
+  `…Component`. Set aside: a type of its own per facet without any dependency on the components -
+  its configuration would have had to be passed apart from the `…Params`, and nothing uses such a
+  type outside a component. Taken from it: `new` fails with the error of what it does itself,
+  never with a `ComponentError`; whether the configuration holds is said by `…Params::read` and
+  `check` in `register`. The types already named after their role - `SummaryCompaction`,
+  `DecisionPolicy`, `A2aAgent` - are no contributing component and stay as they are. One step per
+  crate, the first with the rule in COMPONENTS.md.
+- **2026-11-03** — Step 1: the rule in COMPONENTS.md - the layout of the module `component`, and
+  the error rule in its point **Construction** -; `caelumora-tool-attachment` and
+  `caelumora-tool-image` laid out so. `ImageGenerationComponent::new` refused an agent without an
+  image model with a `ComponentError`; decided with the maintainer, `register` refuses it now,
+  where the graph is asked for the models, and `new` takes them as not empty. Its test builds the
+  component through a kernel of a test, with `caelumora-kernel` and `caelumora-security` as
+  dev-dependencies of the crate.

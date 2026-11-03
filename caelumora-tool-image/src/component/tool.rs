@@ -1,16 +1,14 @@
-//! The component kind `image_generation` (issues 512, 525): the tool `generate_image`, which
-//! generates an image with one of the image models its agent is given (`ImageModelClient`, of
-//! components of the kind `image_model`), and gives it the agent's model to see.
+//! The facet `ToolProvider` of `image_generation` (issues 512, 525): the tool `generate_image`,
+//! which generates an image with one of the image models its agent is given, and gives it the
+//! agent's model to see.
 
+use super::{ImageGenerationComponent, IMAGE_GENERATION_KIND};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::tool::{
-    arguments, described, tool_text, ApprovalMode, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::component::{ComponentError, ComponentResult, Params};
-use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::image::{ImageModelClient, ImageRequest};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
@@ -20,38 +18,14 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-/// The kind of the component, and the path of its texts in the catalogue.
-pub(crate) const IMAGE_GENERATION_KIND: &str = "image_generation";
 /// The one tool of the component.
-pub(crate) const GENERATE_IMAGE: &str = "generate_image";
+const GENERATE_IMAGE: &str = "generate_image";
 /// An image generated: the `prompt` and `negative_prompt` it was described by, its `width` and
 /// `height` where the arguments name them, and the `model` and `seed` of its result - the
 /// arguments' where it has none.
 const IMAGE_PRESENTATION: ToolPresentation = ToolPresentation::new("image");
 /// The seeds chosen at random lie below: exact as a number in JSON and in a browser's JavaScript.
 const MAX_SEED: u64 = 1 << 53;
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ImageGenerationParams {
-    /// Whether calls require approval. Left out, they do not: a call changes nothing but the
-    /// server's time, and what leaves is its arguments, which `destination` bounds.
-    #[serde(default = "approved_by_none")]
-    requires_approval: ApprovalMode,
-    /// What the servers of its models are cleared for: where the arguments of a call go - and
-    /// stay, in a server's history and in the metadata of what it saves. Left out, public.
-    #[serde(default)]
-    destination: Option<Classification>,
-    /// What the tool is for, as its tool set tells it; left out, the catalogue's text.
-    #[serde(default)]
-    description: Option<String>,
-}
-
-impl Params for ImageGenerationParams {}
-
-fn approved_by_none() -> ApprovalMode {
-    ApprovalMode::Never
-}
 
 /// The arguments of a call of `generate_image`: the model, and what it is asked. What it leaves
 /// out, the model says - but the seed, which is chosen at random, so that another call gives
@@ -75,79 +49,22 @@ fn random_seed() -> u64 {
     rand::random_range(0..MAX_SEED)
 }
 
-/// The tool `generate_image` over the image models its agent is given.
-#[derive(Debug)]
-struct ImageGenerationComponent {
-    /// Every model offered, in the order of the agent's components; the first is the default.
-    models: Vec<Arc<dyn ImageModelClient>>,
-    destination: Classification,
-    description: String,
-    tool: Tool,
-}
-
-impl ImageGenerationComponent {
-    /// The tool configured by `params` over `models`, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `InvalidConfig` where `models` is empty; what a text that cannot be had reports.
-    fn new(
-        params: ImageGenerationParams,
-        models: Vec<Arc<dyn ImageModelClient>>,
-        prompts: &PromptTexts,
-    ) -> ComponentResult<Self> {
-        let Some(default) = models.first() else {
-            return Err(ComponentError::InvalidConfig(
-                "the agent has no image model to offer: it needs a component of the kind \
-                 'image_model'"
-                    .to_string(),
-            ));
-        };
-        let values = json!({
-            "models": models
-                .iter()
-                .map(|m| json!({ "name": m.name(), "description": m.description() }))
-                .collect::<Vec<_>>(),
-            "default": default.name(),
-        });
-        let tool = generate_image(prompts, params.requires_approval.required(false), &values)?;
-        let description = match params.description {
-            Some(description) => description,
-            None => tool_text(prompts, NAMESPACE, IMAGE_GENERATION_KIND, "description", ())?,
-        };
-        Ok(Self {
-            models,
-            destination: params.destination.unwrap_or(Classification::PUBLIC),
-            description,
-            tool,
-        })
-    }
-
-    /// The model named `name`, of those offered; the default if none is named.
-    ///
-    /// # Errors
-    /// `InvalidParameter` for a name of none offered, naming those that are.
-    fn model(&self, name: Option<&str>) -> ToolResult<&Arc<dyn ImageModelClient>> {
-        let found = match name {
-            Some(name) => self.models.iter().find(|model| model.name() == name),
-            None => self.models.first(),
-        };
-        found.ok_or_else(|| {
-            let names: Vec<&str> = self.models.iter().map(|model| model.name()).collect();
-            ToolError::InvalidParameter(format!(
-                "there is no model '{}'; there are: {}",
-                name.unwrap_or_default(),
-                names.join(", ")
-            ))
-        })
-    }
-}
-
-/// The tool `generate_image`, its texts rendered with `values`.
-fn generate_image(
+/// The tool `generate_image` over `models`, the first the default, its texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of its texts cannot be had.
+pub(super) fn generate_image(
     prompts: &PromptTexts,
     requires_approval: bool,
-    values: &Value,
+    models: &[Arc<dyn ImageModelClient>],
 ) -> Result<Tool, PromptError> {
+    let values = json!({
+        "models": models
+            .iter()
+            .map(|m| json!({ "name": m.name(), "description": m.description() }))
+            .collect::<Vec<_>>(),
+        "default": models.first().map(|model| model.name()),
+    });
     let tool = Tool {
         name: GENERATE_IMAGE.to_string(),
         description: String::new(),
@@ -167,7 +84,28 @@ fn generate_image(
         classification: None,
         presentation: IMAGE_PRESENTATION,
     };
-    described(prompts, NAMESPACE, IMAGE_GENERATION_KIND, tool, values)
+    described(prompts, NAMESPACE, IMAGE_GENERATION_KIND, tool, &values)
+}
+
+impl ImageGenerationComponent {
+    /// The model named `name`, of those offered; the default if none is named.
+    ///
+    /// # Errors
+    /// `InvalidParameter` for a name of none offered, naming those that are.
+    fn model(&self, name: Option<&str>) -> ToolResult<&Arc<dyn ImageModelClient>> {
+        let found = match name {
+            Some(name) => self.models.iter().find(|model| model.name() == name),
+            None => self.models.first(),
+        };
+        found.ok_or_else(|| {
+            let names: Vec<&str> = self.models.iter().map(|model| model.name()).collect();
+            ToolError::InvalidParameter(format!(
+                "there is no model '{}'; there are: {}",
+                name.unwrap_or_default(),
+                names.join(", ")
+            ))
+        })
+    }
 }
 
 #[async_trait]
@@ -213,39 +151,14 @@ impl ToolProvider for ImageGenerationComponent {
     }
 }
 
-/// Registers the component kind `image_generation`, which needs the agent's image models and
-/// writes for the agent's model.
-pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
-    registry.register_async(
-        writing_for_the_model(
-            ComponentKind::new(IMAGE_GENERATION_KIND)
-                .params::<ImageGenerationParams>()
-                .provides::<dyn ToolProvider>()
-                .needs::<dyn ImageModelClient>(),
-        ),
-        |descriptor, context| async move {
-            let prompts = texts_of(&context).await?;
-            let params = ImageGenerationParams::read(&descriptor.params)?;
-            let models = context
-                .all::<dyn ImageModelClient>()
-                .await?
-                .into_iter()
-                .map(|model| model.facet)
-                .collect();
-            let tool = ImageGenerationComponent::new(params, models, &prompts)?;
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(tool));
-            Ok(facets)
-        },
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::ImageGenerationParams;
     use crate::prompts;
     use bytes::Bytes;
     use caelumora_agents::testing::detached_actor_runtime;
+    use caelumora_api::component::{ComponentResult, Params};
     use caelumora_api::image::Image;
     use caelumora_api::model::{ModelError, ModelResult};
     use caelumora_domain::actor::ActorId;
@@ -291,11 +204,11 @@ mod tests {
 
     fn built(params: Value, models: &[Arc<Painter>]) -> ComponentResult<ImageGenerationComponent> {
         let models = models.iter().map(|m| Arc::<Painter>::clone(m) as Arc<dyn ImageModelClient>);
-        ImageGenerationComponent::new(
+        Ok(ImageGenerationComponent::new(
             ImageGenerationParams::read(&params)?,
             models.collect(),
             &prompts(),
-        )
+        )?)
     }
 
     /// What `tool` gives for a call of `generate_image` with `params`, in a turn that reaches no
@@ -401,13 +314,6 @@ mod tests {
             generate.description
         );
         assert_eq!(tool.destination(), Some(Classification::PUBLIC));
-
-        let refused = built(json!({}), &[]).unwrap_err().to_string();
-        assert!(refused.contains("no image model"), "{refused}");
-        assert!(
-            built(json!({ "endpoint": "x" }), &models).is_err(),
-            "a parameter it does not take"
-        );
         let asked = built(json!({ "requires_approval": true }), &models).unwrap();
         assert!(asked.tools()[0].requires_approval);
     }

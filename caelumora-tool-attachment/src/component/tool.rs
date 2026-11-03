@@ -1,24 +1,24 @@
-//! The component kind `attachments` (issues 282, 533): the tools with which an agent reaches the
-//! attachments it heard, by the numbers its transcript gave them (`a3`) - shows its model an image
-//! again, reads a text a page at a time, copies one into the workspace it may use to work on it
-//! there, or attaches one to its next message. Each reads the message that carries the attachment
-//! as it stands, through the view of the agent's channel: one a change removed is not found, and
-//! its label is the current one.
+//! The facet `ToolProvider` of `attachments` (issue 282): the tools with which an agent reaches
+//! the attachments it heard, by the numbers its transcript gave them (`a3`) - shows its model an
+//! image again, reads a text a page at a time, copies one into the workspace it may use to work on
+//! it there, or attaches one to its next message. Each reads the message that carries the
+//! attachment as it stands, through the view of the agent's channel: one a change removed is not
+//! found, and its label is the current one. What `attach` attaches, it has its turn copy
+//! (`Turn::copy_attachment`); what `copy_attachment` copies, the workspace's terminal writes no
+//! larger than a workspace takes (issue 516).
 
+use super::{AttachmentsComponent, ATTACHMENTS_KIND};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
     arguments, described, page_of, tool_text, workspace_reader, workspace_writer, ToolError,
     ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::error::ContentError;
 use caelumora_api::reader::ChannelReader;
 use caelumora_api::terminal::{ByteStream, WorkspacePath};
-use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::message::MessageId;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -27,11 +27,7 @@ use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibil
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::sync::Arc;
 use tracing::error;
-
-/// The kind of the component, and the path of its texts in the catalogue.
-const ATTACHMENTS_KIND: &str = "attachments";
 
 const VIEW_ATTACHMENT: &str = "view_attachment";
 const READ_ATTACHMENT: &str = "read_attachment";
@@ -72,77 +68,62 @@ struct CopyTo {
     path: Option<String>,
 }
 
-/// The tools `view_attachment`, `read_attachment`, `copy_attachment` and `attach` over the
-/// attachments its agent heard.
-#[derive(Debug)]
-struct AttachmentsComponent {
-    /// What its tool set is for and its tools, as the prompt catalogue words them.
-    description: String,
-    tools: Vec<Tool>,
-    /// The texts its results give.
-    prompts: PromptTexts,
+/// The tools, their texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of their texts cannot be had.
+pub(super) fn tools(prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
+    let reference = || ("ref".to_string(), ToolParameters::string());
+    let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
+        described(
+            prompts,
+            NAMESPACE,
+            ATTACHMENTS_KIND,
+            Tool {
+                name: name.to_string(),
+                description: String::new(),
+                parameters,
+                requires_approval,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: ToolPresentation::default(),
+            },
+            context! { copied_to => COPIED_TO },
+        )
+    };
+    Ok(vec![
+        tool(VIEW_ATTACHMENT, ToolParameters::object([reference()], ["ref"]), false)?,
+        tool(
+            READ_ATTACHMENT,
+            ToolParameters::object(
+                [
+                    reference(),
+                    ("start_line".to_string(), ToolParameters::number()),
+                    ("line_count".to_string(), ToolParameters::number()),
+                ],
+                ["ref"],
+            ),
+            false,
+        )?,
+        // It writes into the workspace: always asked, as a write there is.
+        tool(
+            COPY_ATTACHMENT,
+            ToolParameters::object(
+                [reference(), ("path".to_string(), ToolParameters::string())],
+                ["ref"],
+            ),
+            true,
+        )?,
+        // What it attaches is shown by the answer that carries it; the call would only say so
+        // again.
+        Tool {
+            presentation: ToolPresentation::QUIET,
+            ..tool(ATTACH, ToolParameters::object([reference()], ["ref"]), false)?
+        },
+    ])
 }
 
 impl AttachmentsComponent {
-    /// The provider, its texts from `prompts`. What it attaches it has its turn copy
-    /// (`Turn::copy_attachment`); the workspace's terminal writes no larger file into a workspace
-    /// than a workspace takes (issue 516).
-    ///
-    /// # Errors
-    /// `PromptError` if one of its texts cannot be had.
-    fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
-        let reference = || ("ref".to_string(), ToolParameters::string());
-        let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
-            described(
-                &prompts,
-                NAMESPACE,
-                ATTACHMENTS_KIND,
-                Tool {
-                    name: name.to_string(),
-                    description: String::new(),
-                    parameters,
-                    requires_approval,
-                    visibility: ToolVisibility::SHOWN,
-                    classification: None,
-                    presentation: ToolPresentation::default(),
-                },
-                context! { copied_to => COPIED_TO },
-            )
-        };
-        let tools = vec![
-            tool(VIEW_ATTACHMENT, ToolParameters::object([reference()], ["ref"]), false)?,
-            tool(
-                READ_ATTACHMENT,
-                ToolParameters::object(
-                    [
-                        reference(),
-                        ("start_line".to_string(), ToolParameters::number()),
-                        ("line_count".to_string(), ToolParameters::number()),
-                    ],
-                    ["ref"],
-                ),
-                false,
-            )?,
-            // It writes into the workspace: always asked, as a write there is.
-            tool(
-                COPY_ATTACHMENT,
-                ToolParameters::object(
-                    [reference(), ("path".to_string(), ToolParameters::string())],
-                    ["ref"],
-                ),
-                true,
-            )?,
-            // What it attaches is shown by the answer that carries it; the call would only say so
-            // again.
-            Tool {
-                presentation: ToolPresentation::QUIET,
-                ..tool(ATTACH, ToolParameters::object([reference()], ["ref"]), false)?
-            },
-        ];
-        let description = tool_text(&prompts, NAMESPACE, ATTACHMENTS_KIND, "description", ())?;
-        Ok(Self { description, tools, prompts })
-    }
-
     /// The text `key` of its results, rendered with `values`; `None`, logged, if it cannot be had -
     /// the result is given without it.
     fn text(&self, key: &str, values: impl Serialize) -> Option<String> {
@@ -330,25 +311,6 @@ impl ToolProvider for AttachmentsComponent {
     }
 }
 
-/// Registers the component kind `attachments`, which reads and writes the agent's workspace and
-/// writes for the agent's model.
-pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
-    registry.register_async(
-        writing_for_the_model(
-            ComponentKind::new(ATTACHMENTS_KIND)
-                .provides::<dyn ToolProvider>()
-                .reads::<dyn WorkspaceReader>()
-                .writes::<dyn WorkspaceWriter>(),
-        ),
-        |_descriptor, context| async move {
-            let texts = texts_of(&context).await?;
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AttachmentsComponent::new(texts)?));
-            Ok(facets)
-        },
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +333,7 @@ mod tests {
     use caelumora_kernel::view::Viewer;
     use futures::stream;
     use std::fs;
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
 
