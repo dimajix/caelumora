@@ -113,10 +113,7 @@ personalities:
     kind: agent_memory
     fail_policy: FailClosed
   - id: workspace
-    kind: workspace_prompt_provider
-    fail_policy: FailClosed
-  - id: terminal-tool
-    kind: terminal_tool
+    kind: workspace
     fail_policy: FailClosed
   - id: artifact-tool
     kind: artifact_tool
@@ -278,10 +275,7 @@ personalities:
     params:
       name: agent-basics
   - id: workspace
-    kind: workspace_prompt_provider
-    fail_policy: FailClosed
-  - id: terminal-tool
-    kind: terminal_tool
+    kind: workspace
     fail_policy: FailClosed
   - id: create-plan-tool
     kind: create_plan_tool
@@ -314,10 +308,7 @@ personalities:
     params:
       name: agent-basics
   - id: workspace
-    kind: workspace_prompt_provider
-    fail_policy: FailClosed
-  - id: terminal-tool
-    kind: terminal_tool
+    kind: workspace
     params:
       requires_approval: unless_read_only
     fail_policy: FailClosed

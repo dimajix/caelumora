@@ -2,10 +2,10 @@
 //! the personalities that include it - so far `publish_artifact`, which
 //! publishes a file of the session's workspace as a version of an artifact:
 //! a fixed copy, kept beyond the workspace, downloaded at the message that
-//! published it. Beside it, `publish_file` of `terminal_tool` offers a file
+//! published it. Beside it, `publish_file` of `workspace` offers a file
 //! as a link to it as it is now (issue 273).
 //!
-//! The workspace is reached as `terminal_tool` reaches it to read, through the reader of it the
+//! The workspace is reached as `workspace` reaches it to read, through the reader of it the
 //! situation hands out (`WorkspaceReader`, issues 344, 516); the file read is handed to the
 //! `ArtifactPublisher` the plugin binds to the turn's work (issue 516). Its tool is offered where a
 //! file can be published (issue 290): where the turn may use a workspace in its channel, and a

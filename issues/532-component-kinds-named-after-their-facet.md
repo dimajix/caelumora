@@ -1,6 +1,6 @@
 # 532 — Component kinds are named after their facet
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -91,3 +91,12 @@ the tools (`caelumora-tool-workspace`, `caelumora-tool-mcp`).
 
 - **2026-11-02** — Opened at the maintainer's request, in the discussion of issue
   [531](531-workspace-tools-named-apart-from-the-tools.md).
+- **2026-11-02** — Decided with the maintainer: the rule holds for the prompt parts, the context
+  providers and the commands as well; every struct of a component kind is named `…Component`, its
+  configuration `…Config`, its constant `…_KIND` and its file after the kind; the texts of a kind
+  are keyed by it. Two steps: first `terminal_tool` and `workspace_prompt_provider` become one kind
+  `workspace`, then every other kind is renamed, with the rule in COMPONENTS.md and its test.
+- **2026-11-02** — Step 1: `terminal_tool` and `workspace_prompt_provider` are the one kind
+  `workspace` (`WorkspaceComponent`, `WorkspaceConfig`, in `workspace.rs` of
+  `caelumora-tool-workspace`), which provides the tools and the prompt part; its texts are keyed
+  `tools.workspace`.

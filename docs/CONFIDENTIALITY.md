@@ -367,7 +367,7 @@ channel is classified above it.
 
 An `mcp_tool` is cleared for what its `destination` says, `public` unless configured: the server's
 word is trusted only where an operator gave it. A set without a destination keeps its arguments in
-the system, or is bounded otherwise - `terminal_tool`'s storage by its own ceiling, the workspace by
+the system, or is bounded otherwise - `workspace`'s storage by its own ceiling, the workspace by
 the flow rule at every call. A turn keeps the tools it began with; a channel raised during it
 re-judges them at the next turn.
 

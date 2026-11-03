@@ -109,8 +109,8 @@ drawn in [CRATES.md](CRATES.md):
     that brings nothing but the backend `postgres` of the stores, which keeps the entities and the
     states (issues 03, 04). See [STORAGE.md](STORAGE.md#in-postgres).
 *   **`caelumora-tool-workspace`** - what an agent is given to work on the session's workspace, a
-    library that brings nothing but its component kinds `terminal_tool`, the workspace's files and
-    its shell, and `workspace_prompt_provider`, the prompt part that names them (issue 428). See
+    library that brings nothing but its component kind `workspace`: the workspace's files and its
+    shell, and the prompt part that names them (issues 428, 532). See
     [TOOLS.md](TOOLS.md#the-workspace).
 *   **`caelumora-tool-image`** - the tool that generates images, a library that brings nothing but
     its component kind `image_tool`, whose tool generates an image with one of the image models its

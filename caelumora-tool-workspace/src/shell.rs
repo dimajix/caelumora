@@ -1,4 +1,4 @@
-//! The shell tools of `terminal_tool`: commands in the workspace, through
+//! The shell tools of `workspace`: commands in the workspace, through
 //! the `Shell` the workspace's writer hands out (`WorkspaceWriter::shell`),
 //! which sees the commands started in that channel alone.
 //!
@@ -11,7 +11,7 @@
 //! through the same shell of the channel (`WorkspaceController::shell_in`)
 //! as the REST server does for them.
 
-use crate::terminal_tool::{next, tool, TerminalTool, TerminalToolConfig};
+use crate::workspace::{next, tool, WorkspaceComponent, WorkspaceConfig};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
 use caelumora_api::terminal::{CommandState, Shell};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -72,14 +72,14 @@ impl Drop for KillOnDrop {
     }
 }
 
-fn wait(config: &TerminalToolConfig, asked: Option<f64>) -> Duration {
+fn wait(config: &WorkspaceConfig, asked: Option<f64>) -> Duration {
     let most = config.max_wait_secs.min(MAX_WAIT_SECS) as f64;
     Duration::from_secs_f64(asked.unwrap_or(most).clamp(0.0, most))
 }
 
 /// `state` as the model is given it: the output cut from the front to
 /// what a result may hold.
-fn result(config: &TerminalToolConfig, prompts: &PromptTexts, state: CommandState) -> Value {
+fn result(config: &WorkspaceConfig, prompts: &PromptTexts, state: CommandState) -> Value {
     let mut output = state.output;
     let mut truncated = state.truncated;
     if output.len() > config.max_output_bytes {
@@ -129,7 +129,7 @@ struct Follow {
 }
 
 pub(crate) fn tools(
-    config: &TerminalToolConfig,
+    config: &WorkspaceConfig,
     prompts: &PromptTexts,
 ) -> Result<Vec<Tool>, PromptError> {
     let most = config.max_wait_secs.min(MAX_WAIT_SECS);
@@ -186,15 +186,15 @@ pub(crate) fn describe(name: &str, params: &Value) -> ToolResult<String> {
     }
 }
 
-/// Runs the shell tool `name` of `tool` with `params` on `shell`, the workspace's as
+/// Runs the shell tool `name` of `component` with `params` on `shell`, the workspace's as
 /// the turn's channel sees it.
 pub(crate) async fn execute(
-    tool: &TerminalTool,
+    component: &WorkspaceComponent,
     name: &str,
     params: &Value,
     shell: Arc<dyn Shell>,
 ) -> ToolResult<Value> {
-    let (config, prompts) = (&tool.config, &tool.prompts);
+    let (config, prompts) = (&component.config, &component.prompts);
     let state = match name {
         RUN_COMMAND => {
             let Run { command, wait_secs } = arguments(params)?;
@@ -224,8 +224,8 @@ pub(crate) async fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_tool::tests::tool as terminal_tool;
-    use crate::terminal_tool::TerminalTool;
+    use crate::workspace::tests::component;
+    use crate::workspace::WorkspaceComponent;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;
@@ -234,8 +234,8 @@ mod tests {
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use std::collections::BTreeMap;
 
-    fn the_tool() -> TerminalTool {
-        terminal_tool(json!({ "max_wait_secs": 10 }))
+    fn the_component() -> WorkspaceComponent {
+        component(json!({ "max_wait_secs": 10 }))
     }
 
     #[tokio::test]
@@ -243,7 +243,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let ran = the_tool()
+        let ran = the_component()
             .execute(
                 RUN_COMMAND,
                 &json!({ "command": "echo draft > notes.md; cat notes.md; ls" }),
@@ -268,7 +268,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = the_tool();
+        let tool = the_component();
         let running = tool
             .execute(
                 RUN_COMMAND,
@@ -312,7 +312,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = the_tool();
+        let tool = the_component();
         let marker = world.dir().join("still-running");
         let command = format!("sleep 1.5 && touch {}", marker.display());
         let interrupted = time::timeout(
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn the_approver_reads_the_command_whole_and_a_rule_covers_its_first_words() {
-        let tool = the_tool();
+        let tool = the_component();
         assert_eq!(
             tool.describe(RUN_COMMAND, &json!({ "command": "rm -rf build && make" })).unwrap(),
             "Run in the workspace:\nrm -rf build && make"
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn output_beyond_what_a_result_holds_is_cut_from_the_front() {
-        let config: TerminalToolConfig =
+        let config: WorkspaceConfig =
             serde_json::from_value(json!({ "max_output_bytes": 2 })).unwrap();
         let state = CommandState {
             id: "x".to_string(),

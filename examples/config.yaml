@@ -41,7 +41,7 @@ seed:
 
 # Where the files of workspaces lie (issues 251, 253): storages by name, each
 # with its type. `local` keeps a directory per workspace under `root`.
-# `shell: true` lets agents run commands there with `terminal_tool` - on
+# `shell: true` lets agents run commands there with the component `workspace` - on
 # Caelumora's host, as its user, with no isolation but the directory: only
 # for development. A storage with a shell takes no workspace classified
 # above its `destination` (default then: public). A command runs for

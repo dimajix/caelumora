@@ -1,4 +1,4 @@
-//! The file tools of `terminal_tool` (issue 251, step 9): the workspace's files through its
+//! The file tools of `workspace` (issue 251, step 9): the workspace's files through its
 //! terminal, whatever its storage - a shell is not needed -, those that only read through a
 //! `TerminalReader` (`read`, issue 516), those that change through a `Terminal` (`change`). Paths
 //! are relative to the workspace's top directory and made `WorkspacePath`s before anything is
@@ -20,7 +20,7 @@
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
 //! changed the file in between is overwritten.
 
-use crate::terminal_tool::{tool, TerminalTool, TerminalToolConfig};
+use crate::workspace::{tool, WorkspaceComponent, WorkspaceConfig};
 use bytes::Bytes;
 use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
 use caelumora_agents::turn::Turn;
@@ -197,7 +197,7 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
 }
 
 pub(crate) fn tools(
-    config: &TerminalToolConfig,
+    config: &WorkspaceConfig,
     prompts: &PromptTexts,
 ) -> Result<Vec<Tool>, PromptError> {
     let asks = |name: &str| config.requires_approval.required(read_only(name));
@@ -492,19 +492,19 @@ fn known(
     })
 }
 
-/// Runs the file tool `name` of `tool` that only reads (`read_only`) with `params` on `terminal`,
-/// the files of `workspace` - its id and its classification -, as `tool` is configured, with the
-/// texts its results give, recording in `turn` what was read.
+/// Runs the file tool `name` of `component` that only reads (`read_only`) with `params` on
+/// `terminal`, the files of `workspace` - its id and its classification -, as `component` is
+/// configured, with the texts its results give, recording in `turn` what was read.
 pub(crate) async fn read(
-    tool: &TerminalTool,
+    component: &WorkspaceComponent,
     name: &str,
     params: &Value,
     terminal: &dyn TerminalReader,
     workspace: (WorkspaceId, &Classification),
     turn: &mut Turn<'_>,
 ) -> ToolResult<Value> {
-    let config = &tool.config;
-    let prompts = &tool.prompts;
+    let config = &component.config;
+    let prompts = &component.prompts;
     let read = |turn: &mut Turn<'_>, digest| known(turn, workspace, digest);
     match name {
         LIST_FILES => {
@@ -591,8 +591,8 @@ pub(crate) async fn read(
     }
 }
 
-/// Runs the file tool `name` of `tool` that changes the files with `params` on `terminal`, the
-/// files of `workspace` - its id and its classification -, recording in `turn` what was read.
+/// Runs the file tool `name` that changes the files with `params` on `terminal`, the files of
+/// `workspace` - its id and its classification -, recording in `turn` what was read.
 pub(crate) async fn change(
     name: &str,
     params: &Value,
@@ -659,7 +659,7 @@ pub(crate) async fn change(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal_tool::tests::tool as terminal_tool;
+    use crate::workspace::tests::component;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;
@@ -682,7 +682,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(json!({}));
+        let tool = component(json!({}));
         let run = |name: &'static str, params: Value| (name, params);
 
         let calls = [
@@ -829,7 +829,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(json!({ "max_output_bytes": 10 }));
+        let tool = component(json!({ "max_output_bytes": 10 }));
         fs::write(world.dir().join("long.txt"), "line one\nline two\nline three\n").unwrap();
         fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
 
@@ -884,7 +884,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(json!({}));
+        let tool = component(json!({}));
         fs::create_dir_all(world.dir().join("docs")).unwrap();
         fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
         fs::write(world.dir().join("docs/notes.md"), "notes").unwrap();
@@ -963,7 +963,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(json!({}));
+        let tool = component(json!({}));
         fs::create_dir_all(world.dir().join("out")).unwrap();
         fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
 
@@ -1024,7 +1024,7 @@ mod tests {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let tool = terminal_tool(json!({}));
+        let tool = component(json!({}));
         let too_large = "x".repeat(MAX_FILE_BYTES as usize + 1);
         let refused = tool
             .execute(
@@ -1043,7 +1043,7 @@ mod tests {
 
     #[test]
     fn the_approver_reads_the_change_whole_and_a_rule_covers_the_file_or_the_move() {
-        let tool = terminal_tool(json!({}));
+        let tool = component(json!({}));
         let write = json!({ "path": "docs/a.md", "content": "hello\nworld" });
         assert_eq!(
             tool.describe(WRITE_FILE, &write).unwrap(),
@@ -1094,11 +1094,8 @@ mod tests {
 
     #[test]
     fn the_file_tools_are_presented_as_what_they_do_to_files() {
-        let presented: BTreeMap<String, ToolPresentation> = terminal_tool(json!({}))
-            .tools()
-            .into_iter()
-            .map(|t| (t.name, t.presentation))
-            .collect();
+        let presented: BTreeMap<String, ToolPresentation> =
+            component(json!({})).tools().into_iter().map(|t| (t.name, t.presentation)).collect();
         assert_eq!(presented[LIST_FILES], FILE_LIST_PRESENTATION);
         assert_eq!(presented[READ_FILE], FILE_READ_PRESENTATION);
         assert_eq!(presented[GREP_FILES], FILE_SEARCH_PRESENTATION);

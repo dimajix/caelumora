@@ -1,13 +1,12 @@
-//! What an agent is given to work on the session's workspace (issue 428): the component kinds
-//! `terminal_tool` (`terminal_tool`), with the tools on its files (`files`) and those of its shell
-//! (`shell`), and `workspace_prompt_provider`, which tells the agent which workspace it works on
-//! (`workspace_prompt_provider`), and the library that registers both (`library`). Workspaces
-//! themselves are the kernel's (issue 333); these are built on the terminal's public API and the
-//! agents' tools and prompt parts, as the tools of any other subject are.
+//! What an agent is given to work on the session's workspace (issues 428, 532): the component kind
+//! `workspace` (`workspace`), with the tools on its files (`files`) and those of its shell
+//! (`shell`), and the prompt part that tells the agent which workspace it works on, and the library
+//! that registers it (`library`). Workspaces themselves are the kernel's (issue 333); this is built
+//! on the terminal's public API and the agents' tools and prompt parts, as the tools of any other
+//! subject are.
 
 pub mod library;
-pub mod terminal_tool;
-pub mod workspace_prompt_provider;
+pub mod workspace;
 
 mod files;
 mod shell;

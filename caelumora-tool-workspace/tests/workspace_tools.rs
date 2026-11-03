@@ -19,7 +19,7 @@ use caelumora_domain::user::UserId;
 use caelumora_kernel::testing::World;
 use caelumora_kernel::view::Viewer;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
-use caelumora_tool_workspace::terminal_tool::TERMINAL_TOOL_KIND;
+use caelumora_tool_workspace::workspace::WORKSPACE_KIND;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,7 +39,7 @@ async fn asked_for_a_call_on_the_workspace(
         register_scripted(registry, ONCE_MODEL_KIND, vec![calling(function, arguments)])
     })
     .await;
-    let kind = TERMINAL_TOOL_KIND;
+    let kind = WORKSPACE_KIND;
     asked_for_a_call(&world, kind, present, |_, place| place.join(made).is_file(), owner(&world))
         .await
 }
@@ -135,7 +135,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
                 ComponentDescriptor::new("model", ONCE_MODEL_KIND),
                 ComponentDescriptor {
                     params: serde_json::json!({ "requires_approval": false }),
-                    ..ComponentDescriptor::new("workspace", TERMINAL_TOOL_KIND)
+                    ..ComponentDescriptor::new("workspace", WORKSPACE_KIND)
                 },
             ],
         },

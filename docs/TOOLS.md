@@ -133,7 +133,7 @@ at, and what the future holds is released. A tool therefore:
     own cannot be interrupted at all;
 *   ends on drop what it started outside the process and that would go on without it, in a task
     of its own, bounded and logged, which the drop does not await: the commands of
-    `terminal_tool`, which live with the storage, and the prompts an image model of the backend
+    `workspace`, which live with the storage, and the prompts an image model of the backend
     `comfyui` runs for `image_tool`, which hold its server;
 *   does not block: code that never reaches an `await` cannot be interrupted, and holds up the
     agent's whole task, which even the abort after the stop's grace does not end.
@@ -284,23 +284,23 @@ waits at most 60 seconds, for testing a cancel or a stop while a tool runs.
 
 ### The workspace
 
-`terminal_tool` gives an agent its session's workspace, where its channel may use it
+`workspace` gives an agent its session's workspace, where its channel may use it
 ([CHANNELS.md](CHANNELS.md#its-workspace)): its files, and a shell where its storage gives one. What
 its access list grants decides which of its tools may be called: the tools that only read files need
 reading (`GetWorkspace`), the others and every shell tool changing (`WriteWorkspace`) - a command
 may change anything its place reaches. A turn is offered those it may call: none where there is no
 workspace it may use in its channel - the set is unavailable, saying so -, none that change where
-the list grants reading alone, and no shell tool where its storage gives none; the prompt part says
+the list grants reading alone, and no shell tool where its storage gives none; its prompt part says
 the same ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). The workspace is reached through the turn's
 views on every call all the same, before anything is sent: a call where there is none, or one the
 list does not grant, fails and says so. Which calls need approval is configured as for `mcp_tool`:
 all - the default -, none, or all but those that only read files.
 
-The kind lives in the library `caelumora-tool-workspace` (issue 428), with the prompt part that
-names its `read_file`, `workspace_prompt_provider`: the workspaces are the kernel's, what an agent
-is given to work on them is built on the terminal's public API and the agents' tools, as the tools
-of any other subject are. `caelumora-app` and `caelumora-tui` list the library, and a personality
-names the kinds as before.
+The kind lives in the library `caelumora-tool-workspace` (issue 428): the workspaces are the
+kernel's, what an agent is given to work on them is built on the terminal's public API and the
+agents' tools and prompt parts, as the tools of any other subject are. Its tools and its prompt
+part, which names its `read_file`, are one kind (issue 532): the part tells nothing true without
+the tools. `caelumora-app` and `caelumora-tui` list the library.
 
 **Files.** The file tools work over the workspace's terminal, whatever its storage, without a shell:
 those that only read over the `TerminalReader` the workspace's reader hands out, those that change

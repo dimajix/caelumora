@@ -3,7 +3,7 @@
 # the conventions are those of the agents' file
 # (`caelumora-agents/src/prompts.yaml`). Names of tools are values.
 
-# `workspace_prompt_provider`: the workspace the agent works on in its
+# The prompt part of `workspace`: the workspace the agent works on in its
 # channel - its `name`, its `classification`, its `description` (none if it
 # has none), whether it is `writable` and has a `shell` -, the instruction
 # files `found` at its top, and the `names` of those a directory may hold;
@@ -38,7 +38,7 @@ no_workspace: |
 # `max_matches` and `default_matches`; the tools `run_command`,
 # `command_output` and `kill_command` by name.
 tools:
-  terminal_tool:
+  workspace:
     description: >-
       The session's workspace: its files, which persist across turns and are shared with the others
       who use it - list, read, search and change them - and a shell in it, where its storage gives one.

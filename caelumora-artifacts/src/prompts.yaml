@@ -4,7 +4,7 @@
 # of tools are values.
 
 # The descriptions of the tools (`caelumora_agents::tool::described`).
-# `publish_file` is the tool of `terminal_tool` to point to a file for a
+# `publish_file` is the tool of `workspace` to point to a file for a
 # look now: a tool of another plugin, which this one does not know by its
 # name.
 tools:
