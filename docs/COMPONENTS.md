@@ -20,11 +20,17 @@ turn is in [AGENT-TURN.md](AGENT-TURN.md).
 *   **`ComponentRegistry`** holds a factory per kind, together with the parameters that kind takes,
     the facets it provides and those of others it needs. The `KernelBuilder` makes the built-in
     registry of its own stores and applies `component_defaults`; a plugin registers its kinds in it
-    (`KernelBuilder::components`), a library through a `LibraryComponents`, which marks them as a
-    library's (issue 516), and a test its own before the plugins (`TestKernel::components`). A test
-    that builds components without a kernel starts from `caelumora_kernel::testing::test_registry`,
-    or the agents' `caelumora_agents::testing::test_registry`, with a model that is not to be asked
-    as the default.
+    (`KernelBuilder::components`), a library through a `LibraryComponents`, and a test its own
+    before the plugins (`TestKernel::components`). The registry keeps who registered each kind and
+    declared each single, so that a library's are known as such (issue 516). A kind is registered
+    under its name once, and a single declared once: one registered or declared again - by a
+    plugin, a library, the kernel or a test alike - keeps the kernel from being built, naming
+    whoever made both (issue 521), so that what a program is built of does not depend on the order
+    its parts register in. A test's kernel registers a model that is not to be asked after its
+    plugins and libraries, where none of them declares one. A test that builds components without
+    a kernel starts from `caelumora_kernel::testing::test_registry`, or the agents'
+    `caelumora_agents::testing::test_registry`, with a model that is not to be asked as the
+    default.
 *   **`ComponentContainer`** holds the components of a `ComponentConfig` the registry built for an
     owner (`ComponentRegistry::build`) - an agent, an external agent, a channel, a session's
     commands - and hands out the facets that owner declared it asks for, and no other
@@ -233,9 +239,9 @@ built, and keeps it with every turn.
 *   The default comes from, in this order: the container's own component; the defaults the container
     was built with (an external agent's actor gives its `ContextProvider` so,
     `external_context`); the configuration (`AppConfig::component_defaults`, see
-    [CONFIGURATION.md](CONFIGURATION.md)); and finally the kind it was registered with. Declared
-    again, a single's declaration replaces the one before - a test that builds an agent's
-    components without a kernel declares a model of its own so.
+    [CONFIGURATION.md](CONFIGURATION.md)); and finally the kind it was registered with. A single
+    is declared once: a default for every container is replaced by the configuration, which the
+    operator writes, never by a plugin or a library declaring the single again.
 *   A default may provide several singles - a model, its client and its profile (issue 57) - as
     long as no other default provides one of them too. It is built once for all of them: a
     container keeps its defaults by the component, not by the facet asked for.

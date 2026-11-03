@@ -1,6 +1,6 @@
 # 521 — A component kind or a single registered again replaces the first without a word
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Code structure
@@ -67,3 +67,12 @@ nothing is declared.
 
 - **2026-11-02** — Opened at the maintainer's request, from the reviews of steps 3 and 4 of issue
   [520](520-the-kernel-sees-no-model-call.md).
+- **2026-11-03** — Done as recommended. Since issue 520 the names above are `language_model`,
+  `caelumora-model`, `LanguageModelClient` and `with_unasked_language_model`. The registry keeps
+  who registered each kind and declared each single (`Origin`: the kernel, a plugin, a library, a
+  test), which replaces the mark of a library's (`of_library`, `singles_of_libraries`); the
+  `KernelBuilder` names the plugin or library as it registers it. A kind registered under a name
+  that is taken, or a single declared again, keeps the first and keeps the kernel from being built
+  (`ComponentRegistry::registered_once`), naming who made both. A test's kernel registers its model
+  that is not to be asked after its plugins and libraries, where none of them declares one; the
+  tests without a kernel declared nothing twice and stay as they were.

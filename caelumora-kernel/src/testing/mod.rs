@@ -25,7 +25,7 @@ use crate::actor::user::ChannelWatch;
 use crate::agent::AgentError;
 use crate::backend::Backends;
 use crate::channel::ChannelLoop;
-use crate::component::ComponentRegistry;
+use crate::component::{ComponentRegistry, Origin};
 use crate::controller::WorkspaceController;
 use crate::error::refusal;
 use crate::kernel::{Kernel, KernelBuilder, ParticipantRuntime};
@@ -268,8 +268,9 @@ pub struct TestKernel<'a> {
     pub confidentiality: Arc<dyn ConfidentialityPolicy>,
     /// The default configuration.
     pub config: AppConfig,
-    /// Registers the component kinds of the test beside the built-in ones and a model that is not
-    /// to be asked (`with_unasked_language_model`), before the plugins register theirs; none.
+    /// Registers the component kinds of the test beside the built-in ones, before the plugins
+    /// register theirs; none. After the plugins and the libraries, a model that is not to be asked
+    /// is registered where none of them declares one (`with_unasked_language_model`).
     pub components: Box<dyn FnOnce(&mut ComponentRegistry) + 'a>,
     /// None.
     pub plugins: Vec<&'a dyn Plugin>,
@@ -315,14 +316,16 @@ impl TestKernel<'_> {
             &self.config,
             Backends::with_plugins(&self.plugins),
         )?;
-        with_unasked_language_model(builder.components());
-        (self.components)(builder.components());
+        builder.registering_as(Origin::Test, |builder| (self.components)(builder.components()));
         for plugin in self.plugins {
             builder.plugin(plugin)?;
         }
         for library in self.libraries {
             builder.library(library)?;
         }
+        builder.registering_as(Origin::Test, |builder| {
+            with_unasked_language_model(builder.components());
+        });
         builder.build()
     }
 }

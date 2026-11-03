@@ -21,6 +21,7 @@ use futures::future::BoxFuture;
 use serde::Deserialize;
 use serde_json::Value;
 use std::any::TypeId;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fmt::Debug;
@@ -31,15 +32,37 @@ use std::sync::Arc;
 pub(super) struct Registration {
     /// The kind, as it was declared.
     kind: ComponentKind,
-    /// Whether a library registered it (`LibraryComponents`, issue 516), which is trusted for
-    /// nothing.
-    of_library: bool,
+    /// Who registered it.
+    origin: Origin,
     factory: ComponentFactory,
 }
 
-impl Registration {
-    fn of(kind: ComponentKind, factory: ComponentFactory) -> (String, Self) {
-        (kind.name().to_string(), Self { kind, of_library: false, factory })
+/// Who registered a kind or declared a single (issue 521): the kernel, a plugin or a library -
+/// which is trusted for nothing (issue 516) -, or a test.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Origin {
+    Kernel,
+    Plugin(&'static str),
+    Library(&'static str),
+    #[cfg(any(test, feature = "test-support"))]
+    Test,
+}
+
+impl Origin {
+    fn is_library(self) -> bool {
+        matches!(self, Self::Library(_))
+    }
+}
+
+impl fmt::Display for Origin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Kernel => f.write_str("the kernel"),
+            Self::Plugin(name) => write!(f, "the plugin {name}"),
+            Self::Library(name) => write!(f, "the library {name}"),
+            #[cfg(any(test, feature = "test-support"))]
+            Self::Test => f.write_str("the test"),
+        }
     }
 }
 
@@ -50,6 +73,8 @@ impl Registration {
 struct Single {
     facet: TypeKey,
     default_kind: Option<String>,
+    /// Who declared it.
+    origin: Origin,
 }
 
 /// Reserved `kind` that stands for the components of a bundle (`ComponentBundle`, issue 455)
@@ -84,9 +109,11 @@ struct DefaultRef {
 pub struct ComponentRegistry {
     kinds: HashMap<String, Registration>,
     singles: HashMap<TypeId, Single>,
-    /// The singles a library declared (`LibraryComponents::single`), which may be none the kernel
-    /// builds in its own name (issue 516).
-    singles_of_libraries: Vec<TypeKey>,
+    /// Who registers now (`registering`).
+    origin: Origin,
+    /// The first kind registered under a name that was taken, or single declared again (issue
+    /// 521), naming who made each: what keeps the kernel from being built.
+    registered_twice: Option<String>,
     /// The configuration's defaults for singles (`AppConfig::component_defaults`),
     /// by the single they provide.
     defaults: HashMap<TypeId, ComponentDescriptor>,
@@ -109,7 +136,8 @@ impl ComponentRegistry {
         Self {
             kinds: HashMap::new(),
             singles: HashMap::new(),
-            singles_of_libraries: Vec::new(),
+            origin: Origin::Kernel,
+            registered_twice: None,
             defaults: HashMap::new(),
             bundles,
         }
@@ -120,7 +148,7 @@ impl ComponentRegistry {
     /// kinds of an agent's components are the agents' library's
     /// (`caelumora_agents::library::AgentsLibrary`, issue 370), those of other libraries and
     /// plugins theirs. A binary passes it to the `KernelBuilder` as it is; a test may register
-    /// kinds of its own first, such as a stand-in for the model.
+    /// kinds of its own, such as a stand-in for the model.
     pub fn built_in(bundles: Arc<dyn EntityStore<ComponentBundle>>) -> Self {
         let mut registry = Self::new(bundles);
         command::register_all(&mut registry);
@@ -155,28 +183,52 @@ impl ComponentRegistry {
     ) -> anyhow::Result<()> {
         let kernel = self.built_for(asked);
         let of_kernel = |facet: &TypeKey| kernel.iter().any(|c| c.id == facet.id);
-        for (kind, registration) in self.kinds.iter().filter(|(_, r)| r.of_library) {
+        for (kind, registration) in self.kinds.iter().filter(|(_, r)| r.origin.is_library()) {
             if let Some(facet) = registration.kind.provided().iter().find(|f| of_kernel(f)) {
                 anyhow::bail!(
-                    "The component kind '{kind}' of a library provides {}, which the kernel builds in \
-                     its own name",
+                    "The component kind '{kind}' of {} provides {}, which the kernel builds in its \
+                     own name",
+                    registration.origin,
                     facet.name()
                 );
             }
             if let Some(service) = registration.kind.used().iter().find(|s| !of_libraries(s)) {
                 anyhow::bail!(
-                    "The component kind '{kind}' of a library uses {}, a service of the kernel",
+                    "The component kind '{kind}' of {} uses {}, a service of the kernel",
+                    registration.origin,
                     service.name()
                 );
             }
         }
-        if let Some(facet) = self.singles_of_libraries.iter().find(|f| of_kernel(f)) {
+        let mut of_library = self.singles.values().filter(|single| single.origin.is_library());
+        if let Some(single) = of_library.find(|single| of_kernel(&single.facet)) {
             anyhow::bail!(
-                "A library declares {} a single, which the kernel builds in its own name",
-                facet.name()
+                "{} declares {} a single, which the kernel builds in its own name",
+                single.origin,
+                single.facet.name()
             );
         }
         Ok(())
+    }
+
+    /// Refuses a registry in which a kind was registered under a name that was taken, or a single
+    /// declared again (issue 521): what a program is built of does not depend on the order its
+    /// plugins and libraries register in.
+    ///
+    /// # Errors
+    /// Naming the first such kind or single, and who registered or declared it each time.
+    pub(crate) fn registered_once(&self) -> anyhow::Result<()> {
+        match &self.registered_twice {
+            Some(twice) => anyhow::bail!("{twice}"),
+            None => Ok(()),
+        }
+    }
+
+    /// Makes what is registered from now on `origin`'s, until another is named: the kernel's
+    /// unless the `KernelBuilder` names a plugin or a library as it registers it, or a test's
+    /// kernel the test (`KernelBuilder::registering_as`).
+    pub(crate) fn registering(&mut self, origin: Origin) {
+        self.origin = origin;
     }
 
     /// The facets built for containers that ask for `asked`: those, and what the kinds that are no
@@ -186,7 +238,7 @@ impl ComponentRegistry {
         let mut at = 0;
         while at < facets.len() {
             let facet = facets[at];
-            for registration in self.kinds.values().filter(|r| !r.of_library) {
+            for registration in self.kinds.values().filter(|r| !r.origin.is_library()) {
                 if registration.kind.provided().iter().any(|p| p.id == facet.id) {
                     for need in registration.kind.needed() {
                         if !facets.iter().any(|f| f.id == need.id) {
@@ -221,16 +273,31 @@ impl ComponentRegistry {
         self.add(kind, async_factory(build));
     }
 
-    /// The kinds a library registers with the registry (issue 516): registered as here, marked as a
-    /// library's, so that the kernel is not built where one provides a facet the kernel builds in
-    /// its own name or uses a service of the kernel (`KernelBuilder::build`).
+    /// The kinds a library registers with the registry (issue 516), registered as here. The
+    /// `KernelBuilder` marks them as the library's as it registers it, so that the kernel is not
+    /// built where one provides a facet the kernel builds in its own name or uses a service of the
+    /// kernel.
     pub fn library_components(&mut self) -> LibraryComponents<'_> {
         LibraryComponents::new(Box::new(ForLibrary(self)))
     }
 
+    /// Registers `kind`, unless its name is taken: the first registration is kept then, and the
+    /// kernel is not built (`registered_once`).
     fn add(&mut self, kind: ComponentKind, factory: ComponentFactory) {
-        let (name, registration) = Registration::of(kind, factory);
-        self.kinds.insert(name, registration);
+        match self.kinds.entry(kind.name().to_string()) {
+            Entry::Occupied(first) => {
+                let twice = format!(
+                    "The component kind '{}' is registered by {} and again by {}",
+                    first.key(),
+                    first.get().origin,
+                    self.origin
+                );
+                self.registered_twice.get_or_insert(twice);
+            }
+            Entry::Vacant(place) => {
+                place.insert(Registration { kind, origin: self.origin, factory });
+            }
+        }
     }
 
     /// Makes `T` a facet of which there is exactly one per container, built
@@ -238,15 +305,28 @@ impl ComponentRegistry {
     /// (`set_defaults`) - if no component of the container provides it. With
     /// no default, a container that is asked for `T` and provides none fails
     /// to build it (issue 179: a remote agent has no default). Declared
-    /// again - by a test that builds components without a kernel, say - the
-    /// declaration replaces the one before.
+    /// again, the first declaration is kept, and the kernel is not built
+    /// (`registered_once`, issue 521).
     pub fn single<T: ?Sized + 'static>(&mut self, default_kind: Option<&str>) {
         self.single_of(TypeKey::of::<T>(), default_kind);
     }
 
     fn single_of(&mut self, facet: TypeKey, default_kind: Option<&str>) {
-        self.singles
-            .insert(facet.id, Single { facet, default_kind: default_kind.map(str::to_string) });
+        match self.singles.entry(facet.id) {
+            Entry::Occupied(first) => {
+                let twice = format!(
+                    "{} is declared a single by {} and again by {}",
+                    facet.name(),
+                    first.get().origin,
+                    self.origin
+                );
+                self.registered_twice.get_or_insert(twice);
+            }
+            Entry::Vacant(place) => {
+                let default_kind = default_kind.map(str::to_string);
+                place.insert(Single { facet, default_kind, origin: self.origin });
+            }
+        }
     }
 
     /// Takes the configuration's defaults (`AppConfig::component_defaults`): each of its components
@@ -728,14 +808,11 @@ struct ForLibrary<'a>(&'a mut ComponentRegistry);
 
 impl ComponentKinds for ForLibrary<'_> {
     fn register(&mut self, kind: ComponentKind, factory: ComponentFactory) {
-        let (name, mut registration) = Registration::of(kind, factory);
-        registration.of_library = true;
-        self.0.kinds.insert(name, registration);
+        self.0.add(kind, factory);
     }
 
     fn single_of(&mut self, facet: TypeKey, default_kind: Option<&str>) {
         self.0.single_of(facet, default_kind);
-        self.0.singles_of_libraries.push(facet);
     }
 }
 
@@ -748,6 +825,12 @@ impl ComponentRegistry {
         let mut kinds: Vec<&str> = self.kinds.keys().map(String::as_str).collect();
         kinds.sort_unstable();
         kinds
+    }
+
+    /// Whether `T` is declared a single, for a test that declares a stand-in only where nothing
+    /// else declares it (`with_unasked_language_model`).
+    pub fn declares_single<T: ?Sized + 'static>(&self) -> bool {
+        self.is_single(TypeId::of::<T>())
     }
 }
 
@@ -1604,11 +1687,35 @@ mod tests {
         );
     }
 
-    /// A single declared again replaces the declaration before, its default kind with it.
+    /// A kind registered under a name that is taken, and a single declared again, keep the first
+    /// and refuse the registry, naming who made both (issue 521).
     #[test]
-    fn a_single_declared_again_replaces_its_declaration() {
+    fn what_is_registered_again_keeps_the_first_and_refuses_the_registry() {
         let (mut registry, _) = choices();
+        registry.registered_once().expect("everything once");
+
+        registry.registering(Origin::Plugin("late"));
         registry.single::<dyn Choice>(None);
-        assert_eq!(registry.kind_of::<dyn Choice>(&config(&[])), None, "the declaration replaced");
+        assert_eq!(
+            registry.kind_of::<dyn Choice>(&config(&[])).as_deref(),
+            Some("declared"),
+            "the first declaration kept"
+        );
+        let refused = registry.registered_once().expect_err("declared twice").to_string();
+        assert_eq!(
+            refused, "Choice is declared a single by the kernel and again by the plugin late",
+            "{refused}"
+        );
+
+        let (mut registry, _) = choices();
+        registry.registering(Origin::Library("late"));
+        registry.register(ComponentKind::new("part"), |_, _| unreachable!("never registered"));
+        assert!(registry.provides("part").is_some_and(|facets| !facets.is_empty()), "the first");
+        let refused = registry.registered_once().expect_err("registered twice").to_string();
+        assert_eq!(
+            refused,
+            "The component kind 'part' is registered by the kernel and again by the library late",
+            "{refused}"
+        );
     }
 }

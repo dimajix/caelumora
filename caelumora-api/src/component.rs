@@ -417,11 +417,12 @@ where
     Box::new(move |descriptor, context| Box::pin(build(descriptor, context)))
 }
 
-/// The kinds of components a library registers with (issue 516): the kernel's registry, which
-/// marks what is registered through it as a library's, so that the kernel is not built where one
-/// provides a facet the kernel builds in its own name or uses a service of the kernel.
+/// The kinds of components a library registers with (issue 516): the kernel's registry. The kernel
+/// marks what a library registers as the library's as it registers the library, so that the kernel
+/// is not built where one provides a facet the kernel builds in its own name or uses a service of
+/// the kernel.
 pub trait ComponentKinds {
-    /// Registers `kind`, built by `factory`, as a library's.
+    /// Registers `kind`, built by `factory`.
     fn register(&mut self, kind: ComponentKind, factory: ComponentFactory);
 
     /// Makes `facet` one of which there is exactly one per container, built from `default_kind`

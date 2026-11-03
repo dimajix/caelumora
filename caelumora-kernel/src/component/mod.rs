@@ -25,4 +25,5 @@ mod registry;
 pub mod testing;
 
 pub use context::BuildContext;
+pub(crate) use registry::Origin;
 pub use registry::{ComponentRegistry, BUNDLE_REF_KIND, COMPONENT_DEFAULT_KIND};

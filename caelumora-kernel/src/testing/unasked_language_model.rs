@@ -44,9 +44,15 @@ impl ModelProfileProvider for UnaskedLanguageModel {
 }
 
 /// Registers with `registry` a model that is not to be asked, declared the default of the model's
-/// facets: for a test's kernel (`TestKernel`), whose plugins may declare another after it - the
-/// models' -, and for a test that builds an agent's components without a kernel.
+/// facets, unless one of them is declared already: for a test's kernel (`TestKernel`), after its
+/// plugins, one of which may declare another - the models' -, and for a test that builds an agent's
+/// components without a kernel.
 pub fn with_unasked_language_model(registry: &mut ComponentRegistry) {
+    if registry.declares_single::<dyn LanguageModelClient>()
+        || registry.declares_single::<dyn ModelProfileProvider>()
+    {
+        return;
+    }
     registry.register(
         ComponentKind::new(UNASKED_LANGUAGE_MODEL_KIND)
             .provides::<dyn LanguageModelClient>()

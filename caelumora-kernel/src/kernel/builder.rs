@@ -11,7 +11,7 @@ use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;
-use crate::component::ComponentRegistry;
+use crate::component::{ComponentRegistry, Origin};
 use crate::content::ContentStorage;
 use crate::controller::ControllerManager;
 use crate::event::EventBus;
@@ -397,25 +397,42 @@ impl KernelBuilder {
         Ok(builder)
     }
 
-    /// Registers what `plugin` brings.
+    /// Registers what `plugin` brings, its component kinds as the plugin's.
     ///
     /// # Errors
     /// Whatever its registration fails with, naming the plugin.
     pub fn plugin(&mut self, plugin: &dyn Plugin) -> Result<()> {
-        plugin
-            .register(self)
-            .with_context(|| format!("Cannot register the plugin {}", plugin.name()))
+        self.registering_as(Origin::Plugin(plugin.name()), |builder| {
+            plugin
+                .register(builder)
+                .with_context(|| format!("Cannot register the plugin {}", plugin.name()))
+        })
     }
 
     /// Registers what `library` brings, with the part of this builder a library may use
-    /// (`LibraryBuilder`, issue 516).
+    /// (`LibraryBuilder`, issue 516), its component kinds as the library's.
     ///
     /// # Errors
     /// Whatever its registration fails with, naming the library.
     pub fn library(&mut self, library: &dyn Library) -> Result<()> {
-        library
-            .register(&mut ForLibrary(self))
-            .with_context(|| format!("Cannot register the library {}", library.name()))
+        self.registering_as(Origin::Library(library.name()), |builder| {
+            library
+                .register(&mut ForLibrary(builder))
+                .with_context(|| format!("Cannot register the library {}", library.name()))
+        })
+    }
+
+    /// What `register` answers, the component kinds it registers and the singles it declares made
+    /// `origin`'s (issue 521); what is registered after it is the kernel's again.
+    pub(crate) fn registering_as<R>(
+        &mut self,
+        origin: Origin,
+        register: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.component_registry.registering(origin);
+        let registered = register(self);
+        self.component_registry.registering(Origin::Kernel);
+        registered
     }
 
     /// The store of the entities of `T`, a plugin's kind: over the one
@@ -616,13 +633,15 @@ impl KernelBuilder {
     /// The kernel, with everything registered.
     ///
     /// # Errors
-    /// If a section of the configuration is claimed by no plugin or library; a
+    /// If a section of the configuration is claimed by no plugin or library; if a component kind
+    /// was registered under a name that was taken, or a single declared twice (issue 521); a
     /// `ComponentError` if `component_defaults` cannot replace a default
     /// (see `ComponentRegistry::set_defaults`) - the process does not start
     /// then.
     pub fn build(mut self) -> Result<Kernel> {
         self.plugin_sections.all_claimed()?;
         self.library_sections.all_claimed()?;
+        self.component_registry.registered_once()?;
         let unbound = self
             .component_registry
             .extensions_declared()
@@ -692,6 +711,7 @@ mod tests {
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
     use caelumora_api::model::LanguageModelClient;
+    use caelumora_domain::command::HELP_KIND;
     use caelumora_domain::prompt_catalogue::PromptVariant;
     use caelumora_security::AllowAllPolicy;
     use std::fs;
@@ -787,7 +807,10 @@ mod tests {
                 }),
                 "uses SecretManager",
             ),
-            (Brings(|c| c.single::<dyn Moderator>(None)), "declares Moderator a single"),
+            (
+                Brings(|c| c.single::<dyn ChannelCommandProvider>(None)),
+                "the library brings declares ChannelCommandProvider a single",
+            ),
         ];
         for (brings, what) in refusing {
             let refused = built(&brings).expect_err(what);
@@ -818,6 +841,76 @@ mod tests {
         }
         .try_build()
         .expect("the kernel's own kinds may");
+    }
+
+    /// Issue 521: a component kind registered under a name that is taken, and a single declared
+    /// again, keep the kernel from being built, naming who made both - a plugin and a library, the
+    /// kernel and a test alike.
+    #[test]
+    fn the_kernel_is_not_built_where_a_kind_or_a_single_is_registered_twice() {
+        trait Twice: Send + Sync {}
+        /// Registers the kind `twice` and declares `Twice` a single.
+        struct Registers;
+        impl Plugin for Registers {
+            fn name(&self) -> &'static str {
+                "registers"
+            }
+            fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
+                kernel
+                    .components()
+                    .register(ComponentKind::new("twice"), |_, _| Ok(ComponentFacets::empty()));
+                kernel.components().single::<dyn Twice>(None);
+                Ok(())
+            }
+        }
+        /// What a library does as it registers.
+        struct Again(fn(&mut LibraryComponents<'_>));
+        impl Library for Again {
+            fn name(&self) -> &'static str {
+                "again"
+            }
+            fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
+                (self.0)(&mut library.components());
+                Ok(())
+            }
+        }
+        let built = |again: &Again| {
+            TestKernel { plugins: vec![&Registers], libraries: vec![again], ..Default::default() }
+                .try_build()
+                .map(drop)
+        };
+
+        built(&Again(|_| {})).expect("everything once");
+        let refusing: [(Again, &str); 2] = [
+            (
+                Again(|c| c.register(ComponentKind::new("twice"), |_, _| unreachable!())),
+                "The component kind 'twice' is registered by the plugin registers and again by \
+                 the library again",
+            ),
+            (
+                Again(|c| c.single::<dyn Twice>(None)),
+                "Twice is declared a single by the plugin registers and again by the library \
+                 again",
+            ),
+        ];
+        for (again, what) in refusing {
+            let refused = built(&again).expect_err(what);
+            assert_eq!(refused.to_string(), what, "{refused:#}");
+        }
+        let refused = TestKernel {
+            components: Box::new(|registry| {
+                registry.register(ComponentKind::new(HELP_KIND), |_, _| unreachable!());
+            }),
+            ..Default::default()
+        }
+        .try_build()
+        .map(drop)
+        .expect_err("named as the kernel's");
+        assert_eq!(
+            refused.to_string(),
+            "The component kind 'help' is registered by the kernel and again by the test",
+            "{refused:#}"
+        );
     }
 
     /// Issue 516: a component kind that needs an extension no plugin binds keeps the kernel from

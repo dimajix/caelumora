@@ -8,7 +8,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [521](521-a-registration-made-again-replaces-the-first.md) | open | medium | bug | A component kind registered under a name that is taken, and a single declared again, replace the registration before without a word, so that a library registered after a plugin can change what every agent of the program is built of - its model among it. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Sessions and channels
