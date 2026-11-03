@@ -50,9 +50,16 @@ import {ensureOk} from '../errors';
 
 const API_BASE = '/api';
 
-/** The query of a page of a history (issue 218): the one before `before`, or the last. */
-function pageQuery(before?: number | null): string {
-  return before == null ? '' : `?before=${before}`;
+/**
+ * The query of a page of a history (issue 218): the one before `before`, or the last - of the
+ * messages carrying attachments alone with `attachments` (issue 509).
+ */
+function pageQuery(before?: number | null, attachments = false): string {
+  const query = new URLSearchParams();
+  if (before != null) query.set('before', String(before));
+  if (attachments) query.set('attachments', 'true');
+  const asked = query.toString();
+  return asked ? `?${asked}` : '';
 }
 
 /** A path inside a workspace, each part encoded, `/` kept between them. */
@@ -78,7 +85,8 @@ export interface WorkspaceFiles {
 
 /**
  * The attachments of a channel's messages (issue 282): a file uploaded for a message the user is
- * about to write, and an attachment downloaded through the message that carries it.
+ * about to write, an attachment downloaded through the message that carries it, and the messages
+ * carrying them listed (issue 509).
  */
 export interface ChannelAttachments {
   /**
@@ -91,6 +99,12 @@ export interface ChannelAttachments {
    * goes with it.
    */
   url(message: string, attachment: string): string;
+  /**
+   * A page of the channel's messages carrying attachments (issue 509), as far as the user's view of
+   * its history reaches: the last ones, or those before `before`, the `earlier` of the page after
+   * it. What a tool's result gave its model is no attachment and not among them.
+   */
+  list(before?: number | null): Promise<HistoryPage<Message>>;
 }
 
 /**
@@ -1196,6 +1210,11 @@ export const api = {
         return res.json();
       },
       url: (message, attachment) => `${API_BASE}${base}/messages/${message}/attachments/${attachment}`,
+      async list(before) {
+        const res = await request(`${base}/history${pageQuery(before, true)}`);
+        await ensureOk(res, 'Failed to fetch the attachments');
+        return res.json();
+      },
     };
   },
 

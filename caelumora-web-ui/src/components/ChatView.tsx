@@ -16,6 +16,7 @@ import {
   MessageCircleQuestion,
   MessageSquare,
   NotebookPen,
+  Paperclip,
   Pencil,
   RotateCcw,
   Scale,
@@ -55,6 +56,7 @@ import type {
   WorkspaceResponse,
 } from '../types';
 import {NotesList} from './NotesList';
+import {ChannelAttachmentsPanel} from './ChannelAttachmentsPanel';
 import {answersOnlyWhenMentioned, responderPolicyInfo} from '../moderator';
 import {
   CONFIDENTIALITY_LEVELS,
@@ -268,6 +270,17 @@ interface ChatViewProps {
   onSelectPage: (page: Page) => void;
 }
 
+/** The tabs of the channel panel, in their order, each with its icon and label. */
+const SIDE_TABS = [
+  {id: 'channel', icon: MessageSquare, label: 'Channel'},
+  {id: 'notes', icon: NotebookPen, label: 'Notes'},
+  {id: 'workspace', icon: HardDrive, label: 'Files'},
+  {id: 'attachments', icon: Paperclip, label: 'Attachments'},
+] as const;
+
+/** What the channel panel shows. */
+type SideTab = typeof SIDE_TABS[number]['id'];
+
 export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, onSelectPage }) => {
   // The user's actor, whose messages are their own (issue 407).
   const me = useMemo(() => userActor(user.id), [user.id]);
@@ -279,7 +292,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const shown = useMemo(() => withoutQuietCalls(merged), [merged]);
   const [channel, setChannel] = useState<ChannelResponse | null>(null);
   const [notes, setNotes] = useState<PublishedNotes[]>([]);
-  const [sideTab, setSideTab] = useState<'channel' | 'notes' | 'workspace'>('channel');
+  const [sideTab, setSideTab] = useState<SideTab>('channel');
+  // Changes whenever what the channel's messages carry may have changed (issue 509): a message
+  // with attachments said, a message changed, taken back or reclassified, the channel reclassified,
+  // the stream started from a snapshot.
+  const [attachmentsVersion, setAttachmentsVersion] = useState(0);
   // Changes whenever the session's workspace or its files may have changed
   // here: a tool call ended, the channel's switch was set (issue 253).
   const [workspaceVersion, setWorkspaceVersion] = useState(0);
@@ -548,6 +565,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       const said = saidInChannel(event);
       if (!said || said.channelId !== channelId) return;
       setMessages(prev => prev.some(m => m.id === said.message.id) ? prev : [...prev, said.message]);
+      if (said.message.attachments?.length) setAttachmentsVersion(v => v + 1);
     });
   }, [channelId, takesPart]);
 
@@ -577,6 +595,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       const reclassified = reclassifiedChannel(event);
       if (!reclassified || reclassified.channelId !== channelId) return;
       setChannel(prev => prev && {...prev, classification: reclassified.classification});
+      setAttachmentsVersion(v => v + 1);
       // Its last page anew, as a snapshot would show it (issue 218).
       Promise.all([api.getChannel(sessionId, channelId), api.getHistory(sessionId, channelId)])
         .then(([found, page]) => showLastPage(page, nameIn(found)))
@@ -756,6 +775,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         setPendingApprovals(snapshot.pending_approvals ?? []);
         setPendingQuestions(snapshot.pending_questions ?? []);
         setEarlier(snapshot.earlier);
+        setAttachmentsVersion(v => v + 1);
         // The answers under way as the snapshot found them (issue 240): what
         // streamed before is not kept, what follows streams in.
         setAnswers(snapshot.channel.participants.flatMap(m => m.turn_under_way
@@ -818,6 +838,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           const newMsg = (actorEvent.CompleteMessageGenerated ?? actorEvent.IntermediateMessageGenerated)!;
           // A tool call that ended may have changed the files.
           if (newMsg.tool_results?.length) setWorkspaceVersion(v => v + 1);
+          if (newMsg.attachments?.length) setAttachmentsVersion(v => v + 1);
           // A message can arrive twice: in the snapshot and as an event. Kept
           // as it came, as the snapshot's are; a call and its result are shown
           // together as the chat is drawn (`mergeToolResults`).
@@ -841,16 +862,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setMessages(prev => prev.map(m => m.id === modified.id
             ? {...m, content: modified.content, reasoning: modified.reasoning, attachments: modified.attachments, classification: modified.classification, mentions: modified.mentions, modified: modified.timestamp}
             : m));
+          setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.MessageRevoked) {
           // In its place without what it said (`Message::revoke`).
           const {message, at} = actorEvent.MessageRevoked;
           setMessages(prev => prev.map(m => m.id === message
             ? {...m, content: null, reasoning: undefined, attachments: [], tool_calls: [], tool_results: [], mentions: [], revoked: at}
             : m));
+          setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.MessageReclassified) {
           // In its place, classified anew (`Message::reclassify`, issue 239).
           const {message, classification} = actorEvent.MessageReclassified;
           setMessages(prev => prev.map(m => m.id === message ? {...m, classification} : m));
+          setAttachmentsVersion(v => v + 1);
         } else if (actorEvent.RetryAccepted) {
           // A new answer begins: shown as under way from now on. An answer
           // under way was given up, and what of it was said stays, as the
@@ -2152,37 +2176,24 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       <ResizeHandle panel={channelPanel} panelSide="right" label="Resize the channel panel" className="hidden md:block" />
       <div className="shrink-0 border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 overflow-y-auto hidden md:block" style={{width: channelPanel.width}}>
         <div className="p-4">
-          <div className="flex items-center gap-1 mb-4 text-gray-500 dark:text-gray-400" role="tablist">
-            <button
-              role="tab"
-              aria-selected={sideTab === 'channel'}
-              onClick={() => setSideTab('channel')}
-              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'channel' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
-            >
-              <MessageSquare size={16} />
-              <h3 className="font-semibold uppercase text-xs tracking-wider">Channel</h3>
-            </button>
-            <button
-              role="tab"
-              aria-selected={sideTab === 'notes'}
-              onClick={() => setSideTab('notes')}
-              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'notes' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
-            >
-              <NotebookPen size={16} />
-              <h3 className="font-semibold uppercase text-xs tracking-wider">Notes</h3>
-            </button>
-            <button
-              role="tab"
-              aria-selected={sideTab === 'workspace'}
-              onClick={() => setSideTab('workspace')}
-              className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === 'workspace' && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
-            >
-              <HardDrive size={16} />
-              <h3 className="font-semibold uppercase text-xs tracking-wider">Files</h3>
-            </button>
+          <div className="flex flex-wrap items-center gap-1 mb-4 text-gray-500 dark:text-gray-400" role="tablist">
+            {SIDE_TABS.map(({id, icon: Icon, label}) => (
+              <button
+                key={id}
+                role="tab"
+                aria-selected={sideTab === id}
+                onClick={() => setSideTab(id)}
+                className={cn("flex items-center gap-1.5 px-2 py-1 rounded-md", sideTab === id && "bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-100")}
+              >
+                <Icon size={16} />
+                <h3 className="font-semibold uppercase text-xs tracking-wider">{label}</h3>
+              </button>
+            ))}
           </div>
           {sideTab === 'notes' ? <NotesList notes={notes} /> : sideTab === 'workspace' ? (
             <ChannelWorkspacePanel workspace={workspace} files={workspaceFiles} version={workspaceVersion} />
+          ) : sideTab === 'attachments' ? (
+            <ChannelAttachmentsPanel key={channelId} attachments={channelAttachments} version={attachmentsVersion} />
           ) : (<>
           {channel && (
             <ChannelDescription channel={channel} onEdit={() => setIsDescribing(true)} />

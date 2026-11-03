@@ -439,6 +439,16 @@ channel uses it and the user may read it - and its files, by the workspace; or t
 used here, without why. The files are loaded again when a tool call of the channel ended, when the
 user ended a command, and when the channel's switch to use the workspace changes.
 
+### The channel's attachments
+
+The channel panel's "Attachments" lists what was attached in the channel: its messages carrying
+attachments, the newest first, each with who said it and when, as far as the user's view of the
+history reaches - a page of the history read by what its messages carry (`?attachments=true`, see
+[REST-SERVER.md](REST-SERVER.md)), and further pages on request. Each attachment is shown as at its
+message. What a tool's result gave its model is no attachment and is not listed. The list is read
+again from its end when a message with attachments is said, a message is changed, taken back or
+reclassified, the channel is reclassified, and when the stream starts from a snapshot.
+
 ### Participants, moderator and notes
 
 Under each agent, a gauge shows how full its context is: the tokens its last call measured, or a

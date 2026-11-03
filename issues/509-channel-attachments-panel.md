@@ -1,6 +1,6 @@
 # 509 — A channel's attachments can be found only message by message
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** User interaction
@@ -85,3 +85,6 @@ gets a test for it.
   wanted a panel of a channel's artifacts and left it open when it was cut with issue 282.
 - **2026-11-03** — Decided as above. Step 1: `?attachments=true` on both histories, read through
   `Filter::with_attachments`; the web UI's list follows as step 2.
+- **2026-11-03** — Step 2: the channel panel's "Attachments" lists the messages carrying
+  attachments, page by page, read again as what they carry may have changed; without a way from an
+  entry to its message, as decided. Done.
