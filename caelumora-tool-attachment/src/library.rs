@@ -1,0 +1,22 @@
+//! How the tools on attachments are joined to the kernel (issue 533): their texts and the component
+//! kind `attachments`.
+
+use crate::{component, NAMESPACE, PROMPTS};
+use anyhow::Result;
+use caelumora_api::library::{Library, LibraryBuilder};
+
+/// The tools on attachments, as a library.
+#[derive(Debug, Default)]
+pub struct AttachmentToolLibrary;
+
+impl Library for AttachmentToolLibrary {
+    fn name(&self) -> &'static str {
+        "tool_attachment"
+    }
+
+    fn register(&self, library: &mut dyn LibraryBuilder) -> Result<()> {
+        library.add_prompts(NAMESPACE, PROMPTS)?;
+        component::register(&mut library.components());
+        Ok(())
+    }
+}

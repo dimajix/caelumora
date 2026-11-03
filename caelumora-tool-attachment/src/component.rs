@@ -1,18 +1,19 @@
-//! The `attachments` component (issue 282): the tools with which an agent reaches the
+//! The component kind `attachments` (issues 282, 533): the tools with which an agent reaches the
 //! attachments it heard, by the numbers its transcript gave them (`a3`) - shows its model an image
 //! again, reads a text a page at a time, copies one into the workspace it may use to work on it
 //! there, or attaches one to its next message. Each reads the message that carries the attachment
 //! as it stands, through the view of the agent's channel: one a change removed is not found, and
 //! its label is the current one.
 
-use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
-use crate::situation::Situation;
-use crate::tool::{
+use crate::NAMESPACE;
+use async_trait::async_trait;
+use caelumora_agents::prompt::{texts_of, writing_for_the_model};
+use caelumora_agents::situation::Situation;
+use caelumora_agents::tool::{
     arguments, described, page_of, tool_text, workspace_reader, workspace_writer, ToolError,
     ToolOutput, ToolProvider, ToolResult,
 };
-use crate::turn::Turn;
-use async_trait::async_trait;
+use caelumora_agents::turn::Turn;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::error::ContentError;
 use caelumora_api::reader::ChannelReader;
@@ -29,12 +30,13 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::error;
 
-pub const ATTACHMENTS_KIND: &str = "attachments";
+/// The kind of the component, and the path of its texts in the catalogue.
+const ATTACHMENTS_KIND: &str = "attachments";
 
-pub const VIEW_ATTACHMENT: &str = "view_attachment";
-pub const READ_ATTACHMENT: &str = "read_attachment";
-pub const COPY_ATTACHMENT: &str = "copy_attachment";
-pub const ATTACH: &str = "attach";
+const VIEW_ATTACHMENT: &str = "view_attachment";
+const READ_ATTACHMENT: &str = "read_attachment";
+const COPY_ATTACHMENT: &str = "copy_attachment";
+const ATTACH: &str = "attach";
 
 /// How many bytes of a text `read_attachment` gives at once, as `read_file` gives 64 KiB unless
 /// configured.
@@ -70,8 +72,10 @@ struct CopyTo {
     path: Option<String>,
 }
 
+/// The tools `view_attachment`, `read_attachment`, `copy_attachment` and `attach` over the
+/// attachments its agent heard.
 #[derive(Debug)]
-pub struct AttachmentsComponent {
+struct AttachmentsComponent {
     /// What its tool set is for and its tools, as the prompt catalogue words them.
     description: String,
     tools: Vec<Tool>,
@@ -86,7 +90,7 @@ impl AttachmentsComponent {
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
+    fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
         let reference = || ("ref".to_string(), ToolParameters::string());
         let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
             described(
@@ -326,7 +330,9 @@ impl ToolProvider for AttachmentsComponent {
     }
 }
 
-pub fn register(registry: &mut LibraryComponents<'_>) {
+/// Registers the component kind `attachments`, which reads and writes the agent's workspace and
+/// writes for the agent's model.
+pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(ATTACHMENTS_KIND)
@@ -346,7 +352,9 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{self, agent_runtime};
+    use crate::prompts;
+    use bytes::Bytes;
+    use caelumora_agents::testing::{self, agent_runtime};
     use caelumora_api::terminal::ByteStream;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
@@ -359,14 +367,12 @@ mod tests {
     use caelumora_domain::security::Grant;
     use caelumora_domain::workspace::Workspace;
     use caelumora_kernel::session::SessionLoop;
-    use caelumora_kernel::testing::participant_runtime_in;
-    use caelumora_kernel::testing::World;
+    use caelumora_kernel::testing::{checks, participant_runtime_in, World};
     use caelumora_kernel::view::Viewer;
     use futures::stream;
     use std::fs;
     use std::time::Duration;
     use tokio::time;
-    use tokio_util::bytes::Bytes;
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nthe rest";
 
@@ -442,7 +448,7 @@ mod tests {
     }
 
     fn tool() -> AttachmentsComponent {
-        AttachmentsComponent::new(testing::prompts()).unwrap()
+        AttachmentsComponent::new(prompts()).unwrap()
     }
 
     #[tokio::test]
@@ -587,6 +593,55 @@ mod tests {
             tool.offered(&seeing.situation()).await.unwrap().into_iter().map(|t| t.name).collect();
         assert_eq!(offered, [VIEW_ATTACHMENT, READ_ATTACHMENT, COPY_ATTACHMENT, ATTACH]);
         drop(seeing);
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    }
+
+    /// M5 of the security suite: an agent reaches an attachment it heard (issue 282) through the
+    /// view of its channel, as its owner, by the number its transcript gave it - asking what
+    /// reaching the channel asks, nothing of its own; copying one into the workspace asks what
+    /// writing there asks, and attaching one to its answer nothing more.
+    #[tokio::test]
+    async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel() {
+        let world = testing::world().await;
+        let (session, helper, _) = session_with_helper(&world).await;
+        let said = said_with_attachments(&world, &session).await;
+        let mut state = AgentChannelState::default();
+        state.perceive(vec![Message { role: MessageRole::User, ..said }]);
+        let mut turn = testing::turn(&session, helper, world.alice, &mut state);
+        let tool = tool();
+        let (_, read) = world
+            .asked(tool.execute(READ_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn))
+            .await;
+        let (_, attached) =
+            world.asked(tool.execute(ATTACH, &json!({ "ref": "a1" }), None, &mut turn)).await;
+        let (_, copied) = world
+            .asked(tool.execute(COPY_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn))
+            .await;
+        let reaching = [
+            "alice as helper: GetSession(alice's) yes",
+            "alice as helper: GetChannel(alice's) yes",
+        ];
+        assert_eq!(
+            read,
+            checks(&reaching),
+            "reaching the channel as its owner, nothing of its own"
+        );
+        assert_eq!(attached, checks(&reaching), "nor attaching it");
+        // The workspace's writer is handed out as the session is reached (issue 516), then writing
+        // into the workspace asks what it asks.
+        let handed = ["alice as helper: GetSession(alice's) yes"];
+        let writing = [
+            "alice as helper: GetWorkspace(alice's) yes",
+            "alice as helper: Publish yes",
+            "alice as helper: Publish yes",
+            "alice as helper: WriteWorkspace(alice's) yes",
+        ];
+        assert_eq!(
+            copied,
+            checks(&[&handed[..], &reaching[..], &writing[..], &reaching[..]].concat()),
+            "copying: the writer handed out, what writing into the workspace asks, then reading it"
+        );
+        drop(turn);
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

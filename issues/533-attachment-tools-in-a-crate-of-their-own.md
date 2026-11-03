@@ -1,6 +1,6 @@
 # 533 — The tools on attachments are part of the agents crate
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -103,3 +103,18 @@ Raised by the maintainer on 2026-11-03.
 ## History
 
 - **2026-11-03** — Opened at the maintainer's request.
+- **2026-11-03** — Done. `caelumora-tool-attachment` holds the kind `attachments` in its
+  `component.rs`, its texts in its `prompts.yaml` under the namespace `tool_attachment`, and
+  `AttachmentToolLibrary`, which `caelumora-app` and `caelumora-tui` list; `caelumora-agents`
+  registers the kind no more. Nothing of the agents had to become public. One thing differs from
+  the considerations: the test M5 is no test of the crate's `tests/`, but a unit test beside the
+  kind's own, in the suite's world (`caelumora_agents::testing::world`) and with the same
+  session, as `caelumora-tool-workspace` tests what its reading asks
+  (`a_read_of_a_file_asks_what_reading_asks_and_never_a_change`). Moved as it stood into `tests/`,
+  it would have made the component, its constructor, its tool names and its texts public for the
+  test alone, where the crate keeps them to itself, as `caelumora-tool-image` does. Rewritten
+  through the whole kernel - a scripted model calling the tool, as the workspace tools' tests in
+  `tests/` do - it would have needed nothing public but the kind's name, but it would assert other
+  questions - those of the turn, asked by the one who woke the agent -, so that a refactoring would
+  have changed a test of the suite, which is reviewed as a change of the permissions an action
+  needs; and the agents' `testing` has nothing yet that has an agent hear an attachment first.

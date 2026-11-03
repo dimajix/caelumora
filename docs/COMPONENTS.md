@@ -451,7 +451,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 
 | Kind | Facets | Params | What it does |
 |---|---|---|---|
-| `attachments` | `ToolProvider` | - | The tools `view_attachment`, `read_attachment`, `copy_attachment` - always asked - and `attach`, with which an agent reaches the attachments it heard by their numbers ([TOOLS.md](TOOLS.md#attachments)); offered where its transcript numbered any. |
+| `attachments` | `ToolProvider` | - | Of the library `caelumora-tool-attachment` (issue 533). The tools `view_attachment`, `read_attachment`, `copy_attachment` - always asked - and `attach`, with which an agent reaches the attachments it heard by their numbers ([TOOLS.md](TOOLS.md#attachments)); offered where its transcript numbered any. |
 | `echo` | `ToolProvider` | - | The tool `echo`, for testing. |
 | `sleep` | `ToolProvider` | `seconds` (5), `requires_approval` (`false`) | The tool `sleep`, which waits - the model may ask for at most 60 s -, for testing what happens while a tool runs. |
 | `calculator` | `ToolProvider` | - | The tool `calculate`. |

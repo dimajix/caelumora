@@ -95,7 +95,8 @@ told of a tool call - are the texts of the prompt catalogue (issue 57, see
 [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), compiled in, one file per namespace: the
 kernel's (`caelumora-domain/src/prompts.yaml`), the agents' (`caelumora-agents/src/prompts.yaml`),
 and those of the plugins and libraries (`skills`, `compaction`, `tool_workspace`, `tool_image`,
-`artifacts`, `decision`, each in its `src/prompts.yaml`). `prompts` names variants of them:
+`tool_attachment`, `artifacts`, `decision`, each in its `src/prompts.yaml`). `prompts` names
+variants of them:
 
 ```yaml
 prompts:

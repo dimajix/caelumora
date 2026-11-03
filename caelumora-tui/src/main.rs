@@ -39,6 +39,7 @@ use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
+use caelumora_tool_attachment::library::AttachmentToolLibrary;
 use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
@@ -557,6 +558,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolLibrary),
         Box::new(ImageToolLibrary),
+        Box::new(AttachmentToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
     ]

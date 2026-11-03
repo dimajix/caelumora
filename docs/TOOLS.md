@@ -363,6 +363,10 @@ They are offered where the transcript numbered any, `view_attachment` only to a 
 Each result is classified as the attachment, `copy_attachment`'s as the workspace; nothing is
 recorded as knowledge besides - the result in the transcript is what was read.
 
+The kind lives in the library `caelumora-tool-attachment` (issue 533): the attachments are the
+kernel's and their numbers the transcript's, which names no tool; what reaches them is built on the
+agents' tools and turn, as the tools of any other subject are.
+
 ### Artifacts
 
 `publish_artifact` (component `artifacts`, of the library of `caelumora-artifacts`, issue 328)
