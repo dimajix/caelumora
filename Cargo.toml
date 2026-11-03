@@ -26,6 +26,7 @@ members = [
     "caelumora-decision",
     "caelumora-model-comfyui",
     "caelumora-tool-image",
+    "caelumora-tool-attachment",
 ]
 resolver = "2"
 
@@ -114,6 +115,7 @@ caelumora-model-ollama = { path = "caelumora-model-ollama" }
 caelumora-decision = { path = "caelumora-decision" }
 caelumora-model-comfyui = { path = "caelumora-model-comfyui" }
 caelumora-tool-image = { path = "caelumora-tool-image" }
+caelumora-tool-attachment = { path = "caelumora-tool-attachment" }
 
 [profile.release]
 opt-level = 3

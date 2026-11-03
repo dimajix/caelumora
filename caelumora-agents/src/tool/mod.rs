@@ -5,7 +5,6 @@
 //! another facet - a prompt part, say - stays in `components`.
 
 pub mod ask_user;
-pub mod attachments;
 pub mod calculator;
 pub mod echo;
 mod page;
@@ -1063,7 +1062,6 @@ impl ToolExecutor {
 /// Registers the tool kinds with `registry`.
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
     ask_user::register(registry);
-    attachments::register(registry);
     calculator::register(registry);
     echo::register(registry);
     sleep::register(registry);

@@ -36,6 +36,7 @@ use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
+use caelumora_tool_attachment::library::AttachmentToolLibrary;
 use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
@@ -210,8 +211,8 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
     ]
 }
 
-/// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 516, 525) -
-/// first the essential one, the agents' (issue 370).
+/// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 516, 525,
+/// 533) - first the essential one, the agents' (issue 370).
 fn libraries() -> Vec<Box<dyn Library>> {
     vec![
         Box::new(AgentsLibrary),
@@ -220,6 +221,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(A2aLibrary),
         Box::new(WorkspaceToolLibrary),
         Box::new(ImageToolLibrary),
+        Box::new(AttachmentToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
     ]

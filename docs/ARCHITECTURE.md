@@ -115,6 +115,9 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-tool-image`** - the tool that generates images, a library that brings nothing but
     its component kind `image_generation`, whose tool generates an image with one of the image
     models its agent is given (issue 525). See [TOOLS.md](TOOLS.md#images).
+*   **`caelumora-tool-attachment`** - the tools on the attachments an agent heard, a library that
+    brings nothing but its component kind `attachments`, whose tools reach them by the numbers its
+    transcript gave them (issue 533). See [TOOLS.md](TOOLS.md#attachments).
 *   **`caelumora-web-ui`** - the browser frontend (React, TypeScript), built on the REST API and
     served by `caelumora-app`. See [WEB-UI.md](WEB-UI.md).
 *   **`caelumora-tui`** - a terminal frontend that runs the kernel in its own process.
@@ -146,14 +149,14 @@ is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBui
 are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose actors the
 channel builds (`AgentKinds`), and the kinds of their components; without it, the program is a chat
 between users. `caelumora-tool-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
-`caelumora-compaction`, `caelumora-tool-workspace` and `caelumora-tool-image` bring component kinds
-alone; they build on the agents' library, and a library that defines facets of its own for others to
-serve is built on in turn: `caelumora-skills` serves the `KnowledgeRestorer` of
-`caelumora-compaction`. A service with a manager of its own that extends the kernel - skills and
-artifacts, which plugins bring, the workspace, which the kernel brings itself - is a **system
-service**: it runs on the kernel's side, its manager decides with the kernel's policies, its views
-serve the frontends, and what an agent's work does with its kind it offers as extensions, a reader
-handed out where the work reads and a writer where it acts
+`caelumora-compaction`, `caelumora-tool-workspace`, `caelumora-tool-image` and
+`caelumora-tool-attachment` bring component kinds alone; they build on the agents' library, and a
+library that defines facets of its own for others to serve is built on in turn: `caelumora-skills`
+serves the `KnowledgeRestorer` of `caelumora-compaction`. A service with a manager of its own that
+extends the kernel - skills and artifacts, which plugins bring, the workspace, which the kernel
+brings itself - is a **system service**: it runs on the kernel's side, its manager decides with the
+kernel's policies, its views serve the frontends, and what an agent's work does with its kind it
+offers as extensions, a reader handed out where the work reads and a writer where it acts
 ([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Which plugin is trusted as
 the kernel and which is a library of the agent side, trusted for nothing, is said in
 [Principles](#principles) and listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the kernel

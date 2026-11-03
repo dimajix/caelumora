@@ -66,10 +66,11 @@ it registers, a plugin
 *   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
     namespace of its own, from a file it compiles in - `decision` from its `src/prompts.yaml`, as a
     library adds its own (`LibraryBuilder::add_prompts`): the agents' `agents`, from
-    `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `tool_workspace`, `artifacts` and
-    `tool_image` from a `src/prompts.yaml` of their own -; its component kinds that write for a
-    model use the catalogue as a service (see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)).
-    A tool that names another plugin's tool writes its name as text: it does not know it as a value;
+    `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `tool_workspace`, `artifacts`,
+    `tool_image` and `tool_attachment` from a `src/prompts.yaml` of their own -; its component
+    kinds that write for a model use the catalogue as a service (see
+    [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that names another plugin's tool
+    writes its name as text: it does not know it as a value;
 *   is handed the kernel's storages of content (`content_storages`, issue 282) for what it keeps
     beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes the backends its own service is served by, which other plugins may bring, from its section
@@ -116,9 +117,10 @@ A library (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-i
 the agent side: what runs an agent - `caelumora-agents`, the essential one, which brings the kinds
 of agent and the built-in components (issue 370) - or brings components for an agent's facets -
 `caelumora-tool-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-tool-workspace` (issue
-428), `caelumora-compaction` (issue 464), `caelumora-tool-image` (issue 525), and the library sides
-of `caelumora-skills` and `caelumora-artifacts` (`SkillsLibrary`, `ArtifactsLibrary`). It is linked
-into the program as a plugin is, but trusted for nothing, and links the kernel's API
+428), `caelumora-compaction` (issue 464), `caelumora-tool-image` (issue 525),
+`caelumora-tool-attachment` (issue 533), and the library sides of `caelumora-skills` and
+`caelumora-artifacts` (`SkillsLibrary`, `ArtifactsLibrary`). It is linked into the program as a
+plugin is, but trusted for nothing, and links the kernel's API
 (`caelumora-api`), the domain and other libraries, never the kernel, `caelumora-security` or
 `caelumora-store`: they are dev-dependencies of its tests alone, which build the kernel's world -
 for `caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`

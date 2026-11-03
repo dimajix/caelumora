@@ -209,31 +209,6 @@ tools:
     bye: Signal that you want to say good-bye and stop the conversation.
     silence: Signal that you do not want to respond to the last message and stay silent instead.
 
-  # Issue 282. `copied_to`: where `copy_attachment` puts an attachment unless told; `attached`:
-  # what `attach` tells of what it did.
-  attachments:
-    description: Reach the attachments of this conversation by the `ref` their note names, such as a3.
-    view_attachment: >-
-      Look at an image attached in this conversation again, as it was attached. Only images can be
-      looked at; read a text, copy anything else into the workspace.
-    view_attachment.ref: The attachment's ref, as its note names it, such as a3
-    read_attachment: >-
-      Read the text of an attachment of this conversation, a part at a time, as read_file reads a
-      file. Only plain text can be read; copy anything else into the workspace to work on it there.
-    read_attachment.ref: The attachment's ref, as its note names it, such as a3
-    read_attachment.start_line: The first line to read, from 1; the first unless given
-    read_attachment.line_count: How many lines to read; to the end unless given
-    copy_attachment: >-
-      Copy an attachment of this conversation into the workspace, to work on it there with the
-      tools of the workspace - a document to convert, data to process.
-    copy_attachment.ref: The attachment's ref, as its note names it, such as a3
-    copy_attachment.path: Where in the workspace to put it; {{ copied_to }}/ and its name unless given
-    attach: >-
-      Attach an attachment of this conversation - an image you looked at, a file someone else
-      attached - to your next answer, to show it to the others.
-    attach.ref: The attachment's ref, as its note names it, such as a3
-    attached: It will be attached to your next answer.
-
   # `max_seconds`: the longest it waits; `seconds`: how long it waits unless told.
   sleep:
     description: Wait for a while, for testing.
