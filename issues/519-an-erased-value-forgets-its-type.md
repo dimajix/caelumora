@@ -61,3 +61,6 @@ check and the class of error at once.
   typed already (`Extensions::insert<T>` makes the key from `T` and the value from an `Arc<T>`),
   and `reader_of(key)` keeps its key as the question, the answer checked by `get::<T>()`. The
   module is `caelumora-domain/src/type_map.rs`, not `caelumora-model`'s as the description says.
+- **2026-11-03** — A step of its own, from a finding of the review: `Backends` kept the name of a
+  service's type beside its erased factories, as the `TypeMap` did before; it keeps the
+  `TypeKey` now and asks it for the name, as the `TypeMap` does.

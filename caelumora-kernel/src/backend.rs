@@ -111,13 +111,13 @@ type Factories<T> = BTreeMap<String, BackendFactory<T>>;
 /// names.
 #[derive(Default)]
 pub struct Backends {
-    /// A `Factories<T>` for each service `T`, with its name for messages.
-    factories: HashMap<TypeId, (&'static str, Box<dyn Any + Send + Sync>)>,
+    /// A `Factories<T>` for each service `T`, with its key for messages.
+    factories: HashMap<TypeId, (TypeKey, Box<dyn Any + Send + Sync>)>,
 }
 
 impl fmt::Debug for Backends {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut services: Vec<_> = self.factories.values().map(|(name, _)| *name).collect();
+        let mut services: Vec<_> = self.factories.values().map(|(key, _)| key.name()).collect();
         services.sort_unstable();
         f.debug_struct("Backends").field("services", &services).finish()
     }
@@ -167,7 +167,7 @@ impl Backends {
         let (_, factories) = self
             .factories
             .entry(TypeId::of::<T>())
-            .or_insert_with(|| (TypeKey::of::<T>().name(), Box::new(Factories::<T>::new())));
+            .or_insert_with(|| (TypeKey::of::<T>(), Box::new(Factories::<T>::new())));
         if let Some(factories) = factories.downcast_mut::<Factories<T>>() {
             factories.insert(kind.to_string(), factory);
         }
