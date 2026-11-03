@@ -1,8 +1,6 @@
 # 429 — How the messages of others are framed is configured three times
 
-**Status:** open
-**Type:** refactoring
-**Priority:** low
+**Status:** rejected
 **Area:** Code structure
 **Summary:** `ollama_client`, `a2a_agent` and `decision_policy` each declare `sender_format`, `sender_style` and - the first two - `message_times` with their defaults in a configuration of their own and copy them into a `ModelProfile` by hand, so that a new setting of the framing is added in three places and missing in one goes unnoticed.
 
@@ -48,3 +46,19 @@ them without anything noticing, and the defaults can drift apart.
 
 - **2026-10-18** — Opened while issue 424 added `message_times` to two of the three configurations,
   after `SenderFormat::given` had become `ModelProfile::frame`.
+- **2026-11-03** — Rejected by the maintainer: what is left of it is not worth what it costs. Since
+  it was opened, `ollama_client` has become the kind `language_model`
+  (`caelumora-model/src/language_model.rs`, issue 520) and `ModelProfile` has moved to
+  `caelumora-domain/src/context/profile.rs`; besides the framing, `prompt_texts` is declared, copied
+  into the profile and checked with `require_variant` in all three. The defaults are declared once
+  already (`SenderFormat::configured_default`, `message_times_by_default`); only the attributes
+  and the copying repeat. Embedded with `#[serde(flatten)]`, `deny_unknown_fields` still refuses
+  an unknown parameter, but an error in an embedded field no longer names the parameter:
+  `serde_path_to_error` sees only `.` (`invalid parameters: unknown variant 'header'` instead of
+  `invalid parameter 'sender_format': …`), against the rule that an error of configuration names
+  its parameter. A nested object (`framing: { … }`) keeps the names but changes the parameters of
+  every configuration and of the stored personalities. The decision policy fits neither form: a
+  `bool` that defaults to `true` cannot tell a `message_times: true` written from one left out, and
+  giving it times would need the session's time zone, which `ResponderPolicy::choose` is not
+  given. A type of `sender_format` and `sender_style` alone would leave `message_times` twice and
+  `prompt_texts` three times - a new type for two fields.
