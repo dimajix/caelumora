@@ -258,6 +258,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [433](433-mcp-tools-list-changed.md) | open | An MCP server that announces a change of its tools (`notifications/tools/list_changed`) is not heard, so an agent follows the change only once its list of the server's tools expires. |
 | [512](512-comfyui-image-tool.md) | done | No tool can generate an image, and no tool can hand its model media at all: `ToolOutput` has no media and the channel refuses a tool result that carries some. |
 | [527](527-deny-on-first-decides-as-all.md) | done | `ApprovalStrategy::DenyOnFirst` and `ApprovalStrategy::All` decide every request alike - approved once all who may approve have approved, denied by the first who denies -, so that a configuration offers two names for one rule. |
+| [535](535-tool-media-attached-kept-and-shown-twice.md) | open | An image a tool generates is kept as what its result gave, and once the agent shows it to the channel by `attach` it is kept again as a copy and shown twice in the chat - at the card of the call and at the answer -, so it is unclear whether what a tool gives is rightly seen rather than said. |
 
 ## User interaction
 
