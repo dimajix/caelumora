@@ -55,7 +55,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [465](465-attachments-in-the-context.md) | open | medium | feature | What of a message's attachments is put into a model's context and what it has to fetch through a tool is decided by no bound, so a few images or one long text can fill the context and are sent again with every call. |
 | [518](518-memory-is-reached-through-the-agents-state.md) | open | medium | refactoring | An agent's memory is part of its state, which the agent side is handed whole and changes through three calls of its `ActorRuntime`, and the agent side itself decides which entries may be recalled where, while the workspace, skills and artifacts are system services reached through a reader and a writer. |
-| [537](537-prompt-parts-placed-anew-every-turn.md) | open | medium | feature | A prompt part before the turn's input is built anew in every turn and stands elsewhere in the next, so a model's prompt cache loses the whole turn before with every turn; only an external agent is told a part once and then only when it changed, and that in two ways, by its components and by its actor. |
+| [537](537-prompt-parts-placed-anew-every-turn.md) | in progress | medium | feature | A prompt part before the turn's input is built anew in every turn and stands elsewhere in the next, so a model's prompt cache loses the whole turn before with every turn; only an external agent is told a part once and then only when it changed, and that in two ways, by its components and by its actor. |
 
 ## Maintenance
 

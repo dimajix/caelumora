@@ -83,20 +83,6 @@ impl PositionParams {
     }
 }
 
-/// What a prompt provider that tells of its channel is configured with:
-/// where its part goes, and whether it tells only what changed - for an
-/// external agent, which keeps what it was told.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ChannelPartParams {
-    #[serde(default)]
-    pub(crate) position: PromptPosition,
-    #[serde(default)]
-    pub(crate) changes_only: bool,
-}
-
-impl Params for ChannelPartParams {}
-
 /// What a [`PromptProvider`] contributes: the text of its part, the
 /// knowledge from other places it contains, recorded with the turn's
 /// messages (issue 17), and how what the text holds besides that knowledge
@@ -147,6 +133,16 @@ pub trait PromptProvider: Send + Sync + Debug {
     /// # Errors
     /// `ContextError` if the part cannot be had.
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError>;
+
+    /// What an agent that keeps what it was told - an external one (issue 204) - is told once
+    /// the part it was told holds nothing any more, so that what it was told no longer holds;
+    /// `None`: nothing. It says nothing of what it withdraws, so it is public.
+    ///
+    /// # Errors
+    /// `ContextError` if the text cannot be had.
+    fn withdrawn(&self) -> Result<Option<String>, ContextError> {
+        Ok(None)
+    }
 }
 
 /// The part of the prompt provider `provider` for `situation`, as its fail
@@ -162,8 +158,28 @@ pub(crate) async fn prompt_for(
     provider: &ComponentImpl<dyn PromptProvider>,
     situation: &Situation<'_>,
 ) -> Result<Option<Prompt>, ContextError> {
-    provider.apply_fail_policy(provider.get_prompt(situation).await).map_err(|cause| {
-        ContextError::Component { component: provider.id.clone(), cause: Box::new(cause) }
+    judged(provider, provider.get_prompt(situation).await)
+}
+
+/// The withdrawal of the prompt provider `provider` (`PromptProvider::withdrawn`), as its fail
+/// policy says: `None` if it has none, or failed and fails open.
+///
+/// # Errors
+/// `ContextError::Component`, naming the component, if it failed and fails closed.
+pub(crate) fn withdrawal_for(
+    provider: &ComponentImpl<dyn PromptProvider>,
+) -> Result<Option<String>, ContextError> {
+    judged(provider, provider.withdrawn()).map(Option::flatten)
+}
+
+/// `result`, what `provider` answered, as its fail policy says.
+fn judged<T>(
+    provider: &ComponentImpl<dyn PromptProvider>,
+    result: Result<T, ContextError>,
+) -> Result<Option<T>, ContextError> {
+    provider.apply_fail_policy(result).map_err(|cause| ContextError::Component {
+        component: provider.id.clone(),
+        cause: Box::new(cause),
     })
 }
 

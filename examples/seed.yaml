@@ -214,9 +214,10 @@ personalities:
 # publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
 # only what its roles let it: an external agent that names none sees only
 # what is public. Its remote agent keeps its conversation, so it is told who
-# is in the channel once, and again only when that changes (issue 204) - which
-# is why it writes the channel's context out instead of including
-# `channel-context`.
+# is in the channel, its language and its briefing once, and again only when
+# they change (issues 204, 537) - and it lists these three itself instead of
+# including `channel-context`, which tells the time and why it was asked with
+# every request.
 - id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
   name: hermes-remote
   kind: external
@@ -227,18 +228,12 @@ personalities:
   components:
   - id: channel-participants
     kind: channel_participants
-    params:
-      changes_only: true
     fail_policy: FailClosed
   - id: channel-language
     kind: channel_language
-    params:
-      changes_only: true
     fail_policy: FailClosed
   - id: channel-briefing
     kind: channel_briefing
-    params:
-      changes_only: true
     fail_policy: FailClosed
   - id: remote
     kind: a2a_agent

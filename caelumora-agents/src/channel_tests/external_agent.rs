@@ -106,6 +106,7 @@ async fn external_channel(
         );
         register_no_secrets(registry);
         register_heard(registry);
+        register_first_only(registry);
         register_marking_command(registry);
     };
     // In whose name the remote agent is called, its policy sees (`called_as`).
@@ -150,6 +151,18 @@ fn register_heard(registry: &mut ComponentRegistry) {
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(HeardCount));
+            Ok(facets)
+        },
+    );
+}
+
+/// Registers `FirstOnly` as the kind `test_first_only`.
+fn register_first_only(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_first_only").provides::<dyn PromptProvider>(),
+        |_descriptor, _context| {
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PromptProvider>(Arc::new(FirstOnly));
             Ok(facets)
         },
     );
@@ -883,6 +896,79 @@ async fn an_external_agent_is_given_its_prompt_parts_first_and_again_only_when_t
         })
         .collect();
     assert_eq!(given_prompts, [prompts[0].as_str(), prompts[1].as_str()]);
+    running.abort();
+}
+
+/// An external agent with `FirstOnly`, its part as `rules`.
+fn external_components_with_rules() -> ComponentConfig {
+    let mut components = external_components();
+    components.component_nodes.push(ComponentDescriptor::new("rules", "test_first_only"));
+    components
+}
+
+#[tokio::test]
+async fn a_part_given_that_holds_nothing_any_more_is_withdrawn_once() {
+    use crate::external::ExternalEvent;
+
+    let answer =
+        || vec![Ok(ExternalEvent::Message("Fine.".to_string())), Ok(ExternalEvent::Completed)];
+    let remote = Arc::new(ScriptedExternalAgent::answering(vec![answer(), answer(), answer()]));
+    let built = external_channel(Arc::clone(&remote), external_components_with_rules(), |_| None)
+        .await
+        .expect("the external agent can be run");
+    let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
+    answered(&mut events, agent).await;
+    for text in ["How are you?", "Still there?"] {
+        channel
+            .user_actor(alice_of(&context))
+            .unwrap()
+            .send_message(Some(text.to_string()), None, Vec::new())
+            .await
+            .unwrap();
+        answered(&mut events, agent).await;
+    }
+
+    let sent = remote.sent.lock().unwrap().clone();
+    let prompts: Vec<_> = sent.iter().map(|(_, outbound)| outbound.prompts.clone()).collect();
+    assert_eq!(
+        prompts,
+        [vec!["[Rules]\nBe brief.".to_string()], vec!["[Rules]\nNo longer.".to_string()], vec![]],
+        "the part, then its withdrawal, then nothing"
+    );
+    running.abort();
+}
+
+#[tokio::test]
+async fn a_part_a_failed_send_did_not_give_is_not_given_once_it_holds_nothing() {
+    use crate::external::ExternalEvent;
+
+    let remote = Arc::new(
+        ScriptedExternalAgent::answering(vec![vec![
+            Ok(ExternalEvent::Message("Back again.".to_string())),
+            Ok(ExternalEvent::Completed),
+        ]])
+        .unreachable_for(1),
+    );
+    let built = external_channel(Arc::clone(&remote), external_components_with_rules(), |_| None)
+        .await
+        .expect("the external agent can be run");
+    let Stuck { channel, context, agent, mut events, running, .. } = start(built).await;
+    turn_given_up(&mut events, agent).await;
+
+    channel
+        .user_actor(alice_of(&context))
+        .unwrap()
+        .send_message(Some("Still there?".to_string()), None, Vec::new())
+        .await
+        .unwrap();
+    answered(&mut events, agent).await;
+    let sent = remote.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    assert!(
+        sent[0].1.prompts.is_empty(),
+        "neither what no longer holds nor its withdrawal: it never had it: {:?}",
+        sent[0].1.prompts
+    );
     running.abort();
 }
 
@@ -1946,8 +2032,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
 
     let (alice, bob) = (make_user("alice"), make_user("bob"));
     let participants = record_users(kernel.entity_stores(), &[&alice, &bob]).await;
-    let mut roster = ComponentDescriptor::new("participants", "channel_participants");
-    roster.params = serde_json::json!({ "changes_only": true });
+    let roster = ComponentDescriptor::new("participants", "channel_participants");
     let hermes = stored_agent(
         kernel.entity_stores(),
         "hermes",

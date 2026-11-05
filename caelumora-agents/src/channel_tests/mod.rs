@@ -29,6 +29,7 @@ use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_domain::actor::{EventContext, RetryTarget};
 use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::{AgentId, HearsDuringTurn, Personality};
+use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{Channel, Participant};
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
@@ -311,6 +312,24 @@ struct HeardCount;
 impl PromptProvider for HeardCount {
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         Ok(Prompt::from(format!("[Heard]\n{}", situation.agent_channel_state().transcript.end())))
+    }
+}
+
+/// A prompt part that holds something only for the first call of an
+/// external agent `external_channel` builds - while its transcript was
+/// given two entries at most -, and its withdrawal (issue 537).
+#[derive(Debug)]
+struct FirstOnly;
+
+#[async_trait::async_trait]
+impl PromptProvider for FirstOnly {
+    async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
+        let first = situation.agent_channel_state().transcript.end() <= Position::new(2);
+        Ok(Prompt::from(if first { "[Rules]\nBe brief.".to_string() } else { String::new() }))
+    }
+
+    fn withdrawn(&self) -> Result<Option<String>, ContextError> {
+        Ok(Some("[Rules]\nNo longer.".to_string()))
     }
 }
 

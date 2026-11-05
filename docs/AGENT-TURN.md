@@ -731,8 +731,11 @@ has, so the same providers serve an external agent as well. What only reads take
 what stages changes takes the `Turn`.
 
 The agents bring four parts of their own, which a personality wires in as components. They go into
-the system prompt by default, since they change rarely. For an external agent, whose remote agent
-keeps its conversation, the first three take `changes_only`: told once, then only when they changed.
+the system prompt by default, since they change rarely.
+
+An external agent's remote agent keeps its conversation, so it is given a part only when it changed,
+and told when one it was given holds nothing any more (`PromptProvider::withdrawn`, see
+[CHANNELS.md](CHANNELS.md#external-agents)); the briefing and the language word their withdrawal.
 
 ### Who is in the channel
 
@@ -763,7 +766,7 @@ is given to the model as the channel's notice - "Channel notice: @alice added @b
 of its profile and unmarked by any participant, as a system message where the model keeps one
 (`SystemMessages`), else as a user message. The ContextResolver words it, so that the transcript
 keeps what happened rather than words; an external agent's remote agent is given the same notices,
-kept as system messages (`ContextResolver::given_messages`). With `changes_only`, the roster is told
+kept as system messages (`ContextResolver::given_messages`). An external agent is told the roster
 again as a whole when it changed, without an account of its own of what changed: that is the
 notices' (issue 410).
 

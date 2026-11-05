@@ -177,7 +177,8 @@ impl ExternalAgentActor {
     /// The prompt parts for `work` the remote agent has not been given yet
     /// (issues 204, 214), from its context provider: each that is not what
     /// it was given last of it (`RemoteState::given_prompts`), and each that
-    /// a send which failed did not give - in the order they came. The work
+    /// a send which failed did not give and its component still gives - in
+    /// the order they came. The work
     /// has seen all the parts and the knowledge they hold, given now or
     /// before: the remote agent knows them.
     ///
@@ -192,6 +193,10 @@ impl ExternalAgentActor {
             self.body.current_context(&self.body.situation(work, state)).await?;
         work.take_in_context(&parts, knowledge);
         let mut pending = self.pending_prompts();
+        // A part whose component gives none now is not given: what it said no longer holds.
+        let keys: Vec<String> =
+            parts.iter().enumerate().map(|(index, part)| part_key(part, index)).collect();
+        pending.retain(|(key, _)| keys.contains(key));
         for (index, part) in parts.into_iter().enumerate() {
             let key = part_key(&part, index);
             let due = !state.remote.has_given(&key, &digest::prompt(&part.text));

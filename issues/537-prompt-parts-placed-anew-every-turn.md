@@ -1,6 +1,6 @@
 # 537 — What an agent is given besides the conversation is placed anew in every turn
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -164,3 +164,16 @@ what an agent saw is not told exactly once a text changed: a question of its own
 - **2026-11-05** — Opened from a comparison with the session logs of Claude Code, whose harness
   writes what it gives its model into the session's chain where it changed. Measuring what the
   cache loses was skipped by decision; exactly reconstructing what an agent saw is put after it.
+- **2026-11-05** — Decided with the maintainer: a provider words its withdrawal itself
+  (`PromptProvider::withdrawn`, the second of the two ways above), and for an agent run here a part
+  at `Given` that changed or holds nothing takes its entry before back (`TranscriptEntry::Revoked`)
+  rather than leaving it to stand: the model never reads what no longer holds, a withdrawal needs no
+  text there, and a part that no longer holds what may not be recalled any more is gone at once. The
+  cache is lost where a part changes, from where it stood, and only then.
+- **2026-11-05** — Step 1 done. Unlike *External agents* above says, the withdrawal is not
+  the actor's: whether a component's part is empty only its context provider sees, so
+  `ExternalContextProvider` gives the withdrawal of a component whose part the remote agent was
+  given (`RemoteState::has_given_any`) and that has none now, and the actor gives it, as every
+  part, only where it is not what it gave last. The actor drops a part a failed send left pending
+  once its component gives none. `changes_only`, the components' memory of what they told and
+  `ChannelPartParams` are gone. `withdrawn` takes no situation, since neither withdrawal reads one.

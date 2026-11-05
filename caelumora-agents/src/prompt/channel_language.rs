@@ -13,23 +13,21 @@
 //! particular adds nothing. A personality without the component leaves its
 //! agents to choose themselves.
 //!
-//! An agent that keeps its conversation itself - an external one (issue
-//! 204) - is told the language once and then only when it changed
-//! (parameter `changes_only`), as the roster is
-//! (`channel_participants`).
+//! An agent that keeps what it was told - an external one (issue 204) - is
+//! told that the channel is no longer held in a language once it is not
+//! (`PromptProvider::withdrawn`).
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ChannelPartParams, ContextError, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_api::component::Params;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::value::language::Language;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub const CHANNEL_LANGUAGE_KIND: &str = "channel_language";
 
@@ -41,45 +39,13 @@ const WITHDRAWN: &str = "agents.channel_language_withdrawn";
 #[derive(Debug)]
 pub struct ChannelLanguageComponent {
     pub position: PromptPosition,
-    /// Whether it tells only of changes: then the language it told last,
-    /// `None` before it told any. A plain lock, never held across an await.
-    told: Option<Mutex<Option<Option<Language>>>>,
     prompts: PromptTexts,
 }
 
 impl ChannelLanguageComponent {
-    /// The language at `position`, told every time it is asked.
+    /// The language at `position`.
     pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
-        Self { position, told: None, prompts }
-    }
-
-    /// The language at `position`, told the first time it is asked and then
-    /// only when it changed.
-    pub fn changes_only(position: PromptPosition, prompts: PromptTexts) -> Self {
-        Self { position, told: Some(Mutex::new(None)), prompts }
-    }
-
-    /// What the agent is to be told of `language` now.
-    fn text(&self, language: Option<Language>) -> Result<String, PromptError> {
-        let Some(told) = &self.told else { return render(&self.prompts, language.as_ref()) };
-        let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        match told.as_ref() {
-            Some(before) if *before == language => Ok(String::new()),
-            // Held in none from the start: there is nothing to take back.
-            None if language.is_none() => {
-                *told = Some(None);
-                Ok(String::new())
-            }
-            Some(Some(_)) if language.is_none() => {
-                *told = Some(None);
-                self.prompts.render(WITHDRAWN, ())
-            }
-            _ => {
-                let text = render(&self.prompts, language.as_ref())?;
-                *told = Some(language);
-                Ok(text)
-            }
-        }
+        Self { position, prompts }
     }
 }
 
@@ -94,9 +60,13 @@ impl PromptProvider for ChannelLanguageComponent {
         let Some(channel) = situation.channel().await? else {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
-        let text = self.text(channel.effective_language().cloned())?;
+        let text = render(&self.prompts, channel.effective_language())?;
         // Which language a channel is held in is no secret of its contents.
         Ok(Prompt::classified(text, Classification::PUBLIC))
+    }
+
+    fn withdrawn(&self) -> Result<Option<String>, ContextError> {
+        Ok(Some(self.prompts.render(WITHDRAWN, ())?))
     }
 }
 
@@ -115,18 +85,13 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_LANGUAGE_KIND)
-                .params::<ChannelPartParams>()
+                .params::<PositionParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let ChannelPartParams { position, changes_only } =
-                ChannelPartParams::read(&descriptor.params)?;
-            let provider = if changes_only {
-                ChannelLanguageComponent::changes_only(position, prompts)
-            } else {
-                ChannelLanguageComponent::new(position, prompts)
-            };
+            let position = PositionParams::position_of(&descriptor.params, PromptPosition::Start)?;
+            let provider = ChannelLanguageComponent::new(position, prompts);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
@@ -189,25 +154,15 @@ mod tests {
     }
 
     #[test]
-    fn told_every_time_unless_only_changes_are_told() {
-        let always = ChannelLanguageComponent::new(PromptPosition::Start, testing::prompts());
-        assert_eq!(
-            always.text(language("de")).unwrap(),
-            always.text(language("de")).unwrap(),
-            "every turn"
-        );
-
-        let changes =
-            ChannelLanguageComponent::changes_only(PromptPosition::Start, testing::prompts());
-        assert_eq!(changes.text(None).unwrap(), "", "held in none from the start: nothing to tell");
-        assert!(changes.text(language("de")).unwrap().contains("\"de\""), "the first language");
-        assert_eq!(changes.text(language("de")).unwrap(), "", "not again while it stays");
-        assert!(changes.text(language("fr")).unwrap().contains("\"fr\""), "but when it changes");
+    fn a_language_is_withdrawn_as_no_longer_held() {
+        let provider = ChannelLanguageComponent::new(PromptPosition::Start, testing::prompts());
+        let withdrawn = provider.withdrawn().unwrap();
         assert!(
-            changes.text(None).unwrap().contains("no longer held in a particular language"),
-            "and when it is taken back"
+            withdrawn
+                .as_deref()
+                .is_some_and(|text| text.contains("no longer held in a particular language")),
+            "the language told before is taken back: {withdrawn:?}"
         );
-        assert_eq!(changes.text(None).unwrap(), "");
     }
 
     #[tokio::test]

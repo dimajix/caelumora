@@ -15,22 +15,21 @@
 //! part of the channel, and the part is classified as the channel is if it
 //! holds them.
 //!
-//! An agent that keeps its conversation itself - an external one (issue
-//! 204) - is told them once and then only when they changed (parameter
-//! `changes_only`), as the roster and the language are.
+//! An agent that keeps what it was told - an external one (issue 204) - is
+//! told that what it was told of them no longer holds once neither says
+//! anything (`PromptProvider::withdrawn`).
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ChannelPartParams, ContextError, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_api::component::Params;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::value::text::{Briefing, Summary};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub const CHANNEL_BRIEFING_KIND: &str = "channel_briefing";
 
@@ -42,45 +41,13 @@ const WITHDRAWN: &str = "agents.channel_briefing_withdrawn";
 #[derive(Debug)]
 pub struct ChannelBriefingComponent {
     pub position: PromptPosition,
-    /// Whether it tells only of changes: then what it told last, `None`
-    /// before it told anything. A plain lock, never held across an await.
-    told: Option<Mutex<Option<String>>>,
     prompts: PromptTexts,
 }
 
 impl ChannelBriefingComponent {
-    /// The descriptions at `position`, told every time it is asked.
+    /// The descriptions at `position`.
     pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
-        Self { position, told: None, prompts }
-    }
-
-    /// The descriptions at `position`, told the first time it is asked and
-    /// then only when they changed.
-    pub fn changes_only(position: PromptPosition, prompts: PromptTexts) -> Self {
-        Self { position, told: Some(Mutex::new(None)), prompts }
-    }
-
-    /// What the agent is to be told now, the descriptions rendered as
-    /// `text`.
-    fn text(&self, text: String) -> Result<String, PromptError> {
-        let Some(told) = &self.told else { return Ok(text) };
-        let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        match told.as_deref() {
-            Some(before) if before == text => Ok(String::new()),
-            // Nothing from the start: there is nothing to take back.
-            None if text.is_empty() => {
-                *told = Some(text);
-                Ok(String::new())
-            }
-            Some(_) if text.is_empty() => {
-                *told = Some(text);
-                self.prompts.render(WITHDRAWN, ())
-            }
-            _ => {
-                *told = Some(text.clone());
-                Ok(text)
-            }
-        }
+        Self { position, prompts }
     }
 }
 
@@ -106,8 +73,11 @@ impl PromptProvider for ChannelBriefingComponent {
         } else {
             channel.classification().clone()
         };
-        let text = self.text(render(&self.prompts, &places)?)?;
-        Ok(Prompt::classified(text, classification))
+        Ok(Prompt::classified(render(&self.prompts, &places)?, classification))
+    }
+
+    fn withdrawn(&self) -> Result<Option<String>, ContextError> {
+        Ok(Some(self.prompts.render(WITHDRAWN, ())?))
     }
 }
 
@@ -137,18 +107,13 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_BRIEFING_KIND)
-                .params::<ChannelPartParams>()
+                .params::<PositionParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let ChannelPartParams { position, changes_only } =
-                ChannelPartParams::read(&descriptor.params)?;
-            let provider = if changes_only {
-                ChannelBriefingComponent::changes_only(position, prompts)
-            } else {
-                ChannelBriefingComponent::new(position, prompts)
-            };
+            let position = PositionParams::position_of(&descriptor.params, PromptPosition::Start)?;
+            let provider = ChannelBriefingComponent::new(position, prompts);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
@@ -204,29 +169,13 @@ mod tests {
     }
 
     #[test]
-    fn told_every_time_unless_only_changes_are_told() {
-        let always = ChannelBriefingComponent::new(PromptPosition::Start, testing::prompts());
-        assert_eq!(
-            always.text("a".to_string()).unwrap(),
-            always.text("a".to_string()).unwrap(),
-            "every turn"
-        );
-
-        let changes =
-            ChannelBriefingComponent::changes_only(PromptPosition::Start, testing::prompts());
-        assert_eq!(
-            changes.text(String::new()).unwrap(),
-            "",
-            "nothing from the start: nothing to tell"
-        );
-        assert_eq!(changes.text("a".to_string()).unwrap(), "a", "what is said first");
-        assert_eq!(changes.text("a".to_string()).unwrap(), "", "not again while it stays");
-        assert_eq!(changes.text("b".to_string()).unwrap(), "b", "but when it changes");
+    fn what_was_told_of_them_is_withdrawn_as_no_longer_holding() {
+        let provider = ChannelBriefingComponent::new(PromptPosition::Start, testing::prompts());
+        let withdrawn = provider.withdrawn().unwrap();
         assert!(
-            changes.text(String::new()).unwrap().contains("no longer holds"),
-            "and when it is taken back"
+            withdrawn.as_deref().is_some_and(|text| text.contains("no longer holds")),
+            "the descriptions told before are taken back: {withdrawn:?}"
         );
-        assert_eq!(changes.text(String::new()).unwrap(), "");
     }
 
     #[tokio::test]
