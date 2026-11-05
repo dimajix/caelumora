@@ -20,6 +20,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 caelumora-agents = { workspace = true, features = ["test-support"] }
+caelumora-domain = { workspace = true, features = ["test-support"] }
 caelumora-kernel = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["full"] }
 

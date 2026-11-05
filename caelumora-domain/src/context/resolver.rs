@@ -1,9 +1,9 @@
 //! How an agent's data in a channel is resolved into what a receiver is given (issues 47, 387,
 //! `ContextResolver`): the context a reference names, for its model's next call as for a message
-//! produced earlier, and the transcript's messages for a remote agent that keeps its own
-//! conversation.
+//! produced earlier, the conversation alone for a model to work on, and the transcript's messages
+//! for a remote agent that keeps its own conversation.
 
-use super::{ContextItem, ContextRef, ModelProfile, SenderStyle};
+use super::{ContextItem, ContextRef, FrameRef, ModelProfile, SenderStyle};
 use crate::actor::ActorId;
 use crate::agent::AgentChannelState;
 use crate::chain::Node;
@@ -38,8 +38,9 @@ pub struct ResolvedContext {
 /// is given: its model, the context a reference names; the remote agent of
 /// an external agent, the transcript's messages (issue 529). One
 /// implementation for the model call, for telling afterwards what the model
-/// saw, for measuring how much of its context it fills (issue 284), and for
-/// the remote agent.
+/// saw, for measuring how much of its context it fills (issue 284), for the
+/// conversation a model works on - a summary of it (issue 537) -, and for the
+/// remote agent.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextResolver<'a> {
     transcript: TranscriptSource<'a>,
@@ -147,6 +148,36 @@ impl<'a> ContextResolver<'a> {
             None => Vec::new(),
         };
         Ok(Some(ResolvedContext { reference: reference.clone(), items, tool_sets }))
+    }
+
+    /// The transcript up to and including the entry `last`, as the model of `agent` is given it in
+    /// the turn `turn` - each message framed by `profile` at `time_zone` -, without any prompt
+    /// part: none of a frame, and none given into the transcript (`TranscriptEntry::part_of`,
+    /// issue 537), of which a compaction keeps those that still stand. What a model is handed to
+    /// work on the conversation itself, a summary say (issue 16). `None` if the transcript holds
+    /// no entry `last`.
+    ///
+    /// # Errors
+    /// `PromptError` if the text of a notice cannot be had.
+    pub fn conversation_until(
+        &self,
+        last: Digest,
+        profile: ModelProfile,
+        time_zone: TimeZone,
+        turn: TurnId,
+        agent: ActorId,
+    ) -> Result<Option<Vec<ContextItem>>, PromptError> {
+        let reference = ContextRef {
+            transcript: Some(last),
+            frame: FrameRef { profile, time_zone, ..FrameRef::default() },
+        };
+        let Some((mut items, entries)) = self.given_path(&reference, turn, agent)? else {
+            return Ok(None);
+        };
+        let conversation = entries.into_iter().filter(|(node, _)| node.entry.part_of().is_none());
+        items.extend(conversation.flat_map(|(_, given)| given));
+        profile.place_system_messages(&mut items);
+        Ok(Some(items))
     }
 
     /// Where each entry of the transcript `reference` names stands in what

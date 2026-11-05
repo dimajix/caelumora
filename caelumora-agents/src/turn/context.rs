@@ -8,8 +8,7 @@ use anyhow::{Context, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{
-    ContextItem, ContextRef, ContextResolver, FrameRef, KnowledgeRef, Placement, PromptPart,
-    PromptRef,
+    ContextItem, ContextResolver, FrameRef, KnowledgeRef, Placement, PromptPart, PromptRef,
 };
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
@@ -38,29 +37,29 @@ impl Turn<'_> {
         Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
     }
 
-    /// The transcript up to and including the entry `last`, on whichever
-    /// branch, as the model of the turn would be given it - each message as
-    /// its profile gives it, with its time in the turn's time zone (issue
-    /// 430), a turn given up told where it ended, one that
-    /// no longer flows into the channel reduced to the tools it called -,
-    /// without prompt parts or tools (issue 16): what a component hands a
-    /// model to work on the conversation itself, a summary say. Resolved as
-    /// the turn's own context is (`ContextResolver`), so the same rules hold,
-    /// the attachments given along with their content (`given_along`).
+    /// The transcript up to and including the entry `last`, on whichever branch, as the model of
+    /// the turn would be given it - each message as its profile gives it, with its time in the
+    /// turn's time zone (issue 430), a turn given up told where it ended, one that no longer flows
+    /// into the channel reduced to the tools it called -, without prompt parts or tools (issue
+    /// 16) - also those given into the transcript (issue 537) -: what a component hands a model to
+    /// work on the conversation itself, a summary say. Resolved as the turn's own context is
+    /// (`ContextResolver::conversation_until`), so the same rules hold, the attachments given along
+    /// with their content (`given_along`).
     ///
     /// # Errors
-    /// If the transcript holds no entry `last`, or an attachment given along
-    /// cannot be read.
-    pub async fn context_until(&mut self, last: Digest) -> Result<Vec<Message>> {
+    /// If the transcript holds no entry `last`, or an attachment given along cannot be read.
+    pub async fn conversation_until(&mut self, last: Digest) -> Result<Vec<Message>> {
         let FrameRef { profile, time_zone, .. } = self.current().work.context.frame;
-        let reference = ContextRef {
-            transcript: Some(last),
-            frame: FrameRef { profile, time_zone, ..FrameRef::default() },
-        };
-        let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
-            .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))?
+        let items = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
+            .conversation_until(
+                last,
+                profile,
+                time_zone,
+                self.turn_id(),
+                ActorId::Agent(self.agent_id),
+            )?
             .context("the transcript holds no such entry")?;
-        self.given_along(self.as_messages(resolved.items)).await
+        self.given_along(self.as_messages(items)).await
     }
 
     /// `messages`, the attachments the turn's model is given along with
@@ -574,7 +573,8 @@ mod tests {
 
     /// Issue 537: a part placed `Given` goes into the transcript after the turn's input, and is
     /// given to the model there as a message of the agent in its role; a later turn whose part
-    /// is the same gives nothing again, one whose part changed is given the new one alone.
+    /// is the same gives nothing again, one whose part changed is given the new one alone. What a
+    /// summary is written of holds no part (`Turn::conversation_until`).
     #[tokio::test]
     async fn a_part_given_into_the_transcript_follows_the_input_and_stands_where_it_changed() {
         let agent = AgentId::new();
@@ -651,6 +651,17 @@ mod tests {
                 (MessageRole::User, "[Rules]\nBe very brief.".to_string()),
             ],
             "changed, the new one after the input, the old one taken back"
+        );
+        let last = turn.situation().agent_channel_state().transcript.digest().unwrap();
+        let summarised = turn.conversation_until(last).await.unwrap();
+        assert_eq!(
+            given(&summarised),
+            [
+                (MessageRole::User, "hello".to_string()),
+                (MessageRole::User, "again".to_string()),
+                (MessageRole::User, "once more".to_string()),
+            ],
+            "what a summary is written of holds no part, given or placed"
         );
     }
 }

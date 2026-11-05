@@ -406,13 +406,13 @@ impl AgentChannelState {
     /// whose state this is - (issue 16): the transcript begins anew with
     /// `replacement` - what stands for the older messages: a summary, the
     /// skills given again, each given to read with the knowledge it is, if
-    /// it is one -, the parts of prompt components that stand in what is
-    /// replaced (issue 537), and the entries of the active path from
-    /// `keep_from` on - `None`: none - as they stand (`Transcript::compact`). The turn's
-    /// context moves to the new head, and the history records the
-    /// compaction (`HistoryEntry::Compacted`), then the replacement as
-    /// messages the agent was given. Returns the heads of the transcript
-    /// before and after.
+    /// it is one -, the parts of prompt components that stand before the
+    /// entries kept (`Transcript::carried_parts`, issue 537), and the entries
+    /// of the active path from `keep_from` on - `None`: none - as they stand
+    /// (`Transcript::compact`). The turn's context moves to the new head,
+    /// and the history records the compaction (`HistoryEntry::Compacted`),
+    /// then the replacement as messages the agent was given. Returns the
+    /// heads of the transcript before and after.
     ///
     /// Nothing is removed: every reference recorded before resolves to what
     /// it did. The replacement is seen by the turn; whose it is

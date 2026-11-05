@@ -202,3 +202,17 @@ what an agent saw is not told exactly once a text changed: a question of its own
   loses its part for that turn as before: keeping it would need telling a failure from a part that
   holds nothing, and would keep what may no longer hold. Kept `in progress`: the compaction's
   strategy summarising the parts, and the parts still at `before_turn_input`, are to be discussed.
+- **2026-11-05** — Decided with the maintainer: the strategy of a compaction is not given the parts
+  given into the transcript to summarise (`ContextResolver::conversation_until`, which leaves out
+  every prompt part, for `Turn::conversation_until`): they stand after its replacement again, as
+  they stood. The cut carries them over likewise (`Cut`): they count as kept, are neither counted
+  nor classified as replaced, and are nothing to replace. For the parts still at
+  `before_turn_input`, which cost the cache from the previous turn's input on, a position `end`
+  comes next: transiently after everything the model is given in each call, so that a cache loses
+  the part alone, chosen per component by its `position` parameter. A part placed after the input
+  would save the input alone, since the next turn's answer stands where it stood.
+- **2026-11-05** — Done: what a compaction carries over is named once (`Transcript::carried_parts`),
+  copied by `Transcript::compact` and counted as kept by the cut (`Cut`), also in what `/compact`
+  tells; the strategy is given the conversation without any prompt part
+  (`ContextResolver::conversation_until`), through `Turn::conversation_until`, as
+  `Turn::context_until` is renamed, since it gives the conversation alone now.

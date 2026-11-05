@@ -549,10 +549,10 @@ the agent's transcript.
     `ModelProfile::gives_along`): in the message it is attached to, or with the result of the tool
     that gave or showed it (see [TOOLS.md](TOOLS.md#media-a-tool-gives-its-model),
     [attachments](TOOLS.md#attachments)), with its content, for every call. Before each call the
-    turn has the content put on what is given along (`Turn::full_context`, `context_until`, through
-    `ActorRuntime::load_attachments`), from a cache of the process (`attachments.cache_bytes`) or
-    the storage, checked against its digest. One that cannot be read fails the call: a model told
-    of an image it is not given makes one up.
+    turn has the content put on what is given along (`Turn::full_context`, `conversation_until`,
+    through `ActorRuntime::load_attachments`), from a cache of the process
+    (`attachments.cache_bytes`) or the storage, checked against its digest. One that cannot be
+    read fails the call: a model told of an image it is not given makes one up.
 *   **Its label** counts for the turn as the model is given the attachment along - the turn sees it
     then -, not as it is heard: the note tells what its message says.
 *   An image given along counts as 768 tokens in how full a context is estimated.
@@ -590,18 +590,18 @@ old one but does not continue it:
 
 *   **A branch of its own.** The transcript begins anew from the root with what replaces the older
     messages - a summary, what is given again, each a `Given` entry, the summary without a source -,
-    then copies of the parts given into the transcript that stand in what is replaced, and then
+    then copies of the parts given into the transcript that stand before the part kept, and then
     copies of the entries kept, as they stand (`Transcript::compact`). Every copy gets a digest of
     its own, since what precedes it is another.
 *   **The old branch stays**, in the store. Every reference recorded before resolves to what it
     did; the resolver does not know there was a compaction.
 *   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
     copy, one placed after an entry replaced follows the replacement - the notes before the
-    turn's input as well as the step of a plan. A part given into the transcript that stands in
-    what is replaced is copied as it stands after the replacement (issue 537): what replaces the
-    older messages leaves it as it is. A plan whose instructions were replaced is named
-    again where its current step stood: its steps, which are done and which is under way, then the
-    instruction (`Turn::compact`).
+    turn's input as well as the step of a plan. A part given into the transcript that stands before
+    the part kept is copied as it stands after the replacement (`Transcript::carried_parts`, issue
+    537): what replaces the older messages leaves it as it is. A plan whose instructions were
+    replaced is named again where its current step stood: its steps, which are done and which is
+    under way, then the instruction (`Turn::compact`).
 *   **The turn's answer is what it said**, kept with the turn (`TurnState::answer`), not read
     from the transcript, of which a part may have been summarised.
 *   **Where its part ends** is an entry of the transcript, `TranscriptEntry::Compacted`, after the
@@ -634,8 +634,11 @@ would free too little. It cuts only before a message, by the positions the resol
 (`token_positions`): within the turn under way before a call of its model but the first - before
 that the turn's input would go and the turn stay -, before the turn before any message but a
 tool's result, up to the turn's input; never into a turn given up as `Lowered`. So a tool's result
-stays with its call, and the newest call with its results is never replaced. The strategy is given
-the rest as the agent's model would be, and answers what stands in its place - the default,
+stays with its call, and the newest call with its results is never replaced. A part given into the
+transcript that stands before the cut is carried over rather than replaced (`Cut`): it counts as
+kept, so its tokens stay within `keep`, and a cut before which nothing else lies replaces nothing.
+The strategy is given the rest as the agent's model would be, without those parts
+(`ContextResolver::conversation_until`), and answers what stands in its place - the default,
 `summary_compaction`, has the agent's own model summarise it. A replacement that holds messages of
 the turn under way is the turn's (`Message::turn_id`) and classified as the turn's label - it holds
 what the turn read, and goes with it if the turn is given up as `Lowered`; one of what precedes the

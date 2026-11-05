@@ -148,7 +148,7 @@ where
 /// taken back or one of a turn given up as `Lowered`
 /// (`TranscriptEntry::lowered_turn`). What stands of the components' parts,
 /// for a turn to give where they changed (`AgentChannelState::give_parts`) and
-/// a compaction to keep (`Transcript::compact`).
+/// a compaction to carry over (`Transcript::carried_parts`).
 pub(crate) fn parts_as_given<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
@@ -205,14 +205,23 @@ impl Chain<TranscriptEntry> {
         given
     }
 
+    /// The entries of the active path a compaction carries over rather than
+    /// replacing them (issue 537): the parts of prompt components that stand
+    /// on it, as the model is given them (`parts_as_given`). Copied after
+    /// the replacement (`compact`), they stay as they are, and so count as
+    /// kept wherever the path is cut.
+    pub fn carried_parts(&self) -> HashSet<Digest> {
+        parts_as_given(self.entries()).into_iter().map(|(node, _)| node.digest).collect()
+    }
+
     /// Begins the active path anew as a compaction does (issue 16): a branch
     /// of its own from the root. On it come `replacement` - what stands for
     /// the older entries -, given to read, each as its source if it is
     /// knowledge (issue 389); then the parts of prompt components that stand
-    /// in what is replaced, as the model is given them (`parts_as_given`,
-    /// issue 537); then the entries of the active path from `keep_from` on -
-    /// `None`: none - as they stand; and last where the compaction's part of
-    /// the branch ends (`TranscriptEntry::Compacted`, issue 387).
+    /// before the entries kept (`carried_parts`, issue 537); then the entries
+    /// of the active path from `keep_from` on - `None`: none - as they stand;
+    /// and last where the compaction's part of the branch ends
+    /// (`TranscriptEntry::Compacted`, issue 387).
     ///
     /// Nothing is removed: the old branch stays, and every digest it had
     /// names what it did. Of the entries kept, a message is copied as it
@@ -247,10 +256,9 @@ impl Chain<TranscriptEntry> {
                 .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
                 .collect();
         let kept = copies.split_off(start);
-        let given: HashSet<Digest> =
-            parts_as_given(path.iter().copied()).into_iter().map(|(node, _)| node.digest).collect();
+        let carried = self.carried_parts();
         let (parts, replaced): (Vec<_>, Vec<_>) =
-            copies.into_iter().partition(|(old, _)| given.contains(old));
+            copies.into_iter().partition(|(old, _)| carried.contains(old));
         if replacement.is_empty() && parts.is_empty() && kept.iter().all(|(_, copy)| copy.is_none())
         {
             return None;
