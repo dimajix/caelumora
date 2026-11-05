@@ -3174,3 +3174,53 @@ async fn activity_started(events: &mut broadcast::Receiver<Envelope>, agent: Age
     .await
     .expect("it begins an activity");
 }
+
+/// Issue 537: a part placed `Given` is given into the agent's transcript as its turn begins, and
+/// its channel's history records it as given; once it holds nothing, the next turn takes it back
+/// and is not given it, and the history records where the agent stopped reading it.
+#[tokio::test]
+async fn a_part_given_into_the_transcript_is_recorded_as_given_and_as_withdrawn() {
+    let model = Arc::new(Gated::saying(&["Fine.", "Still."], 2));
+    let components = ComponentConfig {
+        component_nodes: vec![ComponentDescriptor {
+            params: serde_json::json!({ "position": "given" }),
+            ..ComponentDescriptor::new("rules", "test_first_only")
+        }],
+    };
+    let Stuck { channel, context, agent, running, .. } =
+        with_an_agent(Arc::<Gated>::clone(&model), components).await;
+    stored_once_answered(&channel, agent, 1).await;
+    channel
+        .user_actor(alice_of(&context))
+        .unwrap()
+        .send_message(Some("Still there?".to_string()), None, Vec::new())
+        .await
+        .expect("said");
+    stored_once_answered(&channel, agent, 2).await;
+
+    let seen = model.seen.lock().unwrap().clone();
+    let rules = "[Rules]\nBe brief.";
+    assert!(seen[0].iter().any(|c| c.contains(rules)), "the first turn is given it: {:?}", seen[0]);
+    assert!(
+        !seen[1].iter().any(|c| c.contains("[Rules]")),
+        "the second is not given what no longer holds: {:?}",
+        seen[1]
+    );
+    let entries = channel.history_entries().await;
+    let given = entries
+        .iter()
+        .find_map(|entry| match entry {
+            HistoryEntry::Given { message } if message.content.as_deref() == Some(rules) => {
+                Some(message.id)
+            }
+            _ => None,
+        })
+        .expect("the history records the part as given");
+    assert!(
+        entries.iter().any(
+            |entry| matches!(entry, HistoryEntry::Withdrawn { message, .. } if *message == given)
+        ),
+        "and where the agent stopped reading it: {entries:?}"
+    );
+    running.abort();
+}

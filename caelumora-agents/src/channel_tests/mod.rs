@@ -13,7 +13,7 @@ use crate::command::AgentCommandProvider;
 use crate::library::AgentsLibrary;
 use crate::message::{MessageProcessor, PerceiveInProcessor, ProcessingError};
 use crate::notes::{AgentNotes, NoteKind};
-use crate::prompt::{ContextError, Prompt, PromptProvider};
+use crate::prompt::{ContextError, PositionParams, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use crate::testing::Scripted;
 use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
@@ -212,6 +212,7 @@ async fn agent_channel_hearing(
         register_asking_tool(registry);
         register_marking_command(registry);
         register_activities(registry);
+        register_first_only(registry);
     };
     let defaults = ComponentConfig {
         component_nodes: vec![ComponentDescriptor {
@@ -315,14 +316,37 @@ impl PromptProvider for HeardCount {
     }
 }
 
-/// A prompt part that holds something only for the first call of an
-/// external agent `external_channel` builds - while its transcript was
-/// given two entries at most -, and its withdrawal (issue 537).
+/// A prompt part that holds something only while its agent's transcript
+/// was given two entries at most - for the first call of an external agent
+/// `external_channel` builds, the first turn of an agent run here -, at
+/// `position`, and its withdrawal (issue 537).
 #[derive(Debug)]
-struct FirstOnly;
+struct FirstOnly {
+    position: PromptPosition,
+}
+
+/// Registers `FirstOnly` as the kind `test_first_only`, at the position its
+/// parameters name, else at the start.
+fn register_first_only(registry: &mut ComponentRegistry) {
+    registry.register(
+        ComponentKind::new("test_first_only")
+            .params::<PositionParams>()
+            .provides::<dyn PromptProvider>(),
+        |descriptor, _context| {
+            let position = PositionParams::position_of(&descriptor.params, PromptPosition::Start)?;
+            let mut facets = ComponentFacets::empty();
+            facets.insert::<dyn PromptProvider>(Arc::new(FirstOnly { position }));
+            Ok(facets)
+        },
+    );
+}
 
 #[async_trait::async_trait]
 impl PromptProvider for FirstOnly {
+    fn position(&self) -> PromptPosition {
+        self.position
+    }
+
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         let first = situation.agent_channel_state().transcript.end() <= Position::new(2);
         Ok(Prompt::from(if first { "[Rules]\nBe brief.".to_string() } else { String::new() }))

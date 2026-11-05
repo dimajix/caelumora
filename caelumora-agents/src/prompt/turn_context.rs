@@ -1,7 +1,8 @@
 //! The `turn_context` component: what the model of an agent run
 //! here is given in a turn besides the conversation - the prompt parts of
-//! every `PromptProvider` of the agent, placed around its transcript
-//! (issues 47, 99). The default `ContextProvider` of an agent run here.
+//! every `PromptProvider` of the agent, placed around its transcript or
+//! given into it (issues 47, 99, 537). The default `ContextProvider` of an
+//! agent run here.
 
 use crate::prompt::{prompt_for, ContextError, ContextProvider, PromptPosition, PromptProvider};
 use crate::situation::Situation;
@@ -10,7 +11,7 @@ use caelumora_api::component::ComponentImpl;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::{KnowledgeRef, PromptPart};
+use caelumora_domain::context::{KnowledgeRef, Placement, PromptPart};
 use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
@@ -19,7 +20,9 @@ pub const TURN_CONTEXT_KIND: &str = "turn_context";
 /// The prompt parts of `prompt_providers` around the transcript: those at
 /// `Start` joined into the system prompt before everything, those at
 /// `BeforeTurnInput` joined into one user message before the newest message
-/// of the turn. The default `ContextProvider` (issue 98).
+/// of the turn, and those at `Given` each on its own, as a system message of
+/// its component, into the transcript. The default `ContextProvider` (issue
+/// 98).
 #[derive(Debug)]
 pub struct TurnContextProvider {
     pub prompt_providers: Vec<ComponentImpl<dyn PromptProvider>>,
@@ -33,6 +36,7 @@ impl ContextProvider for TurnContextProvider {
     ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
+        let mut given = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
             let Some(contribution) = prompt_for(provider, situation).await? else { continue };
@@ -45,28 +49,42 @@ impl ContextProvider for TurnContextProvider {
             match provider.position() {
                 PromptPosition::Start => start.push(part),
                 PromptPosition::BeforeTurnInput => before_input.push(part),
+                // A system message where the model keeps one, as the
+                // channel's notices are: no participant's words.
+                PromptPosition::Given => given.push(PromptPart {
+                    role: MessageRole::System,
+                    text: part.0,
+                    placement: Placement::Given { component: provider.id.clone() },
+                    classification: part.1,
+                }),
             }
         }
 
         // The system prompt before everything.
-        let mut parts = Vec::with_capacity(2);
+        let mut parts = Vec::with_capacity(2 + given.len());
         if !start.is_empty() {
             let (text, classification) = joined(start);
             parts.push(PromptPart {
                 role: MessageRole::System,
                 text,
-                after: None,
+                placement: Placement::After { after: None, component: None },
                 classification,
-                source: None,
             });
         }
         if !before_input.is_empty() {
             // Before the newest message, which is the turn's input - unless
             // the agent wrote it itself, in a turn that has none (e.g. after
-            // `/wakeup`): then at the end.
+            // `/wakeup`): then at the end. A part given into the transcript is
+            // no input, nor the agent's own words (issue 537): it is passed
+            // over in looking for the input, as a turn answering anew finds
+            // one after it.
             let transcript = &situation.agent_channel_state().transcript;
-            let mut messages =
-                transcript.entries().rev().filter_map(|n| n.entry.message().map(|m| (n.digest, m)));
+            let mut messages = transcript
+                .entries()
+                .rev()
+                .filter_map(|n| n.entry.message().map(|m| (n.digest, n.entry.part_of(), m)))
+                .skip_while(|(_, part, _)| part.is_some())
+                .map(|(digest, _, message)| (digest, message));
             let own = ActorId::Agent(situation.agent_id());
             let after = match messages.next() {
                 Some((_, input)) if input.sender_id != own => {
@@ -79,11 +97,11 @@ impl ContextProvider for TurnContextProvider {
             parts.push(PromptPart {
                 role: MessageRole::User,
                 text,
-                after,
+                placement: Placement::After { after, component: None },
                 classification,
-                source: None,
             });
         }
+        parts.extend(given);
         Ok((parts, knowledge))
     }
 }
@@ -272,5 +290,94 @@ mod tests {
             Some("User:Notes: none."),
             "then at the end"
         );
+    }
+
+    #[tokio::test]
+    async fn a_part_given_into_the_transcript_goes_on_its_own_as_its_components() {
+        let given = |id: &str, prompt: &str| ComponentImpl {
+            id: id.to_string(),
+            fail_policy: ComponentFailPolicy::FailClosed,
+            facet: Arc::new(SystemPromptComponent {
+                prompt: prompt.to_string(),
+                position: PromptPosition::Given,
+                classification: Classification::PUBLIC,
+            }) as Arc<dyn PromptProvider>,
+        };
+        let provider = TurnContextProvider {
+            prompt_providers: vec![given("rules", "Be brief."), given("empty", "  ")],
+        };
+        let mut agent_channel_state = AgentChannelState::default();
+        let turn = Turn::begun(AgentId::new(), &mut agent_channel_state);
+        let (parts, _) = provider.current_context(&turn.situation()).await.unwrap();
+        assert_eq!(
+            parts,
+            [PromptPart {
+                role: MessageRole::System,
+                text: "Be brief.".to_string(),
+                placement: Placement::Given { component: "rules".to_string() },
+                classification: Some(Classification::PUBLIC),
+            }],
+            "not joined, but named by its component - and one that says nothing is none"
+        );
+    }
+
+    /// Issue 537: a part given into the transcript after the input is no input, nor the agent's
+    /// own - a turn that answers anew finds the input before it.
+    #[tokio::test]
+    async fn the_turns_input_is_found_before_the_parts_given_after_it() {
+        let agent_id = AgentId::new();
+        let mut agent_channel_state = AgentChannelState::default();
+        let mut question = message("question");
+        question.role = MessageRole::User;
+        agent_channel_state.perceive(vec![question]);
+        agent_channel_state.begin_turn(Default::default());
+        let rules = Message {
+            sender_id: ActorId::Agent(agent_id),
+            role: MessageRole::System,
+            classification: Classification::PUBLIC,
+            ..message("[Rules]\nBe brief.")
+        };
+        agent_channel_state.give_parts(vec![("rules".to_string(), rules)]);
+        agent_channel_state.turn = None;
+
+        let provider = TurnContextProvider {
+            prompt_providers: vec![
+                part(
+                    Arc::new(SystemPromptComponent {
+                        prompt: "Notes: none.".to_string(),
+                        position: PromptPosition::BeforeTurnInput,
+                        classification: Classification::PUBLIC,
+                    }),
+                    ComponentFailPolicy::FailClosed,
+                ),
+                ComponentImpl {
+                    id: "rules".to_string(),
+                    fail_policy: ComponentFailPolicy::FailClosed,
+                    facet: Arc::new(SystemPromptComponent {
+                        prompt: "[Rules]\nBe brief.".to_string(),
+                        position: PromptPosition::Given,
+                        classification: Classification::PUBLIC,
+                    }),
+                },
+            ],
+        };
+        let before = agent_channel_state.transcript.end();
+        let mut turn = Turn::begun(agent_id, &mut agent_channel_state);
+        assemble(&provider, &mut turn).await.unwrap();
+        let contents: Vec<_> = turn
+            .full_context()
+            .await
+            .unwrap()
+            .0
+            .iter()
+            .map(|m| m.content.clone().unwrap_or_default())
+            .collect();
+        assert_eq!(
+            contents,
+            ["Notes: none.", "question", "[Rules]\nBe brief."],
+            "the notes before the input, not after the part"
+        );
+        drop(turn);
+        assert_eq!(agent_channel_state.transcript.end(), before, "the part stands as it was");
     }
 }

@@ -177,3 +177,28 @@ what an agent saw is not told exactly once a text changed: a question of its own
   part, only where it is not what it gave last. The actor drops a part a failed send left pending
   once its component gives none. `changes_only`, the components' memory of what they told and
   `ChannelPartParams` are gone. `withdrawn` takes no situation, since neither withdrawal reads one.
+- **2026-11-05** — Decided with the maintainer for steps 2 and 3, done as one step, since
+  `GivenSource::Part` had no user before the position: a part placed `Given` (`Placement::Given` of
+  a `PromptPart`, which replaces its `after`) is given as the turn begins, after its input, by
+  `AgentChannelState::give_parts`, rather than before every call; a compaction copies the parts
+  that stand in what it replaces after the replacement (`Transcript::compact`), so that the turn
+  keeps no copy of them and a turn resumed finds them in the transcript. A part is given as a
+  system message of the agent. The seed's `channel-context` gives the roster, the language and the
+  briefing so. That the strategy of a compaction is given the parts to summarise, though they stand
+  after it again, is left for later.
+- **2026-11-05** — From the review of the step: what stands of the parts is read as the model is
+  given them (`parts_as_given`), so that a part of a turn given up as `Lowered`, which the model is
+  given nothing of, is given again and not kept by a compaction; a part stands only with the same
+  text and classification; a part is no input in looking for the turn's input, so that a turn
+  answering anew places what goes before its input before it.
+- **2026-11-05** — Decided with the maintainer after the review: the component a part comes from
+  is its placement's (`Placement::After { after, component }`, `Placement::Given { component }`),
+  so that a part given into the transcript cannot be without one, and `PromptPart::source` is
+  gone. A part taken back is told to the channel as withdrawn (`ActorEvent::MessageWithdrawn`),
+  sent by the agent alone and delivered to nobody, and recorded as an item of its own
+  (`HistoryEntry::Withdrawn`) rather than a change of the message given, which stays found by no
+  id: an agent's history gives it as an item (`withdrawn`), which the history panel shows where the
+  agent stopped reading the part, named by its first line. A component that fails, fail-open,
+  loses its part for that turn as before: keeping it would need telling a failure from a part that
+  holds nothing, and would keep what may no longer hold. Kept `in progress`: the compaction's
+  strategy summarising the parts, and the parts still at `before_turn_input`, are to be discussed.

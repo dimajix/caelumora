@@ -156,18 +156,6 @@ fn register_heard(registry: &mut ComponentRegistry) {
     );
 }
 
-/// Registers `FirstOnly` as the kind `test_first_only`.
-fn register_first_only(registry: &mut ComponentRegistry) {
-    registry.register(
-        ComponentKind::new("test_first_only").provides::<dyn PromptProvider>(),
-        |_descriptor, _context| {
-            let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn PromptProvider>(Arc::new(FirstOnly));
-            Ok(facets)
-        },
-    );
-}
-
 /// Issue 223: an external agent that starts takes in what it missed from
 /// its channel's history, as what it hears - without what it said itself.
 #[tokio::test]

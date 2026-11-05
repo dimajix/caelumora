@@ -393,8 +393,9 @@ fn taking_part(
 /// classification fitted into (issue 133), a turn's end (issue 258) and the
 /// start of a step of its plan (issue 263) in schemes of their own - the
 /// step by what it says, not when -, a command carried out (issue 269), a
-/// context compacted (issue 16) and a change of who takes part (issue 408)
-/// likewise - by what they say, not when; a message modified, taken back or
+/// context compacted (issue 16), a change of who takes part (issue 408) and
+/// a message given withdrawn (issue 537) likewise - by what they say, not
+/// when; a message modified, taken back or
 /// reclassified as `message_modified`, `message_revoked` and
 /// `message_reclassified`.
 pub fn history_chain(previous: Option<&Digest>, recorded: &Recorded) -> Digest {
@@ -416,6 +417,12 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             let mut e = Encoder::new("caelumora.history-given.v1");
             e.opt_digest(previous);
             e.opt_digest(Some(&message_chain(None, message)));
+            e.finish()
+        }
+        HistoryEntry::Withdrawn { message, .. } => {
+            let mut e = Encoder::new("caelumora.history-withdrawn.v1");
+            e.opt_digest(previous);
+            e.bytes(message.0.as_bytes());
             e.finish()
         }
         HistoryEntry::Modified { message } => message_modified(previous, message),

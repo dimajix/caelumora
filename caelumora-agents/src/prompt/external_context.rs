@@ -6,7 +6,7 @@
 //! Unlike a turn's (`turn_context`), it neither joins the parts nor
 //! places them: the remote agent keeps its conversation, so its actor gives
 //! each part only when it changed, and tells them apart by the component
-//! they came from (`PromptPart::source`). Every part goes first, as text of
+//! they came from (`Placement`). Every part goes first, as text of
 //! the remote agent's user; positions mean nothing here. A component whose
 //! part the remote agent was given and that has none now gives its
 //! withdrawal in its place (`PromptProvider::withdrawn`): what the remote
@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::{KnowledgeRef, PromptPart};
+use caelumora_domain::context::{KnowledgeRef, Placement, PromptPart};
 use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
@@ -65,9 +65,8 @@ fn part(
     PromptPart {
         role: MessageRole::User,
         text: text.to_string(),
-        after: None,
+        placement: Placement::After { after: None, component: Some(provider.id.clone()) },
         classification,
-        source: Some(provider.id.clone()),
     }
 }
 
@@ -139,12 +138,16 @@ mod tests {
             .unwrap();
 
         let given: Vec<_> =
-            parts.iter().map(|p| (p.source.as_deref(), p.text.as_str(), p.role, p.after)).collect();
+            parts.iter().map(|p| (p.text.as_str(), p.role, p.placement.clone())).collect();
+        let of = |component: &str| Placement::After {
+            after: None,
+            component: Some(component.to_string()),
+        };
         assert_eq!(
             given,
             [
-                (Some("frame"), "Be brief.", MessageRole::User, None),
-                (Some("rules"), "Answer in German.", MessageRole::User, None)
+                ("Be brief.", MessageRole::User, of("frame")),
+                ("Answer in German.", MessageRole::User, of("rules"))
             ]
         );
         assert!(knowledge.is_empty());
@@ -190,11 +193,12 @@ mod tests {
         let parts = given(&provider, &state).await;
         let withdrawn: Vec<_> = parts
             .iter()
-            .map(|p| (p.source.as_deref(), p.text.as_str(), p.classification.clone()))
+            .map(|p| (p.placement.clone(), p.text.as_str(), p.classification.clone()))
             .collect();
+        let rules = Placement::After { after: None, component: Some("rules".to_string()) };
         assert_eq!(
             withdrawn,
-            [(Some("rules"), "[Rules]\nNo longer.", Some(Classification::PUBLIC))],
+            [(rules, "[Rules]\nNo longer.", Some(Classification::PUBLIC))],
             "given before, so taken back"
         );
     }

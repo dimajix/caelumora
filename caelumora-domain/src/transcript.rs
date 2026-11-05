@@ -16,7 +16,7 @@ use crate::turn::GivenUpReason;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What happened in a `Transcript`; its node carries the digest of the
 /// transcript up to and including it (issue 06).
@@ -26,13 +26,14 @@ pub enum TranscriptEntry {
     /// A message the model was given, or produced.
     Message(Message),
     /// A message the agent was given to read (issue 16) - not said by it,
-    /// not heard from another -, and what it is, if it is knowledge: a
-    /// skill loaded for it (issue 22), say; the summary of a compaction is
-    /// none (issue 389). Given to the model as the message is; `source`
-    /// says what it was given, so that what the agent knows can be told
-    /// from the transcript - a compaction gives a skill again. `source` is
-    /// not covered by the digest: the model is given the message alone.
-    Given { message: Message, source: Option<KnowledgeSource> },
+    /// not heard from another -, and what it is: knowledge - a skill loaded
+    /// for it (issue 22), say -, or the part of a prompt component given
+    /// where it changed (issue 537); the summary of a compaction is neither
+    /// (issue 389). Given to the model as the message is; `source` says what
+    /// it was given, so that what the agent knows can be told from the
+    /// transcript - a compaction gives a skill again, and keeps a part. `source`
+    /// is not covered by the digest: the model is given the message alone.
+    Given { message: Message, source: Option<GivenSource> },
     /// The message `message.id`, before it on the path, is given as
     /// `message` from here on (issue 234, `Message::modify`).
     Modified { message: Message },
@@ -75,6 +76,17 @@ pub enum TranscriptEntry {
         by_name: String,
         at: DateTime<Utc>,
     },
+}
+
+/// What a message given to an agent is (`TranscriptEntry::Given`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GivenSource {
+    /// Knowledge: a skill loaded, a file read (issue 323).
+    Knowledge(KnowledgeSource),
+    /// The part of the prompt component `0`, by its id, given where its text
+    /// changed (issue 537, `AgentChannelState::give_parts`).
+    Part(String),
 }
 
 /// An agent's transcript (issue 50): the sequence of messages its context is
@@ -130,6 +142,31 @@ where
     })
 }
 
+/// The parts of prompt components on `path` - a path of a transcript from its
+/// root - as a model given the path is given them (issue 537): each entry
+/// (`TranscriptEntry::part_of`) with its message as it stands, without a part
+/// taken back or one of a turn given up as `Lowered`
+/// (`TranscriptEntry::lowered_turn`). What stands of the components' parts,
+/// for a turn to give where they changed (`AgentChannelState::give_parts`) and
+/// a compaction to keep (`Transcript::compact`).
+pub(crate) fn parts_as_given<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    let path = path.into_iter();
+    let lowered: HashSet<TurnId> =
+        path.clone().filter_map(|node| node.entry.lowered_turn()).map(|(turn, _)| turn).collect();
+    as_they_stand(path)
+        .filter_map(|(node, message)| {
+            node.entry.part_of()?;
+            let message = message?;
+            let hidden = message.turn_id.is_some_and(|turn| lowered.contains(&turn));
+            (!hidden).then_some((node, message))
+        })
+        .collect()
+}
+
 /// The message `id` as `nodes` - a transcript's, in the order they were
 /// added: of every branch, or of one path - hold it: as it was first
 /// recorded, with every change of it since, in the order they were, and
@@ -169,12 +206,13 @@ impl Chain<TranscriptEntry> {
     }
 
     /// Begins the active path anew as a compaction does (issue 16): a branch
-    /// of its own from the root, with `replacement` - what stands for the
-    /// older entries - given to read, each as its source if it is knowledge
-    /// (issue 389), after it the entries of the active path from `keep_from`
-    /// on - `None`: none - as they stand, and after them where the
-    /// compaction's part of the branch ends (`TranscriptEntry::Compacted`,
-    /// issue 387).
+    /// of its own from the root. On it come `replacement` - what stands for
+    /// the older entries -, given to read, each as its source if it is
+    /// knowledge (issue 389); then the parts of prompt components that stand
+    /// in what is replaced, as the model is given them (`parts_as_given`,
+    /// issue 537); then the entries of the active path from `keep_from` on -
+    /// `None`: none - as they stand; and last where the compaction's part of
+    /// the branch ends (`TranscriptEntry::Compacted`, issue 387).
     ///
     /// Nothing is removed: the old branch stays, and every digest it had
     /// names what it did. Of the entries kept, a message is copied as it
@@ -183,15 +221,15 @@ impl Chain<TranscriptEntry> {
     /// (`TranscriptEntry::copy_standing`); every copy gets a digest of its
     /// own, since what comes before it is another.
     ///
-    /// Returns where each entry of the old path stands on the new branch: one
-    /// replaced at the end of the replacement - `None` without one -, one
-    /// kept at its copy, or at the copy before it if it has none - a change
-    /// of a message, which is in its copy. `None`, and nothing changes, if
-    /// the active path is empty, if `keep_from` is not on it, or if the new
-    /// branch would be empty.
+    /// Returns where each entry of the old path stands on the new branch: a
+    /// part kept at its copy, another entry replaced at the end of the
+    /// replacement - `None` without one -, one kept at its copy, or at the
+    /// copy before it if it has none - a change of a message, which is in its
+    /// copy. `None`, and nothing changes, if the active path is empty, if
+    /// `keep_from` is not on it, or if the new branch would be empty.
     pub fn compact(
         &mut self,
-        replacement: Vec<(Message, Option<KnowledgeSource>)>,
+        replacement: Vec<(Message, Option<GivenSource>)>,
         keep_from: Option<Digest>,
     ) -> Option<HashMap<Digest, Option<Digest>>> {
         let path: Vec<_> = self.entries().collect();
@@ -202,13 +240,19 @@ impl Chain<TranscriptEntry> {
             None => path.len(),
             Some(first) => path.iter().position(|node| node.digest == first)?,
         };
-        let replaced: Vec<Digest> = path[..start].iter().map(|node| node.digest).collect();
-        // Each entry kept with its copy as it stands, `None` if none is made.
-        let kept: Vec<(Digest, Option<TranscriptEntry>)> =
-            as_they_stand(path[start..].iter().copied())
+        // Each entry with its copy as it stands on the whole path - a part
+        // replaced may be taken back after it -, `None` if none is made.
+        let mut copies: Vec<(Digest, Option<TranscriptEntry>)> =
+            as_they_stand(path.iter().copied())
                 .map(|(node, standing)| (node.digest, node.entry.copy_standing(standing)))
                 .collect();
-        if replacement.is_empty() && kept.iter().all(|(_, copy)| copy.is_none()) {
+        let kept = copies.split_off(start);
+        let given: HashSet<Digest> =
+            parts_as_given(path.iter().copied()).into_iter().map(|(node, _)| node.digest).collect();
+        let (parts, replaced): (Vec<_>, Vec<_>) =
+            copies.into_iter().partition(|(old, _)| given.contains(old));
+        if replacement.is_empty() && parts.is_empty() && kept.iter().all(|(_, copy)| copy.is_none())
+        {
             return None;
         }
         self.start_anew();
@@ -217,8 +261,8 @@ impl Chain<TranscriptEntry> {
         }
         let replacement_end = self.digest();
         let mut moved: HashMap<Digest, Option<Digest>> =
-            replaced.into_iter().map(|old| (old, replacement_end)).collect();
-        for (old, copy) in kept {
+            replaced.into_iter().map(|(old, _)| (old, replacement_end)).collect();
+        for (old, copy) in parts.into_iter().chain(kept) {
             if let Some(copy) = copy {
                 self.record(copy);
             }
@@ -240,10 +284,10 @@ impl Chain<TranscriptEntry> {
         self.record(TranscriptEntry::Message(msg))
     }
 
-    /// Appends `msg`, given to read - as `source`, if it is knowledge
-    /// (issues 16, 389) -, and returns the digest of the transcript before
-    /// it.
-    pub fn give(&mut self, msg: Message, source: Option<KnowledgeSource>) -> Option<Digest> {
+    /// Appends `msg`, given to read - as `source`, if it is knowledge or a
+    /// part (issues 16, 389, 537) -, and returns the digest of the transcript
+    /// before it.
+    pub fn give(&mut self, msg: Message, source: Option<GivenSource>) -> Option<Digest> {
         self.record(TranscriptEntry::Given { message: msg, source })
     }
 
@@ -376,7 +420,7 @@ impl TranscriptEntry {
         match (self, standing) {
             (TranscriptEntry::Message(_), Some(message)) => Some(TranscriptEntry::Message(message)),
             (TranscriptEntry::Given { source, .. }, Some(message)) => {
-                Some(TranscriptEntry::Given { message, source: *source })
+                Some(TranscriptEntry::Given { message, source: source.clone() })
             }
             (
                 TranscriptEntry::TurnFinished { .. }
@@ -393,6 +437,32 @@ impl TranscriptEntry {
                 | TranscriptEntry::Compacted { .. },
                 _,
             ) => None,
+        }
+    }
+
+    /// The prompt component whose part this is, if it is one given into the
+    /// transcript (`GivenSource::Part`, issue 537).
+    pub fn part_of(&self) -> Option<&str> {
+        match self {
+            TranscriptEntry::Given { source: Some(GivenSource::Part(component)), .. } => {
+                Some(component)
+            }
+            _ => None,
+        }
+    }
+
+    /// The turn given up because the channel was lowered below it, and the
+    /// classification it was lowered to, if this is that turn's end (issues
+    /// 141, 258): what it read may not flow into the channel, so a model is
+    /// given which tools it called and nothing else.
+    pub fn lowered_turn(&self) -> Option<(TurnId, &Classification)> {
+        match self {
+            TranscriptEntry::TurnGivenUp {
+                turn_id,
+                reason: GivenUpReason::Lowered { channel },
+                ..
+            } => Some((*turn_id, channel)),
+            _ => None,
         }
     }
 
@@ -512,14 +582,14 @@ mod tests {
         let (mut given, mut said) = (Transcript::default(), Transcript::default());
         given.push(make_message(id(1)));
         said.push(make_message(id(1)));
-        given.give(make_message(id(2)), Some(source));
+        given.give(make_message(id(2)), Some(GivenSource::Knowledge(source)));
         said.push(make_message(id(2)));
         assert_eq!(given.digest(), said.digest(), "the model is given the same");
         assert_eq!(given.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2)]);
         assert_eq!(known(given.all_entries(), id(2)).map(|m| m.id), Some(id(2)));
         let entry = &given.last().unwrap().entry;
         assert!(
-            matches!(entry, TranscriptEntry::Given { source: Some(s), .. } if *s == source),
+            matches!(entry, TranscriptEntry::Given { source: Some(GivenSource::Knowledge(s)), .. } if *s == source),
             "and keeps what it is"
         );
         assert_eq!(entry.classification(), Some(&make_message(id(2)).classification));
@@ -915,7 +985,10 @@ mod tests {
             KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
         let moved = transcript
             .compact(
-                vec![(make_message(id(10)), None), (make_message(id(11)), Some(source))],
+                vec![
+                    (make_message(id(10)), None),
+                    (make_message(id(11)), Some(GivenSource::Knowledge(source))),
+                ],
                 Some(old[1]),
             )
             .expect("compacted");
@@ -943,11 +1016,15 @@ mod tests {
         let sources: Vec<_> = new[..2]
             .iter()
             .map(|n| match &n.entry {
-                TranscriptEntry::Given { source, .. } => *source,
+                TranscriptEntry::Given { source, .. } => source.clone(),
                 _ => None,
             })
             .collect();
-        assert_eq!(sources, [None, Some(source)], "each as it was given, knowledge or not");
+        assert_eq!(
+            sources,
+            [None, Some(GivenSource::Knowledge(source))],
+            "each as it was given, knowledge or not"
+        );
         assert!(transcript.prefix(&head.unwrap()).is_some(), "the old branch stays");
 
         let at = |i: usize| Some(new[i].digest);
@@ -956,5 +1033,44 @@ mod tests {
         assert_eq!(stands, [at(1), at(2), at(3), at(4), at(4), at(4), at(4), at(4)],
             "a replaced entry at the replacement's end, a kept one at its copy, or the copy before it");
         assert_eq!(moved.len(), old.len(), "every entry of the old path");
+    }
+
+    /// Issue 537: a part of a prompt component that stands in what a compaction replaces is kept
+    /// after the replacement, as it stands; one taken back is not.
+    #[test]
+    fn a_compaction_keeps_the_parts_that_stand_in_what_it_replaces() {
+        let part = |component: &str| Some(GivenSource::Part(component.to_string()));
+        let mut transcript = Transcript::default();
+        transcript.give(make_message(id(1)), part("roster"));
+        transcript.give(make_message(id(2)), part("language"));
+        let lowered = TurnId::new();
+        transcript.give(of_turn(lowered, 5), part("briefing"));
+        let channel = Classification::PUBLIC;
+        transcript.record(given_up(lowered, GivenUpReason::Lowered { channel }, Utc::now()));
+        transcript.push(make_message(id(3)));
+        transcript.push(make_message(id(4)));
+        transcript.revoke(id(2), Utc::now());
+        let roster = transcript.entries().next().unwrap().digest;
+        let keep_from = transcript.entries().nth(5).map(|node| node.digest);
+
+        let moved =
+            transcript.compact(vec![(make_message(id(10)), None)], keep_from).expect("compacted");
+
+        let ids: Vec<_> = transcript.messages().iter().map(|m| m.id).collect();
+        assert_eq!(
+            ids,
+            [id(10), id(1), id(4)],
+            "the summary, the part that stands, what was kept - not the part taken back, nor the \
+             one of a turn given up as lowered, which the model is given nothing of"
+        );
+        assert!(
+            matches!(&transcript.entries().nth(1).unwrap().entry, TranscriptEntry::Given { source, .. } if *source == part("roster")),
+            "still the part of its component"
+        );
+        assert_eq!(
+            moved.get(&roster).copied().flatten(),
+            Some(transcript.entries().nth(1).unwrap().digest),
+            "a part replaced stands at its copy"
+        );
     }
 }

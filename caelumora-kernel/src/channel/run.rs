@@ -630,6 +630,7 @@ impl ChannelLoop {
                 )
             }
             ActorEvent::PlanStepStarted { .. }
+            | ActorEvent::MessageWithdrawn { .. }
             | ActorEvent::ContextCompacted { .. }
             | ActorEvent::CommandExecuted { turn_id: Some(_), .. }
             | ActorEvent::ActivityStarted { .. }
@@ -1524,6 +1525,8 @@ mod tests {
             ActorEvent::ActivityFinished { turn_id, activity, output: "done".to_string() },
             ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
             ActorEvent::TurnGivenUp { turn_id, reason: GivenUpReason::Left },
+            // A prompt part its turn no longer gives (issue 537).
+            ActorEvent::MessageWithdrawn { message: MessageId::new(), at: Utc::now() },
         ];
         for event in of_a_turn {
             let kind = event.kind();

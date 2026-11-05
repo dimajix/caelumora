@@ -30,6 +30,12 @@ pub enum HistoryEntry {
     /// no id and changed by nobody. Gone to nobody: its record, read by
     /// whom may read what the agent saw.
     Given { message: Message },
+    /// The agent no longer has the message `message` to read, given to it
+    /// before, from `at` on (issue 537) - a prompt part that no longer
+    /// holds -: where it stopped reading it, not a change of it, since what
+    /// it was given is changed by nobody. Gone to nobody, as what it was
+    /// given, and read where that is.
+    Withdrawn { message: MessageId, at: DateTime<Utc> },
     /// The message `message` - on whichever branch - is classified
     /// `classification` from here on (issue 133).
     Reclassified { message: MessageId, classification: Classification },
@@ -232,10 +238,11 @@ impl AsRef<HistoryEntry> for HistoryEntry {
 }
 
 impl HistoryEntry {
-    /// Whether it is an item of its history - a message said or given, the
-    /// start of a plan's step, a command carried out or not, an activity
-    /// ended, a compaction, a turn's end, a change of who takes part, a
-    /// notice, a request - rather than a change of what was said before:
+    /// Whether it is an item of its history - a message said or given, where
+    /// an agent stopped reading one given, the start of a plan's step, a
+    /// command carried out or not, an activity ended, a compaction, a turn's
+    /// end, a change of who takes part, a notice, a request - rather than a
+    /// change of what was said before:
     /// what a reader of the history is given as it stands
     /// (`StandingItems`), a change being in the message it changes. What is
     /// recorded only to be delivered again (issue 223) - a command or a
@@ -245,6 +252,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::PlanStepStarted { .. }
             | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
@@ -286,6 +294,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::PlanStepStarted { .. }
             | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
@@ -326,6 +335,7 @@ impl HistoryEntry {
         match self {
             HistoryEntry::Said { message } => Some(message),
             HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }
@@ -377,6 +387,7 @@ impl HistoryEntry {
             HistoryEntry::Fitted { channel } => standing.fit_into(channel),
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }
             | HistoryEntry::Reclassified { .. }
@@ -415,6 +426,7 @@ impl HistoryEntry {
             }
             HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Fitted { .. }
             | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
@@ -449,15 +461,15 @@ impl HistoryEntry {
     /// to every user and agent; how a turn went, what it carried out and
     /// what came of what it did of its own accord to the users; what
     /// answers a command to the user it answers; the part of the history
-    /// shared with a newcomer to the newcomer alone; what an agent was given
-    /// and a compaction to nobody; a command and a request to answer again
-    /// to the agent they name (issues 234, 269); an approval through the
-    /// approvers - an agent's request to them, theirs to the users, a user's
-    /// answer to them, their decision to the users and the agent that asked
-    /// (issues 81, 148); an agent's questions and their closing to the users,
-    /// to those asked alone if they are sensitive (issue 165). Whether it
-    /// went back to its sender is not this rule's: a reader is given what it
-    /// sent itself.
+    /// shared with a newcomer to the newcomer alone; what an agent was given,
+    /// what it no longer has to read and a compaction to nobody; a command
+    /// and a request to answer again to the agent they name (issues 234,
+    /// 269); an approval through the approvers - an agent's request to them,
+    /// theirs to the users, a user's answer to them, their decision to the
+    /// users and the agent that asked (issues 81, 148); an agent's questions
+    /// and their closing to the users, to those asked alone if they are
+    /// sensitive (issue 165). Whether it went back to its sender is not this
+    /// rule's: a reader is given what it sent itself.
     pub fn recipients(&self) -> Recipients {
         match self {
             HistoryEntry::HistoryShared { participant, .. } => Recipients::only(vec![*participant]),
@@ -481,6 +493,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRejected { .. } => Recipients::participants(false),
             HistoryEntry::Compacted { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
@@ -534,6 +547,7 @@ impl HistoryEntry {
             }
             HistoryEntry::Said { message } => ActorEvent::CompleteMessageGenerated(message),
             HistoryEntry::Given { message } => ActorEvent::MessageGiven { message },
+            HistoryEntry::Withdrawn { message, at } => ActorEvent::MessageWithdrawn { message, at },
             HistoryEntry::Reclassified { message, classification } => {
                 ActorEvent::MessageReclassified { message, classification }
             }
@@ -625,7 +639,8 @@ impl HistoryEntry {
     /// The entry as everybody but its sender may see it (issue 417): a
     /// message, said or modified, as it is published (`Message::published`),
     /// `None` if nothing of it is left to show; nothing of what an agent was
-    /// given; every other entry as it is.
+    /// given, nor of what it no longer has to read; every other entry as it
+    /// is.
     pub fn published(&self) -> Option<HistoryEntry> {
         match self {
             HistoryEntry::Said { message } => {
@@ -634,7 +649,7 @@ impl HistoryEntry {
             HistoryEntry::Modified { message } => {
                 message.published().map(|message| HistoryEntry::Modified { message })
             }
-            HistoryEntry::Given { .. } => None,
+            HistoryEntry::Given { .. } | HistoryEntry::Withdrawn { .. } => None,
             HistoryEntry::Revoked { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Fitted { .. }
@@ -667,8 +682,8 @@ impl HistoryEntry {
     /// Whom the entry names as having done what it records: the sender of a
     /// message said or modified, the actor of a turn's mark, whoever added
     /// or removed a participant; nobody known for a revocation, a
-    /// reclassification or a fitting. What a holder records as the sender
-    /// of what it was told or did itself (`Recorded::delivered`).
+    /// withdrawal, a reclassification or a fitting. What a holder records as
+    /// the sender of what it was told or did itself (`Recorded::delivered`).
     pub(super) fn named_sender(&self) -> ActorId {
         match self {
             HistoryEntry::Said { message }
@@ -698,6 +713,7 @@ impl HistoryEntry {
             | HistoryEntry::MessageRejected { .. }
             | HistoryEntry::ResponseRequested { .. } => ActorId::System,
             HistoryEntry::Revoked { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Fitted { .. } => ActorId::None,
         }
@@ -714,6 +730,7 @@ impl HistoryEntry {
                 Some((transcript, frame, message.turn_id?))
             }
             HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
             | HistoryEntry::Revoked { .. }

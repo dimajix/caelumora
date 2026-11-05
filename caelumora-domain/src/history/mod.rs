@@ -233,6 +233,7 @@ impl Chain<Recorded> {
             HistoryEntry::Fitted { .. }
             | HistoryEntry::Said { .. }
             | HistoryEntry::Given { .. }
+            | HistoryEntry::Withdrawn { .. }
             | HistoryEntry::TurnFinished { .. }
             | HistoryEntry::TurnGivenUp { .. }
             | HistoryEntry::PlanStepStarted { .. }

@@ -500,7 +500,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `channel_participants` | `PromptProvider` | `position` (`start`) | Tells the agent its own name and handle and who else is in its channel, with their introductions, and when to write an @handle and when a name ([AGENT-TURN.md](AGENT-TURN.md#who-is-in-the-channel)). |
 | `channel_mentions` | `PromptProvider` | `position` (`before_turn_input`) | Reminds the agent, where another agent is in its channel, to write an @handle only for an answer or an action needed now, and a name everywhere else ([AGENT-TURN.md](AGENT-TURN.md#when-to-mention)). |
 | `tool_sets` | `PromptProvider` | `position` (`start`) | Tells the model which of its tool sets are unavailable and why, nothing while all are available ([TOOLS.md](TOOLS.md#tool-sets)). |
-| `turn_context` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript ([AGENT-TURN.md](AGENT-TURN.md)). |
+| `turn_context` | `ContextProvider` | - | The default context provider of an agent run here: joins the prompt parts by position around the transcript, and gives those at `given` each on its own into it ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)). |
 | `external_context` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed, and the withdrawal of a part it was given that holds nothing now ([CHANNELS.md](CHANNELS.md#external-agents)). |
 | `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the library `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
 | `language_model` | `LanguageModelClient`, `ModelProfileProvider` | `name` (the one model of `plugins.model.language`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-model`, registered where it is joined; the default model of an agent: a model the platform offers (`plugins.model.language`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
@@ -518,7 +518,8 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `wakeup` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge` | `ChannelCommandProvider` | - | The user command `/nudge`. |
 
-`position` is `start` or `before_turn_input`; the default is given in parentheses. Every tool is
-`SHOWN` unless its row says otherwise. This table is the one list of what comes with Caelumora; the
-commands are described with their arguments and answers in
+`position` is `start`, `before_turn_input` or `given`
+([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.
+Every tool is `SHOWN` unless its row says otherwise. This table is the one list of what comes with
+Caelumora; the commands are described with their arguments and answers in
 [COMMANDS.md](COMMANDS.md#built-in-commands).

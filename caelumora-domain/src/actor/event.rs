@@ -348,6 +348,15 @@ pub enum ActorEvent {
     MessageGiven {
         message: Message,
     },
+    /// The agent no longer has `message` to read, given to it before
+    /// (`MessageGiven`), from `at` on (issue 537) - a prompt part that no
+    /// longer holds -, as its transcript records it: sent by the agent
+    /// alone, so that its channel's history holds where it stopped reading
+    /// it. Delivered to nobody.
+    MessageWithdrawn {
+        message: MessageId,
+        at: DateTime<Utc>,
+    },
     /// The agent replaced its context `from` by `to` in its turn `turn_id`
     /// (issues 16, 417): what its transcript records, told to its channel's
     /// history; what replaced the older messages follows as what it was
@@ -439,7 +448,9 @@ impl ActorEvent {
                 messages: messages.iter().filter_map(Message::published).collect(),
             }),
             // The agent's record of what it read and did to its context.
-            ActorEvent::MessageGiven { .. } | ActorEvent::ContextCompacted { .. } => None,
+            ActorEvent::MessageGiven { .. }
+            | ActorEvent::MessageWithdrawn { .. }
+            | ActorEvent::ContextCompacted { .. } => None,
             other => Some(other),
         }
     }
@@ -494,6 +505,7 @@ impl ActorEvent {
             | ActorEvent::ResponderUndecided { .. }
             | ActorEvent::MessageRejected { .. }
             | ActorEvent::MessageGiven { .. }
+            | ActorEvent::MessageWithdrawn { .. }
             | ActorEvent::ContextCompacted { .. } => false,
         }
     }
@@ -598,6 +610,7 @@ impl ActorEvent {
             ActorEvent::RetryRejected { .. } => "RetryRejected",
             ActorEvent::MessageRejected { .. } => "MessageRejected",
             ActorEvent::MessageGiven { .. } => "MessageGiven",
+            ActorEvent::MessageWithdrawn { .. } => "MessageWithdrawn",
             ActorEvent::ContextCompacted { .. } => "ContextCompacted",
         }
     }

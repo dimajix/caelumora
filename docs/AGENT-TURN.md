@@ -415,17 +415,18 @@ side may take for an injection. An agent run here tells nobody.
 
 An agent keeps no history of its own (issue 417): what it was offered and what it said is its
 channel's history, which records every message it says - in full, with what it was produced from
-(`Message::produced_from`) - and what it was given to read and when it compacted, as gone to
-nobody. Its actor tells the channel the latter after every step (`AgentChannelState::to_tell`,
-`MessageGiven`, `ContextCompacted`). What a turn said is its answer, kept with the turn as it is
-said (`TurnState::answer`), since a compaction in the middle of it may leave nothing of it on the
-transcript's active branch. What reads further back - what the agent saw when it produced an old
-message, a page of what it was offered and said - reads the channel's history in the store, as
-the agent, through the views. Where it stands in the channel's history is its state's
-(`AgentChannelState::heard`, issue 223): what its inbox opens at when it runs again, or when it
-joins again - unless its new view begins later. The last message it heard, said or was given is
-kept beside it (`AgentChannelState::last_message`), for its notes and memory to anchor at, since
-the active branch begins anew with every compaction and every call of an external agent.
+(`Message::produced_from`) - and what it was given to read, when it stopped reading a prompt part
+given, and when it compacted, as gone to nobody. Its actor tells the channel the latter after every
+step (`AgentChannelState::to_tell`, `MessageGiven`, `MessageWithdrawn`, `ContextCompacted`). What
+a turn said is its answer, kept with the turn as it is said (`TurnState::answer`), since a
+compaction in the middle of it may leave nothing of it on the transcript's active branch. What
+reads further back - what the agent saw when it produced an old message, a page of what it was
+offered and said - reads the channel's history in the store, as the agent, through the views.
+Where it stands in the channel's history is its state's (`AgentChannelState::heard`, issue 223):
+what its inbox opens at when it runs again, or when it joins again - unless its new view begins
+later. The last message it heard, said or was given is kept beside it
+(`AgentChannelState::last_message`), for its notes and memory to anchor at, since the active branch
+begins anew with every compaction and every call of an external agent.
 
 Of its transcript the actor holds the active branch alone, from its root on (`transcript_from`,
 issue 380): right after the transcript began anew - a compaction, an external agent's call -,
@@ -588,14 +589,17 @@ All of this relies on nothing ever being removed from the transcript. A compacti
 old one but does not continue it:
 
 *   **A branch of its own.** The transcript begins anew from the root with what replaces the older
-    messages - a summary, what is given again, each a `Given` entry, the summary without a source -
-    and then copies of the entries kept, as they stand (`Transcript::compact`). Every copy gets a
-    digest of its own, since what precedes it is another.
+    messages - a summary, what is given again, each a `Given` entry, the summary without a source -,
+    then copies of the parts given into the transcript that stand in what is replaced, and then
+    copies of the entries kept, as they stand (`Transcript::compact`). Every copy gets a digest of
+    its own, since what precedes it is another.
 *   **The old branch stays**, in the store. Every reference recorded before resolves to what it
     did; the resolver does not know there was a compaction.
 *   **Prompt parts are carried over.** A part the turn placed after an entry kept follows its
     copy, one placed after an entry replaced follows the replacement - the notes before the
-    turn's input as well as the step of a plan. A plan whose instructions were replaced is named
+    turn's input as well as the step of a plan. A part given into the transcript that stands in
+    what is replaced is copied as it stands after the replacement (issue 537): what replaces the
+    older messages leaves it as it is. A plan whose instructions were replaced is named
     again where its current step stood: its steps, which are done and which is under way, then the
     instruction (`Turn::compact`).
 *   **The turn's answer is what it said**, kept with the turn (`TurnState::answer`), not read
@@ -657,7 +661,8 @@ no longer be given.
 
 What the model is given besides the conversation - the system prompt, notes, what the agent
 remembers - is a *prompt part*. The `ContextProvider` decides where the parts go; the turn records
-what it was handed. A part is never stored in the transcript, which stays a stable prefix.
+what it was handed. A part is stored in the transcript only where its position gives it there
+(`Given`, below), so that the transcript stays a stable prefix.
 
 Every part the agents write has one form: a short title in brackets on a line of its own -
 `[Who is in this channel]`, `[Your private notes]` - then what needs explaining, then the content; a
@@ -717,14 +722,27 @@ A `PromptProvider` contributes a part at a `PromptPosition`:
 
 *   **`Start`** - the system prompt, before everything, as a system message.
 *   **`BeforeTurnInput`** - transiently before the newest message of the turn, as a user message.
+*   **`Given`** - into the transcript, after the turn's input, as a system message of its component
+    (issue 537): given where its text changed, and taken back where it stood once it changed or
+    holds nothing, its component failed open, or the personality no longer has its component
+    (`AgentChannelState::give_parts`, `TranscriptEntry::Given` of a `GivenSource::Part`). The
+    channel's history records both, the one taken back as withdrawn (`HistoryEntry::Withdrawn`):
+    where the agent stopped reading it.
 
 The distinction exists because many models cache the prompt up to the first change, and some merge
 every system message into the system prompt. Information that changes often does not belong in the
-system prompt.
+system prompt. A part at `BeforeTurnInput` stands elsewhere in every turn, so a cache keeps nothing
+of the turn before it; one at `Given` stays where it was given, so what the model is given grows
+only at its end, and the cache is lost from where a part stood only when it changes. The model is
+never given what no longer holds. What has to be judged anew in every turn, under the rights of that
+turn - what the agent may recall where -, belongs at `BeforeTurnInput`: a part at `Given` that held
+it would hold it until the part changes.
 
-The parts of one position are joined in the order of the configuration. Every part is classified as
-its provider says, or as the channel; the turn has seen it. A part whose component fails open is
-left out of that turn with a warning; one that fails closed fails the turn.
+The parts of `Start` and of `BeforeTurnInput` are joined in the order of the configuration; each
+part at `Given` stands on its own. Every part is classified as its provider says, or as the channel;
+the turn has seen it. A part whose component fails open is left out of that turn with a warning; one
+that fails closed fails the turn. At `Given`, left out means taken back: the next turn gives it
+again, and the cache is lost from where it stood, as for a change.
 
 A `PromptProvider` is given a `Situation` (`Turn::situation`), what every piece of work of an agent
 has, so the same providers serve an external agent as well. What only reads takes a `Situation`;
@@ -842,8 +860,9 @@ What the model is given is not stored; it is resolved from what is (`caelumora_d
     frame kept once by digest (`AgentChannelState::keep_frame`); the context moves on to the
     transcript's new head (`AgentChannelState::said`). Nothing waits for the turn's end, a turn
     given up included.
-*   **Prompt parts** are kept once per digest; their references go into the turn's context, where
-    they count for the messages produced from then on.
+*   **Prompt parts** placed into the frame are kept once per digest; their references go into the
+    turn's context, where they count for the messages produced from then on. A part given into the
+    transcript is a message of it.
 *   **Resolving** - the `ContextResolver` resolves a reference against the transcript, the prompt
     texts and the tool sets, each as the profile gives it; what it resolves holds references to
     attachments alone, whose content the turn has put on what its model is given along before each
@@ -874,9 +893,10 @@ given what it was produced from.
     remote agent was given in the call that produced it, without prompt parts or tools, which are
     the remote agent's own.
 *   `history_page_of(before, limit, filter)` is a page of the channel's history as the agent saw
-    it - what went to it, what it said in full, what it was given and when it compacted -, as the
-    messages stand now, from where its view begins, read from the store as the agent (issue 417),
-    of the items that meet `filter`, as a channel's history is read.
+    it - what went to it, what it said in full, what it was given, where it stopped reading a part
+    given and when it compacted -, as the messages stand now, from where its view begins, read from
+    the store as the agent (issue 417), of the items that meet `filter`, as a channel's history is
+    read.
     `in_transcript` tells which of a page's messages reached the transcript, on whichever branch -
     not those the perceive processors dropped -, asked of the store once for the page.
 

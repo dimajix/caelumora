@@ -275,7 +275,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::context::ModelProfile;
-    use caelumora_domain::context::{ContextItem, PromptPart};
+    use caelumora_domain::context::{ContextItem, Placement, PromptPart};
     use caelumora_domain::message::Message;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::plan::PlanId;
@@ -431,9 +431,8 @@ mod tests {
                 vec![PromptPart {
                     role: MessageRole::System,
                     text: "Be brief.".to_string(),
-                    after: None,
+                    placement: Placement::After { after: None, component: None },
                     classification: None,
-                    source: None,
                 }],
                 Vec::new(),
             );

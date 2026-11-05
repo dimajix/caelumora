@@ -584,15 +584,16 @@ history is (issue 380), with what differs:
 
 ### Prompt texts and tool sets
 
-The texts of the prompt parts an agent's model was given and the tool sets it was offered are kept
-once by digest (`Kept`), and named by digest from every `ContextRef`. A system prompt changes with
-every note and every participant, so a new text is kept nearly every turn. Beside them the frames of
-the contexts its messages were produced from (`FrameRef`, issue 426): what a message was given
-around its transcript - references to the prompt parts, the tools and the knowledge read, the
-profile -, which stays the same over most of a turn, while the transcript moves on with every
-message. A message in the history names its frame by digest, beside the digest of its transcript,
-so that what its context repeats is written once and not with every message. They are kept apart
-from the agent's state document as the transcript is (issue 383):
+The texts of the prompt parts an agent's model was given in the frame - one given into the
+transcript is a message of it - and the tool sets it was offered are kept once by digest (`Kept`),
+and named by digest from every `ContextRef`. A system prompt changes with every note and every
+participant, so a new text is kept nearly every turn. Beside them the frames of the contexts its
+messages were produced from (`FrameRef`, issue 426): what a message was given around its
+transcript - references to the prompt parts, the tools and the knowledge read, the profile -, which
+stays the same over most of a turn, while the transcript moves on with every message. A message in
+the history names its frame by digest, beside the digest of its transcript, so that what its context
+repeats is written once and not with every message. They are kept apart from the agent's state
+document as the transcript is (issue 383):
 
 *   **Written first.** The put of the agent's state writes the texts and sets kept since it was last
     stored before the history, the transcript and the document, so that nothing stored names a text

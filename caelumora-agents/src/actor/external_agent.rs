@@ -46,7 +46,7 @@ use caelumora_domain::agent::RetryRefused;
 use caelumora_domain::command::Command;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::{ContextResolver, PromptPart};
+use caelumora_domain::context::{ContextResolver, Placement, PromptPart};
 use caelumora_domain::digest;
 use caelumora_domain::external_agent::{OpenTaskState, TaskId};
 use caelumora_domain::history::Heard;
@@ -92,7 +92,12 @@ pub(crate) struct ExternalAgentActor {
 /// What tells `part`, the `index`th the context provider gave, apart from
 /// the others: the component it came from, else its place among them.
 fn part_key(part: &PromptPart, index: usize) -> String {
-    part.source.clone().unwrap_or_else(|| format!("#{index}"))
+    match &part.placement {
+        Placement::After { component: Some(component), .. } | Placement::Given { component } => {
+            component.clone()
+        }
+        Placement::After { component: None, .. } => format!("#{index}"),
+    }
 }
 
 /// How an exchange with the remote agent ended.
@@ -376,13 +381,16 @@ impl ExternalAgentActor {
         let prompts = self.prompts_to_give(state, work).await?;
         let mut parts = Vec::with_capacity(prompts.len());
         for (_, part) in &prompts {
-            // Part of the context of what comes of this call; seen already.
-            let reference = state.keep_prompt(
-                part.role,
-                part.text.clone(),
-                part.after,
-                part.classification.clone(),
-            );
+            // Part of the context of what comes of this call, where its
+            // provider placed it - one given into a turn's transcript before
+            // everything, as the remote agent is given every part; seen
+            // already.
+            let after = match part.placement {
+                Placement::After { after, .. } => after,
+                Placement::Given { .. } => None,
+            };
+            let reference =
+                state.keep_prompt(part.role, part.text.clone(), after, part.classification.clone());
             work.context.frame.prompts.push(reference);
             parts.push(part.text.clone());
         }

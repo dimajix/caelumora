@@ -35,7 +35,7 @@ use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::tool::{ToolCall, ToolVisibility};
-use caelumora_domain::transcript::TranscriptEntry;
+use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_kernel::actor::user::ChannelWatch;
@@ -184,7 +184,7 @@ async fn the_catalogue_lists_what_may_be_loaded_and_load_skill_gives_its_text_as
     );
     let given = state.transcript.last().map(|node| &node.entry);
     assert!(
-        matches!(given, Some(TranscriptEntry::Given { message, source: Some(source) }) if as_read(source) && message.content.as_deref() == Some("[Skill: release-notes]\n1. Collect.\n2. Group.\n") && message.classification == internal),
+        matches!(given, Some(TranscriptEntry::Given { message, source: Some(GivenSource::Knowledge(source)) }) if as_read(source) && message.content.as_deref() == Some("[Skill: release-notes]\n1. Collect.\n2. Group.\n") && message.classification == internal),
         "its text given to read, under its title, as what it is (issue 389): {given:?}"
     );
 

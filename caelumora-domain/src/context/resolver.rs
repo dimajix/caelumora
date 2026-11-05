@@ -271,17 +271,8 @@ impl<'a> ContextResolver<'a> {
         // what they read may not flow into it, and nobody released it (issue
         // 141), so the model is given which tools they called and nothing
         // else (issue 258).
-        let lowered: HashMap<TurnId, &Classification> = path
-            .iter()
-            .filter_map(|(node, _)| match &node.entry {
-                TranscriptEntry::TurnGivenUp {
-                    turn_id,
-                    reason: GivenUpReason::Lowered { channel },
-                    ..
-                } => Some((*turn_id, channel)),
-                _ => None,
-            })
-            .collect();
+        let lowered: HashMap<TurnId, &Classification> =
+            path.iter().filter_map(|(node, _)| node.entry.lowered_turn()).collect();
         let profile = &reference.frame.profile;
         // As the context was recorded: in the variant its model was given.
         let texts = profile.texts(self.catalogue);

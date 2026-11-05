@@ -5,12 +5,13 @@
 // not pass on to its transcript is marked; what each of its own messages was
 // produced from opens as that message's context. A turn it gave up is shown
 // where it ended, after what it said, with why (issues 146, 258), a command
-// it carried out where it did, with on whose word (issue 269), and where it
-// compacted its context (issue 16). It is read in pages from the end
-// (issue 218), older ones on request.
+// it carried out where it did, with on whose word (issue 269), where it
+// compacted its context (issue 16), and where it stopped reading a prompt part
+// it was given (issue 537). It is read in pages from the end (issue 218),
+// older ones on request.
 
 import React, {useEffect, useRef, useState} from 'react';
-import {ChevronRight, FoldVertical, History, ScrollText, Undo2, UserMinus, UserPlus, X} from 'lucide-react';
+import {ChevronRight, EyeOff, FoldVertical, History, ScrollText, Undo2, UserMinus, UserPlus, X} from 'lucide-react';
 import type {ActorId, ChannelParticipant, GivenUpReason, HistoryItem, HistoryMessage, HistoryPage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
@@ -43,14 +44,16 @@ interface HistoryPanelProps {
 
 /**
  * A row of the panel: a message of the history, merged with its tool results,
- * a turn given up, a command carried out, the context compacted, or the
- * notice of someone who joined or left (issue 408).
+ * a turn given up, a command carried out, the context compacted, a message
+ * given no longer read (issue 537), or the notice of someone who joined or
+ * left (issue 408).
  */
 type Row =
   | {kind: 'message'; message: Message}
   | {kind: 'givenUp'; turnId: string; reason: GivenUpReason; at: string}
   | {kind: 'command'; turnId: string | null; command: string; args: string; issuer: ActorId; at: string}
   | {kind: 'compacted'; turnId: string; at: string}
+  | {kind: 'withdrawn'; message: string; at: string}
   | {kind: 'participant'; notice: Message};
 
 /**
@@ -72,8 +75,8 @@ async function readBack<M>(read: (before: number | null) => Promise<HistoryPage<
 /**
  * The rows of `items`, in the order they happened: the messages, with their tool results merged in
  * (`mergeToolResultsAmong`), every turn given up where it ended, every command carried out where
- * it was, every compaction where it was made, and who joined or left where they did. A turn that
- * finished shows nothing of its own.
+ * it was, every compaction where it was made, every message given where the agent stopped reading
+ * it, and who joined or left where they did. A turn that finished shows nothing of its own.
  */
 function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
   const rows = items.flatMap((item): Row[] => {
@@ -89,6 +92,10 @@ function rowsOf(items: HistoryItem<HistoryMessage>[]): Row[] {
     if ('compacted' in item) {
       const {turn_id, at} = item.compacted;
       return [{kind: 'compacted', turnId: turn_id, at}];
+    }
+    if ('withdrawn' in item) {
+      const {message, at} = item.withdrawn;
+      return [{kind: 'withdrawn', message, at}];
     }
     if ('participant_joined' in item) {
       const {participant, name, by, by_name, at} = item.participant_joined;
@@ -228,6 +235,23 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
     );
   };
 
+  // A message the agent was given and stopped reading (issue 537): a prompt part that no longer
+  // held, named by its first line where the message is shown.
+  const withdrawnView = (id: string, at: string, key: React.Key) => {
+    const time = formatTimestamp(at);
+    const given = marks.get(id)?.message.content?.split('\n')[0];
+    return (
+      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
+        <EyeOff size={14} className="mt-0.5 shrink-0" />
+        <span className="flex-1">
+          <span className="font-semibold">No longer given{given ? <> <span className="font-mono">{given}</span></> : null}</span>
+          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
+          <span className="block">What the agent was given there no longer held; from here on it is not given it.</span>
+        </span>
+      </div>
+    );
+  };
+
   // Someone joined or left the channel (issue 408), as the agent was told.
   const participantView = (notice: Message, key: React.Key) => {
     const time = formatTimestamp(notice.timestamp);
@@ -247,6 +271,7 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
       case 'givenUp': return givenUpView(row.reason, row.at, `given-up-${row.turnId}`);
       case 'command': return commandView(row, `command-${row.turnId ?? idx}`);
       case 'compacted': return compactedView(row.at, `compacted-${row.turnId}-${idx}`);
+      case 'withdrawn': return withdrawnView(row.message, row.at, `withdrawn-${row.message}-${idx}`);
       case 'participant': return participantView(row.notice, row.notice.id ?? `participant-${idx}`);
       case 'message': return messageView(row.message, row.message.id ?? `message-${idx}`);
     }

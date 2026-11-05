@@ -11,8 +11,7 @@ use caelumora_domain::context::KnowledgeSource;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::store::EntityKind;
-use caelumora_domain::transcript::{as_they_stand, Transcript, TranscriptEntry};
-use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::transcript::{as_they_stand, GivenSource, Transcript, TranscriptEntry};
 use caelumora_domain::work::TurnId;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -50,7 +49,9 @@ impl Cut {
         let mut path: Vec<Entry> = as_they_stand(transcript.entries())
             .map(|(node, message)| {
                 let gives = match &node.entry {
-                    TranscriptEntry::Given { source: Some(source), .. } => given(source),
+                    TranscriptEntry::Given {
+                        source: Some(GivenSource::Knowledge(source)), ..
+                    } => given(source),
                     _ => None,
                 };
                 (node.digest, gives, message)
@@ -170,14 +171,7 @@ fn cut_at(
 /// lowered below them - its model is given only the tools they called, which the summary of a part
 /// of one without its end would not know (issues 141, 258).
 fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet<TurnId> {
-    entries
-        .filter_map(|entry| match entry {
-            TranscriptEntry::TurnGivenUp {
-                turn_id, reason: GivenUpReason::Lowered { .. }, ..
-            } => Some(*turn_id),
-            _ => None,
-        })
-        .collect()
+    entries.filter_map(TranscriptEntry::lowered_turn).map(|(turn, _)| turn).collect()
 }
 
 /// What was given in `entries`, each once, in the order it was first given
@@ -196,6 +190,7 @@ fn given_in(entries: &[Entry]) -> Vec<Given> {
 mod tests {
     use super::*;
     use caelumora_domain::digest;
+    use caelumora_domain::turn::GivenUpReason;
     use chrono::Utc;
 
     fn entry(content: &str, role: MessageRole, turn: Option<TurnId>) -> Entry {

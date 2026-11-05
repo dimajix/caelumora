@@ -55,6 +55,12 @@ pub enum PromptPosition {
     /// message: some models merge every system message into the system
     /// prompt and move it to the front, where it would invalidate the cache.
     BeforeTurnInput,
+    /// Into the transcript as the part of its component, where its text
+    /// changed, after the turn's input (issue 537): what the model is given
+    /// then grows only at its end, so that a prompt cache keeps the turns
+    /// before. What no longer holds is taken back from where it stands - the
+    /// cache is lost from there, and only then. For what changes rarely.
+    Given,
 }
 
 /// What a prompt provider that takes its position alone is configured

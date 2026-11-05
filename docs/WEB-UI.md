@@ -529,7 +529,7 @@ The history panel shows the channel's history as the agent saw it (issue 417): w
 it and what it said itself, in full, which may differ from what the channel shows. What its
 perceive processors did not pass on is greyed out and marked "not passed on"; a message whose
 context is recorded opens it in the context panel. Where a turn was given up, a command carried
-out or the context compacted, it is marked where it happened, with why, on whose word, and when;
-what replaced the older messages in a compaction follows its mark. It is read in pages like the
-chat; when the history grew, the pages shown are read again from the end, back to the oldest shown,
-so that the messages stand as they do now.
+out, the context compacted or a prompt part given no longer read, it is marked where it happened,
+with why, on whose word, and when; what replaced the older messages in a compaction follows its
+mark. It is read in pages like the chat; when the history grew, the pages shown are read again from
+the end, back to the oldest shown, so that the messages stand as they do now.

@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 /// `Message` or an agent's `HistoryMessageResponse` -, where a step of a turn's plan began (issue
 /// 263) or how a turn ended, and whose it was. Written as an object named by its kind:
 /// `{"said": …}`, `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`, `{"turn_given_up": {…}}`,
-/// `{"command_executed": {…}}`, `{"compacted": {…}}`, `{"participant_joined": {…}}`,
-/// `{"participant_left": {…}}`, and the notices a reader was given (issue 417):
-/// `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_rejected": {…}}`,
+/// `{"command_executed": {…}}`, `{"compacted": {…}}`, `{"withdrawn": {…}}`,
+/// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, and the notices a reader was given
+/// (issue 417): `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_rejected": {…}}`,
 /// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"message_rejected": {…}}`,
 /// `{"response_requested": {…}}`.
 #[derive(Debug, Serialize)]
@@ -64,6 +64,12 @@ pub enum HistoryItemResponse<M> {
         actor: ActorId,
         from: Digest,
         to: Digest,
+        at: DateTime<Utc>,
+    },
+    /// An agent stopped reading the message `message` it was given, a prompt
+    /// part that no longer held (issue 537); in an agent's history only.
+    Withdrawn {
+        message: MessageId,
         at: DateTime<Utc>,
     },
     /// An agent ended an activity of its own accord in its turn, and what
@@ -208,6 +214,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::Compacted { turn_id, actor, from, to, at } => {
                 Some(Self::Compacted { turn_id, actor, from, to, at })
             }
+            HistoryEntry::Withdrawn { message, at } => Some(Self::Withdrawn { message, at }),
             HistoryEntry::ActivityFinished { turn_id, actor, activity, output, at } => {
                 Some(Self::ActivityFinished { turn_id, actor, activity, output, at })
             }
@@ -435,6 +442,14 @@ mod tests {
             (json["compacted"]["from"].clone(), json["compacted"]["to"].clone()),
             (serde_json::to_value(from).unwrap(), serde_json::to_value(to).unwrap())
         );
+        let part = MessageId::new();
+        let withdrawn = HistoryItemResponse::<Message>::of(
+            HistoryEntry::Withdrawn { message: part, at: Utc::now() },
+            |m| m,
+        )
+        .expect("an item of its own, where the agent stopped reading the part");
+        let json = serde_json::to_value(withdrawn).unwrap();
+        assert_eq!(json["withdrawn"]["message"], serde_json::to_value(part).unwrap());
         let finished = HistoryItemResponse::<Message>::of(
             HistoryEntry::ActivityFinished {
                 turn_id: turn,
