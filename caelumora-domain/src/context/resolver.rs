@@ -3,7 +3,7 @@
 //! produced earlier, the conversation alone for a model to work on, and the transcript's messages
 //! for a remote agent that keeps its own conversation.
 
-use super::{ContextItem, ContextRef, FrameRef, ModelProfile, SenderStyle};
+use super::{ContextItem, ContextRef, FrameRef, ModelProfile, PromptAt, SenderStyle};
 use crate::actor::ActorId;
 use crate::agent::AgentChannelState;
 use crate::chain::Node;
@@ -82,10 +82,29 @@ impl<'a> TranscriptSource<'a> {
     }
 }
 
-/// The items the model is given before the first entry of a transcript, and
-/// for each entry what it is given of it - its message, where a turn given
-/// up ended, the prompt parts placed after it.
-type GivenPath<'a> = (Vec<ContextItem>, Vec<(&'a Node<TranscriptEntry>, Vec<ContextItem>)>);
+/// What the model is given of a transcript, entry by entry, and of the frame
+/// around it.
+struct GivenPath<'a> {
+    /// What it is given before the first entry: the parts at `PromptAt::Start`.
+    leading: Vec<ContextItem>,
+    /// For each entry what it is given of it - its message, where a turn
+    /// given up ended, the prompt parts placed after it.
+    entries: Vec<(&'a Node<TranscriptEntry>, Vec<ContextItem>)>,
+    /// What it is given after everything: the parts at `PromptAt::End`.
+    trailing: Vec<ContextItem>,
+}
+
+impl GivenPath<'_> {
+    /// All of it, in the order the model is given it, without the entries
+    /// `left_out` leaves out.
+    fn items(self, left_out: impl Fn(&TranscriptEntry) -> bool) -> Vec<ContextItem> {
+        let mut items = self.leading;
+        let entries = self.entries.into_iter().filter(|(node, _)| !left_out(&node.entry));
+        items.extend(entries.flat_map(|(_, given)| given));
+        items.extend(self.trailing);
+        items
+    }
+}
 
 impl<'a> ContextResolver<'a> {
     /// The resolver over the data of `state`, its transcript as the state
@@ -135,10 +154,10 @@ impl<'a> ContextResolver<'a> {
         turn: TurnId,
         agent: ActorId,
     ) -> Result<Option<ResolvedContext>, PromptError> {
-        let Some((mut items, entries)) = self.given_path(reference, turn, agent)? else {
+        let Some(given) = self.given_path(reference, turn, agent)? else {
             return Ok(None);
         };
-        items.extend(entries.into_iter().flat_map(|(_, given)| given));
+        let mut items = given.items(|_| false);
         reference.frame.profile.place_system_messages(&mut items);
         let tool_sets = match &reference.frame.tools {
             Some(digest) => match self.offered_tools.get(digest) {
@@ -171,11 +190,10 @@ impl<'a> ContextResolver<'a> {
             transcript: Some(last),
             frame: FrameRef { profile, time_zone, ..FrameRef::default() },
         };
-        let Some((mut items, entries)) = self.given_path(&reference, turn, agent)? else {
+        let Some(given) = self.given_path(&reference, turn, agent)? else {
             return Ok(None);
         };
-        let conversation = entries.into_iter().filter(|(node, _)| node.entry.part_of().is_none());
-        items.extend(conversation.flat_map(|(_, given)| given));
+        let mut items = given.items(|entry| entry.part_of().is_some());
         profile.place_system_messages(&mut items);
         Ok(Some(items))
     }
@@ -207,7 +225,9 @@ impl<'a> ContextResolver<'a> {
         turn: TurnId,
         agent: ActorId,
     ) -> Result<Option<(Vec<u64>, bool)>, PromptError> {
-        let Some((leading, entries)) = self.given_path(reference, turn, agent)? else {
+        let Some(GivenPath { leading, entries, trailing }) =
+            self.given_path(reference, turn, agent)?
+        else {
             return Ok(None);
         };
         let size = |items: &[ContextItem]| {
@@ -242,6 +262,12 @@ impl<'a> ContextResolver<'a> {
                 positions[at] = before;
             }
             positions[at + 1] = positions[at] + size(&entries[at].1);
+        }
+        // What stands after everything counts in all, behind every entry. A
+        // call's measure counts what stood at its end then, which is not on
+        // the path: an estimate the larger by that.
+        if let Some(all) = positions.last_mut() {
+            *all += size(&trailing);
         }
         Ok(Some((positions, first.is_some())))
     }
@@ -307,14 +333,13 @@ impl<'a> ContextResolver<'a> {
         let profile = &reference.frame.profile;
         // As the context was recorded: in the variant its model was given.
         let texts = profile.texts(self.catalogue);
-        // The parts after the transcript entry `after` - `None`: before
-        // everything.
-        let after_entry = |after: Option<Digest>| -> Option<Vec<ContextItem>> {
+        // The parts at `at`.
+        let placed_at = |at: PromptAt| -> Option<Vec<ContextItem>> {
             reference
                 .frame
                 .prompts
                 .iter()
-                .filter(|p| p.after == after)
+                .filter(|p| p.at == at)
                 .map(|p| {
                     Some(ContextItem::Prompt {
                         digest: p.text,
@@ -325,8 +350,9 @@ impl<'a> ContextResolver<'a> {
                 })
                 .collect()
         };
-        let Some(leading) = after_entry(None) else { return Ok(None) };
-        let mut placed = leading.len();
+        let Some(leading) = placed_at(PromptAt::Start) else { return Ok(None) };
+        let Some(trailing) = placed_at(PromptAt::End) else { return Ok(None) };
+        let mut placed = leading.len() + trailing.len();
         let mut entries = Vec::with_capacity(path.len());
         for (node, message) in path {
             let in_turn = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
@@ -360,13 +386,17 @@ impl<'a> ContextResolver<'a> {
                     message: profile.given(notice, agent, false, reference.frame.time_zone),
                 });
             }
-            let Some(parts) = after_entry(Some(node.digest)) else { return Ok(None) };
+            let Some(parts) = placed_at(PromptAt::After(node.digest)) else { return Ok(None) };
             placed += parts.len();
             given.extend(parts);
             entries.push((node, given));
         }
         // Every part was placed, none after what is not there.
-        Ok((placed == reference.frame.prompts.len()).then_some((leading, entries)))
+        Ok((placed == reference.frame.prompts.len()).then_some(GivenPath {
+            leading,
+            entries,
+            trailing,
+        }))
     }
 }
 
@@ -658,13 +688,13 @@ mod tests {
                     PromptRef {
                         text: prompt("system"),
                         role: MessageRole::System,
-                        after: None,
+                        at: PromptAt::Start,
                         classification: None,
                     },
                     PromptRef {
                         text: prompt("notes"),
                         role: MessageRole::User,
-                        after: before_question,
+                        at: PromptAt::after(before_question),
                         classification: None,
                     },
                 ],
@@ -684,7 +714,7 @@ mod tests {
         assert_eq!(contents(&seen.items), ["prompt:system", "earlier", "prompt:notes", "question"]);
 
         let mut elsewhere = reference.clone();
-        elsewhere.frame.prompts[1].after = Some(prompt("not an entry"));
+        elsewhere.frame.prompts[1].at = PromptAt::After(prompt("not an entry"));
         assert!(
             resolver.resolve(&elsewhere, turn, ActorId::None).unwrap().is_none(),
             "a part after an entry that is not in the prefix"
@@ -789,9 +819,65 @@ mod tests {
         turn.work.context.frame.prompts.push(PromptRef {
             text: prompt(text),
             role,
-            after: turn.work.context.transcript,
+            at: PromptAt::after(turn.work.context.transcript),
             classification: None,
         });
+    }
+
+    /// Issue 537: a part at the end stands after everything a call is given - after a part placed
+    /// after the last entry too -, and moves on as the turn says more: what each message was
+    /// produced from had it last. It counts in all, behind every entry.
+    #[test]
+    fn a_part_at_the_end_is_given_last_in_every_call() {
+        let agent = ActorId::Agent(AgentId::new());
+        let mut state = AgentChannelState::default();
+        state.transcript.push(text("question"));
+        begin(&mut state, ModelProfile::default());
+        state.prompts.keep(prompt("[Time]"), || "[Time]".to_string());
+        state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef {
+            text: prompt("[Time]"),
+            role: MessageRole::User,
+            at: PromptAt::End,
+            classification: None,
+        });
+        place(&mut state, MessageRole::User, "step 1");
+        let resolved = |state: &AgentChannelState, context: &ContextRef| {
+            let turn_id = state.turn.as_ref().unwrap().work.turn_id;
+            let resolver = ContextResolver::of(state, kernel_catalogue());
+            contents(&resolver.resolve(context, turn_id, agent).unwrap().expect("resolved").items)
+        };
+        let next = |state: &AgentChannelState| state.turn.as_ref().unwrap().work.context.clone();
+        assert_eq!(
+            resolved(&state, &next(&state)),
+            ["question", "prompt:step 1", "prompt:[Time]"],
+            "after the part placed after the last entry"
+        );
+
+        let first = state.said(Message { sender_id: agent, ..text("first") });
+        assert_eq!(
+            resolved(&state, &next(&state)),
+            ["question", "prompt:step 1", "first", "prompt:[Time]"],
+            "moved on with the turn"
+        );
+        let produced_from = state.context_of(&first).expect("sent with what it was produced from");
+        assert_eq!(
+            resolved(&state, &produced_from),
+            ["question", "prompt:step 1", "prompt:[Time]"],
+            "what the message was produced from had it last"
+        );
+
+        let turn_id = state.turn.as_ref().unwrap().work.turn_id;
+        let positions = |context: &ContextRef| {
+            let resolver = ContextResolver::of(&state, kernel_catalogue());
+            resolver.token_positions(context, turn_id, agent).unwrap().expect("measured").0
+        };
+        let with = positions(&next(&state));
+        let mut without_it = next(&state);
+        without_it.frame.prompts.retain(|p| p.at != PromptAt::End);
+        let without = positions(&without_it);
+        let entries = without.len() - 1;
+        assert_eq!(with[..entries], without[..entries], "behind every entry");
+        assert!(with[entries] > without[entries], "counted in all");
     }
 
     #[test]
@@ -1004,7 +1090,7 @@ mod tests {
             state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef {
                 text: prompt("system prompt"),
                 role: MessageRole::System,
-                after: None,
+                at: PromptAt::Start,
                 classification: None,
             });
             place(&mut state, MessageRole::System, "instruction");
@@ -1051,7 +1137,7 @@ mod tests {
         let notes = PromptRef {
             text: prompt("notes"),
             role: MessageRole::User,
-            after: after_question,
+            at: PromptAt::after(after_question),
             classification: None,
         };
         let now = ContextRef {

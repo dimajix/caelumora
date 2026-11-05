@@ -29,8 +29,8 @@ mod resolver;
 mod testing;
 
 pub use item::{
-    ContextItem, ContextRef, FrameRef, KnowledgeRef, KnowledgeSource, Placement, PromptPart,
-    PromptRef,
+    ContextItem, ContextRef, FrameRef, KnowledgeRef, KnowledgeSource, Placement, PromptAt,
+    PromptPart, PromptRef,
 };
 pub use profile::{
     message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle,

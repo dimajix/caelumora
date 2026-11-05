@@ -163,7 +163,7 @@ impl Work {
 mod tests {
     use super::*;
     use crate::confidentiality::{Compartment, Confidentiality};
-    use crate::context::{KnowledgeSource, Placement};
+    use crate::context::{KnowledgeSource, Placement, PromptAt};
     use crate::message::MessageRole;
 
     #[test]
@@ -175,7 +175,7 @@ mod tests {
         let part = |classification: Option<Classification>| PromptPart {
             role: MessageRole::System,
             text: "Be brief.".to_string(),
-            placement: Placement::After { after: None, component: None },
+            placement: Placement::Frame { at: PromptAt::Start, component: None },
             classification,
         };
         let read = KnowledgeRef {

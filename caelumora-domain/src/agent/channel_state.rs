@@ -9,7 +9,7 @@ use crate::confidentiality::Classification;
 use crate::content::ContentId;
 #[cfg(any(test, feature = "test-support"))]
 use crate::context::ContextRef;
-use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptRef};
+use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptAt, PromptRef};
 use crate::digest;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
@@ -462,9 +462,11 @@ impl AgentChannelState {
             self.to_tell.push(ActorEvent::MessageGiven { message });
         }
         turn.work.context.transcript = Some(to);
-        turn.work.context.frame.prompts.retain_mut(|prompt| match prompt.after {
-            None => true,
-            Some(after) => moved.get(&after).map(|now| prompt.after = *now).is_some(),
+        turn.work.context.frame.prompts.retain_mut(|prompt| match prompt.at {
+            PromptAt::Start | PromptAt::End => true,
+            PromptAt::After(after) => {
+                moved.get(&after).map(|now| prompt.at = PromptAt::after(*now)).is_some()
+            }
         });
         // How full the new branch is: no call measured it yet, and the
         // summary's measured the old one. Estimated once, here, with what the
@@ -565,19 +567,18 @@ impl AgentChannelState {
     }
 
     /// Keeps the text of a prompt part the agent was given once by digest
-    /// (issue 47), and returns the reference to it: given in `role` after
-    /// the entry `after` - `None`: before everything - its text classified
-    /// `classification`.
+    /// (issue 47), and returns the reference to it: given in `role` at `at`,
+    /// its text classified `classification`.
     pub fn keep_prompt(
         &mut self,
         role: MessageRole,
         text: String,
-        after: Option<Digest>,
+        at: PromptAt,
         classification: Option<Classification>,
     ) -> PromptRef {
         let digest = digest::prompt(&text);
         self.prompts.keep(digest, || text);
-        PromptRef { text: digest, role, after, classification }
+        PromptRef { text: digest, role, at, classification }
     }
 
     /// Keeps the tool sets the agent's model is offered once by digest
@@ -1678,12 +1679,13 @@ mod tests {
         let change_at = state.transcript.digest();
         begin(&mut state, Vec::new());
         let parts = [
-            ("first", None),
-            ("on the replaced", older),
-            ("on the kept", kept_at),
-            ("on a change", change_at),
+            ("first", PromptAt::Start),
+            ("on the replaced", PromptAt::after(older)),
+            ("on the kept", PromptAt::after(kept_at)),
+            ("on a change", PromptAt::after(change_at)),
+            ("at the end", PromptAt::End),
         ]
-        .map(|(text, after)| state.keep_prompt(MessageRole::System, text.to_string(), after, None));
+        .map(|(text, at)| state.keep_prompt(MessageRole::System, text.to_string(), at, None));
         state.turn.as_mut().unwrap().work.context.frame.prompts = parts.to_vec();
 
         state
@@ -1700,14 +1702,15 @@ mod tests {
             .entries()
             .map(|n| n.entry.message().and_then(|m| m.content.clone()))
             .collect();
-        let anchor = |prompt: &PromptRef| {
-            prompt.after.map(|after| {
+        let anchor = |prompt: &PromptRef| match prompt.at {
+            PromptAt::After(after) => Some(
                 state
                     .transcript
                     .entries()
                     .position(|n| n.digest == after)
-                    .map(|at| on_new[at].clone())
-            })
+                    .map(|at| on_new[at].clone()),
+            ),
+            PromptAt::Start | PromptAt::End => None,
         };
         let anchors: Vec<_> =
             state.turn.as_ref().unwrap().work.context.frame.prompts.iter().map(anchor).collect();
@@ -1716,7 +1719,13 @@ mod tests {
             Some(Some(Some("summary".to_string()))),
             Some(Some(Some("kept".to_string()))),
             Some(Some(Some("changed!".to_string()))),
+            None,
         ], "before everything as it was, after the replacement for what it replaced, after the copy for what was kept - a change's after its message");
+        assert_eq!(
+            state.turn.as_ref().unwrap().work.context.frame.prompts[4].at,
+            PromptAt::End,
+            "at the end as it was (issue 537)"
+        );
         let context = state.turn.as_ref().unwrap().work.context.clone();
         assert!(
             ContextResolver::of(&state, kernel_catalogue())
@@ -1922,7 +1931,8 @@ mod tests {
     #[test]
     fn an_agent_keeps_the_texts_and_tools_its_turn_under_way_names() {
         let mut state = AgentChannelState::default();
-        let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
+        let earlier =
+            state.keep_prompt(MessageRole::System, "earlier".to_string(), PromptAt::Start, None);
         let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
         state.begin_turn(Work::new(
             EventContext::default(),
@@ -1931,7 +1941,8 @@ mod tests {
             Default::default(),
         ));
         state.offer_tools(sets);
-        let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+        let system =
+            state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
         state.turn.as_mut().unwrap().work.context.frame.prompts.push(system.clone());
         let offer = state.turn.as_ref().unwrap().work.context.frame.tools.expect("an offer");
         let frame = state.keep_frame(&state.turn.as_ref().unwrap().work.context.frame.clone());

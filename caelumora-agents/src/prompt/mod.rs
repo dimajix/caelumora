@@ -61,6 +61,12 @@ pub enum PromptPosition {
     /// before. What no longer holds is taken back from where it stands - the
     /// cache is lost from there, and only then. For what changes rarely.
     Given,
+    /// Transiently after everything the model is given in each call (issue
+    /// 537), as a user message: read last, it moves on with every call, so
+    /// that a cache of the prompt loses nothing but the part itself - one
+    /// that keeps what the model wrote after it loses that too. For what
+    /// holds for one turn alone, such as the time.
+    End,
 }
 
 /// What a prompt provider that takes its position alone is configured

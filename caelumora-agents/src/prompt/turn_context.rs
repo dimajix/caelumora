@@ -11,7 +11,7 @@ use caelumora_api::component::ComponentImpl;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::{KnowledgeRef, Placement, PromptPart};
+use caelumora_domain::context::{KnowledgeRef, Placement, PromptAt, PromptPart};
 use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
@@ -20,8 +20,9 @@ pub const TURN_CONTEXT_KIND: &str = "turn_context";
 /// The prompt parts of `prompt_providers` around the transcript: those at
 /// `Start` joined into the system prompt before everything, those at
 /// `BeforeTurnInput` joined into one user message before the newest message
-/// of the turn, and those at `Given` each on its own, as a system message of
-/// its component, into the transcript. The default `ContextProvider` (issue
+/// of the turn, those at `End` joined into one user message after everything
+/// each call is given, and those at `Given` each on its own, as a system
+/// message of its component, into the transcript. The default `ContextProvider` (issue
 /// 98).
 #[derive(Debug)]
 pub struct TurnContextProvider {
@@ -36,6 +37,7 @@ impl ContextProvider for TurnContextProvider {
     ) -> Result<(Vec<PromptPart>, Vec<KnowledgeRef>), ContextError> {
         let mut start = Vec::new();
         let mut before_input = Vec::new();
+        let mut end = Vec::new();
         let mut given = Vec::new();
         let mut knowledge = Vec::new();
         for provider in &self.prompt_providers {
@@ -49,6 +51,7 @@ impl ContextProvider for TurnContextProvider {
             match provider.position() {
                 PromptPosition::Start => start.push(part),
                 PromptPosition::BeforeTurnInput => before_input.push(part),
+                PromptPosition::End => end.push(part),
                 // A system message where the model keeps one, as the
                 // channel's notices are: no participant's words.
                 PromptPosition::Given => given.push(PromptPart {
@@ -60,50 +63,57 @@ impl ContextProvider for TurnContextProvider {
             }
         }
 
-        // The system prompt before everything.
-        let mut parts = Vec::with_capacity(2 + given.len());
-        if !start.is_empty() {
-            let (text, classification) = joined(start);
-            parts.push(PromptPart {
-                role: MessageRole::System,
-                text,
-                placement: Placement::After { after: None, component: None },
-                classification,
-            });
-        }
-        if !before_input.is_empty() {
-            // Before the newest message, which is the turn's input - unless
-            // the agent wrote it itself, in a turn that has none (e.g. after
-            // `/wakeup`): then at the end. A part given into the transcript is
-            // no input, nor the agent's own words (issue 537): it is passed
-            // over in looking for the input, as a turn answering anew finds
-            // one after it.
-            let transcript = &situation.agent_channel_state().transcript;
-            let mut messages = transcript
-                .entries()
-                .rev()
-                .filter_map(|n| n.entry.message().map(|m| (n.digest, n.entry.part_of(), m)))
-                .skip_while(|(_, part, _)| part.is_some())
-                .map(|(digest, _, message)| (digest, message));
-            let own = ActorId::Agent(situation.agent_id());
-            let after = match messages.next() {
-                Some((_, input)) if input.sender_id != own => {
-                    messages.next().map(|(digest, _)| digest)
-                }
-                Some((own_message, _)) => Some(own_message),
-                None => None,
-            };
-            let (text, classification) = joined(before_input);
-            parts.push(PromptPart {
-                role: MessageRole::User,
-                text,
-                placement: Placement::After { after, component: None },
-                classification,
-            });
-        }
+        // The system prompt before everything, what goes before the input,
+        // what is read last, then what is given into the transcript.
+        let mut parts = Vec::with_capacity(3 + given.len());
+        parts.extend(framed(start, MessageRole::System, PromptAt::Start));
+        parts.extend(framed(before_input, MessageRole::User, before_the_input(situation)));
+        parts.extend(framed(end, MessageRole::User, PromptAt::End));
         parts.extend(given);
         Ok((parts, knowledge))
     }
+}
+
+/// The prompt parts `parts` of one position joined into one, given in `role`
+/// at `at` in the frame; `None` if there are none.
+fn framed(
+    parts: Vec<(String, Option<Classification>)>,
+    role: MessageRole,
+    at: PromptAt,
+) -> Option<PromptPart> {
+    if parts.is_empty() {
+        return None;
+    }
+    let (text, classification) = joined(parts);
+    Some(PromptPart {
+        role,
+        text,
+        placement: Placement::Frame { at, component: None },
+        classification,
+    })
+}
+
+/// Where what goes before the turn's input stands in the frame: before the
+/// newest message, which is the input - unless the agent wrote it itself,
+/// in a turn that has none (e.g. after `/wakeup`): then at the end of the
+/// transcript. A part given into the transcript is no input, nor the agent's
+/// own words (issue 537): it is passed over in looking for the input, as a
+/// turn answering anew finds one after it.
+fn before_the_input(situation: &Situation<'_>) -> PromptAt {
+    let transcript = &situation.agent_channel_state().transcript;
+    let mut messages = transcript
+        .entries()
+        .rev()
+        .filter_map(|n| n.entry.message().map(|m| (n.digest, n.entry.part_of(), m)))
+        .skip_while(|(_, part, _)| part.is_some())
+        .map(|(digest, _, message)| (digest, message));
+    let own = ActorId::Agent(situation.agent_id());
+    let after = match messages.next() {
+        Some((_, input)) if input.sender_id != own => messages.next().map(|(digest, _)| digest),
+        Some((own_message, _)) => Some(own_message),
+        None => None,
+    };
+    PromptAt::after(after)
 }
 
 /// The prompt parts of one position joined into one: their texts, and the
@@ -319,6 +329,35 @@ mod tests {
             }],
             "not joined, but named by its component - and one that says nothing is none"
         );
+    }
+
+    /// Issue 537: the parts at the end are joined into one, given as a user message after
+    /// everything each call is given.
+    #[tokio::test]
+    async fn the_parts_at_the_end_are_joined_and_placed_after_everything() {
+        let at_end = |prompt: &str| ComponentImpl {
+            id: "end".to_string(),
+            fail_policy: ComponentFailPolicy::FailClosed,
+            facet: Arc::new(SystemPromptComponent {
+                prompt: prompt.to_string(),
+                position: PromptPosition::End,
+                classification: Classification::PUBLIC,
+            }) as Arc<dyn PromptProvider>,
+        };
+        let provider = TurnContextProvider {
+            prompt_providers: vec![at_end("[Time]\nnow"), at_end("[Why]\nasked")],
+        };
+        let mut agent_channel_state = AgentChannelState::default();
+        agent_channel_state.transcript.push(message("hello"));
+        let turn = Turn::begun(AgentId::new(), &mut agent_channel_state);
+        let (parts, _) = provider.current_context(&turn.situation()).await.unwrap();
+        let placed: Vec<_> = parts.iter().map(|p| (p.role, p.placement.clone())).collect();
+        assert_eq!(
+            placed,
+            [(MessageRole::User, Placement::Frame { at: PromptAt::End, component: None })],
+            "one part, at the end, whatever the transcript holds"
+        );
+        assert!(parts[0].text.contains("[Time]") && parts[0].text.contains("[Why]"), "joined");
     }
 
     /// Issue 537: a part given into the transcript after the input is no input, nor the agent's

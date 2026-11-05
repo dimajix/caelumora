@@ -518,7 +518,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `wakeup` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
 | `nudge` | `ChannelCommandProvider` | - | The user command `/nudge`. |
 
-`position` is `start`, `before_turn_input` or `given`
+`position` is `start`, `before_turn_input`, `end` or `given`
 ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.
 Every tool is `SHOWN` unless its row says otherwise. This table is the one list of what comes with
 Caelumora; the commands are described with their arguments and answers in

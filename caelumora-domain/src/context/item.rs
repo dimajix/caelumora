@@ -17,16 +17,39 @@ use uuid::Uuid;
 
 /// A prompt part an agent's model was given besides the conversation - the
 /// system prompt, notes, ... (issue 47): the digest of its text, the role it
-/// was given as, and the entry of the transcript it followed, `None` if it
-/// came before everything - and how what it holds besides the knowledge it
-/// lists was classified (issue 168), `None` if that is not known.
+/// was given as, where it stood (`PromptAt`), and how what it holds besides
+/// the knowledge it lists was classified (issue 168), `None` if that is not
+/// known.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromptRef {
     pub text: Digest,
     pub role: MessageRole,
-    pub after: Option<Digest>,
+    pub at: PromptAt,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classification: Option<Classification>,
+}
+
+/// Where a prompt part of a frame stands in what its model is given (issues
+/// 47, 537).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptAt {
+    /// Before everything.
+    Start,
+    /// After the transcript entry with this digest.
+    After(Digest),
+    /// After everything a call of the model is given - the transcript it is
+    /// given and every part placed after its entries -, so that it moves
+    /// on with every call and is read last.
+    End,
+}
+
+impl PromptAt {
+    /// After the entry `entry` - before everything if there is none: where
+    /// a part goes that follows what a transcript holds so far.
+    pub fn after(entry: Option<Digest>) -> Self {
+        entry.map_or(PromptAt::Start, PromptAt::After)
+    }
 }
 
 /// An element of what an agent's model is given, in the shape it was given
@@ -158,11 +181,10 @@ pub struct PromptPart {
 /// from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
-    /// Into the frame, after the transcript entry `after` - `None`: before
-    /// everything -, placed anew in every turn. `component` is the one it
-    /// came from, if from one alone (issue 214): what an external agent's
-    /// actor tells the parts it gives apart by.
-    After { after: Option<Digest>, component: Option<String> },
+    /// Into the frame, at `at`, placed anew in every turn. `component` is
+    /// the one it came from, if from one alone (issue 214): what an external
+    /// agent's actor tells the parts it gives apart by.
+    Frame { at: PromptAt, component: Option<String> },
     /// Into the transcript as the part of `component`, where its text
     /// changed (`AgentChannelState::give_parts`).
     Given { component: String },

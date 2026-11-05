@@ -46,7 +46,7 @@ use caelumora_domain::agent::RetryRefused;
 use caelumora_domain::command::Command;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::{ContextResolver, Placement, PromptPart};
+use caelumora_domain::context::{ContextResolver, Placement, PromptAt, PromptPart};
 use caelumora_domain::digest;
 use caelumora_domain::external_agent::{OpenTaskState, TaskId};
 use caelumora_domain::history::Heard;
@@ -93,10 +93,10 @@ pub(crate) struct ExternalAgentActor {
 /// the others: the component it came from, else its place among them.
 fn part_key(part: &PromptPart, index: usize) -> String {
     match &part.placement {
-        Placement::After { component: Some(component), .. } | Placement::Given { component } => {
+        Placement::Frame { component: Some(component), .. } | Placement::Given { component } => {
             component.clone()
         }
-        Placement::After { component: None, .. } => format!("#{index}"),
+        Placement::Frame { component: None, .. } => format!("#{index}"),
     }
 }
 
@@ -385,12 +385,12 @@ impl ExternalAgentActor {
             // provider placed it - one given into a turn's transcript before
             // everything, as the remote agent is given every part; seen
             // already.
-            let after = match part.placement {
-                Placement::After { after, .. } => after,
-                Placement::Given { .. } => None,
+            let at = match part.placement {
+                Placement::Frame { at, .. } => at,
+                Placement::Given { .. } => PromptAt::Start,
             };
             let reference =
-                state.keep_prompt(part.role, part.text.clone(), after, part.classification.clone());
+                state.keep_prompt(part.role, part.text.clone(), at, part.classification.clone());
             work.context.frame.prompts.push(reference);
             parts.push(part.text.clone());
         }

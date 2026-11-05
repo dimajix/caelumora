@@ -8,7 +8,8 @@ use anyhow::{Context, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{
-    ContextItem, ContextResolver, FrameRef, KnowledgeRef, Placement, PromptPart, PromptRef,
+    ContextItem, ContextResolver, FrameRef, KnowledgeRef, Placement, PromptAt, PromptPart,
+    PromptRef,
 };
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
@@ -133,8 +134,12 @@ impl Turn<'_> {
         let mut given = Vec::new();
         for PromptPart { role, text, placement, classification } in parts {
             match placement {
-                Placement::After { after, .. } => prompts
-                    .push(self.agent_channel_state.keep_prompt(role, text, after, classification)),
+                Placement::Frame { at, .. } => prompts.push(self.agent_channel_state.keep_prompt(
+                    role,
+                    text,
+                    at,
+                    classification,
+                )),
                 Placement::Given { component } => {
                     let classification = classification
                         .unwrap_or_else(|| self.current().work.classification.clone());
@@ -152,18 +157,18 @@ impl Turn<'_> {
     }
 
     /// Keeps the text of a prompt part once by digest, and returns the
-    /// reference to it, given in `role` after the entry `after`, its text
-    /// classified `classification`. The model is given it: the turn has
-    /// seen it (issue 168).
+    /// reference to it, given in `role` at `at`, its text classified
+    /// `classification`. The model is given it: the turn has seen it (issue
+    /// 168).
     pub(super) fn keep_prompt(
         &mut self,
         role: MessageRole,
         text: String,
-        after: Option<Digest>,
+        at: PromptAt,
         classification: Option<Classification>,
     ) -> PromptRef {
         self.current_mut().work.see_classified(classification.as_ref());
-        self.agent_channel_state.keep_prompt(role, text, after, classification)
+        self.agent_channel_state.keep_prompt(role, text, at, classification)
     }
 
     /// Places `text`, given in `role`, after the messages the turn has
@@ -174,9 +179,9 @@ impl Turn<'_> {
     /// `role` there is to be given. It counts for the messages produced
     /// from now on.
     pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
-        let after = self.current().work.context.transcript;
+        let at = PromptAt::after(self.current().work.context.transcript);
         // Written by the turn from what it produced: as the turn.
-        let prompt = self.keep_prompt(role, text, after, Some(self.situation().label()));
+        let prompt = self.keep_prompt(role, text, at, Some(self.situation().label()));
         self.current_mut().work.context.frame.prompts.push(prompt);
     }
 }
@@ -406,7 +411,7 @@ mod tests {
         let system = || PromptPart {
             role: MessageRole::System,
             text: "You are good at sums.".to_string(),
-            placement: Placement::After { after: None, component: None },
+            placement: Placement::Frame { at: PromptAt::Start, component: None },
             classification: None,
         };
         let order = |items: &[ContextItem]| {
@@ -589,7 +594,7 @@ mod tests {
                 PromptPart {
                     role: MessageRole::User,
                     text: "[Time]\nnow".to_string(),
-                    placement: Placement::After { after: None, component: None },
+                    placement: Placement::Frame { at: PromptAt::Start, component: None },
                     classification: None,
                 },
                 PromptPart {

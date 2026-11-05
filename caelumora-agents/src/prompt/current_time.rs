@@ -143,6 +143,11 @@ mod tests {
             PromptPosition::Start,
             "as configured"
         );
-        assert!(position(serde_json::json!({ "position": "end" })).is_err());
+        assert_eq!(
+            position(serde_json::json!({ "position": "end" })).unwrap(),
+            PromptPosition::End,
+            "at the end of every call, where a cache loses little but it (issue 537)"
+        );
+        assert!(position(serde_json::json!({ "position": "middle" })).is_err(), "no position");
     }
 }

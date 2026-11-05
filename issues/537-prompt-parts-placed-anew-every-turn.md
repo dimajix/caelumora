@@ -216,3 +216,8 @@ what an agent saw is not told exactly once a text changed: a question of its own
   tells; the strategy is given the conversation without any prompt part
   (`ContextResolver::conversation_until`), through `Turn::conversation_until`, as
   `Turn::context_until` is renamed, since it gives the conversation alone now.
+- **2026-11-05** — Done: a part at `end` (`PromptPosition::End`) is placed into the frame at its
+  end (`PromptAt::End`), which the resolver gives after everything a call is given, after the parts
+  placed after the last entry too. `PromptAt` - `Start`, `After(Digest)`, `End` - replaces the
+  `after` of `PromptRef` and of the placement into the frame, which is named `Placement::Frame` for
+  it. The seed's components keep their positions; which go to `end` is left to decide.

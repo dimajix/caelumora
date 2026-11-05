@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::{KnowledgeRef, Placement, PromptPart};
+use caelumora_domain::context::{KnowledgeRef, Placement, PromptAt, PromptPart};
 use caelumora_domain::message::MessageRole;
 use std::sync::Arc;
 
@@ -65,7 +65,7 @@ fn part(
     PromptPart {
         role: MessageRole::User,
         text: text.to_string(),
-        placement: Placement::After { after: None, component: Some(provider.id.clone()) },
+        placement: Placement::Frame { at: PromptAt::Start, component: Some(provider.id.clone()) },
         classification,
     }
 }
@@ -139,8 +139,8 @@ mod tests {
 
         let given: Vec<_> =
             parts.iter().map(|p| (p.text.as_str(), p.role, p.placement.clone())).collect();
-        let of = |component: &str| Placement::After {
-            after: None,
+        let of = |component: &str| Placement::Frame {
+            at: PromptAt::Start,
             component: Some(component.to_string()),
         };
         assert_eq!(
@@ -195,7 +195,7 @@ mod tests {
             .iter()
             .map(|p| (p.placement.clone(), p.text.as_str(), p.classification.clone()))
             .collect();
-        let rules = Placement::After { after: None, component: Some("rules".to_string()) };
+        let rules = Placement::Frame { at: PromptAt::Start, component: Some("rules".to_string()) };
         assert_eq!(
             withdrawn,
             [(rules, "[Rules]\nNo longer.", Some(Classification::PUBLIC))],

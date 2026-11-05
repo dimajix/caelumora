@@ -731,21 +731,31 @@ A `PromptProvider` contributes a part at a `PromptPosition`:
     (`AgentChannelState::give_parts`, `TranscriptEntry::Given` of a `GivenSource::Part`). The
     channel's history records both, the one taken back as withdrawn (`HistoryEntry::Withdrawn`):
     where the agent stopped reading it.
+*   **`End`** - transiently after everything each call of the model is given, after the parts
+    placed after the last entry too, as a user message (`PromptAt::End`, issue 537): it moves on
+    with every call, and is read last.
 
 The distinction exists because many models cache the prompt up to the first change, and some merge
 every system message into the system prompt. Information that changes often does not belong in the
 system prompt. A part at `BeforeTurnInput` stands elsewhere in every turn, so a cache keeps nothing
-of the turn before it; one at `Given` stays where it was given, so what the model is given grows
-only at its end, and the cache is lost from where a part stood only when it changes. The model is
-never given what no longer holds. What has to be judged anew in every turn, under the rights of that
-turn - what the agent may recall where -, belongs at `BeforeTurnInput`: a part at `Given` that held
-it would hold it until the part changes.
+of the turn before it - from its input on, with every call the turn made; one at `End` stands after
+everything, so a cache of the prompt loses nothing but the part itself, from call to call as from
+turn to turn - one that keeps what the model wrote after it too, as llama.cpp's does, loses that as
+well;
+one at `Given` stays where it was given, so what the model is given grows only at its end, and the
+cache is lost from where a part stood only when it changes. The model is never given what no
+longer holds. What has to be judged anew in every turn, under the rights of that turn - what the
+agent may recall where -, belongs at `BeforeTurnInput` or `End`: a part at `Given` that held it
+would hold it until the part changes. Which suits a component is the personality's to say, by the
+component's `position` where its kind takes one: of the two, `End` costs the cache less, and the
+model reads it after the input rather than before.
 
-The parts of `Start` and of `BeforeTurnInput` are joined in the order of the configuration; each
-part at `Given` stands on its own. Every part is classified as its provider says, or as the channel;
-the turn has seen it. A part whose component fails open is left out of that turn with a warning; one
-that fails closed fails the turn. At `Given`, left out means taken back: the next turn gives it
-again, and the cache is lost from where it stood, as for a change.
+The parts of `Start`, of `BeforeTurnInput` and of `End` are joined in the order of the
+configuration, each position's into one; each part at `Given` stands on its own. Every part is
+classified as its provider says, or as the channel; the turn has seen it. A part whose component
+fails open is left out of that turn with a warning; one that fails closed fails the turn. At
+`Given`, left out means taken back: the next turn gives it again, and the cache is lost from where
+it stood, as for a change.
 
 A `PromptProvider` is given a `Situation` (`Turn::situation`), what every piece of work of an agent
 has, so the same providers serve an external agent as well. What only reads takes a `Situation`;
