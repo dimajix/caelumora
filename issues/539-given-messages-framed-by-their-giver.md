@@ -106,3 +106,13 @@ Decided with the maintainer, in steps of their own:
   part is its frame's (`Placement::Frame { at, role, component }`), no longer a field of
   `PromptPart` beside a placement that gives it no meaning: a part given into the transcript is
   framed as what is given to read, a system message, whatever role it named.
+- **2026-11-06** — Step 2 done: the experiment (`work/given_framing/RESULTS.md`). No framing
+  makes `gemma4:26b` or `gemma4:cloud` take a skill a user gave for given: `gemma4:cloud` loads it
+  again in 20 of 20 runs under every variant, `gemma4:26b` in 9 to 15 of 20, within the noise.
+  Following a skill the model loaded, going on from a summary and telling the senders apart hold in
+  every variant; a block a participant forges is obeyed alike under all of them. A first run that
+  offered `load_skill` alone had found `<given>` taken for given by `gemma4:cloud`; offered the
+  tools of the `skills` component, as Caelumora offers them, it is not. So step 3 is not taken: the
+  format stays the title in brackets, and nothing is configured that a real configuration does not
+  show a use for. Found on the way: loading again a skill that stands in the transcript gives it a
+  second time; whether `load_skill` should answer that without giving it is the skills' question.

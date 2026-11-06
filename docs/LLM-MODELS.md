@@ -38,7 +38,7 @@ component_defaults:
 | `context_size` | as much as the machine holds, e.g. `65536` | The model was trained for 262144 tokens; unless told, Ollama loads it with its own default, which may be far fewer, and cuts a longer prompt off without saying so. Set, the gauge in the web UI knows the size |
 | `think` | left out | Ollama's default for the model; not measured |
 | `reasoning_history` | `current_turn` (default) | What reasoning models document; not measured for gemma4 |
-| `system_messages` | `only_at_start` (default) | Holds for every model. Whether gemma4 keeps a later system message in place is not measured: Ollama renders its chat template internally |
+| `system_messages` | `only_at_start` (default) | Holds for every model. Whether gemma4 keeps a later system message in place is not measured: Ollama renders its chat template internally. With `anywhere`, `gemma4:26b` takes a skill a user gave it for given no more and no less often than with `only_at_start` (`work/given_framing/RESULTS.md`) |
 
 ## Models of Ollama's cloud
 
