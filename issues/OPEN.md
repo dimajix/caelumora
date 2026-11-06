@@ -56,7 +56,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [465](465-attachments-in-the-context.md) | open | medium | feature | What of a message's attachments is put into a model's context and what it has to fetch through a tool is decided by no bound, so a few images or one long text can fill the context and are sent again with every call. |
 | [518](518-memory-is-reached-through-the-agents-state.md) | open | medium | refactoring | An agent's memory is part of its state, which the agent side is handed whole and changes through three calls of its `ActorRuntime`, and the agent side itself decides which entries may be recalled where, while the workspace, skills and artifacts are system services reached through a reader and a writer. |
 | [538](538-workspace-knowledge-without-a-place.md) | open | medium | feature | What an agent read of a workspace is recorded as the workspace and a digest, without the file, and only in the frame of the turn that read it, so a compaction cannot give a file read again, nothing tells that a file read has changed since, and a replacement overwrites what changed in between. |
-| [539](539-given-messages-framed-by-their-giver.md) | in progress | medium | feature | What is given into an agent's transcript - a skill, a compaction's summary, a prompt part - takes the role and sender its giver chooses, so the model cannot tell given context from what was said, and a skill a user loaded is given again after a compaction as the agent's own. |
 
 ## Maintenance
 

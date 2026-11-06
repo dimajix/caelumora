@@ -107,7 +107,7 @@ loaded again 1 of 10 times under `tagged`, 10 of 10 under `titled`. Offered the 
     and every one of `gemma4:cloud`'s that follow a `/skill`. Each time, the model is given the
     skill a second time, and its transcript holds it twice. Whatever the framing, `load_skill`
     could answer for a skill that stands in the transcript already without giving it again; that
-    is the skills' to decide.
+    is the skills' to decide (issue 541).
 
 ## What follows for issue 539
 

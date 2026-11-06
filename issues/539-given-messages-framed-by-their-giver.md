@@ -1,6 +1,6 @@
 # 539 — What is given into an agent's transcript is framed by whoever gives it
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -116,3 +116,12 @@ Decided with the maintainer, in steps of their own:
   format stays the title in brackets, and nothing is configured that a real configuration does not
   show a use for. Found on the way: loading again a skill that stands in the transcript gives it a
   second time; whether `load_skill` should answer that without giving it is the skills' question.
+- **2026-11-06** — The finding of step 2 opened as issue
+  [541](541-skill-loaded-again-though-given.md).
+- **2026-11-06** — Step 4 done, and with it the issue: `Cut::wanted` names with each entity given
+  the message it was first given in, and the compaction gives it again in that message's sender's
+  name - a skill alice gave with `/skill` as alice's, framed as given by alice, one the model loaded
+  as the agent's. A `GivenAgain` is told from the others by its `knowledge`, the entity given again;
+  one a restorer gives that was not wanted is left out. What was given is read as the entries
+  stand, as everything else of the transcript is (issue 234): a gift taken back is no longer given
+  again, nor does it stand in the part kept for one before the cut, which both it had done.
