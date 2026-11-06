@@ -407,7 +407,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [537](537-prompt-parts-placed-anew-every-turn.md) | done | A prompt part before the turn's input is built anew in every turn and stands elsewhere in the next, so a model's prompt cache loses the whole turn before with every turn; only an external agent is told a part once and then only when it changed, and that in two ways, by its components and by its actor. |
 | [538](538-workspace-knowledge-without-a-place.md) | open | What an agent read of a workspace is recorded as the workspace and a digest, without the file, and only in the frame of the turn that read it, so a compaction cannot give a file read again, nothing tells that a file read has changed since, and a replacement overwrites what changed in between. |
 | [539](539-given-messages-framed-by-their-giver.md) | done | What is given into an agent's transcript - a skill, a compaction's summary, a prompt part - takes the role and sender its giver chooses, so the model cannot tell given context from what was said, and a skill a user loaded is given again after a compaction as the agent's own. |
-| [541](541-skill-loaded-again-though-given.md) | in progress | After a participant gave an agent a skill with `/skill`, models call `load_skill` for it anyway, and the skill is given a second time; `load_skill` could answer for a skill that stands in the transcript already without giving it again. |
+| [541](541-skill-loaded-again-though-given.md) | done | After a participant gave an agent a skill with `/skill`, models call `load_skill` for it anyway, and the skill is given a second time; `load_skill` could answer for a skill that stands in the transcript already without giving it again. |
 
 ## Maintenance
 

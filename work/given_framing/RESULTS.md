@@ -1,4 +1,4 @@
-# How what is given to read is framed (issue 539) - experiments of 2026-11-06
+# How what is given to read is framed (issues 539 and 541) - experiments of 2026-11-06
 
 `gemma4:26b` (local, `num_ctx` 65536) and `gemma4:cloud` (no options, as its recommended
 configuration sets no context size) on Ollama 0.40.13, as Caelumora sends them (no `think`, no
@@ -9,7 +9,8 @@ Helper -: the parts at `Start` joined into one system message, the tools of the 
 where a skill is in play, a tool's result as the Ollama client gives it. It changes how what the
 agent is given to read is framed and nothing else. `--table` prints the tables below, `--show
 VARIANT SITUATION` what a call is given. Raw answers in `results/runs.jsonl` (not committed); 5 runs
-per situation and variant, 20 for `skill_by_user`.
+per situation and variant, 20 for `skill_by_user`; the situations of issue 541 at the end, 20 runs
+each under `titled` alone.
 
 The variants:
 
@@ -113,3 +114,32 @@ loaded again 1 of 10 times under `tagged`, 10 of 10 under `titled`. Offered the 
 
 The format stays `titled` and is not made configurable (step 3 is not taken): no variant does
 better than another for either model in what Caelumora actually sends.
+
+## Answered `given above` (issue 541)
+
+Since issue 541, `load_skill` gives no skill that stands in the transcript as it is: it answers
+`"status": "given above"`, and nothing follows; its description says so ("Its text follows the
+result, unless it stands above already, as the result then says"). Two situations, under `titled`
+alone, as Caelumora sends it, with the tools as described since, 20 runs each:
+
+*   **skill_by_user_now**: `skill_by_user`. Does the description keep the model from loading the
+    skill alice gave?
+*   **given_above**: `skill_by_user`, after the agent called `load_skill` and was answered
+    `given above`. Does it follow the skill then?
+
+| situation | `gemma4:26b` follows | loads again | `gemma4:cloud` follows | loads again |
+|---|---|---|---|---|
+| `skill_by_user_now` | 8/20 | 12/20 | 0/20 | 20/20 |
+| `given_above` | 20/20 | 0/20 | 20/20 | 0/20 |
+
+Neither model names alice, calls another tool, or imitates a marker. A tool's value goes to the
+model with its keys sorted, as `serde_json` writes a `json!` object - `{"name":...,"skill_id":...,
+"status":"given above"}` -; a first run of `given_above` with the keys in the order the code names
+them found the same, 20 of 20 for both models (`results/runs-before-key-order.jsonl`). The runs of
+`skill_by_model` above were made with that order too.
+
+1.  **Answered `given above`, both models follow the skill at once, in every run**, and neither
+    loads it again: the call more costs a step, no longer a second copy of the skill.
+2.  **The description does not keep them from loading it**: `gemma4:26b` loads it in 12 of 20
+    runs, as under `titled` before (12 of 20), `gemma4:cloud` in all. Its sentence is right, so it
+    stays, but it is no lever.

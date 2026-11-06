@@ -1,6 +1,6 @@
 # 541 — A skill given to the agent is loaded again and stands twice in its transcript
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Context and knowledge
@@ -81,3 +81,9 @@ Decided with the maintainer, in steps of their own:
   A function of its own for the turns given up as `Lowered`, which the cut, `given_as_they_stand`
   and the resolver each collect in one line, was weighed and not taken: a self-explaining line is
   not worth a name.
+- **2026-11-06** — Step 2 done, and with it the issue: the measurement
+  (`work/given_framing/RESULTS.md`, *Answered `given above`*). Answered `given above`, `gemma4:26b`
+  and `gemma4:cloud` follow the skill at once in 20 of 20 runs each and never load it again. The
+  new description of `load_skill` does not keep them from loading a skill alice gave (`gemma4:26b`
+  12 of 20, `gemma4:cloud` 20 of 20, as before): a model still calls it once, but the skill no
+  longer stands twice.
