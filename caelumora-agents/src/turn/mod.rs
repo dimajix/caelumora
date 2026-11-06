@@ -653,9 +653,12 @@ mod tests {
 
         turn.set_context(
             vec![PromptPart {
-                role: MessageRole::System,
                 text: "Be brief.".to_string(),
-                placement: Placement::Frame { at: PromptAt::Start, component: None },
+                placement: Placement::Frame {
+                    at: PromptAt::Start,
+                    role: MessageRole::System,
+                    component: None,
+                },
                 classification: Some(Classification::PUBLIC),
             }],
             Vec::new(),
@@ -666,9 +669,12 @@ mod tests {
         assert_eq!(turn.situation().label(), internal, "what others said during the turn");
         turn.set_context(
             vec![PromptPart {
-                role: MessageRole::System,
                 text: "Be brief.".to_string(),
-                placement: Placement::Frame { at: PromptAt::Start, component: None },
+                placement: Placement::Frame {
+                    at: PromptAt::Start,
+                    role: MessageRole::System,
+                    component: None,
+                },
                 classification: None,
             }],
             Vec::new(),

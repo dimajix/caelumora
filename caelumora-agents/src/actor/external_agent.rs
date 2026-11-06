@@ -385,12 +385,13 @@ impl ExternalAgentActor {
             // provider placed it - one given into a turn's transcript before
             // everything, as the remote agent is given every part; seen
             // already.
-            let at = match part.placement {
-                Placement::Frame { at, .. } => at,
-                Placement::Given { .. } => PromptAt::Start,
+            let (at, role) = match part.placement {
+                Placement::Frame { at, role, .. } => (at, role),
+                // As what is given to read is (issue 539).
+                Placement::Given { .. } => (PromptAt::Start, MessageRole::System),
             };
             let reference =
-                state.keep_prompt(part.role, part.text.clone(), at, part.classification.clone());
+                state.keep_prompt(role, part.text.clone(), at, part.classification.clone());
             work.context.frame.prompts.push(reference);
             parts.push(part.text.clone());
         }

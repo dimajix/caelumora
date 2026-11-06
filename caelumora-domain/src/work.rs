@@ -173,9 +173,12 @@ mod tests {
         let mut work =
             Work::new(EventContext::default(), None, confidential.clone(), Default::default());
         let part = |classification: Option<Classification>| PromptPart {
-            role: MessageRole::System,
             text: "Be brief.".to_string(),
-            placement: Placement::Frame { at: PromptAt::Start, component: None },
+            placement: Placement::Frame {
+                at: PromptAt::Start,
+                role: MessageRole::System,
+                component: None,
+            },
             classification,
         };
         let read = KnowledgeRef {

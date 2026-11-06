@@ -102,3 +102,7 @@ Decided with the maintainer, in steps of their own:
   is `as_said`, beside `given_to_read`, and the resolver's dispatch between them `framed`. *Given*
   keeps the meaning issue [398](398-given-means-four-things.md) found for it - given to the agent
   or its model -; the two methods name which messages they frame.
+- **2026-11-06** — Decided with the maintainer and done, as a step of its own: the role of a prompt
+  part is its frame's (`Placement::Frame { at, role, component }`), no longer a field of
+  `PromptPart` beside a placement that gives it no meaning: a part given into the transcript is
+  framed as what is given to read, a system message, whatever role it named.

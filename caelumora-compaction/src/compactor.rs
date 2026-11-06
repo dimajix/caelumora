@@ -379,7 +379,6 @@ mod tests {
         let mut turn = workspace_turn(&world, &mut state);
         turn.set_context(
             vec![PromptPart {
-                role: MessageRole::System,
                 text: RULES.to_string(),
                 placement: Placement::Given { component: "rules".to_string() },
                 classification: Some(Classification::PUBLIC),

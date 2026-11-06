@@ -63,9 +63,12 @@ fn part(
     classification: Option<Classification>,
 ) -> PromptPart {
     PromptPart {
-        role: MessageRole::User,
         text: text.to_string(),
-        placement: Placement::Frame { at: PromptAt::Start, component: Some(provider.id.clone()) },
+        placement: Placement::Frame {
+            at: PromptAt::Start,
+            role: MessageRole::User,
+            component: Some(provider.id.clone()),
+        },
         classification,
     }
 }
@@ -137,19 +140,13 @@ mod tests {
             .await
             .unwrap();
 
-        let given: Vec<_> =
-            parts.iter().map(|p| (p.text.as_str(), p.role, p.placement.clone())).collect();
+        let given: Vec<_> = parts.iter().map(|p| (p.text.as_str(), p.placement.clone())).collect();
         let of = |component: &str| Placement::Frame {
             at: PromptAt::Start,
+            role: MessageRole::User,
             component: Some(component.to_string()),
         };
-        assert_eq!(
-            given,
-            [
-                ("Be brief.", MessageRole::User, of("frame")),
-                ("Answer in German.", MessageRole::User, of("rules"))
-            ]
-        );
+        assert_eq!(given, [("Be brief.", of("frame")), ("Answer in German.", of("rules"))]);
         assert!(knowledge.is_empty());
     }
 
@@ -195,7 +192,11 @@ mod tests {
             .iter()
             .map(|p| (p.placement.clone(), p.text.as_str(), p.classification.clone()))
             .collect();
-        let rules = Placement::Frame { at: PromptAt::Start, component: Some("rules".to_string()) };
+        let rules = Placement::Frame {
+            at: PromptAt::Start,
+            role: MessageRole::User,
+            component: Some("rules".to_string()),
+        };
         assert_eq!(
             withdrawn,
             [(rules, "[Rules]\nNo longer.", Some(Classification::PUBLIC))],
