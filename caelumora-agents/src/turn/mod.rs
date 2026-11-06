@@ -224,15 +224,15 @@ impl<'a> Turn<'a> {
         self.situation().tool_sets().iter().flat_map(|set| &set.tools)
     }
 
-    /// Gives the agent `message` to read in this turn (issue 22) - a skill
-    /// loaded for it - as the knowledge `knowledge`, if it is knowledge
-    /// (issue 389): into its transcript, as what it was given, not what it
-    /// said, and the knowledge recorded (`AgentChannelState::given`); its
-    /// channel is told after the step, for its history (issue 417). Not
-    /// published. Written at once, as what a turn says is (issue 260), so a
-    /// component gives only once nothing can fail any more.
-    pub fn give(&mut self, message: Message, knowledge: Option<KnowledgeRef>) {
-        self.agent_channel_state.given(message, knowledge);
+    /// Gives the agent `message` to read in this turn (issue 22) - a skill loaded for it - as the
+    /// knowledge `knowledge`, if it is knowledge (issue 389): into its transcript, as what it was
+    /// given, not what it said, and the knowledge recorded (`AgentChannelState::given`); its
+    /// channel is told after the step, for its history (issue 417). Not published. Written at
+    /// once, as what a turn says is (issue 260), so a component gives only once nothing can fail
+    /// any more. `false`, and nothing given but the knowledge recorded, if the same knowledge
+    /// stands given already (issue 541).
+    pub fn give(&mut self, message: Message, knowledge: Option<KnowledgeRef>) -> bool {
+        self.agent_channel_state.given(message, knowledge)
     }
 
     /// Replaces the agent's context in this turn (issue 16): its transcript

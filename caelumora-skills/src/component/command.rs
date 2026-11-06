@@ -115,11 +115,12 @@ impl AgentCommandProvider for SkillsComponent {
                 // Nothing can fail from here on: what is given is written at once.
                 let knowledge =
                     skill.knowledge(turn.situation().channel_id(), turn.situation().session_id());
-                turn.give(given, Some(knowledge));
+                let when = if turn.give(given, Some(knowledge)) { "now" } else { "already" };
                 Ok(CommandOutput::private(format!(
-                    "{} has the skill '{}' now.",
+                    "{} has the skill '{}' {}.",
                     turn.agent_name(),
-                    skill.name.name
+                    skill.name.name,
+                    when
                 )))
             }
             _ => Err(CommandError::Unknown(name.to_string())),

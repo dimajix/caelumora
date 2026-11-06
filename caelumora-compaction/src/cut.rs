@@ -12,7 +12,7 @@ use caelumora_domain::context::KnowledgeSource;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::store::EntityKind;
-use caelumora_domain::transcript::{as_they_stand, GivenSource, Transcript, TranscriptEntry};
+use caelumora_domain::transcript::{as_they_stand, Transcript, TranscriptEntry};
 use caelumora_domain::work::TurnId;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -53,15 +53,7 @@ impl Cut {
         let whole = kept_whole(transcript.entries().map(|node| &node.entry));
         let carried = transcript.carried_parts();
         let mut path: Vec<Entry> = as_they_stand(transcript.entries())
-            .map(|(node, message)| {
-                let gives = match &node.entry {
-                    TranscriptEntry::Given {
-                        source: Some(GivenSource::Knowledge(source)), ..
-                    } => given(source),
-                    _ => None,
-                };
-                (node.digest, gives, message)
-            })
+            .map(|(node, message)| (node.digest, node.entry.knowledge().and_then(given), message))
             .collect();
         let at = cut_at(&path, positions, keep, under_way, &whole, &carried)?;
         let kept = path.split_off(at);
@@ -223,6 +215,7 @@ mod tests {
     use caelumora_domain::digest;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
+    use caelumora_domain::transcript::GivenSource;
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::UserId;
     use caelumora_domain::workspace::{Workspace, WorkspaceId};

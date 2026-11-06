@@ -26,7 +26,8 @@ tools:
     list_skills: List the skills you can load here, each with what it is for.
     load_skill: >-
       Load a skill by its name - a procedure to follow for the task at hand. Its text follows the
-      result. The channel sees which skill you loaded, not what it says; do not quote it to them.
+      result, unless it stands above already, as the result then says. The channel sees which skill
+      you loaded, not what it says; do not quote it to them.
     load_skill.name: The name of the skill
     create_skill: >-
       Write down a skill: how a task is done here, as you have learnt it - steps to follow, for

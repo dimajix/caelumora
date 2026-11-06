@@ -1,6 +1,6 @@
 # 541 — A skill given to the agent is loaded again and stands twice in its transcript
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** Context and knowledge
@@ -40,6 +40,20 @@ text, after the results of the step, as a `Given` entry. The skill stands twice 
   measured, with both models.
 - **Leave it.** Loading again costs a call and the space of a skill, nothing else.
 
+## The plan
+
+Decided with the maintainer, in steps of their own:
+
+1. **Giving gives only what does not stand given.** As `give_parts` gives a prompt part only where
+   it does not stand (issue 537), `AgentChannelState::given` - and `Turn::give` with it - gives
+   knowledge only if the same knowledge does not stand given already with the same text and
+   classification, on the active path as the model is given it or put aside for after the step,
+   and answers whether it gave it; the knowledge is recorded with the turn either way. What stands
+   given is read by one function, `given_as_they_stand`, of which `parts_as_given` keeps the parts.
+   `load_skill` answers `given above` then, `/skill` that the agent has the skill already.
+2. **A measurement** under `work/given_framing/`, with `gemma4:26b` and `gemma4:cloud` alone:
+   whether a model answered `given above` follows the skill then, or loads it again.
+
 ## Done when
 
 - A skill that stands in the agent's transcript, as it is now, is not given to it a second time by
@@ -48,3 +62,12 @@ text, after the results of the step, as a `Given` entry. The skill stands twice 
 ## History
 
 - **2026-11-06** — Opened from finding 5 of the experiment of issue 539, step 2.
+- **2026-11-06** — Planned with the maintainer (*The plan*): the giving decides, not the tool.
+- **2026-11-06** — Step 1 done: `AgentChannelState::given` - and `Turn::give` - gives knowledge
+  only where the same does not stand given with the same text and classification, on the active
+  path as the model is given it (`given_as_they_stand`, of which `parts_as_given` keeps the parts)
+  or put aside for after the step, records it with the turn either way and answers whether it gave
+  it. `load_skill` answers `given above` then, `/skill` that the agent has the skill already. What
+  is alike is one function for parts and knowledge (`alike`), and which knowledge an entry gives
+  one method (`TranscriptEntry::knowledge`), which the compaction's cut reads too. The description
+  of `load_skill` tells the model that the text follows the result unless it stands above already.

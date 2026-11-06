@@ -64,14 +64,17 @@ participants who may not read the skill.
 *   **`load_skill(name)`** - the model loads one. Its result names the skill - classified as the
     skill, as the catalogue names it - and the skill's text is given to the agent as a `/skill`
     gives it (`Turn::give`), after the results of the step: in the agent's name, as a `Given` entry
-    that names the skill (issue 389). The channel sees which skill was loaded, not what it says,
-    and the model is told not to quote it.
+    that names the skill (issue 389). The channel sees which skill was loaded, not what it says, and
+    the model is told not to quote it. A skill that stands in the transcript as it is - a
+    participant gave it, or the model loaded it before - is not given again; the result says
+    `given above`.
 *   **`/skill @agent <name>`** - a participant gives one to an agent, a command the agent carries
     out itself. In its command turn the skill's text is given to the agent (`Turn::give`): into its
     transcript in the participant's name, as a `Given` entry that names the skill, which the model
     is told the participant gave it ([AGENT-TURN.md](AGENT-TURN.md#what-is-given-to-read)). The
-    channel's history records the command, and the text as what the agent was given, gone to
-    nobody but read by whom may read what the agent saw (issue 417).
+    channel's history records the command, and the text as what the agent was given, gone to nobody
+    but read by whom may read what the agent saw (issue 417). One that stands there as it is already
+    is not given again, and the issuer is told the agent has it.
 *   **`list_skills`** gives the catalogue as a tool, for a model whose prompt was built before a
     skill appeared; **`/skills @agent`** lists, privately, what the agent may load here - for its
     owner, as it answers for its owner, so the issuer learns the names and descriptions of the
