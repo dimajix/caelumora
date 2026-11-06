@@ -91,7 +91,7 @@ channel_participants: |
   {% endif %}
   {% endif %}
 
-# `channel_mentions`, before the turn's input: read last, it
+# `channel_mentions`, before the turn's input by default: read late, it
 # does what the roster alone does not (`work/quiet_agents/MENTIONS.md`,
 # `test_names_turn`).
 channel_mentions: |
@@ -392,7 +392,7 @@ results:
   invalid_arguments: "The arguments were invalid: {{ reason }}. Correct them and call the tool again."
   failed: "The tool failed: {{ reason }}"
 
-# `planning`, in the system prompt: when to plan - by the tool
+# `planning`, in the system prompt by default: when to plan - by the tool
 # `create_plan`. It stays for the whole turn, also once a plan is carried
 # out: the instructions of its steps (`plan`) dominate by then.
 planning: |

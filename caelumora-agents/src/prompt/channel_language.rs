@@ -38,13 +38,13 @@ const WITHDRAWN: &str = "agents.channel_language_withdrawn";
 
 #[derive(Debug)]
 pub struct ChannelLanguageComponent {
-    pub position: PromptPosition,
+    position: PromptPosition,
     prompts: PromptTexts,
 }
 
 impl ChannelLanguageComponent {
     /// The language at `position`.
-    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, prompts }
     }
 }

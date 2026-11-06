@@ -59,8 +59,9 @@ published in the channel.
     turn, so that whoever reacts to the end of the turn reads the state it left.
 *   **Reading.** Others read published notes from the agents' stored states, so only notes of
     finished turns are ever seen.
-*   **Prompt part.** A `BeforeTurnInput` part, empty when nothing is noted: the agent's own notes
-    first, then those of the other agents of the channel.
+*   **Prompt part.** A part before the turn's input unless its `position` says otherwise, empty
+    when nothing is noted: the agent's own notes first, then those of the other agents of the
+    channel.
 *   **Clients** get the notes per agent with the channel's snapshot and read them again when the
     global stream announces a change (see [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)).
 
@@ -72,12 +73,13 @@ public notes.
 
 *   **Own numbering.** Private notes are numbered separately, so that gaps in the public numbers do
     not reveal them.
-*   **Prompt part.** Its `BeforeTurnInput` part shows the agent its private notes of this channel
-    and of every other channel of the session it takes or took part in, as far as they may be copied
-    into this one (see [reading other channels](#reading-other-channels)). It reaches them through
-    the agent itself, not through the channels. A note carries [the turn's
-    label](CONFIDENTIALITY.md#what-a-turn-writes-as), stamped when it is written, and is read note
-    by note; `reclassify_private_note` changes it (see
+*   **Prompt part.** Its part, before the turn's input unless its `position` says otherwise, shows
+    the agent its private notes of this channel and of every other channel of the session it takes
+    or took part in, as far as they may be copied into this one (see
+    [reading other channels](#reading-other-channels)). It reaches them through the agent itself,
+    not through the channels. A note carries
+    [the turn's label](CONFIDENTIALITY.md#what-a-turn-writes-as), stamped when it is written, and is
+    read note by note; `reclassify_private_note` changes it (see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)).
 *   **Hidden calls.** The tools are hidden, so their calls never reach the channel. "Private" means
     private from other agents and other users, not from the agent's owner, who sees them in the
@@ -111,8 +113,8 @@ per personality.
     be updated, forgotten or reclassified there (`reclassify_memory`, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)); the policy is asked about that one
     entry.
-*   **Prompt part.** A `BeforeTurnInput` part lists what may be recalled in the channel, as the
-    memory is now.
+*   **Prompt part.** A part before the turn's input unless its `position` says otherwise lists what
+    may be recalled in the channel, as the memory is now.
 *   **Taken over on the current state.** A staged change is applied to the agent's state as it is
     when the turn is taken over, under the state handle's lock, stored and announced
     (`agent::STATE_CHANGED`). Actors of the same agent in other channels and sessions thus neither

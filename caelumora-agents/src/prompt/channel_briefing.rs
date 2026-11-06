@@ -40,13 +40,13 @@ const WITHDRAWN: &str = "agents.channel_briefing_withdrawn";
 
 #[derive(Debug)]
 pub struct ChannelBriefingComponent {
-    pub position: PromptPosition,
+    position: PromptPosition,
     prompts: PromptTexts,
 }
 
 impl ChannelBriefingComponent {
     /// The descriptions at `position`.
-    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, prompts }
     }
 }

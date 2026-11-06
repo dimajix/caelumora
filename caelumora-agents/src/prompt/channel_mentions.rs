@@ -1,5 +1,5 @@
 //! The `channel_mentions` component (issue 442): reminds an
-//! agent, before the turn's input, when to write an @handle and when a
+//! agent, late in what it is given, when to write an @handle and when a
 //! name - an @handle only for an answer or an action needed from that
 //! participant now, never to greet, thank, praise, agree with or refer to
 //! someone. The roster says as much (`channel_participants`),
@@ -11,7 +11,8 @@
 //! It is given only where another agent is in the channel: a mention of a
 //! person asks no agent, and an agent alone has nobody to ask. The same in
 //! every turn, so it is not stored with the turn's context; it goes before
-//! the turn's input by default (parameter `position`).
+//! the turn's input by default, or at the end of every call (parameter
+//! `position`).
 
 use crate::prompt::channel_participants::participants;
 use crate::prompt::{
@@ -33,8 +34,8 @@ const TEXT: &str = "agents.channel_mentions";
 
 #[derive(Debug)]
 pub struct ChannelMentionsComponent {
-    pub position: PromptPosition,
-    pub prompts: PromptTexts,
+    position: PromptPosition,
+    prompts: PromptTexts,
 }
 
 #[async_trait]

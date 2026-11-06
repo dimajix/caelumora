@@ -33,8 +33,8 @@ const TEXT: &str = "agents.request_reason";
 
 #[derive(Debug)]
 pub struct RequestReasonComponent {
-    pub position: PromptPosition,
-    pub prompts: PromptTexts,
+    position: PromptPosition,
+    prompts: PromptTexts,
 }
 
 #[async_trait]

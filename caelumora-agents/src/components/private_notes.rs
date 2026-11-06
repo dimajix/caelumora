@@ -2,19 +2,15 @@
 //! should remember, and recalls it in all its channels of the session where
 //! that tells no one anything new.
 //!
-//! Its tools `write_private_note`, `update_private_note` and
-//! `revoke_private_note` change the agent's
-//! private notes in the current channel - taken over when the turn
-//! completes, like public notes (`notes`). Its prompt part gives the model
-//! its private notes from this channel and from every other channel of the
-//! session it takes or took part in, as far as they may be copied into
-//! this one (`SessionReader::own_private_notes`,
-//! `ConfidentialityQuestions::may_copy_information`, issues 133, 264): a note
-//! carries the classification of the channel it was written in, checked
-//! when it is read; whoever may read that channel now does not matter, the
-//! notes are the agent's own. It is a
-//! `BeforeTurnInput` part, and every chain it shows is recorded as a
-//! `KnowledgeRef`.
+//! Its tools `write_private_note`, `update_private_note` and `revoke_private_note` change the
+//! agent's private notes in the current channel - taken over when the turn completes, like public
+//! notes (`notes`). Its prompt part gives the model its private notes from this channel and from
+//! every other channel of the session it takes or took part in, as far as they may be copied into
+//! this one (`SessionReader::own_private_notes`, `ConfidentialityQuestions::may_copy_information`,
+//! issues 133, 264): a note carries the classification of the channel it was written in, checked
+//! when it is read; whoever may read that channel now does not matter, the notes are the agent's
+//! own. It is a part before the turn's input (`PromptPosition::BeforeTurnInput`) unless its
+//! `position` says otherwise, and every chain it shows is recorded as a `KnowledgeRef`.
 //!
 //! "Private" means private from other agents and other users (issue 54):
 //! its tools are `ToolVisibility::HIDDEN`, so their calls never reach the
@@ -25,7 +21,8 @@ use crate::components::notes::NOTE_PRESENTATION;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::NAMESPACE;
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use crate::tool::{
@@ -59,6 +56,8 @@ const TEXT: &str = "agents.private_notes";
 pub struct PrivateNotesComponent {
     /// The texts of its prompt part (issue 57).
     prompts: PromptTexts,
+    /// Where its prompt part goes: before the turn's input unless configured otherwise.
+    position: PromptPosition,
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
@@ -98,12 +97,13 @@ impl ToolProvider for PrivateNotesComponent {
 }
 
 impl PrivateNotesComponent {
-    /// The component, its texts from `prompts`; whether a note may be reclassified, the kernel
-    /// decides, asked in the turn's context (`Turn::may_reclassify`, issue 516).
+    /// The component, its texts from `prompts`, its prompt part at `position`; whether a note may
+    /// be reclassified, the kernel decides, asked in the turn's context (`Turn::may_reclassify`,
+    /// issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(
                 &prompts,
@@ -173,7 +173,7 @@ impl PrivateNotesComponent {
             )?,
         ];
         let description = tool_text(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, "description", ())?;
-        Ok(Self { prompts, description, tools })
+        Ok(Self { prompts, position, description, tools })
     }
 
     /// `write_private_note(text)`: notes `text` privately, taken over when
@@ -236,7 +236,7 @@ impl PrivateNotesComponent {
 #[async_trait]
 impl PromptProvider for PrivateNotesComponent {
     fn position(&self) -> PromptPosition {
-        PromptPosition::BeforeTurnInput
+        self.position
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
@@ -293,12 +293,15 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(PRIVATE_NOTES_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>(),
         ),
-        |_descriptor, context| async move {
+        |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let component = Arc::new(PrivateNotesComponent::new(texts)?);
+            let position =
+                PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+            let component = Arc::new(PrivateNotesComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -358,7 +361,8 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent::new(testing::prompts()).unwrap();
+        let tools = PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
+            .unwrap();
         let mut turn = Turn::begun(AgentId::new(), &mut state);
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools
@@ -453,7 +457,9 @@ mod tests {
 
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = PrivateNotesComponent::new(testing::prompts()).unwrap().tools();
+        let tools = PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
+            .unwrap()
+            .tools();
         assert!(
             tools
                 .iter()

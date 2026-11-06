@@ -2,7 +2,10 @@
 //! prompt that nudges the model towards it (extended planning).
 
 use crate::prompt::NAMESPACE;
-use crate::prompt::{texts_of, writing_for_the_model, ContextError, Prompt, PromptProvider};
+use crate::prompt::{
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
+    PromptProvider,
+};
 use crate::situation::Situation;
 use crate::tool::{
     arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
@@ -26,13 +29,12 @@ pub const PLANNING_KIND: &str = "planning";
 
 pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 
-/// The text of the system prompt part contributed by
-/// `PlanningComponent`'s `PromptProvider` impl, nudging the model
-/// towards `create_plan` for anything non-trivial, in the prompt catalogue.
-/// Composed alongside the personality's own system prompt by
-/// `TurnContextProvider` once per turn - it stays for the whole turn
-/// (including once a plan is being executed), which is harmless: the far
-/// more specific instructions of the plan's steps dominate by then.
+/// The text of the prompt part contributed by `PlanningComponent`'s `PromptProvider` impl, nudging
+/// the model towards `create_plan` for anything non-trivial, in the prompt catalogue. Composed by
+/// `TurnContextProvider` once per turn - in the system prompt, alongside the personality's own,
+/// unless its `position` says otherwise -, it stays for the whole turn (including once a plan is
+/// being executed), which is harmless: the far more specific instructions of the plan's steps
+/// dominate by then.
 const PLANNING: &str = "agents.planning";
 
 /// The tool `create_plan` and when to use it: the tool is available at every point in a turn (not
@@ -50,15 +52,17 @@ pub struct PlanningComponent {
     tools: Vec<Tool>,
     /// The texts of its prompt part.
     prompts: PromptTexts,
+    /// Where its prompt part goes: in the system prompt unless configured otherwise.
+    position: PromptPosition,
 }
 
 impl PlanningComponent {
     /// The provider, its texts from `prompts`, told how many steps a plan
-    /// has at most; it keeps `prompts` for its prompt part.
+    /// has at most; it keeps `prompts` for its prompt part at `position`.
     ///
     /// # Errors
     /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Result<Self, PromptError> {
         // What its texts are told.
         let values = context! { max_steps => Plan::MAX_STEPS };
         let tools = vec![described(
@@ -89,12 +93,16 @@ impl PlanningComponent {
             &values,
         )?];
         let description = tool_text(&prompts, NAMESPACE, PLANNING_KIND, "description", &values)?;
-        Ok(Self { description, tools, prompts })
+        Ok(Self { description, tools, prompts, position })
     }
 }
 
 #[async_trait]
 impl PromptProvider for PlanningComponent {
+    fn position(&self) -> PromptPosition {
+        self.position
+    }
+
     async fn get_prompt(&self, _situation: &Situation<'_>) -> Result<Prompt, ContextError> {
         // A fixed text of the agents': nothing confidential (issue 168).
         let text =
@@ -202,12 +210,14 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(PLANNING_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>(),
         ),
-        |_descriptor, context| async move {
+        |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let provider = Arc::new(PlanningComponent::new(texts)?);
+            let position = PositionParams::position_of(&descriptor.params, PromptPosition::Start)?;
+            let provider = Arc::new(PlanningComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PlanningComponent>::clone(&provider));
             facets.insert::<dyn PromptProvider>(provider);
@@ -226,7 +236,7 @@ mod tests {
     #[test]
     fn create_plan_tool_requires_no_approval() {
         assert!(
-            !PlanningComponent::new(testing::prompts())
+            !PlanningComponent::new(PromptPosition::Start, testing::prompts())
                 .unwrap()
                 .tools()
                 .remove(0)
@@ -237,14 +247,18 @@ mod tests {
     #[test]
     fn create_plan_calls_are_shown_as_a_plan() {
         assert_eq!(
-            PlanningComponent::new(testing::prompts()).unwrap().tools().remove(0).presentation,
+            PlanningComponent::new(PromptPosition::Start, testing::prompts())
+                .unwrap()
+                .tools()
+                .remove(0)
+                .presentation,
             PLAN_PRESENTATION
         );
     }
 
     #[tokio::test]
     async fn create_plan_tool_execute_stores_the_parsed_plan() {
-        let provider = PlanningComponent::new(testing::prompts()).unwrap();
+        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -267,7 +281,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_plan_tool_execute_appends_steps_to_a_plan_mid_step() {
-        let provider = PlanningComponent::new(testing::prompts()).unwrap();
+        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -297,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_plan_tool_execute_resumes_a_finalizing_plan_when_steps_are_added() {
-        let provider = PlanningComponent::new(testing::prompts()).unwrap();
+        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -325,7 +339,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_plan_tool_execute_rejects_malformed_arguments() {
-        let provider = PlanningComponent::new(testing::prompts()).unwrap();
+        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -339,7 +353,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_plan_has_at_most_its_number_of_steps_those_appended_included() {
-        let provider = PlanningComponent::new(testing::prompts()).unwrap();
+        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
         let steps = |n: usize| json!({ "summary": "work", "steps": (0..n).map(|i| json!({ "description": format!("step {i}") })).collect::<Vec<_>>() });
@@ -376,7 +390,7 @@ mod tests {
 
     #[test]
     fn create_plan_tool_describe_renders_summary_and_steps() {
-        let provider = PlanningComponent::new(testing::prompts()).unwrap();
+        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
         let params = json!({
             "summary": "Investigate and fix the bug",
             "steps": [
@@ -396,7 +410,7 @@ mod tests {
     async fn create_plan_tool_contributes_the_planning_system_prompt() {
         let mut state = AgentChannelState::default();
         let turn = Turn::begun(Default::default(), &mut state);
-        let prompt = PlanningComponent::new(testing::prompts())
+        let prompt = PlanningComponent::new(PromptPosition::Start, testing::prompts())
             .unwrap()
             .get_prompt(&turn.situation())
             .await

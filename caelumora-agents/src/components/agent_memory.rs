@@ -19,7 +19,8 @@ use crate::components::notes::NOTE_PRESENTATION;
 use crate::memory::AgentMemory;
 use crate::prompt::NAMESPACE;
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use crate::tool::{
@@ -55,6 +56,8 @@ const TEXT: &str = "agents.agent_memory";
 pub struct AgentMemoryComponent {
     /// The texts of its prompt part (issue 57).
     prompts: PromptTexts,
+    /// Where its prompt part goes: before the turn's input unless configured otherwise.
+    position: PromptPosition,
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
@@ -98,11 +101,11 @@ impl ToolProvider for AgentMemoryComponent {
 }
 
 impl AgentMemoryComponent {
-    /// The component, its texts from `prompts`.
+    /// The component, its texts from `prompts`, its prompt part at `position`.
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(
                 &prompts,
@@ -172,7 +175,7 @@ impl AgentMemoryComponent {
             )?,
         ];
         let description = tool_text(&prompts, NAMESPACE, AGENT_MEMORY_KIND, "description", ())?;
-        Ok(Self { prompts, description, tools })
+        Ok(Self { prompts, position, description, tools })
     }
 
     /// `remember(text)`: remembers `text`, taken over when the turn
@@ -219,7 +222,7 @@ impl AgentMemoryComponent {
 #[async_trait]
 impl PromptProvider for AgentMemoryComponent {
     fn position(&self) -> PromptPosition {
-        PromptPosition::BeforeTurnInput
+        self.position
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
@@ -263,12 +266,15 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(AGENT_MEMORY_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>(),
         ),
-        |_descriptor, context| async move {
+        |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let component = Arc::new(AgentMemoryComponent::new(texts)?);
+            let position =
+                PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+            let component = Arc::new(AgentMemoryComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -358,7 +364,14 @@ mod tests {
     /// The component of an agent owned by `owner`; what it may recall and reclassify its turn's
     /// runtime decides, by the policies the sessions of the test run under (issue 516).
     fn component(owner: ActorId) -> Memory {
-        Memory { component: AgentMemoryComponent::new(testing::prompts()).unwrap(), owner }
+        Memory {
+            component: AgentMemoryComponent::new(
+                PromptPosition::BeforeTurnInput,
+                testing::prompts(),
+            )
+            .unwrap(),
+            owner,
+        }
     }
 
     async fn handle(agent: AgentId) -> Arc<AgentStateHandle> {
@@ -1126,7 +1139,9 @@ mod tests {
 
     #[test]
     fn every_entry_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = AgentMemoryComponent::new(testing::prompts()).unwrap().tools();
+        let tools = AgentMemoryComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
+            .unwrap()
+            .tools();
         assert!(
             tools
                 .iter()

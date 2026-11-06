@@ -290,12 +290,22 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::agent_memory::AGENT_MEMORY_KIND;
+    use crate::components::notes::NOTES_KIND;
+    use crate::components::planning::PLANNING_KIND;
+    use crate::components::private_notes::PRIVATE_NOTES_KIND;
     use crate::library::AgentsLibrary;
+    use crate::prompt::channel_briefing::CHANNEL_BRIEFING_KIND;
+    use crate::prompt::channel_language::CHANNEL_LANGUAGE_KIND;
+    use crate::prompt::channel_mentions::CHANNEL_MENTIONS_KIND;
+    use crate::prompt::channel_participants::CHANNEL_PARTICIPANTS_KIND;
     use crate::prompt::current_time::CURRENT_TIME_KIND;
+    use crate::prompt::request_reason::REQUEST_REASON_KIND;
+    use crate::prompt::tool_sets::TOOL_SETS_KIND;
     use crate::testing::agent_runtime;
     use crate::tool::calculator::CALCULATOR_KIND;
     use crate::tool::{denied_result, ToolProvider};
-    use caelumora_api::component::ComponentFacets;
+    use caelumora_api::component::{ComponentError, ComponentFacets};
     use caelumora_api::model::{LanguageModelClient, ModelResult};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
@@ -312,6 +322,7 @@ mod tests {
     use caelumora_domain::work::Work;
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::component::ComponentRegistry;
+    use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::session::testing::detached_participant_in;
     use caelumora_kernel::testing::TestKernel;
     use caelumora_security::SecurityContext;
@@ -319,6 +330,7 @@ mod tests {
     use futures::stream;
     use futures::stream::BoxStream;
     use futures::StreamExt;
+    use serde_json::Value;
     use std::fs;
     use std::sync::Arc;
 
@@ -347,15 +359,52 @@ mod tests {
         }
     }
 
-    /// Issue 57: what writes for a model takes its texts in the variant the
-    /// model's profile names - a prompt part and a tool as they are built,
-    /// what the work words itself by the profile of the work -, and falls
-    /// back to the default for what the variant leaves out.
+    /// Issue 537: every prompt kind of the agents that takes nothing but `position` - the agents'
+    /// `system_prompt` needs its `prompt` - takes it, the kind's own default where it names none,
+    /// and refuses a position there is not.
     #[tokio::test]
-    async fn the_texts_are_given_in_the_variant_of_the_model() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
-        let store = Persistence::in_memory();
+    async fn a_prompt_kind_takes_its_position_from_its_params() {
+        use PromptPosition::{BeforeTurnInput, End, Start};
+        let kernel = kernel_with_gemma(AppConfig::default());
+        let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
+        let positioned = |kind: &str, params: Value| ComponentConfig {
+            component_nodes: vec![
+                ComponentDescriptor::new("model", "gemma"),
+                ComponentDescriptor { params, ..ComponentDescriptor::new("part", kind) },
+            ],
+        };
+        let position = async |kind: &str, params: Value| {
+            let built = kernel
+                .component_registry()
+                .build(&positioned(kind, params), &[TypeKey::of::<dyn PromptProvider>()], &context)
+                .await?;
+            Ok::<_, ComponentError>(built.get_all::<dyn PromptProvider>(None)?.remove(0).position())
+        };
+        let kinds = [
+            (CURRENT_TIME_KIND, BeforeTurnInput),
+            (REQUEST_REASON_KIND, BeforeTurnInput),
+            (CHANNEL_MENTIONS_KIND, BeforeTurnInput),
+            (CHANNEL_PARTICIPANTS_KIND, Start),
+            (CHANNEL_LANGUAGE_KIND, Start),
+            (CHANNEL_BRIEFING_KIND, Start),
+            (TOOL_SETS_KIND, Start),
+            (PLANNING_KIND, Start),
+            (NOTES_KIND, BeforeTurnInput),
+            (PRIVATE_NOTES_KIND, BeforeTurnInput),
+            (AGENT_MEMORY_KIND, BeforeTurnInput),
+        ];
+        for (kind, default) in kinds {
+            assert_eq!(position(kind, Value::Null).await.unwrap(), default, "{kind}: its default");
+            let end = serde_json::json!({ "position": "end" });
+            assert_eq!(position(kind, end).await.unwrap(), End, "{kind}: as configured");
+            let middle = serde_json::json!({ "position": "middle" });
+            assert!(position(kind, middle).await.is_err(), "{kind}: no position");
+        }
+    }
+
+    /// A kernel with the agents' library and a model of the kind `gemma` (`Gemma`), configured by
+    /// `config`.
+    fn kernel_with_gemma(config: AppConfig) -> Arc<Kernel> {
         let components = |registry: &mut ComponentRegistry| {
             registry.register(
                 ComponentKind::new("gemma")
@@ -370,18 +419,29 @@ mod tests {
                 },
             );
         };
-        let config = AppConfig {
-            prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(),
-            ..AppConfig::default()
-        };
-        let kernel = TestKernel {
-            store,
+        TestKernel {
+            store: Persistence::in_memory(),
             config,
             components: Box::new(components),
             libraries: vec![&AgentsLibrary],
             ..Default::default()
         }
-        .build();
+        .build()
+    }
+
+    /// Issue 57: what writes for a model takes its texts in the variant the
+    /// model's profile names - a prompt part and a tool as they are built,
+    /// what the work words itself by the profile of the work -, and falls
+    /// back to the default for what the variant leaves out.
+    #[tokio::test]
+    async fn the_texts_are_given_in_the_variant_of_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("agents.yaml"), "current_time: |\n  [Now]\n  {{ time }}\ntools:\n  calculator:\n    calculate: Computes.\nresults:\n  denied: Declined.\n").unwrap();
+        let config = AppConfig {
+            prompts: [("gemma4".to_string(), dir.path().to_path_buf())].into(),
+            ..AppConfig::default()
+        };
+        let kernel = kernel_with_gemma(config);
 
         let components = ComponentConfig {
             component_nodes: vec![

@@ -1,6 +1,6 @@
 # 537 — What an agent is given besides the conversation is placed anew in every turn
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -221,3 +221,14 @@ what an agent saw is not told exactly once a text changed: a question of its own
   placed after the last entry too. `PromptAt` - `Start`, `After(Digest)`, `End` - replaces the
   `after` of `PromptRef` and of the placement into the frame, which is named `Placement::Frame` for
   it. The seed's components keep their positions; which go to `end` is left to decide.
+- **2026-11-06** — Decided with the maintainer and done: the seed gives the time and when to
+  mention at `end` - when to mention is to be read last, which at `given` it would not be - and the
+  notes, the private notes and the agent's memory too, since they change often; why the agent was
+  asked stays before the turn's input, where `work/quiet_agents` tried it. `notes`,
+  `private_notes`, `agent_memory` and `planning` take a `position` too, the first three
+  `before_turn_input` and `planning` `start` unless configured otherwise. A part at `given` is
+  judged anew in every turn under the rights of that turn, so what changes often stays off it for
+  what it costs the cache, not for the rights. Every personality of the seed lists
+  `channel-context` last, so that when to mention comes after the notes in what stands at the end.
+  The prompt kinds of the agents keep their position and texts private and are built only within
+  the crate. With every prompt component of a personality taking a `position`, the issue is done.

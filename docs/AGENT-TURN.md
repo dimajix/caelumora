@@ -741,14 +741,15 @@ system prompt. A part at `BeforeTurnInput` stands elsewhere in every turn, so a 
 of the turn before it - from its input on, with every call the turn made; one at `End` stands after
 everything, so a cache of the prompt loses nothing but the part itself, from call to call as from
 turn to turn - one that keeps what the model wrote after it too, as llama.cpp's does, loses that as
-well;
-one at `Given` stays where it was given, so what the model is given grows only at its end, and the
-cache is lost from where a part stood only when it changes. The model is never given what no
-longer holds. What has to be judged anew in every turn, under the rights of that turn - what the
-agent may recall where -, belongs at `BeforeTurnInput` or `End`: a part at `Given` that held it
-would hold it until the part changes. Which suits a component is the personality's to say, by the
-component's `position` where its kind takes one: of the two, `End` costs the cache less, and the
-model reads it after the input rather than before.
+well; one at `Given` stays where it was given, so what the model is given grows only at its end,
+and the cache is lost from where a part stood only when it changes. The model is never given what
+no longer holds: a part at `Given` is judged anew in every turn as well, under the rights of that
+turn, and taken back once it changes. What changes often - what the agent may recall where,
+which depends on who asked as well - belongs at `End` or `BeforeTurnInput`: at `Given`, every
+change would cost the cache from where the part stood, the further back the more. Which suits a
+component is the personality's to say, by the component's `position` where its kind takes one: of
+the two, `End` costs the cache less, and the model reads it last, after the tool results of the
+turn too, rather than before the input.
 
 The parts of `Start`, of `BeforeTurnInput` and of `End` are joined in the order of the
 configuration, each position's into one; each part at `Given` stands on its own. Every part is
@@ -785,11 +786,12 @@ agents that greet each other with `@` keep asking the next one to answer.
 ### When to mention
 
 Said once in the system prompt, the rule changes little: by the time the model writes, everything
-said since stands between, full of handles. `channel_mentions` says it again before the turn's
-input, every turn - an `@handle` only for an answer or an action needed from that participant now;
-never to greet, thank, praise, agree with or refer to someone, but the name - and only where another
-agent is in the channel: a mention of a person asks no agent. Read last, it keeps the mentions that
-hand over work and drops those of courtesy ([work/quiet_agents](../work/quiet_agents/MENTIONS.md)).
+said since stands between, full of handles. `channel_mentions` says it again, every turn, before
+the turn's input or, as the seed has it, at the end of every call - an `@handle` only for an answer
+or an action needed from that participant now; never to greet, thank, praise, agree with or refer
+to someone, but the name - and only where another agent is in the channel: a mention of a person
+asks no agent. Read last, it keeps the mentions that hand over work and drops those of courtesy
+([work/quiet_agents](../work/quiet_agents/MENTIONS.md)).
 
 That the roster changed is told where it happened: a transcript entry of someone who joined or left
 is given to the model as the channel's notice - "Channel notice: @alice added @bob to the channel.",
@@ -812,9 +814,9 @@ follows a name more surely. Nothing is translated.
 `current_time` tells the agent the date and time as its turn's context is built, in the time zone
 the turn records (see [who said what](#who-said-what)). With the times of messages alone a model
 takes the last one's for now, which is wrong for a turn that comes later - after `/wakeup`, after a
-long queue. It changes with every turn, so it goes before the turn's input, not into the system
-prompt, whose every change invalidates the cache. Within a turn it stays as it was read when the
-turn began, also through a long plan.
+long queue. It changes with every turn, so it goes before the turn's input or, as the seed has it,
+at the end of every call, not into the system prompt, whose every change invalidates the cache.
+Within a turn it stays as it was read when the turn began, also through a long plan.
 
 ### What the session and channel are for
 

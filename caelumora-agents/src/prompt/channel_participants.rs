@@ -34,13 +34,13 @@ const TEXT: &str = "agents.channel_participants";
 
 #[derive(Debug)]
 pub struct ChannelParticipantsComponent {
-    pub position: PromptPosition,
+    position: PromptPosition,
     prompts: PromptTexts,
 }
 
 impl ChannelParticipantsComponent {
     /// The roster at `position`.
-    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, prompts }
     }
 }

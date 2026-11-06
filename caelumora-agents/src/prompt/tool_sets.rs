@@ -29,8 +29,8 @@ const TEXT: &str = "agents.tool_sets";
 
 #[derive(Debug)]
 pub struct ToolSetsComponent {
-    pub position: PromptPosition,
-    pub prompts: PromptTexts,
+    position: PromptPosition,
+    prompts: PromptTexts,
 }
 
 #[async_trait]
