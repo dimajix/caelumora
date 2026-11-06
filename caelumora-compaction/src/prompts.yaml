@@ -16,12 +16,12 @@ summary: |-
   [Summary of the conversation so far]
   {{ text }}{{ "\n" if text is not endingwith "\n" }}
 
-# `summary_compaction`: asked after the summary, which of what was `given`
-# in the part summarised - each by its kind and name - the agent still needs
-# (issue 413). Its answer is read a line a name, or as `none`, the word that
+# `summary_compaction`: asked after the summary, which of what the agent
+# knew in the part summarised - was given, or read with its tools; `given`,
+# each by its kind and name - it still needs (issues 413, 538). Its answer is read a line a name, or as `none`, the word that
 # says it needs nothing of it.
 still_needed: |-
-  Of what was given to you in the conversation above, what do you still need word for word for the work that is still open?
+  Of what was given to you or what you read in the conversation above, what do you still need word for word for the work that is still open?
   {% for name in given %}
   - {{ name }}
   {% endfor %}

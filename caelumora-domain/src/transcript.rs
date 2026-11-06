@@ -164,11 +164,32 @@ where
         .collect()
 }
 
+/// What the agent knows on `path` as a model given the path sees it whole (`as_seen_whole`, issue
+/// 538): each entry that holds a message, with the knowledge it holds - what it gives, if it is
+/// given (`TranscriptEntry::knowledge`), and what its tools read or wrote
+/// (`ToolCallResult::knowledge`). What a write is checked against
+/// (`AgentChannelState::last_known`), and a compaction gives again.
+pub fn knowledge_as_seen_whole<'a, P>(
+    path: P,
+) -> Vec<(&'a Node<TranscriptEntry>, Vec<KnowledgeSource>)>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    as_seen_whole(path)
+        .into_iter()
+        .map(|(node, message)| {
+            let read = message.tool_results.iter().flat_map(|r| &r.knowledge);
+            let known = node.entry.knowledge().into_iter().chain(read.map(|k| &k.source));
+            (node, known.cloned().collect())
+        })
+        .collect()
+}
+
 /// What is given on `path` as a model given the path is given it (issues 389, 537): each entry
 /// `TranscriptEntry::Given` of what it sees whole (`as_seen_whole`). What stands given, for a turn
-/// to give only what does not (`AgentChannelState::given`, `AgentChannelState::give_parts`), and a
-/// compaction to give again what it takes away.
-pub fn given_as_they_stand<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
+/// to give only what does not (`AgentChannelState::given`, `AgentChannelState::give_parts`).
+pub(crate) fn given_as_they_stand<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
     P::IntoIter: Clone,

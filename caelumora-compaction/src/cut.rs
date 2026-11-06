@@ -3,29 +3,26 @@
 //! The cut lies before a message, never between a tool's call and its result (issue 284), never
 //! into a turn given up because its channel was lowered below it, and within the turn under way
 //! before a call of its model but the first. The prompt parts given into the transcript that stand
-//! before it are not replaced but carried over (issue 537): they count as kept. What was given in
-//! the part replaced and is not still there in the part kept is what is given again, as whoever
-//! first gave it; whose the replacement is and how it is classified follows from what it replaces.
+//! before it are not replaced but carried over (issue 537): they count as kept. What the agent knew
+//! in the part replaced - was given, or read or wrote with its tools - and does not know still in
+//! the part kept is what is given again, as whoever first gave it; whose the replacement is and how
+//! it is classified follows from what it replaces.
 
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::KnowledgeSource;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageRole};
-use caelumora_domain::store::EntityKind;
 use caelumora_domain::transcript::{
-    as_they_stand, given_as_they_stand, Transcript, TranscriptEntry,
+    as_they_stand, knowledge_as_seen_whole, Transcript, TranscriptEntry,
 };
 use caelumora_domain::work::TurnId;
-use std::collections::HashSet;
-use uuid::Uuid;
+use std::collections::{HashMap, HashSet};
 
-/// What the agent was given: an entity of a kind (`KnowledgeSource::Entity`).
-pub(crate) type Given = (EntityKind, Uuid);
-
-/// An entry of the active path of a transcript, as a compaction reads it: its digest, what it gives
-/// if it is one given as the model is given it (`given_as_they_stand`), and its message as it
-/// stands, if it holds one.
-type Entry = (Digest, Option<Given>, Option<Message>);
+/// An entry of the active path of a transcript, as a compaction reads it: its digest, what it holds
+/// of what can be given again - knowledge of an entity read whole (`KnowledgeSource::read_whole`),
+/// given to the agent or read or written by a tool of its, as the model sees it
+/// (`knowledge_as_seen_whole`) -, and its message as it stands, if it holds one.
+type Entry = (Digest, Vec<KnowledgeSource>, Option<Message>);
 
 /// An agent's transcript cut for a compaction: the part replaced, without the prompt parts carried
 /// over, and the part kept as it stands.
@@ -55,16 +52,19 @@ impl Cut {
     ) -> Option<Self> {
         let whole = kept_whole(transcript.entries().map(|node| &node.entry));
         let carried = transcript.carried_parts();
-        // What gives knowledge as the model is given it: not what a turn given up as `Lowered`
-        // gave, which it does not see.
-        let gives: HashSet<Digest> = given_as_they_stand(transcript.entries())
-            .into_iter()
-            .map(|(node, _)| node.digest)
-            .collect();
+        // What can be given again as the model sees it: not what a turn given up as `Lowered`
+        // read, which it does not see (issue 538).
+        let mut known: HashMap<Digest, Vec<KnowledgeSource>> =
+            knowledge_as_seen_whole(transcript.entries())
+                .into_iter()
+                .map(|(node, known)| {
+                    let whole = known.into_iter().filter(|k| k.read_whole().is_some());
+                    (node.digest, whole.collect())
+                })
+                .collect();
         let mut path: Vec<Entry> = as_they_stand(transcript.entries())
             .map(|(node, message)| {
-                let what = node.entry.knowledge().filter(|_| gives.contains(&node.digest));
-                (node.digest, what.and_then(given), message)
+                (node.digest, known.remove(&node.digest).unwrap_or_default(), message)
             })
             .collect();
         let at = cut_at(&path, positions, keep, under_way, &whole, &carried)?;
@@ -97,16 +97,20 @@ impl Cut {
         messages(&self.kept) + self.carried
     }
 
-    /// What was given in the part replaced and is not still there, as it was given, in the part
-    /// kept: each once, in the order it was first given, with the message it was first given in -
-    /// whose sender gave it (issue 539). Read as the model is given it (`given_as_they_stand`): a
-    /// gift taken back, or of a turn given up as `Lowered`, is neither given again nor still there
-    /// (issue 234). Still there is an entity by its kind and id, whatever text of it the part
-    /// kept holds: a compaction gives again what it takes away, not what changed since - which the
-    /// model loads anew if it needs it, and which is given then, as the text differs (issue 541).
-    pub(crate) fn wanted(&self) -> Vec<(Given, &Message)> {
-        let still_there: Vec<Given> = given_in(&self.kept).into_iter().map(|(g, _)| g).collect();
-        given_in(&self.replaced).into_iter().filter(|(g, _)| !still_there.contains(g)).collect()
+    /// What the agent knew in the part replaced and is not still there in the part kept - what it
+    /// was given, what its tools read or wrote (issue 538) -: each once, as it first knew it, in
+    /// that order, with the message it first knew it from - whose sender gave it (issue 539). Read
+    /// as the model sees it (`as_seen_whole`): what was taken back, or is of a turn given up as
+    /// `Lowered`, is neither given again nor still there (issue 234). Still there is the same
+    /// entity, or the same place within it (`KnowledgeSource::of_the_same`), whatever of it the
+    /// part kept holds: a compaction gives again what it takes away, not what changed since -
+    /// which the model loads or reads anew if it needs it (issue 541).
+    pub(crate) fn wanted(&self) -> Vec<(&KnowledgeSource, &Message)> {
+        let still_there = known_in(&self.kept);
+        let gone = |(k, _): &(&KnowledgeSource, &Message)| {
+            !still_there.iter().any(|(there, _)| there.of_the_same(k))
+        };
+        known_in(&self.replaced).into_iter().filter(gone).collect()
     }
 
     /// Whose the replacement is and how it is classified. One that holds messages of the turn under
@@ -134,14 +138,6 @@ impl Cut {
 /// How many messages `entries` hold.
 fn messages(entries: &[Entry]) -> usize {
     entries.iter().filter(|(_, _, m)| m.is_some()).count()
-}
-
-/// What `source` gave, if it is knowledge of an entity.
-pub(crate) fn given(source: &KnowledgeSource) -> Option<Given> {
-    match *source {
-        KnowledgeSource::Entity { kind, id, .. } => Some((kind, id)),
-        _ => None,
-    }
 }
 
 /// Where the entries `path` are cut, standing in the context at `positions`: the index of the first
@@ -207,18 +203,20 @@ fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet
     entries.filter_map(TranscriptEntry::lowered_turn).map(|(turn, _)| turn).collect()
 }
 
-/// What was given in `entries`, each once, in the order it was first given
-/// (`TranscriptEntry::Given`), with the message it was first given in: a skill a user gave and one
-/// the model loaded alike (issue 389). A gift taken back holds no message any more, and gives
-/// nothing; neither does one of a turn given up as `Lowered`, which the model does not see.
-fn given_in(entries: &[Entry]) -> Vec<(Given, &Message)> {
-    let mut given: Vec<(Given, &Message)> = Vec::new();
-    for (what, message) in entries.iter().filter_map(|(_, gives, m)| gives.zip(m.as_ref())) {
-        if !given.iter().any(|(g, _)| *g == what) {
-            given.push((what, message));
+/// What `entries` hold of what can be given again, each once - the same entity, or the same place
+/// within it, once (`KnowledgeSource::of_the_same`) -, as it was first known, in that order, with
+/// the message it was first known from: a skill a user gave and one the model loaded alike (issue
+/// 389), a file read and one written alike (issue 538).
+fn known_in(entries: &[Entry]) -> Vec<(&KnowledgeSource, &Message)> {
+    let mut known: Vec<(&KnowledgeSource, &Message)> = Vec::new();
+    for (sources, message) in entries.iter().filter_map(|(_, k, m)| Some((k, m.as_ref()?))) {
+        for source in sources {
+            if !known.iter().any(|(k, _)| k.of_the_same(source)) {
+                known.push((source, message));
+            }
         }
     }
-    given
+    known
 }
 
 #[cfg(test)]
@@ -226,10 +224,14 @@ mod tests {
     use super::*;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::ChannelId;
     use caelumora_domain::confidentiality::Confidentiality;
+    use caelumora_domain::context::KnowledgeRef;
     use caelumora_domain::digest;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_domain::transcript::GivenSource;
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::UserId;
@@ -256,11 +258,11 @@ mod tests {
     /// The entry of a public message saying `content`, as `message` makes it.
     fn entry(content: &str, role: MessageRole, turn: Option<TurnId>) -> Entry {
         let message = message(content, role, turn, Classification::PUBLIC);
-        (digest::content(content.as_bytes()), None, Some(message))
+        (digest::content(content.as_bytes()), Vec::new(), Some(message))
     }
 
     fn end(turn: &str) -> Entry {
-        (digest::content(turn.as_bytes()), None, None)
+        (digest::content(turn.as_bytes()), Vec::new(), None)
     }
 
     #[test]
@@ -407,7 +409,7 @@ mod tests {
     fn what_is_wanted_is_named_with_the_message_it_was_first_given_in() {
         let (release_notes, review) = (WorkspaceId::new(), WorkspaceId::new());
         let skill = |id| {
-            let source = KnowledgeSource::entity::<Workspace>(id, None);
+            let source = KnowledgeSource::entity::<Workspace>(id, Some(digest::prompt("[Skill]")));
             Some(GivenSource::Knowledge(source))
         };
         let given = |by: ActorId, name: &str, id| {
@@ -434,10 +436,13 @@ mod tests {
 
         let cut = Cut::of(&transcript, &[0, 10, 20, 30, 40, 50, 60], 20, TurnId::new());
         let wanted = cut.as_ref().expect("cut").wanted();
-        let wanted: Vec<_> = wanted.iter().map(|((_, id), m)| (*id, m.sender_id)).collect();
+        let wanted: Vec<_> = wanted
+            .iter()
+            .map(|(k, m)| (k.about::<Workspace>().map(|(id, _)| id), m.sender_id))
+            .collect();
         assert_eq!(
             wanted,
-            [(Uuid::from(release_notes), alice)],
+            [(Some(release_notes), alice)],
             "alice's, once; not what the part kept holds"
         );
     }
@@ -452,8 +457,10 @@ mod tests {
                 sender_name: sender_name.to_string(),
                 ..message("[Skill]", MessageRole::System, None, Classification::PUBLIC)
             };
-            let source =
-                Some(GivenSource::Knowledge(KnowledgeSource::entity::<Workspace>(id, None)));
+            let source = Some(GivenSource::Knowledge(KnowledgeSource::entity::<Workspace>(
+                id,
+                Some(digest::prompt("[Skill]")),
+            )));
             (message, source)
         };
         let said = |text| message(text, MessageRole::User, None, Classification::PUBLIC);
@@ -477,11 +484,14 @@ mod tests {
         let positions = [0, 10, 20, 30, 40, 50, 60, 60, 60];
         let cut = Cut::of(&transcript, &positions, 30, TurnId::new()).expect("cut");
         assert_eq!(cut.keep_from(), Some(transcript.entries().nth(3).unwrap().digest), "before u2");
-        let wanted: Vec<_> =
-            cut.wanted().iter().map(|((_, id), m)| (*id, m.sender_name.clone())).collect();
+        let wanted: Vec<_> = cut
+            .wanted()
+            .iter()
+            .map(|(k, m)| (k.about::<Workspace>().map(|(id, _)| id), m.sender_name.clone()))
+            .collect();
         assert_eq!(
             wanted,
-            [(Uuid::from(review), "alice".to_string())],
+            [(Some(review), "alice".to_string())],
             "not the one taken back; the one taken back in the part kept does not stand for it"
         );
     }
@@ -495,7 +505,8 @@ mod tests {
         let lowered = TurnId::new();
         let gift = |turn| {
             let message = message("[Skill]", MessageRole::System, turn, Classification::PUBLIC);
-            let source = KnowledgeSource::entity::<Workspace>(skill, None);
+            let source =
+                KnowledgeSource::entity::<Workspace>(skill, Some(digest::prompt("[Skill]")));
             (message, Some(GivenSource::Knowledge(source)))
         };
         let said = |text| message(text, MessageRole::User, None, Classification::PUBLIC);
@@ -515,8 +526,9 @@ mod tests {
 
         let cut = Cut::of(&transcript, &[0, 10, 20, 30, 30, 40], 35, TurnId::new()).expect("cut");
         assert_eq!(cut.keep_from(), Some(transcript.entries().nth(1).unwrap().digest), "before u1");
-        let wanted: Vec<_> = cut.wanted().iter().map(|((_, id), _)| *id).collect();
-        assert_eq!(wanted, [Uuid::from(skill)], "given again");
+        let wanted: Vec<_> =
+            cut.wanted().iter().map(|(k, _)| k.about::<Workspace>().map(|(id, _)| id)).collect();
+        assert_eq!(wanted, [Some(skill)], "given again");
 
         let mut transcript = Transcript::default();
         let (hidden, source) = gift(Some(lowered));
@@ -532,6 +544,63 @@ mod tests {
         let cut = Cut::of(&transcript, &[0, 10, 10, 20, 30], 15, TurnId::new()).expect("cut");
         assert_eq!(cut.keep_from(), Some(transcript.entries().nth(3).unwrap().digest), "before u2");
         assert!(cut.wanted().is_empty(), "in the part replaced, nor is it given again");
+    }
+
+    /// Issue 538: what a tool read or wrote whole in the part replaced is wanted again, by its
+    /// place, with the message of the result it was first known from; a listing is not, and a file
+    /// the part kept knows still - whatever of it - is not.
+    #[test]
+    fn what_a_tool_read_whole_is_wanted_by_its_place() {
+        let workspace = WorkspaceId::new();
+        let file = |place: &str, text: &str| {
+            let digest = Some(digest::content(text.as_bytes()));
+            KnowledgeSource::within::<Workspace>(workspace, place.to_string(), digest)
+        };
+        let listing = KnowledgeSource::within::<Workspace>(workspace, "docs".to_string(), None);
+        let results = |known: Vec<KnowledgeSource>| {
+            let knowledge = known
+                .into_iter()
+                .map(|source| KnowledgeRef {
+                    channel: ChannelId::new(),
+                    session: SessionId::new(),
+                    source,
+                    classification: None,
+                })
+                .collect();
+            let call = ToolCall {
+                id: Some("1".to_string()),
+                function_name: "read_file".to_string(),
+                arguments: serde_json::Value::Null,
+                visibility: Default::default(),
+                presentation: Default::default(),
+            };
+            let result = ToolCallResult::of(
+                &call,
+                ToolResultStatus::Ok,
+                String::new(),
+                Classification::PUBLIC,
+            );
+            Message {
+                tool_results: vec![ToolCallResult { knowledge, ..result }],
+                ..message("", MessageRole::User, None, Classification::PUBLIC)
+            }
+        };
+        let mut transcript = Transcript::default();
+        let first = results(vec![listing, file("docs/plan.md", "one"), file("a.txt", "one")]);
+        let first_id = first.id;
+        transcript.push(first);
+        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
+        transcript.push(results(vec![file("a.txt", "two")]));
+        transcript.push(message("u2", MessageRole::User, None, Classification::PUBLIC));
+
+        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 40], 20, TurnId::new()).expect("cut");
+        let wanted: Vec<_> =
+            cut.wanted().iter().map(|(k, m)| (k.place().map(str::to_string), m.id)).collect();
+        assert_eq!(
+            wanted,
+            [(Some("docs/plan.md".to_string()), first_id)],
+            "the file read, with the result it was known from; not the listing"
+        );
     }
 
     #[test]

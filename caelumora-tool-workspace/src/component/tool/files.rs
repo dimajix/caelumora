@@ -367,8 +367,11 @@ async fn content(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResul
     Ok(bytes)
 }
 
-/// The file `at` as text.
-async fn text(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResult<(String, Digest)> {
+/// The file `at` as text, with the digest of its content.
+pub(in crate::component) async fn text(
+    terminal: &dyn TerminalReader,
+    at: &WorkspacePath,
+) -> ToolResult<(String, Digest)> {
     let bytes = content(terminal, at).await?;
     let digest = digest::content(&bytes);
     let text = String::from_utf8(bytes)
@@ -506,7 +509,7 @@ fn knowing(value: Value, knowledge: impl IntoIterator<Item = KnowledgeRef>) -> T
 /// That the work in `turn` knows `at` in the files of `workspace` - its id and its
 /// classification - (issue 538), as of `digest` where a file was read or written whole: what it
 /// knows of it now.
-fn known(
+pub(in crate::component) fn known(
     turn: &Turn<'_>,
     (id, classification): (WorkspaceId, &Classification),
     at: &WorkspacePath,
@@ -608,7 +611,8 @@ pub(super) async fn read(
             {
                 result["description"] = json!(description);
             }
-            Ok(read(result, &at, Some(digest)))
+            // Offered as a link: the model knows the place, not what the file holds.
+            Ok(read(result, &at, None))
         }
         _ => Err(ToolError::UnknownTool(name.to_string())),
     }
@@ -1159,8 +1163,8 @@ mod tests {
 
         drop(turn);
         assert!(
-            matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d == Some(digest)) && source.place() == Some("out/report.csv")),
-            "what was read, by its place: {read:?}"
+            matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d.is_none()) && source.place() == Some("out/report.csv")),
+            "its place, not its content, which the model was not given: {read:?}"
         );
         assert!(knowledge(&state).is_empty(), "recorded by the executor, not by the tool");
     }

@@ -26,8 +26,8 @@ use crate::store;
 use crate::store::Journaled;
 use crate::tool::{ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
 use crate::transcript::{
-    as_seen_whole, as_they_stand, given_as_they_stand, parts_as_given, GivenSource, Transcript,
-    TranscriptEntry,
+    as_they_stand, given_as_they_stand, knowledge_as_seen_whole, parts_as_given, GivenSource,
+    Transcript, TranscriptEntry,
 };
 use crate::turn::GivenUpReason;
 use crate::turn::{AfterStep, CommandRequest, TurnState};
@@ -384,12 +384,8 @@ impl AgentChannelState {
     /// given after it, as `stands_given` reads what is given. `None` if it never knew the content
     /// of the place: a listing or a search holds none.
     pub fn last_known<T: store::Stored>(&self, id: T::Id, place: &str) -> Option<Digest> {
-        let mut known: Vec<KnowledgeSource> = Vec::new();
-        for (node, message) in as_seen_whole(self.transcript.entries()) {
-            known.extend(node.entry.knowledge().cloned());
-            let results = message.tool_results.iter().flat_map(|r| &r.knowledge);
-            known.extend(results.map(|k| k.source.clone()));
-        }
+        let path = knowledge_as_seen_whole(self.transcript.entries());
+        let mut known: Vec<KnowledgeSource> = path.into_iter().flat_map(|(_, k)| k).collect();
         if let Some(turn) = &self.turn {
             let results = turn.tool_calls.iter().filter_map(ToolCallState::result);
             known.extend(results.flat_map(|r| &r.knowledge).map(|k| k.source.clone()));
@@ -399,13 +395,10 @@ impl AgentChannelState {
             });
             known.extend(put_aside.map(|k| k.source.clone()));
         }
-        known
-            .iter()
-            .filter(|k| k.place() == Some(place))
-            .filter_map(|k| k.about::<T>())
-            .filter(|(of, _)| *of == id)
-            .filter_map(|(_, digest)| digest)
-            .next_back()
+        let of_place = |k: &&KnowledgeSource| {
+            k.place() == Some(place) && k.about::<T>().is_some_and(|(of, _)| of == id)
+        };
+        known.iter().filter(of_place).filter_map(KnowledgeSource::read_whole).next_back()
     }
 
     /// Makes `parts` - each the id of a prompt component and the message of its part - what

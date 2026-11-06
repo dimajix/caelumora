@@ -110,7 +110,8 @@ drawn in [CRATES.md](CRATES.md):
     states (issues 03, 04). See [STORAGE.md](STORAGE.md#in-postgres).
 *   **`caelumora-tool-workspace`** - what an agent is given to work on the session's workspace, a
     library that brings nothing but its component kind `workspace`: the workspace's files and its
-    shell, and the prompt part that names them (issues 428, 532). See
+    shell, the prompt part that names them, and the files the agent knew given again after a
+    compaction (issues 428, 532, 538). See
     [TOOLS.md](TOOLS.md#the-workspace).
 *   **`caelumora-tool-image`** - the tool that generates images, a library that brings nothing but
     its component kind `image_generation`, whose tool generates an image with one of the image
@@ -128,40 +129,40 @@ drawn in [CRATES.md](CRATES.md):
 ## Plugins
 
 A subject that is not the kernel's - a kind of entity with its manager, its components, its views
-and its routes - can be a **plugin**: a crate linked into the program, not loaded at run time (issue
-323). It implements `Plugin` and registers what it brings with the `KernelBuilder` when the kernel
-is built: its component kinds, the store of its kind, which the configured backend opens for any
-kind, its manager as a service of the kernel, which its views and its routes reach, what an agent's
-work does with its kind, bound to the views of that work (`extend_readers`, `extend_writers`, issue
-516), the members of a scope, and its sections of the configuration and of the seed. On the REST
-side, `RestPlugin` adds its routes, served behind the same login as the kernel's. A plugin's views
-are an extension trait on the kernel's `Views`, built from what they open, and what a channel's view
-lists of its kind one on `ChannelView`. Which plugins are in is the program's choice:
-`caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the kernel leaves open -
-the model; the kernel knows none. A plugin is one crate; one that brings a library beside it is cut
-into layers by Cargo features rather than crates. The first is `caelumora-skills`
-([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
-the kernel's workspaces; `caelumora-decision` brings a component of a channel alone, and
-`caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres` bring backends
-alone. What runs an agent or serves its facets is no plugin but a **library** of the agent side
-(issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered as a plugin
-is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`). The agents
-are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose actors the
-channel builds (`AgentKinds`), and the kinds of their components; without it, the program is a chat
-between users. `caelumora-tool-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
+and its routes - can be a **plugin**: a crate linked into the program, not loaded at run time
+(issue 323). It implements `Plugin` and registers what it brings with the `KernelBuilder` when the
+kernel is built: its component kinds, the store of its kind, which the configured backend opens for
+any kind, its manager as a service of the kernel, which its views and its routes reach, what an
+agent's work does with its kind, bound to the views of that work (`extend_readers`,
+`extend_writers`, issue 516), the members of a scope, and its sections of the configuration and of
+the seed. On the REST side, `RestPlugin` adds its routes, served behind the same login as the
+kernel's. A plugin's views are an extension trait on the kernel's `Views`, built from what they
+open, and what a channel's view lists of its kind one on `ChannelView`. Which plugins are in is the
+program's choice: `caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the
+kernel leaves open - the model; the kernel knows none. A plugin is one crate; one that brings a
+library beside it is cut into layers by Cargo features rather than crates. The first is
+`caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`,
+which depends on the kernel's workspaces; `caelumora-decision` brings a component of a channel
+alone, and `caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres` bring
+backends alone. What runs an agent or serves its facets is no plugin but a **library** of the agent
+side (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered as a
+plugin is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`). The
+agents are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
+actors the channel builds (`AgentKinds`), and the kinds of their components; without it, the program
+is a chat between users. `caelumora-tool-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
 `caelumora-compaction`, `caelumora-tool-workspace`, `caelumora-tool-image` and
 `caelumora-tool-attachment` bring component kinds alone; they build on the agents' library, and a
 library that defines facets of its own for others to serve is built on in turn: `caelumora-skills`
-serves the `KnowledgeRestorer` of `caelumora-compaction`. A service with a manager of its own that
-extends the kernel - skills and artifacts, which plugins bring, the workspace, which the kernel
-brings itself - is a **system service**: it runs on the kernel's side, its manager decides with the
-kernel's policies, its views serve the frontends, and what an agent's work does with its kind it
-offers as extensions, a reader handed out where the work reads and a writer where it acts
-([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Which plugin is trusted as
-the kernel and which is a library of the agent side, trusted for nothing, is said in
-[Principles](#principles) and listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the kernel
-calls a plugin, the plugin answers in the kernel's error types, not in its own: the kernel decides
-by the types it knows what a person is told of an error.
+and `caelumora-tool-workspace` serve the `KnowledgeRestorer` of `caelumora-compaction`. A service
+with a manager of its own that extends the kernel - skills and artifacts, which plugins bring, the
+workspace, which the kernel brings itself - is a **system service**: it runs on the kernel's side,
+its manager decides with the kernel's policies, its views serve the frontends, and what an agent's
+work does with its kind it offers as extensions, a reader handed out where the work reads and a
+writer where it acts ([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Which
+plugin is trusted as the kernel and which is a library of the agent side, trusted for nothing, is
+said in [Principles](#principles) and listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the
+kernel calls a plugin, the plugin answers in the kernel's error types, not in its own: the kernel
+decides by the types it knows what a person is told of an error.
 
 Details: [PLUGINS.md](PLUGINS.md).
 

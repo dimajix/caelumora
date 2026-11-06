@@ -385,7 +385,13 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
 
     let again = skills::<dyn KnowledgeRestorer>(&world, json!({}))
         .await
-        .give_again(&mut turn, &[gone.id.0, kept.id.0])
+        .give_again(
+            &mut turn,
+            &[
+                KnowledgeSource::entity::<Skill>(gone.id, None),
+                KnowledgeSource::entity::<Skill>(kept.id, None),
+            ],
+        )
         .await
         .unwrap();
     let again: Vec<_> =

@@ -304,8 +304,9 @@ list does not grant, fails and says so. Which calls need approval is configured 
 all - the default -, none, or all but those that only read files.
 
 The kind lives in the library `caelumora-tool-workspace` (issue 428): the workspaces are the
-kernel's, what an agent is given to work on them is built on the terminal's public API and the
-agents' tools and prompt parts, as the tools of any other subject are. Its tools and its prompt
+kernel's, what an agent is given to work on them is built on the terminal's public API, the
+agents' tools and prompt parts and the compaction's `KnowledgeRestorer`, as the tools of any other
+subject are. Its tools and its prompt
 part, which names its `read_file`, are one kind (issue 532): the part tells nothing true without
 the tools. `caelumora-app` and `caelumora-tui` list the library.
 
@@ -323,10 +324,18 @@ content as the agent knew it where it did. A file the agent last knew otherwise 
 person, a command or an agent of another channel changed it since - is neither written nor replaced
 in, and the model is told to read it again (`AgentChannelState::last_known`): a workspace is used by
 several channels and people at once, and a stale write would destroy their work unnoticed. A file
-never known - a listing or a search tells no content -, or gone since, is written as now. A refused
-call wrote nothing; the next is approved as any call. The check and the write are not one step: what
-changes the file between them is overwritten. The approver reads a change whole, and a rule derived
-from an approved change covers the file, whatever is written into it - for a move, both places.
+never known - a listing, a search or an offer tells no content -, or gone since, is written as now.
+A refused call wrote nothing; the next is approved as any call. The check and the write are not one
+step: what changes the file between them is overwritten. The approver reads a change whole, and a
+rule derived from an approved change covers the file, whatever is written into it - for a move, both
+places.
+
+After a compaction, the component gives again the files the agent read or wrote whole in the part
+replaced and still needs (`KnowledgeRestorer`, see [AGENT-TURN.md](AGENT-TURN.md#compaction)): each
+as it is now, under its path (`[File: docs/plan.md]`), and known so, so that a write checks against
+it. One that is gone, no text, or larger than a result holds (`max_output_bytes`) is not, nor any
+where the channel may no longer use the workspace or its storage cannot be reached: the model reads
+it again if it needs it.
 
 `publish_file` offers a file for download at the message that calls it: a link to the file as it is
 now, with its digest, downloaded through the channel's workspace by whoever may use it there. It

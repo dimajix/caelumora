@@ -23,7 +23,7 @@
 mod files;
 mod shell;
 
-pub(super) use files::READ_FILE;
+pub(super) use files::{known, text, READ_FILE};
 
 use super::{WorkspaceComponent, WorkspaceParams, WORKSPACE_KIND};
 use crate::NAMESPACE;

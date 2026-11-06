@@ -179,6 +179,38 @@ impl KnowledgeSource {
         }
     }
 
+    /// The kind of the entity this is the knowledge of; `None` for knowledge of anything else.
+    pub fn kind(&self) -> Option<EntityKind> {
+        match self {
+            Self::Entity { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
+
+    /// The digest of what the model was given whole of an entity, or what a tool wrote whole of
+    /// it (issue 538) - a skill loaded, a file read or written -, which can be given again and a
+    /// write be checked against; `None` for a listing or a search, a file offered by a link, and
+    /// knowledge of anything else.
+    pub fn read_whole(&self) -> Option<Digest> {
+        match self {
+            Self::Entity { digest, .. } => *digest,
+            _ => None,
+        }
+    }
+
+    /// Whether `self` and `other` are knowledge of the same, whatever was read of it when: the
+    /// same place within the same entity, or the same entity read as a whole (issue 538) - what a
+    /// compaction gives again once; knowledge of anything else where it is equal.
+    pub fn of_the_same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Entity { kind, id, place, .. },
+                Self::Entity { kind: other_kind, id: other_id, place: other_place, .. },
+            ) => kind == other_kind && id == other_id && place == other_place,
+            _ => self == other,
+        }
+    }
+
     /// Where within its entity what was read lies (`within`); `None` for an entity read as a
     /// whole, and for knowledge of anything else.
     pub fn place(&self) -> Option<&str> {
@@ -257,6 +289,7 @@ mod tests {
     use crate::content::testing::make_content_ref;
     use crate::content::ContentRef;
     use crate::context::testing::text;
+    use crate::digest;
     use crate::workspace::{Workspace, WorkspaceId};
 
     /// Issue 538: what was read within an entity is known by its place, kept where there is one;
@@ -268,6 +301,13 @@ mod tests {
         let whole = KnowledgeSource::entity::<Workspace>(id, None);
         assert_eq!((file.place(), whole.place()), (Some("docs/plan.md"), None));
         assert_eq!(file.about::<Workspace>(), whole.about::<Workspace>(), "of the same entity");
+        let changed = KnowledgeSource::within::<Workspace>(
+            id,
+            "docs/plan.md".to_string(),
+            Some(digest::prompt("v2")),
+        );
+        assert!(file.of_the_same(&changed), "the same place, whatever was read of it");
+        assert!(!file.of_the_same(&whole), "not the whole entity");
         let kept = serde_json::to_value(&whole).unwrap();
         assert!(kept["Entity"].get("place").is_none(), "{kept}");
         let read: KnowledgeSource =

@@ -2,14 +2,14 @@
 //! summarises, given again as they are now - where the agent may still load them.
 
 use super::{reader_in, SkillsComponent};
-use crate::skill::{Skill, SkillId};
+use crate::skill::Skill;
 use async_trait::async_trait;
 use caelumora_agents::turn::Turn;
 use caelumora_compaction::{CompactionError, GivenAgain, KnowledgeRestorer};
+use caelumora_domain::context::KnowledgeSource;
 use caelumora_domain::store::{EntityKind, Stored};
 use std::fmt::Display;
 use tracing::warn;
-use uuid::Uuid;
 
 #[async_trait]
 impl KnowledgeRestorer for SkillsComponent {
@@ -21,7 +21,7 @@ impl KnowledgeRestorer for SkillsComponent {
     async fn give_again(
         &self,
         turn: &mut Turn<'_>,
-        given: &[Uuid],
+        given: &[KnowledgeSource],
     ) -> Result<Vec<GivenAgain>, CompactionError> {
         let agent = turn.situation().agent_id();
         let unreadable = |e: &dyn Display| {
@@ -32,7 +32,8 @@ impl KnowledgeRestorer for SkillsComponent {
         let usable = skills.usable_skills().await.map_err(|e| unreadable(&e))?;
         given
             .iter()
-            .filter_map(|id| usable.iter().find(|skill| skill.id == SkillId::from(*id)))
+            .filter_map(|known| known.about::<Skill>())
+            .filter_map(|(id, _)| usable.iter().find(|skill| skill.id == id))
             .map(|skill| {
                 Ok(GivenAgain {
                     name: skill.name.name.to_string(),

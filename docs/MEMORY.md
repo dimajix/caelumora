@@ -167,9 +167,11 @@ message produced after it. A `PromptProvider` returns the knowledge its part con
 so prompt parts record their reads as well; a tool returns what it read with its output, which the
 `ToolExecutor` records and keeps on the result as well, so that the transcript holds it (see
 [TOOLS.md](TOOLS.md)). What the transcript holds is read back too: the file tools write a file only
-as the agent last knew it (`AgentChannelState::last_known`). What was read is shown with the context
-of a message (see [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)). A turn that read private
-notes or memory has seen private knowledge, which makes its reasoning private (see
+as the agent last knew it (`AgentChannelState::last_known`), and a compaction gives again what the
+agent knew whole in the part it replaces (see [AGENT-TURN.md](AGENT-TURN.md#compaction)). What was
+read is shown with the context of a message (see
+[AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)). A turn that read private notes or memory
+has seen private knowledge, which makes its reasoning private (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 ## Terms

@@ -3,6 +3,12 @@
 # the conventions are those of the agents' file
 # (`caelumora-agents/src/prompts.yaml`). Names of tools are values.
 
+# A file as the model is given it again after a compaction (issue 538): its
+# `path` and its `text`.
+file: |-
+  [File: {{ path }}]
+  {{ text }}{{ "\n" if text is not endingwith "\n" }}
+
 # The prompt part of `workspace`: the workspace the agent works on in its
 # channel - its `name`, its `classification`, its `description` (none if it
 # has none), whether it is `writable` and has a `shell` -, the instruction

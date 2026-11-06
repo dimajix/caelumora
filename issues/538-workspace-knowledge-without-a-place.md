@@ -1,6 +1,6 @@
 # 538 — What an agent read of a workspace is known without the file it read
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -118,3 +118,19 @@ its own.
   now as the agent knew it where it was, so that it stays protected; `delete_file` gives nothing,
   as planned - a file made anew by another where the agent deleted one is not overwritten. The
   check and the write are not one step.
+- **2026-11-06** — Step 4 done, and with it the issue: the compaction's cut reads what the agent
+  knew whole in each entry as the model sees it - a gift, and what its tools read or wrote -, and
+  tells one from another by `KnowledgeSource::of_the_same`, the same entity or the same place
+  within it; a listing or a search is nothing to give again. `KnowledgeRestorer::give_again` is
+  handed the knowledge of its kind wanted, as it was first known. `workspace` is a
+  `KnowledgeRestorer` now: it gives each file again as it is now under its path
+  (`tool_workspace.file`, "[File: ...]"), known so, where the channel may still use the workspace
+  and the file is text no larger than a result holds; `caelumora-tool-workspace` links
+  `caelumora-compaction` for it.
+  After the review of this step: `publish_file` gives the place it offers without a digest - the
+  model is given a link, not the file -, so that an offer is neither given again as a file nor
+  counts as knowing it for a write. What the agent knows on the path is read by one function
+  (`knowledge_as_seen_whole`) for the cut and `last_known` alike, and what of it was known whole
+  by `KnowledgeSource::read_whole`. Where the workspace's storage cannot be reached, the restorer
+  gives nothing rather than fail the compaction, as the prompt part leaves its instruction files
+  out rather than fail the turn.

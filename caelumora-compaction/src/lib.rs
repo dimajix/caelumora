@@ -15,10 +15,9 @@
 //! its own (`Transcript::compact`), and what the agent saw before stays recorded and resolvable
 //! (`AgentChannelState::compact`).
 //!
-//! What a component gave the agent - a skill loaded - is given again after
-//! a compaction by that component, a [`KnowledgeRestorer`] (issue 323): the
-//! compaction asks the restorers of the agent's components, and knows no
-//! kind of knowledge itself.
+//! What the agent knew of a component's - a skill loaded, a file read (issue 538) - is given
+//! again after a compaction by that component, a [`KnowledgeRestorer`] (issue 323): the
+//! compaction asks the restorers of the agent's components, and knows no kind of knowledge itself.
 
 mod compactor;
 pub mod component;
@@ -30,12 +29,11 @@ mod testing;
 
 use async_trait::async_trait;
 use caelumora_agents::turn::Turn;
-use caelumora_domain::context::KnowledgeRef;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::message::Message;
 use caelumora_domain::prompt_catalogue::PromptError;
 use caelumora_domain::store::EntityKind;
 use std::fmt::Debug;
-use uuid::Uuid;
 
 /// The namespace of the texts of compaction in the prompt catalogue (issue 57).
 pub const NAMESPACE: &str = "compaction";
@@ -44,15 +42,15 @@ pub const NAMESPACE: &str = "compaction";
 pub const PROMPTS: &str = include_str!("prompts.yaml");
 
 /// What stands in the place of the older part of an agent's context when it is compacted. An agent
-/// has exactly one; where the part ends, what was given in it, and how the context is replaced is
-/// its `compaction` component's, as is when it compacts.
+/// has exactly one; where the part ends, what the agent knew in it, and how the context is replaced
+/// is its `compaction` component's, as is when it compacts.
 #[async_trait]
 pub trait CompactionStrategy: Send + Sync + Debug {
     /// What replaces `part` - the older part of `turn`'s context, as its model is given it, without
     /// the prompt parts given into the transcript, which stand after the replacement again - for
-    /// the agent to go on from. `given` names, by kind and name, what was given in the part and can
-    /// be given again after the replacement; what the agent still needs of it is given again
-    /// (issue 413).
+    /// the agent to go on from. `given` names, by kind and name, what the agent knew in the part -
+    /// was given, or read with its tools - and can be given again after the replacement; what the
+    /// agent still needs of it is given again (issue 413).
     ///
     /// # Errors
     /// `ModelUnreachable` if a model it asks cannot be asked, `NoSummary` if it answers nothing,
@@ -73,25 +71,25 @@ pub struct Replacement {
     /// The message its model answered with, which carries the measures of the calls that wrote
     /// the replacement - their tokens summed, the context size of the last.
     pub call: Message,
-    /// Of what was given in the part, what the agent still needs for the work under way, by kind
-    /// and name; the rest is not given again.
+    /// Of what the agent knew in the part, what it still needs for the work under way, by kind and
+    /// name; the rest is not given again.
     pub still_needed: Vec<String>,
 }
 
-/// What a component gave the agent and gives again after a compaction
-/// (issue 323), as it is now: the entities of one kind recorded as given -
-/// as `KnowledgeSource::Entity`, in a `TranscriptEntry::Given` or as what a
-/// turn read - in the part of the transcript a compaction replaces. A facet
-/// of the component that gave them, as a skill is given by the `skills`
-/// component.
+/// What the agent knew of a component's and the component gives again after a compaction
+/// (issue 323), as it is now: knowledge of entities of one kind read whole
+/// (`KnowledgeSource::Entity`), each by its place within the entity where it has one (issue 538) -
+/// given to the agent, in a `TranscriptEntry::Given`, or read or written by a tool of its, on its
+/// result - in the part of the transcript a compaction replaces. A facet of the component whose it
+/// is, as a skill is given again by the `skills` component, a file by the `workspace` component.
 #[async_trait]
 pub trait KnowledgeRestorer: Send + Sync + Debug {
     /// The kind of what it gives again.
     fn kind(&self) -> EntityKind;
 
-    /// What of `given` - entities of its kind, in the order they were first
-    /// given - it gives `turn`'s agent again, as each is now; one it can no
-    /// longer give there is left out.
+    /// What of `given` - knowledge of entities of its kind, each as the agent first knew it, in
+    /// that order: an entity by its id, a place within it by its place too (issue 538) - it gives
+    /// `turn`'s agent again, as each is now; one it can no longer give there is left out.
     ///
     /// # Errors
     /// `KnowledgeUnreadable` if what it gives cannot be read, `NoSession`
@@ -99,15 +97,16 @@ pub trait KnowledgeRestorer: Send + Sync + Debug {
     async fn give_again(
         &self,
         turn: &mut Turn<'_>,
-        given: &[Uuid],
+        given: &[KnowledgeSource],
     ) -> Result<Vec<GivenAgain>, CompactionError>;
 }
 
 /// What a `KnowledgeRestorer` gives again: its name, as the agent's owners
 /// are told it, the text the agent is given, as the message that follows
 /// the summary - classified as `knowledge` says -, and the knowledge that
-/// message records: of the entity given again, by which the compaction
-/// tells who first gave it.
+/// message records: of what is given again - an entity, or a place within
+/// it -, by which the compaction tells it from the rest and who first gave
+/// it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GivenAgain {
     pub name: String,
@@ -128,8 +127,8 @@ pub struct Compaction {
     /// What could have been given again and was not, since the agent no
     /// longer needs it, each by its kind and name (issue 413).
     pub not_needed: Vec<String>,
-    /// How much the agent had been given before that can no longer be
-    /// given and was not given again.
+    /// How much of what the agent knew before can no longer be given and
+    /// was not given again.
     pub lost: usize,
 }
 
@@ -152,7 +151,10 @@ impl Compaction {
             ));
         }
         if self.lost > 0 {
-            text.push_str(&format!(" {} of what it had been given can no longer be given here and was not given again.", self.lost));
+            text.push_str(&format!(
+                " {} of what it knew can no longer be given here and was not given again.",
+                self.lost
+            ));
         }
         text
     }
@@ -167,7 +169,7 @@ pub enum CompactionError {
     ModelUnreachable,
     #[error("its model wrote no summary")]
     NoSummary,
-    #[error("what it had been given could not be read again")]
+    #[error("what it knew could not be read again")]
     KnowledgeUnreadable,
     #[error("the agent is in no session")]
     NoSession,
@@ -195,7 +197,7 @@ mod tests {
             compaction.describe("Jonathan"),
             "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Given again: skill release-notes. \
             No longer needed, not given again: skill quiz-round. \
-            1 of what it had been given can no longer be given here and was not given again."
+            1 of what it knew can no longer be given here and was not given again."
         );
     }
 }

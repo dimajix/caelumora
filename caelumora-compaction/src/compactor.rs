@@ -1,23 +1,24 @@
 //! A compaction of an agent's context carried out: the transcript cut, the older part replaced by
-//! what the agent's strategy puts there, and what was given in it given again (issues 284, 413).
+//! what the agent's strategy puts there, and what the agent knew in it given again
+//! (issues 284, 413).
 //!
 //! The newest part of the context - `keep`, a share of the model's context size - is kept as it
 //! stands; where the cut lies is the [`Cut`]'s. What replaces the part before it is asked of the
-//! agent's [`CompactionStrategy`]; what the agent had been given there is given again, as it is
-//! now, by the component that gave it, its [`KnowledgeRestorer`] (issue 323), after the
-//! replacement - what the strategy answers the agent still needs of it (issue 413) -, as whoever
-//! first gave it: a skill a participant gave as theirs (issue 539). Nothing changes until all of it
-//! is had: then the context moves to the compacted one at once (`Turn::compact`).
+//! agent's [`CompactionStrategy`]; what the agent knew there - was given, or read with its tools -
+//! is given again, as it is now, by the component whose it is, its [`KnowledgeRestorer`]
+//! (issue 323), after the replacement - what the strategy answers the agent still needs of it
+//! (issue 413) -, as whoever first gave it: a skill a participant gave as theirs (issue 539).
+//! Nothing changes until all of it is had: then the context moves to the compacted one at once
+//! (`Turn::compact`).
 
-use crate::cut::{given, Cut, Given};
+use crate::cut::Cut;
 use crate::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
 use caelumora_agents::turn::Turn;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::context::KnowledgeRef;
+use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::message::{Message, MessageId};
 use chrono::Utc;
 use std::sync::Arc;
-use uuid::Uuid;
 
 /// Carries out the compactions of an agent's context, with its strategy and the restorers of its
 /// components.
@@ -25,7 +26,7 @@ use uuid::Uuid;
 pub(crate) struct Compactor {
     /// What replaces the part cut off.
     strategy: Arc<dyn CompactionStrategy>,
-    /// The components of the agent that give again what they gave it, each for its kind.
+    /// The components of the agent that give again what it knew of theirs, each for its kind.
     restorers: Vec<Arc<dyn KnowledgeRestorer>>,
     /// How much of the newest context is kept as it stands, as a share of the context size - of the
     /// context as it stands where no size is known.
@@ -137,36 +138,39 @@ impl Compactor {
         (self.keep * size as f64) as u64
     }
 
-    /// What `wanted` - given in the part replaced and not in the part kept, each with the message
-    /// it was first given in - can be given again by the restorer of its kind, and how much of it
-    /// can no longer be given. What no restorer gives - a workspace's files - is not given again,
-    /// and not lost either; what a restorer gives that was not wanted is left out.
+    /// What `wanted` - known in the part replaced and not in the part kept, each with the message
+    /// it was first known from - can be given again by the restorer of its kind, and how much of it
+    /// can no longer be given. What no restorer gives is not given again, and not lost either; what
+    /// a restorer gives that was not wanted is left out.
     async fn give_again<'a>(
         &self,
         turn: &mut Turn<'_>,
-        wanted: &[(Given, &'a Message)],
+        wanted: &[(&KnowledgeSource, &'a Message)],
     ) -> Result<(Vec<Restored<'a>>, usize), CompactionError> {
         let mut restored = Vec::new();
         let mut lost = 0;
         for restorer in &self.restorers {
             let kind = restorer.kind();
-            let ids: Vec<Uuid> =
-                wanted.iter().filter(|((of, _), _)| *of == kind).map(|((_, id), _)| *id).collect();
-            if ids.is_empty() {
+            let of_kind: Vec<KnowledgeSource> = wanted
+                .iter()
+                .filter(|(k, _)| k.kind() == Some(kind))
+                .map(|(k, _)| (*k).clone())
+                .collect();
+            if of_kind.is_empty() {
                 continue;
             }
             let again: Vec<_> = restorer
-                .give_again(turn, &ids)
+                .give_again(turn, &of_kind)
                 .await?
                 .into_iter()
                 .filter_map(|again| {
-                    let what = given(&again.knowledge.source)?;
-                    let (_, giver) = wanted.iter().find(|(g, _)| *g == what)?;
+                    let what = &again.knowledge.source;
+                    let (_, giver) = wanted.iter().find(|(k, _)| k.of_the_same(what))?;
                     let name = format!("{} {}", kind, again.name);
                     Some(Restored { name, again, giver })
                 })
                 .collect();
-            lost += ids.len().saturating_sub(again.len());
+            lost += of_kind.len().saturating_sub(again.len());
             restored.extend(again);
         }
         Ok((restored, lost))
@@ -193,6 +197,7 @@ mod tests {
     use caelumora_domain::context::{
         KnowledgeSource, ModelProfile, Placement, PromptPart, SenderFormat,
     };
+    use caelumora_domain::digest;
     use caelumora_domain::message::MessageRole;
     use caelumora_domain::store::{EntityKind, Stored};
     use caelumora_domain::user::UserId;
@@ -220,7 +225,7 @@ mod tests {
         KnowledgeRef {
             channel: world.session.channels()[0].id(),
             session: world.session.id(),
-            source: KnowledgeSource::entity::<Workspace>(id, None),
+            source: KnowledgeSource::entity::<Workspace>(id, Some(digest::prompt(GIVEN))),
             classification: Some(Classification::general(Confidentiality::Internal)),
         }
     }
@@ -239,7 +244,7 @@ mod tests {
         async fn give_again(
             &self,
             turn: &mut Turn<'_>,
-            given: &[Uuid],
+            given: &[KnowledgeSource],
         ) -> Result<Vec<GivenAgain>, CompactionError> {
             Ok(self
                 .0
@@ -316,6 +321,94 @@ mod tests {
         let u2 = heard("u2");
         state.perceive(vec![u2]);
         skill
+    }
+
+    /// Gives again every file it is asked for under its place, as the `workspace` component would -
+    /// but `gone.txt`, which is gone.
+    #[derive(Debug)]
+    struct Files;
+
+    #[async_trait]
+    impl KnowledgeRestorer for Files {
+        fn kind(&self) -> EntityKind {
+            Workspace::KIND
+        }
+
+        async fn give_again(
+            &self,
+            turn: &mut Turn<'_>,
+            given: &[KnowledgeSource],
+        ) -> Result<Vec<GivenAgain>, CompactionError> {
+            Ok(given
+                .iter()
+                .filter_map(|known| {
+                    known.place().filter(|place| *place != "gone.txt").map(|place| (known, place))
+                })
+                .map(|(known, place)| GivenAgain {
+                    name: place.to_string(),
+                    text: format!("[File: {place}]"),
+                    knowledge: KnowledgeRef { source: known.clone(), ..turn_knowledge(turn) },
+                })
+                .collect())
+        }
+    }
+
+    /// Issue 538: what is wanted again by its place within one entity is matched back by its
+    /// place - each given again as whoever first gave it -, and what cannot be given again is lost.
+    #[tokio::test]
+    async fn files_are_given_again_by_their_place_as_whoever_gave_them() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let heard = |text: &str| Message {
+            content: Some(text.to_string()),
+            ..Message::new(Classification::PUBLIC)
+        };
+        let alice = ActorId::User(UserId::new());
+        let agent = ActorId::Agent(world.agent);
+        let file = |place: &str, by: ActorId, name: &str| {
+            let source = KnowledgeSource::within::<Workspace>(
+                world.workspace.id,
+                place.to_string(),
+                Some(digest::prompt(place)),
+            );
+            let message = Message {
+                sender_id: by,
+                sender_name: name.to_string(),
+                content: Some(format!("[File: {place}]")),
+                ..Message::new(Classification::PUBLIC)
+            };
+            (message, KnowledgeRef { source, ..knowledge(&world, world.workspace.id) })
+        };
+        state.perceive(vec![heard("u1")]);
+        let mut turn = workspace_turn(&world, &mut state);
+        for (message, known) in [
+            file("a.txt", alice, "alice"),
+            file("b.txt", agent, "helper"),
+            file("gone.txt", agent, "helper"),
+        ] {
+            turn.give(message, Some(known));
+        }
+        drop(turn);
+        let given = state.turn.take().unwrap().work.turn_id;
+        state.finish_turn(given, Vec::new(), Vec::new());
+        drop(workspace_turn(&world, &mut state));
+        state.said(Message { sender_id: agent, role: MessageRole::Assistant, ..heard(A1) });
+        let answered = state.turn.take().unwrap().work.turn_id;
+        state.finish_turn(answered, Vec::new(), Vec::new());
+        state.perceive(vec![heard("u2")]);
+        let compactor = compactor(&Arc::new(Scripted::default()), vec![Arc::new(Files)]);
+
+        let mut turn = workspace_turn(&world, &mut state);
+        let compaction = compactor.compact(&mut turn).await.expect("compacted").expect("some");
+        drop(turn);
+
+        assert_eq!(
+            (compaction.given_again, compaction.lost),
+            (vec!["workspace a.txt".to_string(), "workspace b.txt".to_string()], 1),
+            "each by its place; the one gone lost"
+        );
+        let given: Vec<_> = state.transcript.messages()[1..3].iter().map(|m| m.sender_id).collect();
+        assert_eq!(given, [alice, agent], "as whoever first gave it");
     }
 
     #[tokio::test]
