@@ -408,6 +408,8 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [538](538-workspace-knowledge-without-a-place.md) | open | What an agent read of a workspace is recorded as the workspace and a digest, without the file, and only in the frame of the turn that read it, so a compaction cannot give a file read again, nothing tells that a file read has changed since, and a replacement overwrites what changed in between. |
 | [539](539-given-messages-framed-by-their-giver.md) | done | What is given into an agent's transcript - a skill, a compaction's summary, a prompt part - takes the role and sender its giver chooses, so the model cannot tell given context from what was said, and a skill a user loaded is given again after a compaction as the agent's own. |
 | [541](541-skill-loaded-again-though-given.md) | done | After a participant gave an agent a skill with `/skill`, models call `load_skill` for it anyway, and the skill is given a second time; `load_skill` could answer for a skill that stands in the transcript already without giving it again. |
+| [542](542-what-is-given-again-unbounded.md) | open | After a compaction, every file the agent read whole in the part replaced and still needs is given again, each bounded by `max_output_bytes` but not all of them together, so a context can stay above the threshold and be compacted again and again, giving the same files each time. |
+| [543](543-told-when-a-file-read-changed.md) | open | A file the agent read and somebody else changed since is refused to be written over, but the agent learns of the change only when it tries to write, and answers and plans from what it read until then. |
 
 ## Maintenance
 
