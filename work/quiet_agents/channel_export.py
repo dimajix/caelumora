@@ -11,6 +11,32 @@ an agent, the request its model was sent for the turn's first call, as the
 (`caelumora-ollama/src/client.rs`) build it. That request is what an
 experiment varies - a prompt part replaced, one added - and sends again.
 
+It rebuilds them as Caelumora built them at commit 22206aad (issue 442), when
+its exports `team-session.json` and `team-session-2.json` were made, and the
+paths it names are that commit's
+(`git show 22206aad:caelumora-model/src/context.rs`). Only so do their
+requests verify. A store written since reads otherwise, and an export of it
+needs the script brought up to date first, then verified on that export:
+
+  - a frame places a part `at` - `"start"`, `{"after": digest}` or `"end"` -,
+    no longer `after` (issue 537); a part at the end follows everything;
+  - what is given to read (a `given` entry) is a system message, never marked
+    as said, worded "@alice gave you this to read:" where another participant
+    gave it (`ModelProfile::given_to_read`, `kernel.given_by`, issue 539);
+  - the system prompt is the parts at the start in the role of one alone: a
+    system message of the transcript at the start is a user message under
+    `only_at_start` (`ContextResolver::resolve`, issue 539);
+  - attachments and the media of tool results are noted after the text
+    (`ModelProfile::with_notes`).
+
+What it left out already then, as its exports hold none: of a turn given up
+because the channel was lowered, the model was given only which tools it
+called (`Message::names_only`), and told that what it read and said is
+withheld.
+
+The resolver is `caelumora-domain/src/context/resolver.rs` now, the Ollama
+client `caelumora-model-ollama/src/client.rs`.
+
 Every turn is told with why the agent was asked (the requests to respond the
 history records before it, and whether the message that asked mentioned the
 agent) and what it did (what it said, which tools it called, whether it
