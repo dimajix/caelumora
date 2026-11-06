@@ -5,6 +5,7 @@
 use super::Turn;
 use crate::prompt::NAMESPACE;
 use caelumora_domain::actor::ActorEvent;
+use caelumora_domain::context::PromptAt;
 use caelumora_domain::digest::{prompt, Digest};
 use caelumora_domain::message::MessageRole;
 use caelumora_domain::plan::{Plan, PlanProgress, PlanState, PlanStep};
@@ -114,14 +115,13 @@ impl Turn<'_> {
             .map(|(at, _)| at)
             .collect();
         let Some(&current) = of_plan.last() else { return };
-        if !of_plan.iter().any(|&at| prompts[at].after == replaced) {
+        let replaced = PromptAt::after(replaced);
+        if !of_plan.iter().any(|&at| prompts[at].at == replaced) {
             return;
         }
-        let after = prompts[current].after;
-        let dropped: HashSet<usize> = of_plan
-            .into_iter()
-            .filter(|&at| at == current || prompts[at].after == replaced)
-            .collect();
+        let stood = prompts[current].at;
+        let dropped: HashSet<usize> =
+            of_plan.into_iter().filter(|&at| at == current || prompts[at].at == replaced).collect();
         let kept = prompts
             .iter()
             .enumerate()
@@ -130,7 +130,7 @@ impl Turn<'_> {
             .collect();
         self.current_mut().work.context.frame.prompts = kept;
         let label = self.situation().label();
-        let overview = self.keep_prompt(MessageRole::System, overview, after, Some(label));
+        let overview = self.keep_prompt(MessageRole::System, overview, stood, Some(label));
         self.current_mut().work.context.frame.prompts.push(overview);
     }
 
@@ -275,7 +275,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::context::ModelProfile;
-    use caelumora_domain::context::{ContextItem, PromptPart};
+    use caelumora_domain::context::{ContextItem, Placement, PromptAt, PromptPart};
     use caelumora_domain::message::Message;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::plan::PlanId;
@@ -431,9 +431,8 @@ mod tests {
                 vec![PromptPart {
                     role: MessageRole::System,
                     text: "Be brief.".to_string(),
-                    after: None,
+                    placement: Placement::Frame { at: PromptAt::Start, component: None },
                     classification: None,
-                    source: None,
                 }],
                 Vec::new(),
             );

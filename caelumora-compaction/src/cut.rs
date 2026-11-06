@@ -2,17 +2,17 @@
 //!
 //! The cut lies before a message, never between a tool's call and its result (issue 284), never
 //! into a turn given up because its channel was lowered below it, and within the turn under way
-//! before a call of its model but the first. What was given in the part replaced and is not still
-//! there in the part kept is what is given again; whose the replacement is and how it is classified
-//! follows from what it replaces.
+//! before a call of its model but the first. The prompt parts given into the transcript that stand
+//! before it are not replaced but carried over (issue 537): they count as kept. What was given in
+//! the part replaced and is not still there in the part kept is what is given again; whose the
+//! replacement is and how it is classified follows from what it replaces.
 
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::KnowledgeSource;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::store::EntityKind;
-use caelumora_domain::transcript::{as_they_stand, Transcript, TranscriptEntry};
-use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::transcript::{as_they_stand, GivenSource, Transcript, TranscriptEntry};
 use caelumora_domain::work::TurnId;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -24,12 +24,15 @@ pub(crate) type Given = (EntityKind, Uuid);
 /// if it is one given (`TranscriptEntry::Given`), and its message as it stands, if it holds one.
 type Entry = (Digest, Option<Given>, Option<Message>);
 
-/// An agent's transcript cut for a compaction: the part replaced, and the part kept as it stands.
+/// An agent's transcript cut for a compaction: the part replaced, without the prompt parts carried
+/// over, and the part kept as it stands.
 #[derive(Debug)]
 pub(crate) struct Cut {
     replaced: Vec<Entry>,
     kept: Vec<Entry>,
-    /// The last entry of the part replaced: up to it the part is read.
+    /// How many prompt parts before the cut are carried over (`Transcript::carried_parts`).
+    carried: usize,
+    /// The last entry before the cut: up to it the part replaced is read.
     until: Digest,
     /// The turn under way, for which it was cut.
     under_way: TurnId,
@@ -38,8 +41,9 @@ pub(crate) struct Cut {
 impl Cut {
     /// `transcript`'s active path cut so that at most `keep` tokens are kept as they stand, its
     /// entries standing in the context at `positions` (`Situation::token_positions`); `under_way`
-    /// is the turn under way. The oldest cut allowed behind which at most `keep` tokens stand; the
-    /// newest allowed if none is. `None` if there is none, or nothing before it to replace.
+    /// is the turn under way. The oldest cut allowed behind which at most `keep` tokens stand, the
+    /// prompt parts carried over counted with them; the newest allowed if none is. `None` if there
+    /// is none, or nothing before it to replace.
     pub(crate) fn of(
         transcript: &Transcript,
         positions: &[u64],
@@ -47,22 +51,28 @@ impl Cut {
         under_way: TurnId,
     ) -> Option<Self> {
         let whole = kept_whole(transcript.entries().map(|node| &node.entry));
+        let carried = transcript.carried_parts();
         let mut path: Vec<Entry> = as_they_stand(transcript.entries())
             .map(|(node, message)| {
                 let gives = match &node.entry {
-                    TranscriptEntry::Given { source: Some(source), .. } => given(source),
+                    TranscriptEntry::Given {
+                        source: Some(GivenSource::Knowledge(source)), ..
+                    } => given(source),
                     _ => None,
                 };
                 (node.digest, gives, message)
             })
             .collect();
-        let at = cut_at(&path, positions, keep, under_way, &whole)?;
+        let at = cut_at(&path, positions, keep, under_way, &whole, &carried)?;
         let kept = path.split_off(at);
-        let (until, _, _) = path.last()?;
-        Some(Self { until: *until, under_way, replaced: path, kept })
+        let (until, _, _) = *path.last()?;
+        path.retain(|(digest, _, _)| !carried.contains(digest));
+        let carried = at - path.len();
+        Some(Self { until, under_way, replaced: path, kept, carried })
     }
 
-    /// The last entry of the part replaced.
+    /// The last entry before the cut, up to which the part replaced is read: a part carried over,
+    /// maybe, which what is read of it leaves out (`ContextResolver::conversation_until`).
     pub(crate) fn until(&self) -> Digest {
         self.until
     }
@@ -77,9 +87,10 @@ impl Cut {
         messages(&self.replaced)
     }
 
-    /// How many messages the part kept holds.
+    /// How many messages stay as they stand: those of the part kept, and the prompt parts carried
+    /// over from before it.
     pub(crate) fn messages_kept(&self) -> usize {
-        messages(&self.kept)
+        messages(&self.kept) + self.carried
     }
 
     /// What was given in the part replaced and is not still there, as it was given, in the part
@@ -129,14 +140,16 @@ fn given(source: &KnowledgeSource) -> Option<Given> {
 /// under way `under_way` before one of its model's messages but the first - before that, its input
 /// would be summarised and the turn kept -, before it before any message that is no tool's result,
 /// up to the turn's input, and none in a turn of `whole`. The oldest of them behind which at most
-/// `keep` tokens stand; the newest if none is. `None` if there is none, or nothing before it to
-/// replace.
+/// `keep` tokens stand, those of the entries `carried` before it counted with them - the prompt
+/// parts a compaction carries over -; the newest if none is. `None` if there is none, or nothing
+/// before it to replace but what is carried.
 fn cut_at(
     path: &[Entry],
     positions: &[u64],
     keep: u64,
     under_way: TurnId,
     whole: &HashSet<TurnId>,
+    carried: &HashSet<Digest>,
 ) -> Option<usize> {
     let end = positions.last().copied().unwrap_or(0);
     let of_turn = |m: &Message| m.turn_id == Some(under_way);
@@ -158,26 +171,31 @@ fn cut_at(
         })
         .map(|(at, _)| at)
         .collect();
+    let position = |at: usize| positions.get(at).copied().unwrap_or(end);
+    // How many tokens the entries carried before each entry hold, which stay.
+    let mut carried_before = vec![0; path.len() + 1];
+    for (at, (digest, _, _)) in path.iter().enumerate() {
+        let size = if carried.contains(digest) {
+            position(at + 1).saturating_sub(position(at))
+        } else {
+            0
+        };
+        carried_before[at + 1] = carried_before[at] + size;
+    }
     let cut = candidates
         .iter()
         .copied()
-        .find(|&at| end.saturating_sub(positions.get(at).copied().unwrap_or(end)) <= keep)
+        .find(|&at| end.saturating_sub(position(at)) + carried_before[at] <= keep)
         .or(candidates.last().copied())?;
-    path[..cut].iter().any(|(_, _, message)| message.is_some()).then_some(cut)
+    let replaced = |(digest, _, message): &Entry| message.is_some() && !carried.contains(digest);
+    path[..cut].iter().any(replaced).then_some(cut)
 }
 
 /// The turns of `entries` a compaction must not cut apart: those given up because the channel was
 /// lowered below them - its model is given only the tools they called, which the summary of a part
 /// of one without its end would not know (issues 141, 258).
 fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet<TurnId> {
-    entries
-        .filter_map(|entry| match entry {
-            TranscriptEntry::TurnGivenUp {
-                turn_id, reason: GivenUpReason::Lowered { .. }, ..
-            } => Some(*turn_id),
-            _ => None,
-        })
-        .collect()
+    entries.filter_map(TranscriptEntry::lowered_turn).map(|(turn, _)| turn).collect()
 }
 
 /// What was given in `entries`, each once, in the order it was first given
@@ -195,16 +213,33 @@ fn given_in(entries: &[Entry]) -> Vec<Given> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::digest;
+    use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::turn::GivenUpReason;
     use chrono::Utc;
 
-    fn entry(content: &str, role: MessageRole, turn: Option<TurnId>) -> Entry {
-        let message = Message {
+    /// A message saying `content` in `role`, of the turn `turn` if any, classified
+    /// `classification`.
+    fn message(
+        content: &str,
+        role: MessageRole,
+        turn: Option<TurnId>,
+        classification: Classification,
+    ) -> Message {
+        Message {
             content: Some(content.to_string()),
             role,
             turn_id: turn,
-            ..Message::new(Classification::PUBLIC)
-        };
+            classification,
+            ..make_message(MessageId::new())
+        }
+    }
+
+    /// The entry of a public message saying `content`, as `message` makes it.
+    fn entry(content: &str, role: MessageRole, turn: Option<TurnId>) -> Entry {
+        let message = message(content, role, turn, Classification::PUBLIC);
         (digest::content(content.as_bytes()), None, Some(message))
     }
 
@@ -224,33 +259,34 @@ mod tests {
         ];
         let positions = [0, 10, 20, 50, 50, 60];
         let none = HashSet::new();
+        let no_parts = HashSet::new();
         assert_eq!(
-            cut_at(&path, &positions, 10, under_way, &none),
+            cut_at(&path, &positions, 10, under_way, &none, &no_parts),
             Some(4),
             "the newest part that fits"
         );
         assert_eq!(
-            cut_at(&path, &positions, 45, under_way, &none),
+            cut_at(&path, &positions, 45, under_way, &none, &no_parts),
             Some(4),
             "never before a result, which would part it from its call"
         );
         assert_eq!(
-            cut_at(&path, &positions, 50, under_way, &none),
+            cut_at(&path, &positions, 50, under_way, &none, &no_parts),
             Some(1),
             "a finished turn may be cut apart"
         );
         assert_eq!(
-            cut_at(&path, &positions, 5, under_way, &none),
+            cut_at(&path, &positions, 5, under_way, &none, &no_parts),
             Some(4),
             "the newest if nothing fits"
         );
         assert_eq!(
-            cut_at(&path, &positions, 60, under_way, &none),
+            cut_at(&path, &positions, 60, under_way, &none, &no_parts),
             None,
             "nothing to summarise if everything fits"
         );
         assert_eq!(
-            cut_at(&path, &positions, 50, under_way, &HashSet::from([earlier])),
+            cut_at(&path, &positions, 50, under_way, &HashSet::from([earlier]), &no_parts),
             Some(4),
             "not into a turn kept whole"
         );
@@ -270,22 +306,82 @@ mod tests {
         ];
         let positions = [0, 10, 20, 40, 50, 70, 80, 100];
         let none = HashSet::new();
+        let no_parts = HashSet::new();
         assert_eq!(
-            cut_at(&path, &positions, 60, under_way, &none),
+            cut_at(&path, &positions, 60, under_way, &none, &no_parts),
             Some(3),
             "before its second call"
         );
         assert_eq!(
-            cut_at(&path, &positions, 85, under_way, &none),
+            cut_at(&path, &positions, 85, under_way, &none, &no_parts),
             Some(3),
             "not before its first: its input would go and the turn stay"
         );
         assert_eq!(
-            cut_at(&path, &positions, 10, under_way, &none),
+            cut_at(&path, &positions, 10, under_way, &none, &no_parts),
             Some(5),
             "its newest call and results stay"
         );
-        assert_eq!(cut_at(&path, &positions, 100, under_way, &none), None);
+        assert_eq!(cut_at(&path, &positions, 100, under_way, &none, &no_parts), None);
+    }
+
+    /// Issue 537: a prompt part given into the transcript that stands before the cut is carried
+    /// over, so its tokens stay, and it is nothing to replace.
+    #[test]
+    fn a_part_carried_over_counts_as_kept() {
+        let under_way = TurnId::new();
+        let part = entry("[Rules]", MessageRole::System, None);
+        let carried = HashSet::from([part.0]);
+        let none = HashSet::new();
+        let path = vec![
+            part.clone(),
+            entry("u1", MessageRole::User, None),
+            entry("u2", MessageRole::User, None),
+            entry("u3", MessageRole::User, None),
+        ];
+        let positions = [0, 20, 30, 40, 50];
+        assert_eq!(
+            cut_at(&path, &positions, 40, under_way, &none, &carried),
+            Some(2),
+            "what is carried stays beside what is kept"
+        );
+        assert_eq!(
+            cut_at(&path, &positions, 40, under_way, &none, &HashSet::new()),
+            Some(1),
+            "without the part carried, the cut lies earlier"
+        );
+        let path = vec![part, entry("u1", MessageRole::User, None)];
+        assert_eq!(
+            cut_at(&path, &[0, 20, 30], 10, under_way, &none, &carried),
+            None,
+            "nothing to summarise but what is carried"
+        );
+    }
+
+    /// Issue 537: what a compaction replaces holds no part carried over - it is not counted as
+    /// replaced, nor classifies the replacement.
+    #[test]
+    fn a_part_carried_over_is_neither_counted_nor_classified_as_replaced() {
+        let internal = Classification::general(Confidentiality::Internal);
+        let mut transcript = Transcript::default();
+        transcript.give(
+            message("[Rules]", MessageRole::System, None, internal),
+            Some(GivenSource::Part("rules".to_string())),
+        );
+        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
+        transcript.push(message("u2", MessageRole::User, None, Classification::PUBLIC));
+
+        let cut = Cut::of(&transcript, &[0, 10, 20, 30], 10, TurnId::new()).expect("cut");
+        assert_eq!(
+            (cut.messages_replaced(), cut.messages_kept()),
+            (1, 2),
+            "the part not replaced, but kept as it stands"
+        );
+        assert_eq!(
+            cut.replaced_as(Classification::PUBLIC),
+            (None, Classification::PUBLIC),
+            "classified by what it replaces, without the part"
+        );
     }
 
     #[test]

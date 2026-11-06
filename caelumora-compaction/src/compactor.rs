@@ -56,7 +56,7 @@ impl Compactor {
             return Ok(None);
         };
         let (restored, lost) = self.give_again(turn, &cut.wanted()).await?;
-        let part = turn.context_until(cut.until()).await.map_err(|e| {
+        let part = turn.conversation_until(cut.until()).await.map_err(|e| {
             tracing::warn!(
                 "Agent {}: a compaction cannot read its transcript: {:#}",
                 turn.situation().agent_id(),
@@ -174,15 +174,20 @@ mod tests {
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
-    use caelumora_domain::context::{KnowledgeSource, ModelProfile, SenderFormat};
+    use caelumora_domain::context::{
+        KnowledgeSource, ModelProfile, Placement, PromptPart, SenderFormat,
+    };
     use caelumora_domain::store::{EntityKind, Stored};
-    use caelumora_domain::transcript::TranscriptEntry;
+    use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::time_zone::TimeZone;
     use caelumora_domain::work::Work;
     use caelumora_domain::workspace::{Workspace, WorkspaceId};
     use caelumora_kernel::testing::participant_runtime_in;
     use caelumora_kernel::workspace::testing::{session_with_workspace, WithWorkspace};
+
+    /// The text of a prompt part given into the transcript (issue 537).
+    const RULES: &str = "[Rules]\nBe brief.";
 
     /// What the agent of a test is given, as a plugin gives it - a skill, say: a workspace, here,
     /// and its text.
@@ -325,7 +330,7 @@ mod tests {
 
         assert_eq!(texts(&state), [SUMMARY, GIVEN, "u2"]);
         assert!(
-            matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(source), .. }) if source.about::<Workspace>().is_some_and(|(s, _)| s == skill)),
+            matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(GivenSource::Knowledge(source)), .. }) if source.about::<Workspace>().is_some_and(|(s, _)| s == skill)),
             "the skill as given"
         );
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
@@ -357,6 +362,59 @@ mod tests {
             (usage.prompt_tokens, usage.completion_tokens),
             (40, 8),
             "the replacement's call counts"
+        );
+    }
+
+    /// Issue 537: a prompt part given into the transcript before the cut is carried over - its
+    /// strategy is not asked about it, it stands after the summary as it stood, and it counts as
+    /// kept, not as replaced.
+    #[tokio::test]
+    async fn a_part_given_before_the_cut_is_carried_over_and_not_summarised() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let heard = |text: &str| Message {
+            content: Some(text.to_string()),
+            ..Message::new(Classification::PUBLIC)
+        };
+        state.perceive(vec![heard("u1")]);
+        let mut turn = workspace_turn(&world, &mut state);
+        turn.set_context(
+            vec![PromptPart {
+                role: MessageRole::System,
+                text: RULES.to_string(),
+                placement: Placement::Given { component: "rules".to_string() },
+                classification: Some(Classification::PUBLIC),
+            }],
+            Vec::new(),
+        );
+        drop(turn);
+        state.said(Message {
+            sender_id: ActorId::Agent(world.agent),
+            role: MessageRole::Assistant,
+            ..heard("a1")
+        });
+        let answered = state.turn.take().unwrap().work.turn_id;
+        state.finish_turn(answered, Vec::new(), Vec::new());
+        state.perceive(vec![heard("u2")]);
+        let strategy = Arc::new(Scripted::default());
+        let compactor = compactor(&strategy, Vec::new());
+
+        let mut turn = workspace_turn(&world, &mut state);
+        let compaction = compactor.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        assert_eq!(
+            compaction.map(|c| (c.replaced, c.kept)),
+            Some((2, 2)),
+            "the part kept, not replaced"
+        );
+        let (part, _) = strategy.asked.lock().unwrap().pop().expect("its strategy was asked");
+        let asked: Vec<_> = part.iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(asked, ["u1", "a1"], "the strategy is not asked about the part");
+        assert_eq!(
+            texts(&state),
+            [SUMMARY, RULES, "u2"],
+            "the part after the summary, as it stood"
         );
     }
 

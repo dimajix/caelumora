@@ -1,6 +1,6 @@
 # 537 — What an agent is given besides the conversation is placed anew in every turn
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -164,3 +164,71 @@ what an agent saw is not told exactly once a text changed: a question of its own
 - **2026-11-05** — Opened from a comparison with the session logs of Claude Code, whose harness
   writes what it gives its model into the session's chain where it changed. Measuring what the
   cache loses was skipped by decision; exactly reconstructing what an agent saw is put after it.
+- **2026-11-05** — Decided with the maintainer: a provider words its withdrawal itself
+  (`PromptProvider::withdrawn`, the second of the two ways above), and for an agent run here a part
+  at `Given` that changed or holds nothing takes its entry before back (`TranscriptEntry::Revoked`)
+  rather than leaving it to stand: the model never reads what no longer holds, a withdrawal needs no
+  text there, and a part that no longer holds what may not be recalled any more is gone at once. The
+  cache is lost where a part changes, from where it stood, and only then.
+- **2026-11-05** — Step 1 done. Unlike *External agents* above says, the withdrawal is not
+  the actor's: whether a component's part is empty only its context provider sees, so
+  `ExternalContextProvider` gives the withdrawal of a component whose part the remote agent was
+  given (`RemoteState::has_given_any`) and that has none now, and the actor gives it, as every
+  part, only where it is not what it gave last. The actor drops a part a failed send left pending
+  once its component gives none. `changes_only`, the components' memory of what they told and
+  `ChannelPartParams` are gone. `withdrawn` takes no situation, since neither withdrawal reads one.
+- **2026-11-05** — Decided with the maintainer for steps 2 and 3, done as one step, since
+  `GivenSource::Part` had no user before the position: a part placed `Given` (`Placement::Given` of
+  a `PromptPart`, which replaces its `after`) is given as the turn begins, after its input, by
+  `AgentChannelState::give_parts`, rather than before every call; a compaction copies the parts
+  that stand in what it replaces after the replacement (`Transcript::compact`), so that the turn
+  keeps no copy of them and a turn resumed finds them in the transcript. A part is given as a
+  system message of the agent. The seed's `channel-context` gives the roster, the language and the
+  briefing so. That the strategy of a compaction is given the parts to summarise, though they stand
+  after it again, is left for later.
+- **2026-11-05** — From the review of the step: what stands of the parts is read as the model is
+  given them (`parts_as_given`), so that a part of a turn given up as `Lowered`, which the model is
+  given nothing of, is given again and not kept by a compaction; a part stands only with the same
+  text and classification; a part is no input in looking for the turn's input, so that a turn
+  answering anew places what goes before its input before it.
+- **2026-11-05** — Decided with the maintainer after the review: the component a part comes from
+  is its placement's (`Placement::After { after, component }`, `Placement::Given { component }`),
+  so that a part given into the transcript cannot be without one, and `PromptPart::source` is
+  gone. A part taken back is told to the channel as withdrawn (`ActorEvent::MessageWithdrawn`),
+  sent by the agent alone and delivered to nobody, and recorded as an item of its own
+  (`HistoryEntry::Withdrawn`) rather than a change of the message given, which stays found by no
+  id: an agent's history gives it as an item (`withdrawn`), which the history panel shows where the
+  agent stopped reading the part, named by its first line. A component that fails, fail-open,
+  loses its part for that turn as before: keeping it would need telling a failure from a part that
+  holds nothing, and would keep what may no longer hold. Kept `in progress`: the compaction's
+  strategy summarising the parts, and the parts still at `before_turn_input`, are to be discussed.
+- **2026-11-05** — Decided with the maintainer: the strategy of a compaction is not given the parts
+  given into the transcript to summarise (`ContextResolver::conversation_until`, which leaves out
+  every prompt part, for `Turn::conversation_until`): they stand after its replacement again, as
+  they stood. The cut carries them over likewise (`Cut`): they count as kept, are neither counted
+  nor classified as replaced, and are nothing to replace. For the parts still at
+  `before_turn_input`, which cost the cache from the previous turn's input on, a position `end`
+  comes next: transiently after everything the model is given in each call, so that a cache loses
+  the part alone, chosen per component by its `position` parameter. A part placed after the input
+  would save the input alone, since the next turn's answer stands where it stood.
+- **2026-11-05** — Done: what a compaction carries over is named once (`Transcript::carried_parts`),
+  copied by `Transcript::compact` and counted as kept by the cut (`Cut`), also in what `/compact`
+  tells; the strategy is given the conversation without any prompt part
+  (`ContextResolver::conversation_until`), through `Turn::conversation_until`, as
+  `Turn::context_until` is renamed, since it gives the conversation alone now.
+- **2026-11-05** — Done: a part at `end` (`PromptPosition::End`) is placed into the frame at its
+  end (`PromptAt::End`), which the resolver gives after everything a call is given, after the parts
+  placed after the last entry too. `PromptAt` - `Start`, `After(Digest)`, `End` - replaces the
+  `after` of `PromptRef` and of the placement into the frame, which is named `Placement::Frame` for
+  it. The seed's components keep their positions; which go to `end` is left to decide.
+- **2026-11-06** — Decided with the maintainer and done: the seed gives the time and when to
+  mention at `end` - when to mention is to be read last, which at `given` it would not be - and the
+  notes, the private notes and the agent's memory too, since they change often; why the agent was
+  asked stays before the turn's input, where `work/quiet_agents` tried it. `notes`,
+  `private_notes`, `agent_memory` and `planning` take a `position` too, the first three
+  `before_turn_input` and `planning` `start` unless configured otherwise. A part at `given` is
+  judged anew in every turn under the rights of that turn, so what changes often stays off it for
+  what it costs the cache, not for the rights. Every personality of the seed lists
+  `channel-context` last, so that when to mention comes after the notes in what stands at the end.
+  The prompt kinds of the agents keep their position and texts private and are built only within
+  the crate. With every prompt component of a personality taking a `position`, the issue is done.

@@ -32,7 +32,7 @@ const TEXT: &str = "agents.current_time";
 
 #[derive(Debug)]
 pub struct CurrentTimeComponent {
-    pub position: PromptPosition,
+    position: PromptPosition,
     /// What it reads the time from: the system's clock, or a fixed one in
     /// tests.
     clock: fn() -> DateTime<Utc>,
@@ -41,7 +41,7 @@ pub struct CurrentTimeComponent {
 
 impl CurrentTimeComponent {
     /// The current time at `position`, read from the system's clock.
-    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
         Self { position, clock: Utc::now, prompts }
     }
 }
@@ -127,22 +127,5 @@ mod tests {
                 .contains("It is Sunday, 18 October 2026, 12:33 (UTC)."),
             "UTC where the session names none"
         );
-    }
-
-    #[test]
-    fn it_goes_before_the_turns_input_unless_configured_otherwise() {
-        let position =
-            |params| PositionParams::position_of(&params, PromptPosition::BeforeTurnInput);
-        assert_eq!(
-            position(serde_json::json!({})).unwrap(),
-            PromptPosition::BeforeTurnInput,
-            "it changes with every turn"
-        );
-        assert_eq!(
-            position(serde_json::json!({ "position": "start" })).unwrap(),
-            PromptPosition::Start,
-            "as configured"
-        );
-        assert!(position(serde_json::json!({ "position": "end" })).is_err());
     }
 }

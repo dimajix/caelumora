@@ -447,7 +447,9 @@ mod tests {
     use crate::testing;
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::confidentiality::Confidentiality;
-    use caelumora_domain::context::{ContextItem, ContextResolver, PromptPart};
+    use caelumora_domain::context::{
+        ContextItem, ContextResolver, Placement, PromptAt, PromptPart,
+    };
     use caelumora_domain::message::MessageId;
     use caelumora_domain::message::MessageRole;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
@@ -653,9 +655,8 @@ mod tests {
             vec![PromptPart {
                 role: MessageRole::System,
                 text: "Be brief.".to_string(),
-                after: None,
+                placement: Placement::Frame { at: PromptAt::Start, component: None },
                 classification: Some(Classification::PUBLIC),
-                source: None,
             }],
             Vec::new(),
         );
@@ -667,9 +668,8 @@ mod tests {
             vec![PromptPart {
                 role: MessageRole::System,
                 text: "Be brief.".to_string(),
-                after: None,
+                placement: Placement::Frame { at: PromptAt::Start, component: None },
                 classification: None,
-                source: None,
             }],
             Vec::new(),
         );

@@ -48,7 +48,8 @@ pub const PROMPTS: &str = include_str!("prompts.yaml");
 /// its `compaction` component's, as is when it compacts.
 #[async_trait]
 pub trait CompactionStrategy: Send + Sync + Debug {
-    /// What replaces `part` - the older part of `turn`'s context, as its model is given it - for
+    /// What replaces `part` - the older part of `turn`'s context, as its model is given it, without
+    /// the prompt parts given into the transcript, which stand after the replacement again - for
     /// the agent to go on from. `given` names, by kind and name, what was given in the part and can
     /// be given again after the replacement; what the agent still needs of it is given again
     /// (issue 413).

@@ -1394,6 +1394,11 @@ export type HistoryItemKind<M> =
   | {activity_finished: {turn_id: string; actor: ActorId; activity: string; output: string; at: string}}
   /** An agent replaced its context `from` by `to` (issue 16); in an agent's history only. */
   | {compacted: {turn_id: string; actor: ActorId; from: string; to: string; at: string}}
+  /**
+   * An agent stopped reading the message `message` it was given, a prompt part that no longer held
+   * (issue 537); in an agent's history only.
+   */
+  | {withdrawn: {message: string; at: string}}
   /** Someone joined the channel, by the act of `by` (issue 408); the names as they were then. */
   | {participant_joined: {participant: ActorId; name: string; by: ActorId; by_name: string; at: string}}
   /** Someone left the channel, by the act of `by` (issue 408). */

@@ -8,10 +8,11 @@ use anyhow::{Context, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{
-    ContextItem, ContextRef, ContextResolver, FrameRef, KnowledgeRef, PromptPart, PromptRef,
+    ContextItem, ContextResolver, FrameRef, KnowledgeRef, Placement, PromptAt, PromptPart,
+    PromptRef,
 };
 use caelumora_domain::digest::Digest;
-use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::tool::{Tool, ToolSet};
 
 impl Turn<'_> {
@@ -37,29 +38,29 @@ impl Turn<'_> {
         Ok((messages, resolved.tool_sets.into_iter().flat_map(|set| set.tools).collect()))
     }
 
-    /// The transcript up to and including the entry `last`, on whichever
-    /// branch, as the model of the turn would be given it - each message as
-    /// its profile gives it, with its time in the turn's time zone (issue
-    /// 430), a turn given up told where it ended, one that
-    /// no longer flows into the channel reduced to the tools it called -,
-    /// without prompt parts or tools (issue 16): what a component hands a
-    /// model to work on the conversation itself, a summary say. Resolved as
-    /// the turn's own context is (`ContextResolver`), so the same rules hold,
-    /// the attachments given along with their content (`given_along`).
+    /// The transcript up to and including the entry `last`, on whichever branch, as the model of
+    /// the turn would be given it - each message as its profile gives it, with its time in the
+    /// turn's time zone (issue 430), a turn given up told where it ended, one that no longer flows
+    /// into the channel reduced to the tools it called -, without prompt parts or tools (issue
+    /// 16) - also those given into the transcript (issue 537) -: what a component hands a model to
+    /// work on the conversation itself, a summary say. Resolved as the turn's own context is
+    /// (`ContextResolver::conversation_until`), so the same rules hold, the attachments given along
+    /// with their content (`given_along`).
     ///
     /// # Errors
-    /// If the transcript holds no entry `last`, or an attachment given along
-    /// cannot be read.
-    pub async fn context_until(&mut self, last: Digest) -> Result<Vec<Message>> {
+    /// If the transcript holds no entry `last`, or an attachment given along cannot be read.
+    pub async fn conversation_until(&mut self, last: Digest) -> Result<Vec<Message>> {
         let FrameRef { profile, time_zone, .. } = self.current().work.context.frame;
-        let reference = ContextRef {
-            transcript: Some(last),
-            frame: FrameRef { profile, time_zone, ..FrameRef::default() },
-        };
-        let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
-            .resolve(&reference, self.turn_id(), ActorId::Agent(self.agent_id))?
+        let items = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
+            .conversation_until(
+                last,
+                profile,
+                time_zone,
+                self.turn_id(),
+                ActorId::Agent(self.agent_id),
+            )?
             .context("the transcript holds no such entry")?;
-        self.given_along(self.as_messages(resolved.items)).await
+        self.given_along(self.as_messages(items)).await
     }
 
     /// `messages`, the attachments the turn's model is given along with
@@ -87,15 +88,28 @@ impl Turn<'_> {
             .into_iter()
             .map(|item| match item {
                 ContextItem::Conversation { message } => message,
-                ContextItem::Prompt { role, text, .. } => Message {
-                    role,
-                    content: Some(text),
-                    sender_id: ActorId::Agent(self.agent_id),
-                    sender_name: self.agent_name.clone(),
-                    ..Message::new(self.current().work.classification.clone())
-                },
+                ContextItem::Prompt { role, text, .. } => {
+                    self.message_of_agent(role, text, self.current().work.classification.clone())
+                }
             })
             .collect()
+    }
+
+    /// `text` as a message of the agent in `role`, classified `classification`: how a prompt
+    /// part is given to the model.
+    fn message_of_agent(
+        &self,
+        role: MessageRole,
+        text: String,
+        classification: Classification,
+    ) -> Message {
+        Message {
+            role,
+            content: Some(text),
+            sender_id: ActorId::Agent(self.agent_id),
+            sender_name: self.agent_name.clone(),
+            ..Message::new(classification)
+        }
     }
 
     /// Offers the turn's model the tools in `tool_sets` - once, at its start,
@@ -108,33 +122,53 @@ impl Turn<'_> {
     /// Sets what the `ContextProvider` assembled for the turn - once, at its
     /// start (issue 285): the `knowledge` its prompt parts hold, recorded,
     /// and the `parts` the model is given besides the transcript, where the
-    /// provider placed them, all of them seen (`Work::take_in_context`);
-    /// what was placed before is replaced. Every part's text is kept once by
-    /// digest, so that what the agent saw can be told later (issues 06, 47).
+    /// provider placed them, all of them seen (`Work::take_in_context`).
+    /// A part placed into the frame replaces what was placed there before,
+    /// its text kept once by digest, so that what the agent saw can be told
+    /// later (issues 06, 47); the parts given into the transcript become what
+    /// stands of their components' parts there (`AgentChannelState::give_parts`,
+    /// issue 537), each a message of the agent in its role.
     pub fn set_context(&mut self, parts: Vec<PromptPart>, knowledge: Vec<KnowledgeRef>) {
         self.current_mut().work.take_in_context(&parts, knowledge);
-        let prompts = parts
-            .into_iter()
-            .map(|PromptPart { role, text, after, classification, .. }| {
-                self.agent_channel_state.keep_prompt(role, text, after, classification)
-            })
-            .collect();
+        let mut prompts = Vec::new();
+        let mut given = Vec::new();
+        for PromptPart { role, text, placement, classification } in parts {
+            match placement {
+                Placement::Frame { at, .. } => prompts.push(self.agent_channel_state.keep_prompt(
+                    role,
+                    text,
+                    at,
+                    classification,
+                )),
+                Placement::Given { component } => {
+                    let classification = classification
+                        .unwrap_or_else(|| self.current().work.classification.clone());
+                    // A message of its own, which a change of the part takes back.
+                    let message = Message {
+                        id: MessageId::new(),
+                        ..self.message_of_agent(role, text, classification)
+                    };
+                    given.push((component, message));
+                }
+            }
+        }
         self.current_mut().work.context.frame.prompts = prompts;
+        self.agent_channel_state.give_parts(given);
     }
 
     /// Keeps the text of a prompt part once by digest, and returns the
-    /// reference to it, given in `role` after the entry `after`, its text
-    /// classified `classification`. The model is given it: the turn has
-    /// seen it (issue 168).
+    /// reference to it, given in `role` at `at`, its text classified
+    /// `classification`. The model is given it: the turn has seen it (issue
+    /// 168).
     pub(super) fn keep_prompt(
         &mut self,
         role: MessageRole,
         text: String,
-        after: Option<Digest>,
+        at: PromptAt,
         classification: Option<Classification>,
     ) -> PromptRef {
         self.current_mut().work.see_classified(classification.as_ref());
-        self.agent_channel_state.keep_prompt(role, text, after, classification)
+        self.agent_channel_state.keep_prompt(role, text, at, classification)
     }
 
     /// Places `text`, given in `role`, after the messages the turn has
@@ -145,9 +179,9 @@ impl Turn<'_> {
     /// `role` there is to be given. It counts for the messages produced
     /// from now on.
     pub(crate) fn place_turn_prompt(&mut self, role: MessageRole, text: String) {
-        let after = self.current().work.context.transcript;
+        let at = PromptAt::after(self.current().work.context.transcript);
         // Written by the turn from what it produced: as the turn.
-        let prompt = self.keep_prompt(role, text, after, Some(self.situation().label()));
+        let prompt = self.keep_prompt(role, text, at, Some(self.situation().label()));
         self.current_mut().work.context.frame.prompts.push(prompt);
     }
 }
@@ -377,9 +411,8 @@ mod tests {
         let system = || PromptPart {
             role: MessageRole::System,
             text: "You are good at sums.".to_string(),
-            after: None,
+            placement: Placement::Frame { at: PromptAt::Start, component: None },
             classification: None,
-            source: None,
         };
         let order = |items: &[ContextItem]| {
             items
@@ -541,5 +574,99 @@ mod tests {
             "as they were treated when they were offered"
         );
         assert_eq!(state.offered_tools.len(), 2, "each offer kept once");
+    }
+
+    /// Issue 537: a part placed `Given` goes into the transcript after the turn's input, and is
+    /// given to the model there as a message of the agent in its role; a later turn whose part
+    /// is the same gives nothing again, one whose part changed is given the new one alone. What a
+    /// summary is written of holds no part (`Turn::conversation_until`).
+    #[tokio::test]
+    async fn a_part_given_into_the_transcript_follows_the_input_and_stands_where_it_changed() {
+        let agent = AgentId::new();
+        let heard = |content: &str| Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        let parts = |rules: &str| {
+            vec![
+                PromptPart {
+                    role: MessageRole::User,
+                    text: "[Time]\nnow".to_string(),
+                    placement: Placement::Frame { at: PromptAt::Start, component: None },
+                    classification: None,
+                },
+                PromptPart {
+                    role: MessageRole::System,
+                    text: rules.to_string(),
+                    placement: Placement::Given { component: "rules".to_string() },
+                    classification: Some(Classification::PUBLIC),
+                },
+            ]
+        };
+        let given = |messages: &[Message]| -> Vec<(MessageRole, String)> {
+            messages.iter().map(|m| (m.role, m.content.clone().unwrap_or_default())).collect()
+        };
+        let mut state = AgentChannelState::default();
+        state.perceive(vec![heard("hello")]);
+        {
+            let mut turn = Turn::begun(agent, &mut state);
+            turn.set_context(parts("[Rules]\nBe brief."), Vec::new());
+            let (messages, _) = turn.full_context().await.unwrap();
+            assert_eq!(
+                given(&messages),
+                [
+                    (MessageRole::User, "[Time]\nnow".to_string()),
+                    (MessageRole::User, "hello".to_string()),
+                    (MessageRole::User, "[Rules]\nBe brief.".to_string()),
+                ],
+                "the frame where it was placed, the part after the input - as a user message, since \
+                 the default profile keeps no system message after the start"
+            );
+            turn.commit(false, &Discard).await;
+        }
+
+        state.perceive(vec![heard("again")]);
+        let mut turn = Turn::begun(agent, &mut state);
+        turn.set_context(parts("[Rules]\nBe brief."), Vec::new());
+        let (messages, _) = turn.full_context().await.unwrap();
+        assert_eq!(
+            given(&messages)[1..],
+            [
+                (MessageRole::User, "hello".to_string()),
+                (MessageRole::User, "[Rules]\nBe brief.".to_string()),
+                (MessageRole::User, "again".to_string()),
+            ],
+            "unchanged, it stays where it was"
+        );
+        drop(turn);
+        state.turn = None;
+
+        state.perceive(vec![heard("once more")]);
+        let mut turn = Turn::begun(agent, &mut state);
+        turn.set_context(parts("[Rules]\nBe very brief."), Vec::new());
+        let (messages, _) = turn.full_context().await.unwrap();
+        assert_eq!(
+            given(&messages)[1..],
+            [
+                (MessageRole::User, "hello".to_string()),
+                (MessageRole::User, "again".to_string()),
+                (MessageRole::User, "once more".to_string()),
+                (MessageRole::User, "[Rules]\nBe very brief.".to_string()),
+            ],
+            "changed, the new one after the input, the old one taken back"
+        );
+        let last = turn.situation().agent_channel_state().transcript.digest().unwrap();
+        let summarised = turn.conversation_until(last).await.unwrap();
+        assert_eq!(
+            given(&summarised),
+            [
+                (MessageRole::User, "hello".to_string()),
+                (MessageRole::User, "again".to_string()),
+                (MessageRole::User, "once more".to_string()),
+            ],
+            "what a summary is written of holds no part, given or placed"
+        );
     }
 }

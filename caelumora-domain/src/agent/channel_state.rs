@@ -9,7 +9,7 @@ use crate::confidentiality::Classification;
 use crate::content::ContentId;
 #[cfg(any(test, feature = "test-support"))]
 use crate::context::ContextRef;
-use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptRef};
+use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptAt, PromptRef};
 use crate::digest;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
@@ -22,7 +22,7 @@ use crate::prompt_catalogue::PromptCatalogue;
 use crate::question::QuestionRequest;
 use crate::store::Journaled;
 use crate::tool::{ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
-use crate::transcript::{as_they_stand, Transcript, TranscriptEntry};
+use crate::transcript::{as_they_stand, parts_as_given, GivenSource, Transcript, TranscriptEntry};
 use crate::turn::GivenUpReason;
 use crate::turn::{AfterStep, CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
@@ -100,7 +100,8 @@ pub struct AgentChannelState {
     #[serde(default, skip_serializing_if = "RemoteState::is_empty")]
     pub remote: RemoteState,
     /// What the agent recorded that its channel is to be told of (issue
-    /// 417): what it was given to read, a compaction of its context - for
+    /// 417): what it was given to read, where it stopped reading a part
+    /// given (issue 537), a compaction of its context - for
     /// the channel's history to hold what the agent saw where it saw it.
     /// Taken by its actor after every step and sent (`take_told`); not
     /// stored: one cut off by a crash is in the transcript alone.
@@ -336,18 +337,62 @@ impl AgentChannelState {
     /// step's tool message (`TurnState::after_step`, issue 389): a
     /// tool gives what it gives at any time, and nothing stands between the
     /// calls and their results, which the models refuse.
-    pub fn given(&mut self, mut message: Message, knowledge: Option<KnowledgeRef>) {
+    pub fn given(&mut self, message: Message, knowledge: Option<KnowledgeRef>) {
         if let Some(turn) = self.turn.as_mut().filter(|turn| !turn.tool_calls.is_empty()) {
             turn.after_step.push(AfterStep::Given { message, knowledge });
             return;
         }
-        let source = knowledge.as_ref().map(|knowledge| knowledge.source);
+        let source = knowledge.as_ref().map(|knowledge| GivenSource::Knowledge(knowledge.source));
+        if let (Some(turn), Some(knowledge)) = (self.turn.as_mut(), knowledge) {
+            turn.work.record_knowledge(knowledge);
+        }
+        self.give_as(message, source);
+    }
+
+    /// Makes `parts` - each the id of a prompt component and the message of its part - what
+    /// stands of the parts of prompt components on the transcript's active branch, as the model is
+    /// given them (`parts_as_given`), at the start of the turn under way (issue 537). A part stands
+    /// where its component's message stands with the same text and classification: it stays
+    /// where it is. One that changed or is new is given (`TranscriptEntry::Given`, as `given`
+    /// gives). One that stands and whose component has none like it now - it changed, it holds
+    /// nothing, its component failed open, or the agent's personality no longer has the
+    /// component - is taken back (`TranscriptEntry::Revoked`), so that the model is never given
+    /// what no longer holds, for its channel to be told as withdrawn
+    /// (`ActorEvent::MessageWithdrawn`).
+    pub fn give_parts(&mut self, parts: Vec<(String, Message)>) {
+        let same = |a: &Message, b: &Message| {
+            a.content == b.content && a.classification == b.classification
+        };
+        let standing: Vec<(String, Message)> = parts_as_given(self.transcript.entries())
+            .into_iter()
+            .filter_map(|(node, message)| Some((node.entry.part_of()?.to_string(), message)))
+            .collect();
+        let among = |(component, message): &(String, Message), others: &[(String, Message)]| {
+            others.iter().any(|(c, other)| c == component && same(message, other))
+        };
+        let at = Utc::now();
+        for stood in &standing {
+            if !among(stood, &parts) && self.transcript.revoke(stood.1.id, at) {
+                self.to_tell.push(ActorEvent::MessageWithdrawn { message: stood.1.id, at });
+            }
+        }
+        for part in parts {
+            if !among(&part, &standing) {
+                let (component, message) = part;
+                self.give_as(message, Some(GivenSource::Part(component)));
+            }
+        }
+        if let Some(turn) = self.turn.as_mut() {
+            turn.work.context.transcript = self.transcript.digest();
+        }
+    }
+
+    /// Records `message`, given to the agent as `source`, as `given` describes: the turn's, seen
+    /// by it, into the transcript, for the channel to be told.
+    fn give_as(&mut self, mut message: Message, source: Option<GivenSource>) {
         if let Some(turn) = self.turn.as_mut() {
             message.turn_id = Some(turn.work.turn_id);
             turn.work.see_message(&message);
-            if let Some(knowledge) = knowledge {
-                turn.work.record_knowledge(knowledge);
-            }
         }
         self.transcript.give(message.clone(), source);
         self.last_message = Some(message.id);
@@ -361,20 +406,21 @@ impl AgentChannelState {
     /// whose state this is - (issue 16): the transcript begins anew with
     /// `replacement` - what stands for the older messages: a summary, the
     /// skills given again, each given to read with the knowledge it is, if
-    /// it is one - and the entries of the active path from `keep_from` on -
-    /// `None`: none - as they stand (`Transcript::compact`). The turn's
-    /// context moves to the new head, and the history records the
-    /// compaction (`HistoryEntry::Compacted`), then the replacement as
-    /// messages the agent was given. Returns the heads of the transcript
-    /// before and after.
+    /// it is one -, the parts of prompt components that stand before the
+    /// entries kept (`Transcript::carried_parts`, issue 537), and the entries
+    /// of the active path from `keep_from` on - `None`: none - as they stand
+    /// (`Transcript::compact`). The turn's context moves to the new head,
+    /// and the history records the compaction (`HistoryEntry::Compacted`),
+    /// then the replacement as messages the agent was given. Returns the
+    /// heads of the transcript before and after.
     ///
     /// Nothing is removed: every reference recorded before resolves to what
     /// it did. The replacement is seen by the turn; whose it is
     /// (`Message::turn_id`) is the caller's to say (issue 284). The prompt
     /// parts the turn placed after an entry are carried over (issue 284) to
-    /// where the entry stands on the new branch: one after an entry kept
-    /// follows its copy, one after an entry replaced follows the
-    /// replacement.
+    /// where the entry stands on the new branch: one after an entry kept, or
+    /// after a part kept, follows its copy, one after an entry replaced
+    /// follows the replacement.
     ///
     /// How full the new branch is, it estimates as the model is given it,
     /// its notices worded by `catalogue`.
@@ -396,7 +442,8 @@ impl AgentChannelState {
         let given = replacement
             .iter()
             .map(|(message, knowledge)| {
-                (message.clone(), knowledge.as_ref().map(|knowledge| knowledge.source))
+                let source = knowledge.as_ref().map(|knowledge| knowledge.source);
+                (message.clone(), source.map(GivenSource::Knowledge))
             })
             .collect();
         let moved = self.transcript.compact(given, keep_from)?;
@@ -415,9 +462,11 @@ impl AgentChannelState {
             self.to_tell.push(ActorEvent::MessageGiven { message });
         }
         turn.work.context.transcript = Some(to);
-        turn.work.context.frame.prompts.retain_mut(|prompt| match prompt.after {
-            None => true,
-            Some(after) => moved.get(&after).map(|now| prompt.after = *now).is_some(),
+        turn.work.context.frame.prompts.retain_mut(|prompt| match prompt.at {
+            PromptAt::Start | PromptAt::End => true,
+            PromptAt::After(after) => {
+                moved.get(&after).map(|now| prompt.at = PromptAt::after(*now)).is_some()
+            }
         });
         // How full the new branch is: no call measured it yet, and the
         // summary's measured the old one. Estimated once, here, with what the
@@ -518,19 +567,18 @@ impl AgentChannelState {
     }
 
     /// Keeps the text of a prompt part the agent was given once by digest
-    /// (issue 47), and returns the reference to it: given in `role` after
-    /// the entry `after` - `None`: before everything - its text classified
-    /// `classification`.
+    /// (issue 47), and returns the reference to it: given in `role` at `at`,
+    /// its text classified `classification`.
     pub fn keep_prompt(
         &mut self,
         role: MessageRole,
         text: String,
-        after: Option<Digest>,
+        at: PromptAt,
         classification: Option<Classification>,
     ) -> PromptRef {
         let digest = digest::prompt(&text);
         self.prompts.keep(digest, || text);
-        PromptRef { text: digest, role, after, classification }
+        PromptRef { text: digest, role, at, classification }
     }
 
     /// Keeps the tool sets the agent's model is offered once by digest
@@ -1159,6 +1207,100 @@ mod tests {
         assert_eq!(state.notes.current().len(), 1);
     }
 
+    /// Issue 537: the parts of prompt components stand in the transcript as given where they
+    /// changed, and what no longer holds is taken back.
+    #[test]
+    fn a_part_is_given_where_it_changed_and_taken_back_where_it_no_longer_holds() {
+        let part = |text: &str| said(text, Classification::PUBLIC);
+        let standing = |state: &AgentChannelState| -> Vec<(String, String)> {
+            parts_as_given(state.transcript.entries())
+                .into_iter()
+                .filter_map(|(node, message)| {
+                    Some((node.entry.part_of()?.to_string(), message.content.unwrap_or_default()))
+                })
+                .collect()
+        };
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let turn_id = state.turn.as_ref().unwrap().work.turn_id;
+        state.give_parts(vec![
+            ("roster".to_string(), part("[Roster]\nalice")),
+            ("language".to_string(), part("[Language]\nde")),
+        ]);
+        let pair = |component: &str, text: &str| (component.to_string(), text.to_string());
+        assert_eq!(
+            standing(&state),
+            [pair("roster", "[Roster]\nalice"), pair("language", "[Language]\nde")],
+            "given after what was heard"
+        );
+        assert_eq!(
+            state.transcript.messages().last().map(|m| m.turn_id),
+            Some(Some(turn_id)),
+            "the turn's"
+        );
+        assert_eq!(state.take_told().len(), 2, "each told the channel as given");
+        state.finish_turn(turn_id, Vec::new(), Vec::new());
+
+        let before = state.transcript.end();
+        state.perceive(vec![said("again", Classification::PUBLIC)]);
+        begin(&mut state, Vec::new());
+        state.give_parts(vec![
+            ("roster".to_string(), part("[Roster]\nalice")),
+            ("language".to_string(), part("[Language]\nde")),
+        ]);
+        assert_eq!(state.transcript.end(), before.after(1), "nothing given again unchanged");
+
+        let stood: Vec<MessageId> =
+            parts_as_given(state.transcript.entries()).into_iter().map(|(_, m)| m.id).collect();
+        state.give_parts(vec![("roster".to_string(), part("[Roster]\nalice, bob"))]);
+        assert_eq!(
+            standing(&state),
+            [pair("roster", "[Roster]\nalice, bob")],
+            "what changed given anew, what holds nothing any more taken back"
+        );
+        let withdrawn: Vec<MessageId> = state
+            .take_told()
+            .into_iter()
+            .filter_map(|event| match event {
+                ActorEvent::MessageWithdrawn { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(withdrawn, stood, "each taken back told the channel as withdrawn");
+        let given: Vec<_> =
+            state.transcript.messages().iter().filter_map(|m| m.content.clone()).collect();
+        assert_eq!(
+            given,
+            ["hello", "again", "[Roster]\nalice, bob"],
+            "the model is not given what no longer holds"
+        );
+    }
+
+    /// Issue 537: a part given in a turn given up as `Lowered` is hidden from the model as that
+    /// turn's messages are, so it does not stand: the next turn gives it again.
+    #[test]
+    fn a_part_of_a_turn_given_up_as_lowered_is_given_again() {
+        let rules = || ("rules".to_string(), said("[Rules]\nBe brief.", Classification::PUBLIC));
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let lowered = state.turn.as_ref().unwrap().work.turn_id;
+        state.give_parts(vec![rules()]);
+        state.give_up_turn(lowered, GivenUpReason::Lowered { channel: Classification::PUBLIC });
+        state.turn = None;
+
+        begin(&mut state, Vec::new());
+        state.give_parts(vec![rules()]);
+        let given: Vec<_> = parts_as_given(state.transcript.entries())
+            .into_iter()
+            .map(|(_, message)| message.turn_id)
+            .collect();
+        assert_eq!(
+            given,
+            [Some(state.turn.as_ref().unwrap().work.turn_id)],
+            "given again, in the turn after"
+        );
+    }
+
     #[test]
     fn a_message_given_in_a_turn_is_read_not_said() {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
@@ -1186,7 +1328,7 @@ mod tests {
             "into the transcript, the turn's"
         );
         assert!(
-            matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(s), .. }) if *s == source),
+            matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(GivenSource::Knowledge(s)), .. }) if *s == source),
             "as what it was given (issue 16)"
         );
         let work = &state.turn.as_ref().unwrap().work;
@@ -1537,12 +1679,13 @@ mod tests {
         let change_at = state.transcript.digest();
         begin(&mut state, Vec::new());
         let parts = [
-            ("first", None),
-            ("on the replaced", older),
-            ("on the kept", kept_at),
-            ("on a change", change_at),
+            ("first", PromptAt::Start),
+            ("on the replaced", PromptAt::after(older)),
+            ("on the kept", PromptAt::after(kept_at)),
+            ("on a change", PromptAt::after(change_at)),
+            ("at the end", PromptAt::End),
         ]
-        .map(|(text, after)| state.keep_prompt(MessageRole::System, text.to_string(), after, None));
+        .map(|(text, at)| state.keep_prompt(MessageRole::System, text.to_string(), at, None));
         state.turn.as_mut().unwrap().work.context.frame.prompts = parts.to_vec();
 
         state
@@ -1559,14 +1702,15 @@ mod tests {
             .entries()
             .map(|n| n.entry.message().and_then(|m| m.content.clone()))
             .collect();
-        let anchor = |prompt: &PromptRef| {
-            prompt.after.map(|after| {
+        let anchor = |prompt: &PromptRef| match prompt.at {
+            PromptAt::After(after) => Some(
                 state
                     .transcript
                     .entries()
                     .position(|n| n.digest == after)
-                    .map(|at| on_new[at].clone())
-            })
+                    .map(|at| on_new[at].clone()),
+            ),
+            PromptAt::Start | PromptAt::End => None,
         };
         let anchors: Vec<_> =
             state.turn.as_ref().unwrap().work.context.frame.prompts.iter().map(anchor).collect();
@@ -1575,7 +1719,13 @@ mod tests {
             Some(Some(Some("summary".to_string()))),
             Some(Some(Some("kept".to_string()))),
             Some(Some(Some("changed!".to_string()))),
+            None,
         ], "before everything as it was, after the replacement for what it replaced, after the copy for what was kept - a change's after its message");
+        assert_eq!(
+            state.turn.as_ref().unwrap().work.context.frame.prompts[4].at,
+            PromptAt::End,
+            "at the end as it was (issue 537)"
+        );
         let context = state.turn.as_ref().unwrap().work.context.clone();
         assert!(
             ContextResolver::of(&state, kernel_catalogue())
@@ -1781,7 +1931,8 @@ mod tests {
     #[test]
     fn an_agent_keeps_the_texts_and_tools_its_turn_under_way_names() {
         let mut state = AgentChannelState::default();
-        let earlier = state.keep_prompt(MessageRole::System, "earlier".to_string(), None, None);
+        let earlier =
+            state.keep_prompt(MessageRole::System, "earlier".to_string(), PromptAt::Start, None);
         let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
         state.begin_turn(Work::new(
             EventContext::default(),
@@ -1790,7 +1941,8 @@ mod tests {
             Default::default(),
         ));
         state.offer_tools(sets);
-        let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+        let system =
+            state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
         state.turn.as_mut().unwrap().work.context.frame.prompts.push(system.clone());
         let offer = state.turn.as_ref().unwrap().work.context.frame.tools.expect("an offer");
         let frame = state.keep_frame(&state.turn.as_ref().unwrap().work.context.frame.clone());

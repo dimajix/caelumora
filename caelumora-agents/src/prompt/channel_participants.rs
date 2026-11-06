@@ -9,27 +9,23 @@
 //! joins and leaves. It goes into the system prompt by default: it changes
 //! rarely, and every change ought to reach the model at once.
 //!
-//! An agent that keeps its conversation itself - an external one (issue
-//! 204) - is told the roster once and then only when it changed (parameter
-//! `changes_only`): the whole of it again. Who joined or left, by whose act,
-//! it is told where it happened, as the channel's notice in what was said
-//! (issues 408, 410). The component remembers what it told while it lives -
-//! it is built for each actor, so for each channel - and tells all of it
-//! again after a restart.
+//! An agent that keeps what it was told - an external one (issue 204) - is
+//! told the roster again only when it changed, by its actor: the whole of it
+//! again. Who joined or left, by whose act, it is told where it happened, as
+//! the channel's notice in what was said (issues 408, 410).
 
 use crate::prompt::{
-    texts_of, writing_for_the_model, ChannelPartParams, ContextError, Prompt, PromptPosition,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use crate::situation::Situation;
 use async_trait::async_trait;
-use caelumora_api::component::Params;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::actor::{ActorDescription, ActorId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::value::text::Introduction;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub const CHANNEL_PARTICIPANTS_KIND: &str = "channel_participants";
 
@@ -38,36 +34,14 @@ const TEXT: &str = "agents.channel_participants";
 
 #[derive(Debug)]
 pub struct ChannelParticipantsComponent {
-    pub position: PromptPosition,
-    /// Whether it tells only of changes: then what it told last, `None`
-    /// before it told anything. A plain lock, never held across an await.
-    told: Option<Mutex<Option<String>>>,
+    position: PromptPosition,
     prompts: PromptTexts,
 }
 
 impl ChannelParticipantsComponent {
-    /// The roster at `position`, told every time it is asked.
-    pub fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
-        Self { position, told: None, prompts }
-    }
-
-    /// The roster at `position`, told the first time it is asked and then
-    /// only when it changed (issue 204).
-    pub fn changes_only(position: PromptPosition, prompts: PromptTexts) -> Self {
-        Self { position, told: Some(Mutex::new(None)), prompts }
-    }
-
-    /// What the agent is to be told now, the roster rendered as `text`: all
-    /// of it, or - telling only of changes - nothing if it is what it told
-    /// last.
-    fn text(&self, text: String) -> String {
-        let Some(told) = &self.told else { return text };
-        let mut told = told.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if told.as_deref() == Some(text.as_str()) {
-            return String::new();
-        }
-        *told = Some(text.clone());
-        text
+    /// The roster at `position`.
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+        Self { position, prompts }
     }
 }
 
@@ -83,7 +57,7 @@ impl PromptProvider for ChannelParticipantsComponent {
             return Ok(Prompt::classified(String::new(), Classification::PUBLIC));
         };
         let explanation = situation.profile().framing_explanation(&self.prompts)?;
-        let text = self.text(render(&self.prompts, me.as_ref(), &others, explanation.as_deref())?);
+        let text = render(&self.prompts, me.as_ref(), &others, explanation.as_deref())?;
         // Names and introductions are public (issue 176).
         Ok(Prompt::classified(text, Classification::PUBLIC))
     }
@@ -147,18 +121,13 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(CHANNEL_PARTICIPANTS_KIND)
-                .params::<ChannelPartParams>()
+                .params::<PositionParams>()
                 .provides::<dyn PromptProvider>(),
         ),
         |descriptor, context| async move {
             let prompts = texts_of(&context).await?;
-            let ChannelPartParams { position, changes_only } =
-                ChannelPartParams::read(&descriptor.params)?;
-            let provider = if changes_only {
-                ChannelParticipantsComponent::changes_only(position, prompts)
-            } else {
-                ChannelParticipantsComponent::new(position, prompts)
-            };
+            let position = PositionParams::position_of(&descriptor.params, PromptPosition::Start)?;
+            let provider = ChannelParticipantsComponent::new(position, prompts);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::new(provider));
             Ok(facets)
@@ -191,7 +160,6 @@ mod tests {
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::testing::record_users;
     use caelumora_store::{EntityStores, Persistence};
-    use std::slice;
 
     fn participant(name: &str, person: bool, introduction: Option<&str>) -> ActorDescription {
         let id = if person { ActorId::User(UserId::new()) } else { ActorId::Agent(AgentId::new()) };
@@ -241,30 +209,6 @@ mod tests {
             The others:\n\
             - Kaya (@kaya), a person. In their own words: \"I run the budget.\"\n",
             "among people alone, a mention asks nobody (issues 438, 442)"
-        );
-    }
-
-    #[test]
-    fn telling_only_of_changes_tells_the_roster_again_only_when_it_changed() {
-        let changes =
-            ChannelParticipantsComponent::changes_only(PromptPosition::Start, testing::prompts());
-        let prompts = testing::prompts();
-        let roster = |others: &[ActorDescription]| render(&prompts, None, others, None).unwrap();
-        let (kaya, bob) = (participant("Kaya", true, None), participant("Bob", true, None));
-        let first = roster(slice::from_ref(&kaya));
-        assert_eq!(changes.text(first.clone()), first, "told the first time");
-        assert_eq!(changes.text(first.clone()), "", "not again unchanged");
-        let both = roster(&[kaya, bob]);
-        assert_eq!(
-            changes.text(both.clone()),
-            both,
-            "all of it again, without an account of what changed (issue 410)"
-        );
-        assert_eq!(
-            ChannelParticipantsComponent::new(PromptPosition::Start, testing::prompts())
-                .text(first.clone()),
-            first,
-            "told every time without it"
         );
     }
 

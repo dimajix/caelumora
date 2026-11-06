@@ -129,7 +129,8 @@ impl Envelope {
     /// with its answer, or not (issue 269) - who asked is the initiator;
     /// what came of what an agent did of its own accord (issue 284); who
     /// joined or left, by its sender (issue 408); a change of a message
-    /// (issue 234); what an agent was given and a compaction of its context;
+    /// (issue 234); what an agent was given, where it stopped reading a part
+    /// given (issue 537), and a compaction of its context;
     /// the answer to a request to answer again, a chain cut off, a rejection
     /// and a request to respond (issue 417); what an actor's state depends
     /// on receiving, to be delivered again from the history (issue 223) - a
@@ -262,6 +263,9 @@ impl Envelope {
             }
             ActorEvent::MessageRevoked { message, at } => {
                 HistoryEntry::Revoked { message: *message, at: *at }
+            }
+            ActorEvent::MessageWithdrawn { message, at } => {
+                HistoryEntry::Withdrawn { message: *message, at: *at }
             }
             ActorEvent::MessageReclassified { message, classification } => {
                 HistoryEntry::Reclassified {

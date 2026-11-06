@@ -293,7 +293,7 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::content::testing::make_content_ref;
-    use caelumora_domain::context::{ContextItem, FrameRef, PromptRef};
+    use caelumora_domain::context::{ContextItem, FrameRef, PromptAt, PromptRef};
     use caelumora_domain::digest::{self, prompt};
     use caelumora_domain::history::HistoryEntry;
     use caelumora_domain::message::testing::make_message;
@@ -467,7 +467,7 @@ mod tests {
         let system = PromptRef {
             text: prompt("system"),
             role: MessageRole::System,
-            after: None,
+            at: PromptAt::Start,
             classification: Some(confidential.clone()),
         };
         state.prompts.keep(system.text, || "system".to_string());
@@ -490,7 +490,7 @@ mod tests {
         let gone = PromptRef {
             text: prompt("gone"),
             role: MessageRole::System,
-            after: None,
+            at: PromptAt::Start,
             classification: None,
         };
         history.push(lost.clone().produced_from_context(

@@ -125,6 +125,12 @@ impl RemoteState {
         self.given_prompts.get(source) == Some(digest)
     }
 
+    /// Whether the remote agent was given a part of `source` in its
+    /// conversation, whatever it said.
+    pub fn has_given_any(&self, source: &str) -> bool {
+        self.given_prompts.contains_key(source)
+    }
+
     /// Records that the remote agent was given the part of `source` with the
     /// text of `digest`.
     pub fn give(&mut self, source: String, digest: Digest) {

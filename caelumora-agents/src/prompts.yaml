@@ -36,7 +36,7 @@ channel_briefing: |
   {% endif %}
   {% endfor %}
 
-# An agent told only of changes, after both stopped describing themselves.
+# An agent that keeps what it was told, after both stopped describing themselves.
 channel_briefing_withdrawn: |
   [About this session and channel]
   What you were told of them before no longer holds: neither says anything about itself now.
@@ -47,7 +47,7 @@ channel_language: |
   [Language of this channel]
   This channel's conversation is held in {% if not english %}the language with the BCP 47 tag "{{ tag }}"{% elif english == native %}{{ english }} (BCP 47 tag "{{ tag }}"){% else %}{{ english }} - {{ native }}, BCP 47 tag "{{ tag }}"{% endif %}. Write everything in {{ english or "it" }} - your answers, your messages to the others and what you note down - whatever language your instructions, your tools or earlier messages are in.
 
-# An agent told only of changes, after the channel stopped being held in one.
+# An agent that keeps what it was told, after the channel stopped being held in one.
 channel_language_withdrawn: |
   [Language of this channel]
   This channel's conversation is no longer held in a particular language.
@@ -91,7 +91,7 @@ channel_participants: |
   {% endif %}
   {% endif %}
 
-# `channel_mentions`, before the turn's input: read last, it
+# `channel_mentions`, before the turn's input by default: read late, it
 # does what the roster alone does not (`work/quiet_agents/MENTIONS.md`,
 # `test_names_turn`).
 channel_mentions: |
@@ -392,7 +392,7 @@ results:
   invalid_arguments: "The arguments were invalid: {{ reason }}. Correct them and call the tool again."
   failed: "The tool failed: {{ reason }}"
 
-# `planning`, in the system prompt: when to plan - by the tool
+# `planning`, in the system prompt by default: when to plan - by the tool
 # `create_plan`. It stays for the whole turn, also once a plan is carried
 # out: the instructions of its steps (`plan`) dominate by then.
 planning: |

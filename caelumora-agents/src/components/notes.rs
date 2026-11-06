@@ -1,19 +1,19 @@
 //! The `notes` component (issue 17): an agent notes what it wants to
 //! remember in a channel, and is given what every agent of the channel noted.
 //!
-//! Its tools `write_note`, `update_note` and `revoke_note` change the
-//! agent's own notes - taken over when the turn completes, see
-//! `crate::notes::AgentNotes`; `read_notes` reads
-//! the notes of another channel of the session, or of all it may read. Every
-//! read is recorded as a `KnowledgeRef` with the turn's messages. Its prompt part
-//! gives the model the notes of all agents of the channel before the turn's
-//! input (`PromptPosition::BeforeTurnInput`), not in the system prompt, so
-//! that changing notes do not invalidate the prompt cache (issue 47).
+//! Its tools `write_note`, `update_note` and `revoke_note` change the agent's own notes - taken
+//! over when the turn completes, see `crate::notes::AgentNotes`; `read_notes` reads the notes of
+//! another channel of the session, or of all it may read. Every read is recorded as a
+//! `KnowledgeRef` with the turn's messages. Its prompt part gives the model the notes of all agents
+//! of the channel before the turn's input (`PromptPosition::BeforeTurnInput`) unless its
+//! `position` says otherwise, not in the system prompt, so that changing notes do not invalidate
+//! the prompt cache (issue 47).
 
 use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::NAMESPACE;
 use crate::prompt::{
-    texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
+    texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
+    PromptProvider,
 };
 use crate::situation::Situation;
 use crate::tool::{
@@ -65,6 +65,8 @@ const TEXT: &str = "agents.notes";
 pub struct NotesComponent {
     /// The texts of its prompt part (issue 57).
     prompts: PromptTexts,
+    /// Where its prompt part goes: before the turn's input unless configured otherwise.
+    position: PromptPosition,
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
@@ -103,12 +105,13 @@ impl ToolProvider for NotesComponent {
 }
 
 impl NotesComponent {
-    /// The component, its texts from `prompts`; whether a note may be reclassified, the kernel
-    /// decides, asked in the turn's context (`Turn::may_reclassify`, issue 516).
+    /// The component, its texts from `prompts`, its prompt part at `position`; whether a note may
+    /// be reclassified, the kernel decides, asked in the turn's context (`Turn::may_reclassify`,
+    /// issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
-    pub fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Result<Self, PromptError> {
         let tools = vec![
             described(
                 &prompts,
@@ -196,7 +199,7 @@ impl NotesComponent {
             )?,
         ];
         let description = tool_text(&prompts, NAMESPACE, NOTES_KIND, "description", ())?;
-        Ok(Self { prompts, description, tools })
+        Ok(Self { prompts, position, description, tools })
     }
 
     /// `write_note(text)`: notes `text`, published when the turn completes.
@@ -322,7 +325,7 @@ fn notes_ref(
 #[async_trait]
 impl PromptProvider for NotesComponent {
     fn position(&self) -> PromptPosition {
-        PromptPosition::BeforeTurnInput
+        self.position
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
@@ -396,12 +399,15 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         writing_for_the_model(
             ComponentKind::new(NOTES_KIND)
+                .params::<PositionParams>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>(),
         ),
-        |_descriptor, context| async move {
+        |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let component = Arc::new(NotesComponent::new(texts)?);
+            let position =
+                PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
+            let component = Arc::new(NotesComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<NotesComponent>::clone(&component));
             facets.insert::<dyn PromptProvider>(component);
@@ -505,7 +511,8 @@ mod tests {
         use caelumora_domain::confidentiality::{Classification, Confidentiality};
         let agent = AgentId::new();
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(testing::prompts()).unwrap();
+        let tools =
+            NotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts()).unwrap();
         // Asked in the context the kernel builds for the agent, the author of its own note.
         let mut turn = turn_of(agent, &mut state);
         tools
@@ -552,7 +559,8 @@ mod tests {
     #[tokio::test]
     async fn notes_are_published_when_the_turn_completes_and_only_the_author_revokes() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(testing::prompts()).unwrap();
+        let tools =
+            NotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts()).unwrap();
         {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
             let noted = tools
@@ -628,7 +636,8 @@ mod tests {
     async fn an_updated_note_keeps_its_number_and_is_classified_as_the_turn_that_updated_it() {
         use caelumora_domain::confidentiality::{Classification, Confidentiality};
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(testing::prompts()).unwrap();
+        let tools =
+            NotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts()).unwrap();
         let texts = |state: &AgentChannelState| {
             state.notes.current().into_iter().map(|n| (n.id.0, n.text)).collect::<Vec<_>>()
         };
@@ -739,7 +748,8 @@ mod tests {
     #[tokio::test]
     async fn a_note_revoked_in_the_turn_that_noted_it_is_gone_and_its_number_used_up() {
         let mut state = AgentChannelState::default();
-        let tools = NotesComponent::new(testing::prompts()).unwrap();
+        let tools =
+            NotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts()).unwrap();
         {
             let mut turn = Turn::begun(AgentId::new(), &mut state);
             tools
@@ -784,7 +794,9 @@ mod tests {
 
     #[test]
     fn a_note_acted_on_is_shown_as_a_note_and_the_notes_read_as_a_list() {
-        let tools = NotesComponent::new(testing::prompts()).unwrap().tools();
+        let tools = NotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
+            .unwrap()
+            .tools();
         let notes: Vec<_> = tools
             .iter()
             .filter(|t| t.presentation == NOTE_PRESENTATION)

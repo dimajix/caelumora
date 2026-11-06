@@ -27,6 +27,7 @@ use caelumora_domain::component::{
     ComponentBundle, ComponentBundleId, ComponentConfig, ComponentDescriptor,
 };
 use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::context::PromptAt;
 use caelumora_domain::define_id;
 use caelumora_domain::digest;
 use caelumora_domain::external_agent::ConversationId;
@@ -1776,7 +1777,8 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     let sets = vec![ToolSet::new("calc", "calculates", Vec::new())];
     let offer = digest::tool_sets(&sets);
     let mut state = AgentChannelState::default();
-    let before = state.keep_prompt(MessageRole::System, "before".to_string(), None, None);
+    let before =
+        state.keep_prompt(MessageRole::System, "before".to_string(), PromptAt::Start, None);
     states.put_agent_channel_state(agent, channel, &mut state).await.expect("put");
     assert!(state.prompts.changes().is_empty(), "the texts are marked stored");
 
@@ -1787,7 +1789,8 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
         Default::default(),
     ));
     state.offer_tools(sets.clone());
-    let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    let system =
+        state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
     state.turn.as_mut().expect("a turn").work.context.frame.prompts.push(system.clone());
     let context = state.turn.as_ref().expect("a turn").work.context.clone();
     let frame = state.keep_frame(&context.frame);
@@ -1843,7 +1846,7 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     assert!(loaded.frames.is_empty(), "no frame: the turn holds its own");
 
     let mut next = AgentChannelState::default();
-    next.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    next.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
     states
         .put_agent_channel_state(agent, channel, &mut next)
         .await
@@ -1871,7 +1874,7 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     assert!(transcripts.frame(agent, channel, frame).await.unwrap().is_none(), "the frames too");
     let elsewhere = ChannelId::new();
     let mut other = AgentChannelState::default();
-    other.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    other.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
     states.put_agent_channel_state(agent, elsewhere, &mut other).await.expect("put");
     states.delete_agent_state(agent).await.expect("delete");
     assert!(

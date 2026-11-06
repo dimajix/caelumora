@@ -303,7 +303,8 @@ impl AgentBody {
     }
 
     /// Tells its channel what the agent recorded since it last did - what
-    /// it was given to read, a compaction of its context (issue 417) -, in
+    /// it was given to read, where it stopped reading a part given, a
+    /// compaction of its context (issues 417, 537) -, in
     /// its own context, for the channel's history to hold what it saw
     /// where it saw it. Not sent is only logged: the transcript holds it.
     pub(super) async fn tell_recorded(

@@ -29,30 +29,50 @@ component_bundles:
 # Who is in the channel, which language it speaks, what it is about, what
 # time it is, - when only the responder policy chose the agent - that it
 # may stay silent, and - where another agent could be asked - when to write
-# an @handle and when a name.
+# an @handle and when a name. Who is there, the language and the briefing
+# change rarely, so they are given into the transcript where they change
+# (issue 537): a change of one costs the model's prompt cache from where it
+# stood, not from the system prompt on. The time holds for one turn alone,
+# and when to mention is to be read last, so they stand at the end of every
+# call, where the cache loses little but them. That it may stay silent goes
+# before the turn's input, where it was tried (work/quiet_agents). Every
+# personality lists it last: the parts at the end are joined in the order of
+# the configuration, and when to mention comes after the notes.
 - id: 3b1f7e52-6a0c-4d8e-9f21-5c7a2b9d4e10
   name: channel-context
   components:
   - id: channel-participants
     kind: channel_participants
+    params:
+      position: given
     fail_policy: FailClosed
   - id: channel-language
     kind: channel_language
+    params:
+      position: given
     fail_policy: FailClosed
   - id: channel-briefing
     kind: channel_briefing
+    params:
+      position: given
     fail_policy: FailClosed
   - id: current-time
     kind: current_time
+    params:
+      position: end
     fail_policy: FailClosed
   - id: request-reason
     kind: request_reason
     fail_policy: FailClosed
   - id: channel-mentions
     kind: channel_mentions
+    params:
+      position: end
     fail_policy: FailClosed
 # What every agent run here needs to take part in a channel - `compaction` among it: an agent
-# compacts its context only if it lists that.
+# compacts its context only if it lists that. The notes stand at the end of every call: they
+# change as agents write them, and before the turn's input they would cost the prompt cache the
+# turn before (issue 537); so do an agent's memory and its private notes below.
 - id: 8d4c2a91-0e57-4b3f-a6d8-17f9c3e5b204
   name: agent-basics
   components:
@@ -64,6 +84,8 @@ component_bundles:
     fail_policy: FailClosed
   - id: notes
     kind: notes
+    params:
+      position: end
     fail_policy: FailClosed
   - id: channel-history
     kind: channel_history
@@ -95,10 +117,6 @@ personalities:
       prompt: You are a self-made millionaire. You always wanted to be a quiz-master. You are polite
         and helpful.
     fail_policy: FailClosed
-  - id: channel-context
-    kind: ref
-    params:
-      name: channel-context
   - id: agent-basics
     kind: ref
     params:
@@ -111,6 +129,8 @@ personalities:
     fail_policy: FailClosed
   - id: memory
     kind: agent_memory
+    params:
+      position: end
     fail_policy: FailClosed
   - id: workspace
     kind: workspace
@@ -118,6 +138,10 @@ personalities:
   - id: artifacts
     kind: artifacts
     fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context
 - id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
   name: sassy-assistant
   description: A sassy and witty assistant
@@ -134,10 +158,6 @@ personalities:
       title: Who you are
       prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
     fail_policy: FailClosed
-  - id: channel-context
-    kind: ref
-    params:
-      name: channel-context
   - id: agent-basics
     kind: ref
     params:
@@ -150,6 +170,8 @@ personalities:
     fail_policy: FailClosed
   - id: private-notes
     kind: private_notes
+    params:
+      position: end
     fail_policy: FailClosed
   # The configuration's model (`component_defaults` of examples/config.yaml),
   # given the variant `gemma4` of the texts (issue 57,
@@ -163,6 +185,10 @@ personalities:
       params:
         prompt_texts: gemma4
     fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context
 # A painter, named after the TV painter Bob Ross (issue 512): the one personality that generates
 # images, with the image model `z_image_turbo` of the configuration (issue 525), and shows them to
 # the channel with `attach`. Its server runs on this machine, cleared for what is internal.
@@ -185,10 +211,6 @@ personalities:
         the tool in detail - its subject, its setting, its light and its style. There are no
         mistakes, only happy little accidents.
     fail_policy: FailClosed
-  - id: channel-context
-    kind: ref
-    params:
-      name: channel-context
   - id: agent-basics
     kind: ref
     params:
@@ -209,14 +231,19 @@ personalities:
       destination:
         level: internal
     fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context
 # An agent that runs elsewhere, reached over A2A (issue 179) - for instance
 # a Hermes Agent with its A2A plugin. Set the endpoint's `url` to where it
 # publishes its agent card, and keep its token in the secret HERMES_A2A_TOKEN. It sees
 # only what its roles let it: an external agent that names none sees only
 # what is public. Its remote agent keeps its conversation, so it is told who
-# is in the channel once, and again only when that changes (issue 204) - which
-# is why it writes the channel's context out instead of including
-# `channel-context`.
+# is in the channel, its language and its briefing once, and again only when
+# they change (issues 204, 537) - and it lists these three itself instead of
+# including `channel-context`, which tells the time and why it was asked with
+# every request.
 - id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
   name: hermes-remote
   kind: external
@@ -227,18 +254,12 @@ personalities:
   components:
   - id: channel-participants
     kind: channel_participants
-    params:
-      changes_only: true
     fail_policy: FailClosed
   - id: channel-language
     kind: channel_language
-    params:
-      changes_only: true
     fail_policy: FailClosed
   - id: channel-briefing
     kind: channel_briefing
-    params:
-      changes_only: true
     fail_policy: FailClosed
   - id: remote
     kind: a2a_agent
@@ -266,10 +287,6 @@ personalities:
         workspace, run the build and the tests, and debug what fails. Leave reviews to the
         reviewer and planning to the planner.
     fail_policy: FailClosed
-  - id: channel-context
-    kind: ref
-    params:
-      name: channel-context
   - id: agent-basics
     kind: ref
     params:
@@ -280,6 +297,10 @@ personalities:
   - id: planning
     kind: planning
     fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context
 - id: c0bb5f0c-d731-4cf6-bef0-aabe69ea44d5
   name: team-reviewer
   description: Reviews changes for correctness, style and security
@@ -299,10 +320,6 @@ personalities:
         merged, for correctness, readability and security, and say clearly what has to change and
         why. You do not write the code yourself.
     fail_policy: FailClosed
-  - id: channel-context
-    kind: ref
-    params:
-      name: channel-context
   - id: agent-basics
     kind: ref
     params:
@@ -312,6 +329,10 @@ personalities:
     params:
       requires_approval: unless_read_only
     fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context
 - id: 92576955-d5fb-4bad-9b46-e856b92f49db
   name: team-planner
   description: Splits work into tasks, estimates and schedules them
@@ -331,10 +352,6 @@ personalities:
       prompt: You are the planner of a small software team. You keep the backlog, split work into
         tasks, estimate them and decide in which order they are done. You do not write code.
     fail_policy: FailClosed
-  - id: channel-context
-    kind: ref
-    params:
-      name: channel-context
   - id: agent-basics
     kind: ref
     params:
@@ -342,6 +359,10 @@ personalities:
   - id: planning
     kind: planning
     fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context
 session_templates:
 - id: 94a2df67-0bde-4906-adb1-40e936b463e9
   name: simple-session

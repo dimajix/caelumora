@@ -15,6 +15,7 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::{AppConfig, BackendConfig};
+use caelumora_domain::context::PromptAt;
 use caelumora_domain::digest;
 use caelumora_domain::group::Group;
 use caelumora_domain::history::{Audience, HistoryEntry, Reader, Recorded};
@@ -333,7 +334,8 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     state.begin_turn(Work::new(context, None, Classification::CHANNEL_DEFAULT, Default::default()));
     let sets = vec![ToolSet::new("search", "searches", Vec::new())];
     state.offer_tools(sets.clone());
-    let system = state.keep_prompt(MessageRole::System, "system".to_string(), None, None);
+    let system =
+        state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
     state.transcript.push(said("look it up"));
     let call = ToolCall {
         id: Some("1".to_string()),

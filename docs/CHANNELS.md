@@ -853,8 +853,10 @@ remote agent:
 *   **the prompt parts** its `ContextProvider` assembles, as an agent's does for a turn - by default
     each part on its own, in the order of the configuration. The remote agent keeps its
     conversation, so a part is given only when it is not what was given last of it; after a restart
-    only what changed is given, and to a new remote conversation all of it again. A2A has no system
-    message: the parts are text of the user's message;
+    only what changed is given, and to a new remote conversation all of it again. A component whose
+    part it was given and that has none now gives its withdrawal in its place, if it words one
+    (`PromptProvider::withdrawn`): what the remote agent keeps would hold otherwise. A2A has no
+    system message: the parts are text of the user's message;
 *   **then its transcript**, each message marked with its sender as its profile says, which then
     starts anew: what the remote agent has not heard yet is what is given next, what a failed send
     did not give is given with the next one, and a restart gives nothing twice.
