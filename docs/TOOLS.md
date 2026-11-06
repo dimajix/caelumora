@@ -314,13 +314,19 @@ those that only read over the `TerminalReader` the workspace's reader hands out,
 over the `Terminal` of its writer (issue 516). A path is relative to the workspace's top; one that
 leaves the workspace is the model's to correct, as is a file that is not there or not text. Reading
 is bounded, and says where to read on. A replacement must find its text exactly once, unless every
-occurrence is to be replaced; it reads, replaces and writes, so what changed the file in between is
-overwritten. Nothing is moved over, which would be a deletion, and the workspace's top is neither
-moved nor moved over. What was read is knowledge, by its path, a file's content with its digest
-(see [MEMORY.md](MEMORY.md#recording-what-was-read)); so is what `write_file` and `replace_in_file`
-wrote, by its path and the digest of what they wrote - what the agent knows of the file now, not
-what it found before a replacement. The approver reads a change whole, and a rule derived from an
-approved change covers the file, whatever is written into it - for a move, both places.
+occurrence is to be replaced. Nothing is moved over, which would be a deletion, and the workspace's
+top is neither moved nor moved over. What was read is knowledge, by its path, a file's content with
+its digest (see [MEMORY.md](MEMORY.md#recording-what-was-read)); so is what `write_file` and
+`replace_in_file` wrote, by its path and the digest of what they wrote - what the agent knows of the
+file now, not what it found before a replacement -, and a file moved, where it lies now, by its
+content as the agent knew it where it did. A file the agent last knew otherwise than it is now - a
+person, a command or an agent of another channel changed it since - is neither written nor replaced
+in, and the model is told to read it again (`AgentChannelState::last_known`): a workspace is used by
+several channels and people at once, and a stale write would destroy their work unnoticed. A file
+never known - a listing or a search tells no content -, or gone since, is written as now. A refused
+call wrote nothing; the next is approved as any call. The check and the write are not one step: what
+changes the file between them is overwritten. The approver reads a change whole, and a rule derived
+from an approved change covers the file, whatever is written into it - for a move, both places.
 
 `publish_file` offers a file for download at the message that calls it: a link to the file as it is
 now, with its digest, downloaded through the channel's workspace by whoever may use it there. It

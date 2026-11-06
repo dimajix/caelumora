@@ -22,10 +22,12 @@ use crate::message::{executed_calls, Message, MessageId, MessageRole, TokenUsage
 use crate::note::{NoteChain, NoteChange, NoteOrigin, Notes};
 use crate::prompt_catalogue::PromptCatalogue;
 use crate::question::QuestionRequest;
+use crate::store;
 use crate::store::Journaled;
-use crate::tool::{ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
+use crate::tool::{ToolCallResult, ToolCallState, ToolCallStatus, ToolResultStatus, ToolSet};
 use crate::transcript::{
-    as_they_stand, given_as_they_stand, parts_as_given, GivenSource, Transcript, TranscriptEntry,
+    as_seen_whole, as_they_stand, given_as_they_stand, parts_as_given, GivenSource, Transcript,
+    TranscriptEntry,
 };
 use crate::turn::GivenUpReason;
 use crate::turn::{AfterStep, CommandRequest, TurnState};
@@ -373,6 +375,37 @@ impl AgentChannelState {
                 if k.source == *source && alike(given, message))
         });
         on_path || put_aside
+    }
+
+    /// The digest of `place` within the entity of kind `T` with `id` as the agent last knew it
+    /// (issue 538): of its last knowledge of that place that holds one - what a tool read or wrote
+    /// of it, what it was given to read -, on the transcript's active path as the model sees it
+    /// (`as_seen_whole`), then among the results of the step under way and what is put aside to be
+    /// given after it, as `stands_given` reads what is given. `None` if it never knew the content
+    /// of the place: a listing or a search holds none.
+    pub fn last_known<T: store::Stored>(&self, id: T::Id, place: &str) -> Option<Digest> {
+        let mut known: Vec<KnowledgeSource> = Vec::new();
+        for (node, message) in as_seen_whole(self.transcript.entries()) {
+            known.extend(node.entry.knowledge().cloned());
+            let results = message.tool_results.iter().flat_map(|r| &r.knowledge);
+            known.extend(results.map(|k| k.source.clone()));
+        }
+        if let Some(turn) = &self.turn {
+            let results = turn.tool_calls.iter().filter_map(ToolCallState::result);
+            known.extend(results.flat_map(|r| &r.knowledge).map(|k| k.source.clone()));
+            let put_aside = turn.after_step.iter().filter_map(|put| match put {
+                AfterStep::Given { knowledge, .. } => knowledge.as_ref(),
+                AfterStep::Announced { .. } => None,
+            });
+            known.extend(put_aside.map(|k| k.source.clone()));
+        }
+        known
+            .iter()
+            .filter(|k| k.place() == Some(place))
+            .filter_map(|k| k.about::<T>())
+            .filter(|(of, _)| *of == id)
+            .filter_map(|(_, digest)| digest)
+            .next_back()
     }
 
     /// Makes `parts` - each the id of a prompt component and the message of its part - what
@@ -1556,6 +1589,74 @@ mod tests {
         let given =
             state.transcript.messages().iter().filter(|m| m.content == text.content).count();
         assert_eq!(given, 1, "once, after the results");
+    }
+
+    /// Issue 538: what the agent last knew of a place within an entity - by the last tool result or
+    /// gift that holds its content, on the path as the model sees it, then in the step under way
+    /// and what is put aside for after it -; of a place it never knew the content of, nothing.
+    #[test]
+    fn what_the_agent_last_knew_of_a_place_is_its_last_knowledge_of_it() {
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let workspace = WorkspaceId::new();
+        let digest = |text: &str| Some(digest::content(text.as_bytes()));
+        let knowing = |place: &str, of: Option<Digest>| {
+            knowledge(KnowledgeSource::within::<Workspace>(workspace, place.to_string(), of), None)
+        };
+        let result = |call: &ToolCall, place: &str, of: Option<Digest>| ToolCallResult {
+            knowledge: vec![knowing(place, of)],
+            ..ToolCallResult::of(call, ToolResultStatus::Ok, String::new(), Classification::PUBLIC)
+        };
+        let last = |state: &AgentChannelState, place: &str| {
+            state.last_known::<Workspace>(workspace, place)
+        };
+        assert_eq!(last(&state, "a.txt"), None, "nothing known");
+
+        let calls = a_step_calling(&mut state, &["read_file"]);
+        state.turn.as_mut().unwrap().tool_calls.clear();
+        let read = state.said(Message {
+            role: MessageRole::Tool,
+            tool_results: vec![result(&calls[0], "a.txt", digest("one"))],
+            ..said("", Classification::PUBLIC)
+        });
+        assert_eq!(last(&state, "a.txt"), digest("one"), "as a result on the path holds it");
+        assert_eq!(last(&state, "b.txt"), None, "of that place alone");
+        assert_eq!(state.last_known::<Workspace>(WorkspaceId::new(), "a.txt"), None);
+
+        let calls = a_step_calling(&mut state, &["write_file", "grep_files"]);
+        state.turn.as_mut().unwrap().tool_calls[0].status =
+            ToolCallStatus::Finished(result(&calls[0], "a.txt", digest("two")));
+        assert_eq!(last(&state, "a.txt"), digest("two"), "as the step under way wrote it");
+        state.turn.as_mut().unwrap().tool_calls[1].status =
+            ToolCallStatus::Finished(result(&calls[1], "a.txt", None));
+        assert_eq!(last(&state, "a.txt"), digest("two"), "a search holds no content");
+        state.given(
+            said("[File: a.txt]", Classification::PUBLIC),
+            Some(knowing("a.txt", digest("given"))),
+        );
+        assert_eq!(
+            last(&state, "a.txt"),
+            digest("given"),
+            "as put aside to be given after the step"
+        );
+
+        state.turn.as_mut().unwrap().tool_calls.clear();
+        state.turn.as_mut().unwrap().after_step.clear();
+        assert!(state.transcript.revoke(read.id, Utc::now()));
+        assert_eq!(last(&state, "a.txt"), None, "taken back, as the model is no longer given it");
+
+        let lowered = state.turn.as_ref().unwrap().work.turn_id;
+        let calls = a_step_calling(&mut state, &["read_file"]);
+        state.turn.as_mut().unwrap().tool_calls.clear();
+        state.said(Message {
+            role: MessageRole::Tool,
+            tool_results: vec![result(&calls[0], "a.txt", digest("three"))],
+            ..said("", Classification::PUBLIC)
+        });
+        assert_eq!(last(&state, "a.txt"), digest("three"));
+        state.give_up_turn(lowered, GivenUpReason::Lowered { channel: Classification::PUBLIC });
+        state.turn = None;
+        assert_eq!(last(&state, "a.txt"), None, "hidden with a turn given up as `Lowered`");
     }
 
     #[test]

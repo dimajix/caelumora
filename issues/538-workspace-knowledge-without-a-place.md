@@ -108,3 +108,13 @@ its own.
   and `Turn::record_knowledge` is the crate's. `write_file` and `replace_in_file` give what they
   wrote, by its place and the digest of what they wrote; a replacement no longer gives the file as
   it read it.
+- **2026-11-06** — Step 3 done: `AgentChannelState::last_known` tells the digest of a place as the
+  agent last knew it - its last knowledge of the place that holds one, on the path as the model
+  sees it whole (`as_seen_whole`, of which `given_as_they_stand` keeps what is given), then in the
+  step under way and what is put aside for after it -, and `write_file` and `replace_in_file`
+  refuse to change a file that differs from it, telling the model to read it again; their
+  descriptions say so. A listing or a search holds no content and changes nothing of it; a file
+  gone since, and one never known, are written as now. `move_file` gives the file where it lies
+  now as the agent knew it where it was, so that it stays protected; `delete_file` gives nothing,
+  as planned - a file made anew by another where the agent deleted one is not overwritten. The
+  check and the write are not one step.

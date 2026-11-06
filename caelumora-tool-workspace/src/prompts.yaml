@@ -78,13 +78,15 @@ tools:
       given
     grep_files.max_matches: How many matches to give at most; {{ default_matches }} unless given
     write_file: >-
-      Write a text file of the session's workspace, replacing what it held; the directories it lies in
-      are made.
+      Write a text file of the session's workspace, replacing what it held; the directories it lies
+      in are made. A file you read or wrote before is written only as you knew it: if someone changed
+      it since, read it again.
     write_file.path: The file, relative to the workspace's top
     write_file.content: What the file is to hold
     replace_in_file: >-
       Replace a piece of text in a text file of the session's workspace. The text must occur exactly
-      once - give enough of what surrounds it - unless every occurrence is to be replaced.
+      once - give enough of what surrounds it - unless every occurrence is to be replaced. A file you
+      read or wrote before is changed only as you knew it: if someone changed it since, read it again.
     replace_in_file.path: The file, relative to the workspace's top
     replace_in_file.old_text: The text to replace, exactly as it is in the file
     replace_in_file.new_text: The text to put in its place

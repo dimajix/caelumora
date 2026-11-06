@@ -16,9 +16,10 @@
 //!   within a directory. `write_file` and `replace_in_file` give what they wrote as knowledge, by
 //!   its path and the digest of what they wrote: what the agent knows of the file now.
 //!
-//! A file is read whole, up to `READ_LIMIT`, and given as text: one that is
-//! no UTF-8 is refused. A replacement reads, replaces and writes: what
-//! changed the file in between is overwritten.
+//! A file is read whole, up to `READ_LIMIT`, and given as text: one that is no UTF-8 is refused.
+//! A file the agent last knew otherwise than it is now - another changed it since it read, wrote or
+//! moved it - is neither written nor replaced in (issue 538): the model is told to read it again.
+//! The check and the write are not one step: what changes the file between them is overwritten.
 
 use super::tool;
 use crate::component::{WorkspaceComponent, WorkspaceParams};
@@ -393,7 +394,7 @@ async fn digest(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResult
     let (size, mut stream) = terminal.read(at).await?;
     if size > limit {
         return Err(ToolError::InvalidParameter(format!(
-            "'{at}' is {size} bytes, more than the {limit} a file may be offered with"
+            "'{at}' is {size} bytes, more than the {limit} a file of the workspace may hold"
         )));
     }
     let (mut digest, mut read) = (ContentDigest::new(size), 0u64);
@@ -409,7 +410,7 @@ async fn digest(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResult
     }
     if read != size {
         return Err(ToolError::ExecutionFailed(format!(
-            "'{at}' changed while it was read; offer it again once it is written"
+            "'{at}' changed while it was read; try again once it is written"
         )));
     }
     Ok((size, digest.finish()))
@@ -485,23 +486,38 @@ async fn search(
     )
 }
 
-/// `value`, given with the knowledge that the work in `turn` read `at` in the files of
-/// `workspace` - its id and its classification - (issue 538), as of `digest` where a file was read
-/// or written whole: what it knows of it now.
+/// Refuses to change the file `at`, which the agent last knew as `known` and is `now` (issue 538):
+/// another - a person, a command, an agent of another channel - changed it since, whose change
+/// writing would overwrite. The model is to read it again.
+fn unchanged(at: &WorkspacePath, known: Digest, now: Digest) -> ToolResult<()> {
+    if known == now {
+        return Ok(());
+    }
+    Err(ToolError::InvalidParameter(format!(
+        "'{at}' changed since you last read or wrote it: read it again before you change it"
+    )))
+}
+
+/// `value`, with what the tool read or wrote for it, `knowledge` (`ToolOutput::knowledge`).
+fn knowing(value: Value, knowledge: impl IntoIterator<Item = KnowledgeRef>) -> ToolOutput {
+    ToolOutput { knowledge: knowledge.into_iter().collect(), ..value.into() }
+}
+
+/// That the work in `turn` knows `at` in the files of `workspace` - its id and its
+/// classification - (issue 538), as of `digest` where a file was read or written whole: what it
+/// knows of it now.
 fn known(
-    value: Value,
     turn: &Turn<'_>,
     (id, classification): (WorkspaceId, &Classification),
     at: &WorkspacePath,
     digest: Option<Digest>,
-) -> ToolOutput {
-    let knowledge = KnowledgeRef {
+) -> KnowledgeRef {
+    KnowledgeRef {
         channel: turn.situation().channel_id(),
         session: turn.situation().session_id(),
         source: KnowledgeSource::within::<Workspace>(id, at.to_string(), digest),
         classification: Some(classification.clone()),
-    };
-    ToolOutput { knowledge: vec![knowledge], ..value.into() }
+    }
 }
 
 /// Runs the file tool `name` of `component` that only reads (`read_only`) with `params` on
@@ -516,7 +532,8 @@ pub(super) async fn read(
     turn: &Turn<'_>,
 ) -> ToolResult<ToolOutput> {
     let prompts = &component.prompts;
-    let read = |value, at: &WorkspacePath, digest| known(value, turn, workspace, at, digest);
+    let read =
+        |value, at: &WorkspacePath, digest| knowing(value, [known(turn, workspace, at, digest)]);
     match name {
         LIST_FILES => {
             let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
@@ -598,8 +615,10 @@ pub(super) async fn read(
 }
 
 /// Runs the file tool `name` that changes the files with `params` on `terminal`, the files of
-/// `workspace` - its id and its classification -, in `turn`: its value, with what it knows of a
-/// file it wrote, its content as written (issue 538).
+/// `workspace` - its id and its classification -, in `turn`: its value, with what the agent knows
+/// of what it changed (issue 538) - a file written by its content as written, one moved by its
+/// content as the agent knew it where it did. A file the agent knew is written or replaced only as
+/// it knew it (`unchanged`).
 pub(super) async fn change(
     name: &str,
     params: &Value,
@@ -607,13 +626,25 @@ pub(super) async fn change(
     workspace: (WorkspaceId, &Classification),
     turn: &Turn<'_>,
 ) -> ToolResult<ToolOutput> {
-    let wrote = |value, at: &WorkspacePath, digest| known(value, turn, workspace, at, Some(digest));
+    let wrote =
+        |value, at: &WorkspacePath, digest| knowing(value, [known(turn, workspace, at, digest)]);
+    let last_known = |at: &WorkspacePath| {
+        turn.situation().agent_channel_state().last_known::<Workspace>(workspace.0, &at.to_string())
+    };
     match name {
         WRITE_FILE => {
             let Write { path: at, content } = arguments(params)?;
             let at = path(&at)?;
+            if let Some(knew) = last_known(&at) {
+                match terminal.stat(&at).await {
+                    // A file that is gone takes what is written: nothing is lost.
+                    Err(TerminalError::NotFound(_)) => {}
+                    Err(e) => return Err(e.into()),
+                    Ok(_) => unchanged(&at, knew, digest(terminal, &at).await?.1)?,
+                }
+            }
             let (written, digest) = write(terminal, &at, content).await?;
-            Ok(wrote(json!({ "path": at.to_string(), "bytes": written }), &at, digest))
+            Ok(wrote(json!({ "path": at.to_string(), "bytes": written }), &at, Some(digest)))
         }
         REPLACE_IN_FILE => {
             let Replace { path: at, old_text, new_text, replace_all } = arguments(params)?;
@@ -623,7 +654,10 @@ pub(super) async fn change(
                 ));
             }
             let at = path(&at)?;
-            let (text, _) = text(terminal, &at).await?;
+            let (text, now) = text(terminal, &at).await?;
+            if let Some(knew) = last_known(&at) {
+                unchanged(&at, knew, now)?;
+            }
             let found = text.matches(old_text.as_str()).count();
             let replaced = match (found, replace_all) {
                 (0, _) => return Err(ToolError::InvalidParameter(format!("'old_text' does not occur in '{at}'"))),
@@ -631,7 +665,7 @@ pub(super) async fn change(
                 (many, false) => return Err(ToolError::InvalidParameter(format!("'old_text' occurs {many} times in '{at}': give more of what surrounds it, or set replace_all"))),
             };
             let (_, digest) = write(terminal, &at, replaced).await?;
-            Ok(wrote(json!({ "path": at.to_string(), "replacements": found }), &at, digest))
+            Ok(wrote(json!({ "path": at.to_string(), "replacements": found }), &at, Some(digest)))
         }
         MOVE_FILE => {
             let Move { from, to } = arguments(params)?;
@@ -644,7 +678,14 @@ pub(super) async fn change(
                 }
                 e => ToolError::from(e),
             })?;
-            Ok(json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }).into())
+            let moved = json!({
+                "from": from.to_string(),
+                "to": to.to_string(),
+                "renamed": renames(&from, &to)
+            });
+            // Where it lies now, as the agent knew it where it was, if it did.
+            let knew = last_known(&from).map(|digest| known(turn, workspace, &to, Some(digest)));
+            Ok(knowing(moved, knew))
         }
         DELETE_FILE => {
             let at = path(&arguments::<Delete>(params)?.path)?;
@@ -669,6 +710,8 @@ mod tests {
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::digest;
     use caelumora_domain::digest::Digest;
+    use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_kernel::workspace::testing::{session_with_workspace, MAX_FILE_BYTES};
     use std::fs;
 
@@ -840,6 +883,90 @@ mod tests {
                 (Some("docs/plan.md"), plan("# Plan\nfirst move\nsecond stride\n"))
             ]
         );
+    }
+
+    /// What `output` knows, kept on the transcript of `turn` with a result of its call, as the
+    /// executor keeps it (issue 538).
+    fn kept(turn: &mut Turn<'_>, output: ToolOutput) {
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            function_name: "tool".to_string(),
+            arguments: Value::Null,
+            visibility: Default::default(),
+            presentation: Default::default(),
+        };
+        let result =
+            ToolCallResult::of(&call, ToolResultStatus::Ok, String::new(), Classification::PUBLIC);
+        turn.record_said(Message {
+            role: MessageRole::Tool,
+            tool_results: vec![ToolCallResult { knowledge: output.knowledge, ..result }],
+            ..Message::new(Classification::PUBLIC)
+        });
+    }
+
+    /// Issue 538: a file the agent last knew otherwise than it is now - changed by another since
+    /// it read, wrote or moved it - is neither written nor replaced in, until the agent read it
+    /// again; a search of it does not count as reading it. A file it never knew, and one gone
+    /// since, are written as now.
+    #[tokio::test]
+    async fn a_file_changed_since_the_agent_knew_it_is_not_overwritten() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let mut turn = workspace_turn(&world, &mut state);
+        let tool = component(json!({}));
+        let file = |name: &str| world.dir().join(name);
+        let changed = |result: &ToolResult<ToolOutput>| {
+            matches!(result, Err(ToolError::InvalidParameter(why))
+                if why.contains("changed since you last read or wrote it"))
+        };
+        let write = |path: &str, content: &str| json!({ "path": path, "content": content });
+        let replace =
+            |old: &str, new: &str| json!({ "path": "a.txt", "old_text": old, "new_text": new });
+
+        let written = tool.execute(WRITE_FILE, &write("a.txt", "one"), None, &mut turn).await;
+        kept(&mut turn, written.unwrap());
+        fs::write(file("a.txt"), "two").unwrap();
+        let refused = tool.execute(WRITE_FILE, &write("a.txt", "three"), None, &mut turn).await;
+        assert!(changed(&refused), "changed since written: {refused:?}");
+        let refused = tool.execute(REPLACE_IN_FILE, &replace("two", "four"), None, &mut turn).await;
+        assert!(changed(&refused), "nor replaced in: {refused:?}");
+        let searched = json!({ "pattern": "two", "path": "a.txt" });
+        let searched = tool.execute(GREP_FILES, &searched, None, &mut turn).await;
+        kept(&mut turn, searched.unwrap());
+        let refused = tool.execute(WRITE_FILE, &write("a.txt", "three"), None, &mut turn).await;
+        assert!(changed(&refused), "a search is no reading: {refused:?}");
+        assert_eq!(fs::read_to_string(file("a.txt")).unwrap(), "two", "as the other left it");
+
+        let read = tool.execute(READ_FILE, &json!({ "path": "a.txt" }), None, &mut turn).await;
+        kept(&mut turn, read.unwrap());
+        let replaced =
+            tool.execute(REPLACE_IN_FILE, &replace("two", "four"), None, &mut turn).await;
+        kept(&mut turn, replaced.unwrap());
+        let written = tool.execute(WRITE_FILE, &write("a.txt", "five"), None, &mut turn).await;
+        assert!(written.is_ok(), "read again, and changed by itself since: {written:?}");
+        kept(&mut turn, written.unwrap());
+        assert_eq!(fs::read_to_string(file("a.txt")).unwrap(), "five");
+
+        let deleted = tool.execute(DELETE_FILE, &json!({ "path": "a.txt" }), None, &mut turn).await;
+        kept(&mut turn, deleted.unwrap());
+        fs::write(file("a.txt"), "theirs").unwrap();
+        let refused = tool.execute(WRITE_FILE, &write("a.txt", "six"), None, &mut turn).await;
+        assert!(changed(&refused), "made anew by another: {refused:?}");
+        fs::remove_file(file("a.txt")).unwrap();
+        let written = tool.execute(WRITE_FILE, &write("a.txt", "seven"), None, &mut turn).await;
+        assert!(written.is_ok(), "gone since: {written:?}");
+
+        let moved = json!({ "from": "a.txt", "to": "b.txt" });
+        kept(&mut turn, written.unwrap());
+        let moved = tool.execute(MOVE_FILE, &moved, None, &mut turn).await;
+        kept(&mut turn, moved.unwrap());
+        fs::write(file("b.txt"), "theirs").unwrap();
+        let refused = tool.execute(WRITE_FILE, &write("b.txt", "eight"), None, &mut turn).await;
+        assert!(changed(&refused), "known where it was moved to: {refused:?}");
+
+        fs::write(file("c.txt"), "theirs").unwrap();
+        let never = tool.execute(WRITE_FILE, &write("c.txt", "mine"), None, &mut turn).await;
+        assert!(never.is_ok(), "never known: written as now");
     }
 
     #[tokio::test]

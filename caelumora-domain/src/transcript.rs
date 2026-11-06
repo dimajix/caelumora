@@ -143,12 +143,11 @@ where
     })
 }
 
-/// What is given on `path` - a path of a transcript from its root - as a model given the path is
-/// given it (issues 389, 537): each entry `TranscriptEntry::Given` with its message as it stands,
-/// without one taken back or of a turn given up as `Lowered` (`TranscriptEntry::lowered_turn`).
-/// What stands given, for a turn to give only what does not (`AgentChannelState::given`,
-/// `AgentChannelState::give_parts`), and a compaction to give again what it takes away.
-pub fn given_as_they_stand<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
+/// The entries of `path` - a path of a transcript from its root - that hold a message as a model
+/// given the path is given it whole, each with that message as it stands: without one taken back,
+/// or of a turn given up as `Lowered` (`TranscriptEntry::lowered_turn`), of which a model is given
+/// only which tools it called (issues 141, 258). What a model has before it of the transcript.
+pub(crate) fn as_seen_whole<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
     P::IntoIter: Clone,
@@ -158,13 +157,25 @@ where
         path.clone().filter_map(|node| node.entry.lowered_turn()).map(|(turn, _)| turn).collect();
     as_they_stand(path)
         .filter_map(|(node, message)| {
-            let TranscriptEntry::Given { .. } = node.entry else {
-                return None;
-            };
             let message = message?;
             let hidden = message.turn_id.is_some_and(|turn| lowered.contains(&turn));
             (!hidden).then_some((node, message))
         })
+        .collect()
+}
+
+/// What is given on `path` as a model given the path is given it (issues 389, 537): each entry
+/// `TranscriptEntry::Given` of what it sees whole (`as_seen_whole`). What stands given, for a turn
+/// to give only what does not (`AgentChannelState::given`, `AgentChannelState::give_parts`), and a
+/// compaction to give again what it takes away.
+pub fn given_as_they_stand<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    as_seen_whole(path)
+        .into_iter()
+        .filter(|(node, _)| matches!(node.entry, TranscriptEntry::Given { .. }))
         .collect()
 }
 
