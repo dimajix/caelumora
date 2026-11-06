@@ -9,7 +9,9 @@ use crate::confidentiality::Classification;
 use crate::content::ContentId;
 #[cfg(any(test, feature = "test-support"))]
 use crate::context::ContextRef;
-use crate::context::{ContextResolver, FrameRef, KnowledgeRef, PromptAt, PromptRef};
+use crate::context::{
+    ContextResolver, FrameRef, KnowledgeRef, KnowledgeSource, PromptAt, PromptRef,
+};
 use crate::digest;
 use crate::digest::Digest;
 use crate::external_agent::RemoteState;
@@ -22,7 +24,9 @@ use crate::prompt_catalogue::PromptCatalogue;
 use crate::question::QuestionRequest;
 use crate::store::Journaled;
 use crate::tool::{ToolCallResult, ToolCallStatus, ToolResultStatus, ToolSet};
-use crate::transcript::{as_they_stand, parts_as_given, GivenSource, Transcript, TranscriptEntry};
+use crate::transcript::{
+    as_they_stand, given_as_they_stand, parts_as_given, GivenSource, Transcript, TranscriptEntry,
+};
 use crate::turn::GivenUpReason;
 use crate::turn::{AfterStep, CommandRequest, TurnState};
 use crate::work::{TurnId, Work};
@@ -312,7 +316,9 @@ impl AgentChannelState {
         if turn.tool_calls.is_empty() {
             for put_aside in mem::take(&mut turn.after_step) {
                 match put_aside {
-                    AfterStep::Given { message, knowledge } => self.given(message, knowledge),
+                    AfterStep::Given { message, knowledge } => {
+                        self.given(message, knowledge);
+                    }
                     AfterStep::Announced { entry } => self.note(entry),
                 }
             }
@@ -321,32 +327,51 @@ impl AgentChannelState {
         message.produced_from_context(context.transcript, frame)
     }
 
-    /// Records `message`, given to the agent to read in the turn under way
-    /// (issue 22) - a skill loaded for it - as the knowledge `knowledge`,
-    /// if it is knowledge (issue 389): the turn's from now on
-    /// (`Message::turn_id`), into the transcript as what it was given
-    /// (`TranscriptEntry::Given`, issue 16), for its channel to be told as
-    /// given (`ActorEvent::MessageGiven`, issue 417) - the agent did not
-    /// produce it -, the knowledge recorded with the turn, and the turn's
-    /// context moved on past it, so that what the turn says next is
-    /// produced from it. Not published: it is what the agent read, not what
-    /// it said. Between turns it is recorded as heard would be, still as
-    /// given.
+    /// Records `message`, given to the agent to read in the turn under way (issue 22) - a skill
+    /// loaded for it - as the knowledge `knowledge`, if it is knowledge (issue 389): the turn's
+    /// from now on (`Message::turn_id`), into the transcript as what it was given
+    /// (`TranscriptEntry::Given`, issue 16), for its channel to be told as given
+    /// (`ActorEvent::MessageGiven`, issue 417) - the agent did not produce it -, the knowledge
+    /// recorded with the turn, and the turn's context moved on past it, so that what the turn says
+    /// next is produced from it. Not published: it is what the agent read, not what it said.
+    /// Between turns it is recorded as heard would be, still as given.
     ///
-    /// While the calls of a step run, it is put aside and written after the
-    /// step's tool message (`TurnState::after_step`, issue 389): a
-    /// tool gives what it gives at any time, and nothing stands between the
-    /// calls and their results, which the models refuse.
-    pub fn given(&mut self, message: Message, knowledge: Option<KnowledgeRef>) {
+    /// Knowledge that stands given already (`stands_given`) is not given a second time (issue
+    /// 541): the model has it before it. Its knowledge is recorded with the turn all the same, and
+    /// `false` answered; `true` where it is given. What is no knowledge is always given.
+    ///
+    /// While the calls of a step run, it is put aside and written after the step's tool message
+    /// (`TurnState::after_step`, issue 389): a tool gives what it gives at any time, and nothing
+    /// stands between the calls and their results, which the models refuse. Knowledge put aside
+    /// twice is given once, after the step.
+    pub fn given(&mut self, message: Message, knowledge: Option<KnowledgeRef>) -> bool {
+        let stands = knowledge.as_ref().is_some_and(|k| self.stands_given(&message, &k.source));
         if let Some(turn) = self.turn.as_mut().filter(|turn| !turn.tool_calls.is_empty()) {
             turn.after_step.push(AfterStep::Given { message, knowledge });
-            return;
+            return !stands;
         }
         let source = knowledge.as_ref().map(|knowledge| GivenSource::Knowledge(knowledge.source));
         if let (Some(turn), Some(knowledge)) = (self.turn.as_mut(), knowledge) {
             turn.work.record_knowledge(knowledge);
         }
-        self.give_as(message, source);
+        if !stands {
+            self.give_as(message, source);
+        }
+        !stands
+    }
+
+    /// Whether `message`, giving the knowledge `source`, stands given already: the same knowledge
+    /// with the same text and classification (`alike`), on the transcript's active path as the
+    /// model is given it (`given_as_they_stand`) or put aside to be given after the step.
+    fn stands_given(&self, message: &Message, source: &KnowledgeSource) -> bool {
+        let on_path = given_as_they_stand(self.transcript.entries())
+            .into_iter()
+            .any(|(node, given)| node.entry.knowledge() == Some(source) && alike(&given, message));
+        let put_aside = self.turn.iter().flat_map(|turn| &turn.after_step).any(|put| {
+            matches!(put, AfterStep::Given { message: given, knowledge: Some(k) }
+                if k.source == *source && alike(given, message))
+        });
+        on_path || put_aside
     }
 
     /// Makes `parts` - each the id of a prompt component and the message of its part - what
@@ -360,15 +385,12 @@ impl AgentChannelState {
     /// what no longer holds, for its channel to be told as withdrawn
     /// (`ActorEvent::MessageWithdrawn`).
     pub fn give_parts(&mut self, parts: Vec<(String, Message)>) {
-        let same = |a: &Message, b: &Message| {
-            a.content == b.content && a.classification == b.classification
-        };
         let standing: Vec<(String, Message)> = parts_as_given(self.transcript.entries())
             .into_iter()
             .filter_map(|(node, message)| Some((node.entry.part_of()?.to_string(), message)))
             .collect();
         let among = |(component, message): &(String, Message), others: &[(String, Message)]| {
-            others.iter().any(|(c, other)| c == component && same(message, other))
+            others.iter().any(|(c, other)| c == component && alike(message, other))
         };
         let at = Utc::now();
         for stood in &standing {
@@ -747,6 +769,13 @@ impl AgentChannelState {
     }
 }
 
+/// Whether `a` and `b`, given to read, give the model the same: the same text, classified alike - a
+/// prompt part or knowledge that stands given where its message is alike (`give_parts`,
+/// `stands_given`).
+fn alike(a: &Message, b: &Message) -> bool {
+    a.content == b.content && a.classification == b.classification
+}
+
 /// Why an agent does not answer again instead of one of its messages (issue
 /// 234), as `ActorEvent::RetryRejected` tells it: a closed set, so that a
 /// user interface can word and react to each itself. The text is for logs
@@ -1093,6 +1122,46 @@ mod tests {
         state.offer_tools(sets);
     }
 
+    /// That the agent read `source`, classified `classification` - a skill it loaded, say.
+    fn knowledge(source: KnowledgeSource, classification: Option<Classification>) -> KnowledgeRef {
+        KnowledgeRef {
+            channel: Default::default(),
+            session: Default::default(),
+            source,
+            classification,
+        }
+    }
+
+    /// A workspace the agent read, unclassified: knowledge where no more of it matters.
+    fn a_workspace_read() -> KnowledgeRef {
+        knowledge(KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), None), None)
+    }
+
+    /// Lets the turn under way of `state` call the tools `names` in one step, approved and running,
+    /// so that what is given or noted meanwhile is put aside (`TurnState::after_step`): the calls,
+    /// for their results.
+    fn a_step_calling(state: &mut AgentChannelState, names: &[&str]) -> Vec<ToolCall> {
+        let calls: Vec<ToolCall> = names
+            .iter()
+            .enumerate()
+            .map(|(at, name)| ToolCall {
+                id: Some((at + 1).to_string()),
+                function_name: name.to_string(),
+                arguments: serde_json::json!({}),
+                visibility: ToolVisibility::SHOWN,
+                presentation: Default::default(),
+            })
+            .collect();
+        state.said(Message {
+            role: MessageRole::Assistant,
+            tool_calls: calls.clone(),
+            ..said("", Classification::PUBLIC)
+        });
+        state.turn.as_mut().unwrap().tool_calls =
+            calls.iter().cloned().map(ToolCallState::approved).collect();
+        calls
+    }
+
     #[test]
     fn a_turn_begun_has_seen_the_transcript_and_offers_its_tools_kept_once() {
         let internal = Classification::general(Confidentiality::Internal);
@@ -1301,6 +1370,23 @@ mod tests {
         );
     }
 
+    /// Issue 541: knowledge given in a turn given up as `Lowered` is hidden from the model as that
+    /// turn's messages are, so it does not stand: the next turn gives it again.
+    #[test]
+    fn knowledge_given_in_a_turn_given_up_as_lowered_is_given_again() {
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let lowered = state.turn.as_ref().unwrap().work.turn_id;
+        let skill = a_workspace_read();
+        let text = || said("Collect.", Classification::PUBLIC);
+        assert!(state.given(text(), Some(skill.clone())));
+        state.give_up_turn(lowered, GivenUpReason::Lowered { channel: Classification::PUBLIC });
+        state.turn = None;
+
+        begin(&mut state, Vec::new());
+        assert!(state.given(text(), Some(skill)), "given again, in the turn after");
+    }
+
     #[test]
     fn a_message_given_in_a_turn_is_read_not_said() {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
@@ -1314,12 +1400,7 @@ mod tests {
             WorkspaceId::new(),
             Some(digest::prompt("Collect, group, write.")),
         );
-        let knowledge = KnowledgeRef {
-            channel: Default::default(),
-            session: Default::default(),
-            source,
-            classification: Some(Classification::CHANNEL_DEFAULT),
-        };
+        let knowledge = knowledge(source, Some(Classification::CHANNEL_DEFAULT));
 
         state.given(skill.clone(), Some(knowledge.clone()));
         assert_eq!(
@@ -1328,7 +1409,7 @@ mod tests {
             "into the transcript, the turn's"
         );
         assert!(
-            matches!(state.transcript.last().map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(GivenSource::Knowledge(s)), .. }) if *s == source),
+            state.transcript.last().and_then(|n| n.entry.knowledge()) == Some(&source),
             "as what it was given (issue 16)"
         );
         let work = &state.turn.as_ref().unwrap().work;
@@ -1354,31 +1435,11 @@ mod tests {
     fn what_is_given_while_the_calls_of_a_step_run_follows_their_results() {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
-        let call = ToolCall {
-            id: Some("1".to_string()),
-            function_name: "load_skill".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
-        };
-        state.said(Message {
-            role: MessageRole::Assistant,
-            tool_calls: vec![call.clone()],
-            ..said("", Classification::PUBLIC)
-        });
-        state.turn.as_mut().unwrap().tool_calls = vec![ToolCallState::approved(call.clone())];
+        let calls = a_step_calling(&mut state, &["load_skill"]);
         let skill = said("Collect, group, write.", Classification::PUBLIC);
         let summary = said("what was given without being knowledge", Classification::PUBLIC);
 
-        state.given(
-            skill.clone(),
-            Some(KnowledgeRef {
-                channel: Default::default(),
-                session: Default::default(),
-                source: KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), None),
-                classification: None,
-            }),
-        );
+        state.given(skill.clone(), Some(a_workspace_read()));
         state.given(summary.clone(), None);
         assert_eq!(
             state.transcript.messages().len(),
@@ -1388,7 +1449,7 @@ mod tests {
         assert!(state.to_tell.is_empty(), "nor told yet");
 
         let result = ToolCallResult::of(
-            &call,
+            &calls[0],
             ToolResultStatus::Ok,
             "loaded".to_string(),
             Classification::PUBLIC,
@@ -1430,23 +1491,77 @@ mod tests {
         assert_eq!(told, [skill.id, summary.id], "and its channel is to be told so");
     }
 
+    /// Issue 541: knowledge that stands given - with the same text and classification - is not
+    /// given again, though recorded with the turn that would give it; changed, classified
+    /// otherwise or taken back, it is given. What is no knowledge is always given.
+    #[test]
+    fn knowledge_that_stands_given_is_not_given_again() {
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let skill = a_workspace_read();
+        let public = |content| said(content, Classification::PUBLIC);
+        let first = public("Collect.");
+        assert!(state.given(first.clone(), Some(skill.clone())), "given");
+        let turn_id = state.turn.as_ref().unwrap().work.turn_id;
+        state.finish_turn(turn_id, Vec::new(), Vec::new());
+        begin(&mut state, Vec::new());
+        state.take_told();
+
+        assert!(!state.given(public("Collect."), Some(skill.clone())), "not given again");
+        assert_eq!(state.transcript.messages().len(), 2, "it stands once");
+        assert!(state.take_told().is_empty(), "nothing to tell");
+        assert_eq!(
+            state.turn.as_ref().unwrap().work.context.frame.knowledge,
+            vec![skill.clone()],
+            "recorded with the turn all the same"
+        );
+
+        let internal = said("Collect.", Classification::general(Confidentiality::Internal));
+        assert!(state.given(internal, Some(skill.clone())), "classified otherwise");
+        assert!(state.given(public("Collect, group."), Some(skill.clone())), "changed");
+        assert!(state.transcript.revoke(first.id, Utc::now()));
+        assert!(state.given(public("Collect."), Some(skill)), "taken back");
+        assert!(
+            state.given(public("a summary"), None) && state.given(public("a summary"), None),
+            "what is no knowledge always"
+        );
+    }
+
+    /// Issue 541: knowledge put aside twice while the calls of a step run is given once, after
+    /// their results.
+    #[test]
+    fn knowledge_put_aside_twice_in_a_step_is_given_once() {
+        let mut state = a_state_that_heard("hello", Classification::PUBLIC);
+        begin(&mut state, Vec::new());
+        let calls = a_step_calling(&mut state, &["load_skill", "load_skill"]);
+        let skill = a_workspace_read();
+        let text = said("Collect.", Classification::PUBLIC);
+
+        assert!(state.given(text.clone(), Some(skill.clone())), "the first given");
+        assert!(!state.given(text.clone(), Some(skill)), "the second not");
+        state.turn.as_mut().unwrap().tool_calls.clear();
+        let results = calls
+            .iter()
+            .map(|call| {
+                let loaded = "loaded".to_string();
+                ToolCallResult::of(call, ToolResultStatus::Ok, loaded, Classification::PUBLIC)
+            })
+            .collect();
+        state.said(Message {
+            role: MessageRole::Tool,
+            tool_results: results,
+            ..said("", Classification::PUBLIC)
+        });
+        let given =
+            state.transcript.messages().iter().filter(|m| m.content == text.content).count();
+        assert_eq!(given, 1, "once, after the results");
+    }
+
     #[test]
     fn who_left_while_the_calls_of_a_step_run_is_noted_after_their_results() {
         let mut state = a_state_that_heard("hello", Classification::PUBLIC);
         begin(&mut state, Vec::new());
-        let call = ToolCall {
-            id: Some("1".to_string()),
-            function_name: "ask_user".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
-        };
-        state.said(Message {
-            role: MessageRole::Assistant,
-            tool_calls: vec![call.clone()],
-            ..said("", Classification::PUBLIC)
-        });
-        state.turn.as_mut().unwrap().tool_calls = vec![ToolCallState::approved(call.clone())];
+        let calls = a_step_calling(&mut state, &["ask_user"]);
         let alice = ActorId::User(UserId::new());
         let left = HistoryEntry::ParticipantLeft {
             participant: alice,
@@ -1467,7 +1582,7 @@ mod tests {
         );
 
         let result = ToolCallResult::of(
-            &call,
+            &calls[0],
             ToolResultStatus::NotExecuted,
             "unanswered".to_string(),
             Classification::PUBLIC,
@@ -1561,12 +1676,7 @@ mod tests {
 
         let source =
             KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), Some(digest::prompt("steps")));
-        let knowledge = KnowledgeRef {
-            channel: Default::default(),
-            session: Default::default(),
-            source,
-            classification: Some(Classification::CHANNEL_DEFAULT),
-        };
+        let knowledge = knowledge(source, Some(Classification::CHANNEL_DEFAULT));
         let skill = said("[Skill: steps]", Classification::PUBLIC);
         let (from, to) = state
             .compact(

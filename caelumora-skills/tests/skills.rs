@@ -399,6 +399,66 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// Issue 541: a skill that stands in the agent's transcript as it is is not given again - not by
+/// `load_skill`, which answers `given above`, nor by `/skill`, which says the agent has it
+/// already -; once it changed, it is.
+#[tokio::test]
+async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
+    let world = world().await;
+    let (session, helper) = with_an_agent(&world).await;
+    let internal = Classification::general(Confidentiality::Internal);
+    let manager = manager(&world);
+    let made = manager
+        .create(
+            &SecurityContext::system(),
+            "release-notes",
+            Scope::GlobalScope,
+            "How we write a release note",
+            "1. Collect.",
+            internal,
+        )
+        .await
+        .unwrap();
+    let tools = skills::<dyn ToolProvider>(&world, json!({})).await;
+    let commands = skills::<dyn AgentCommandProvider>(&world, json!({})).await;
+    let load = json!({ "name": "release-notes" });
+    let mut state = AgentChannelState::default();
+    let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
+    let given = AgentCommandProvider::execute(
+        commands.as_ref(),
+        SKILL_COMMAND_NAME,
+        "release-notes",
+        &mut turn,
+    )
+    .await
+    .expect("given");
+    assert!(given.text.ends_with(" now."), "{}", given.text);
+
+    let loaded = call(tools.as_ref(), &mut turn, LOAD_SKILL_TOOL_NAME, load.clone()).await.unwrap();
+    assert_eq!(
+        loaded.value,
+        json!({ "status": "given above", "name": "release-notes", "skill_id": made.id }),
+        "the skill alice gave stands above"
+    );
+    let again = AgentCommandProvider::execute(
+        commands.as_ref(),
+        SKILL_COMMAND_NAME,
+        "release-notes",
+        &mut turn,
+    )
+    .await
+    .expect("answered");
+    assert!(again.text.ends_with(" already."), "{}", again.text);
+
+    manager.rewrite(&SecurityContext::system(), made.id, "1. Collect.\n2. Group.").await.unwrap();
+    let changed = call(tools.as_ref(), &mut turn, LOAD_SKILL_TOOL_NAME, load).await.unwrap();
+    assert_eq!(changed.value["status"], "loaded", "changed, it is given");
+    drop(turn);
+    let given = state.transcript.entries().filter(|node| node.entry.knowledge().is_some()).count();
+    assert_eq!(given, 2, "as it was, once, and as it is now");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// Issue 413: the `compaction` component asks the agent's `skills` for what it can give again - the
 /// skills given in the part of the context it replaces -, and gives again after the summary those
 /// the agent's model still needs, as `/compact` tells: `release-notes`, not the quiz of a task

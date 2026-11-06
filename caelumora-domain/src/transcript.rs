@@ -143,14 +143,12 @@ where
     })
 }
 
-/// The parts of prompt components on `path` - a path of a transcript from its
-/// root - as a model given the path is given them (issue 537): each entry
-/// (`TranscriptEntry::part_of`) with its message as it stands, without a part
-/// taken back or one of a turn given up as `Lowered`
-/// (`TranscriptEntry::lowered_turn`). What stands of the components' parts,
-/// for a turn to give where they changed (`AgentChannelState::give_parts`) and
-/// a compaction to carry over (`Transcript::carried_parts`).
-pub(crate) fn parts_as_given<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
+/// What is given on `path` - a path of a transcript from its root - as a model given the path is
+/// given it (issues 389, 537): each entry `TranscriptEntry::Given` with its message as it stands,
+/// without one taken back or of a turn given up as `Lowered` (`TranscriptEntry::lowered_turn`).
+/// What stands given, for a turn to give only what does not (`AgentChannelState::given`,
+/// `AgentChannelState::give_parts`), and a compaction to give again what it takes away.
+pub fn given_as_they_stand<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
     P::IntoIter: Clone,
@@ -160,11 +158,28 @@ where
         path.clone().filter_map(|node| node.entry.lowered_turn()).map(|(turn, _)| turn).collect();
     as_they_stand(path)
         .filter_map(|(node, message)| {
-            node.entry.part_of()?;
+            let TranscriptEntry::Given { .. } = node.entry else {
+                return None;
+            };
             let message = message?;
             let hidden = message.turn_id.is_some_and(|turn| lowered.contains(&turn));
             (!hidden).then_some((node, message))
         })
+        .collect()
+}
+
+/// The parts of prompt components on `path` that stand given (`given_as_they_stand`), each entry
+/// (`TranscriptEntry::part_of`) with its message as it stands (issue 537): what stands of the
+/// components' parts, for a turn to give where they changed (`AgentChannelState::give_parts`) and
+/// a compaction to carry over (`Transcript::carried_parts`).
+pub(crate) fn parts_as_given<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
+where
+    P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
+    P::IntoIter: Clone,
+{
+    given_as_they_stand(path)
+        .into_iter()
+        .filter(|(node, _)| node.entry.part_of().is_some())
         .collect()
 }
 
@@ -446,6 +461,17 @@ impl TranscriptEntry {
                 | TranscriptEntry::Compacted { .. },
                 _,
             ) => None,
+        }
+    }
+
+    /// The knowledge this gives, if it is knowledge given into the transcript
+    /// (`GivenSource::Knowledge`, issue 389): a skill loaded, a file read.
+    pub fn knowledge(&self) -> Option<&KnowledgeSource> {
+        match self {
+            TranscriptEntry::Given { source: Some(GivenSource::Knowledge(source)), .. } => {
+                Some(source)
+            }
+            _ => None,
         }
     }
 

@@ -195,7 +195,6 @@ mod tests {
     };
     use caelumora_domain::message::MessageRole;
     use caelumora_domain::store::{EntityKind, Stored};
-    use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::time_zone::TimeZone;
     use caelumora_domain::work::Work;
@@ -354,7 +353,13 @@ mod tests {
 
         assert_eq!(texts(&state), [SUMMARY, GIVEN, "u2"]);
         assert!(
-            matches!(state.transcript.entries().nth(1).map(|n| &n.entry), Some(TranscriptEntry::Given { source: Some(GivenSource::Knowledge(source)), .. }) if source.about::<Workspace>().is_some_and(|(s, _)| s == skill)),
+            state
+                .transcript
+                .entries()
+                .nth(1)
+                .and_then(|n| n.entry.knowledge())
+                .and_then(|source| source.about::<Workspace>())
+                .is_some_and(|(s, _)| s == skill),
             "the skill as given"
         );
         assert!(state.transcript.prefix(&before).is_some(), "what it saw before stays");
