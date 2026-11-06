@@ -1,11 +1,13 @@
 //! The facet `ToolProvider` of `skills` (issues 22, 281, 301): the tools that list and load the
 //! skills the agent may load, and write and change those of its owner's.
 //!
-//! - **`list_skills`** gives the catalogue as a tool, for a model whose
-//!   prompt was built before a skill appeared - each skill with its id, for
-//!   the channel to link to (issue 301); **`load_skill`** gives a
-//!   skill's text as the call's result, hidden from the channel, which sees
-//!   only which skill was loaded (issue 281), classified as the skill.
+//! - **`list_skills`** gives the catalogue as a tool, for a model whose prompt was built before a
+//!   skill appeared - each skill with its id, for the channel to link to (issue 301);
+//!   **`load_skill`** names the skill in its result, classified as the skill, and gives its text
+//!   after the step's results, as `/skill` does (issue 389): the channel sees only which skill was
+//!   loaded (issue 281), its history records the text as what the agent was given, gone to nobody
+//!   (issue 417), and it is not given again where it stands so already, which the result says
+//!   (`given above`, issue 541).
 //! - **`create_skill`** and **`update_skill`** let the agent write down
 //!   what it has learnt to do (issue 22, decision 6): a skill of its owner's,
 //!   in the session's scope or the owner's - never the global one -,

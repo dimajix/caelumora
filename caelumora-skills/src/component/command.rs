@@ -1,6 +1,7 @@
 //! The facet `AgentCommandProvider` of `skills` (issue 22): **`/skill @agent <name>`**, a command a
-//! participant gives the agent - the skill's text goes into its transcript as given to read, in
-//! the participant's name, read in the command's turn, never into the channel's history -; and
+//! participant gives the agent - the skill's text goes into its transcript as given to read, in the
+//! participant's name, read in the command's turn, and into the channel's history as what the agent
+//! was given, gone to nobody (issue 417); not again where it stands so already (issue 541) -; and
 //! **`/skills @agent`**, which lists what it may load.
 
 use super::{reader_in, SkillsComponent};

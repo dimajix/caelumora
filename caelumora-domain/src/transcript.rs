@@ -147,8 +147,8 @@ where
 /// given it (issues 389, 537): each entry `TranscriptEntry::Given` with its message as it stands,
 /// without one taken back or of a turn given up as `Lowered` (`TranscriptEntry::lowered_turn`).
 /// What stands given, for a turn to give only what does not (`AgentChannelState::given`,
-/// `AgentChannelState::give_parts`).
-pub(crate) fn given_as_they_stand<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
+/// `AgentChannelState::give_parts`), and a compaction to give again what it takes away.
+pub fn given_as_they_stand<'a, P>(path: P) -> Vec<(&'a Node<TranscriptEntry>, Message)>
 where
     P: IntoIterator<Item = &'a Node<TranscriptEntry>>,
     P::IntoIter: Clone,

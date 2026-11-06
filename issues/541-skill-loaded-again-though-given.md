@@ -71,3 +71,13 @@ Decided with the maintainer, in steps of their own:
   is alike is one function for parts and knowledge (`alike`), and which knowledge an entry gives
   one method (`TranscriptEntry::knowledge`), which the compaction's cut reads too. The description
   of `load_skill` tells the model that the text follows the result unless it stands above already.
+- **2026-11-06** — The findings of step 1, decided with the maintainer to be addressed before the
+  measurement: the module docs of the skills' tool and command say what they do since issues 389
+  and 417. The compaction's cut reads what was given as the model is given it
+  (`given_as_they_stand`, now public), so a gift of a turn given up as `Lowered` no longer stands
+  for one in the part replaced; it keeps telling an entity by its kind and id, unlike the giving,
+  which compares the text: a compaction gives again what it takes away, and a skill changed since
+  is loaded anew - and given then.
+  A function of its own for the turns given up as `Lowered`, which the cut, `given_as_they_stand`
+  and the resolver each collect in one line, was weighed and not taken: a self-explaining line is
+  not worth a name.

@@ -12,7 +12,9 @@ use caelumora_domain::context::KnowledgeSource;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::store::EntityKind;
-use caelumora_domain::transcript::{as_they_stand, Transcript, TranscriptEntry};
+use caelumora_domain::transcript::{
+    as_they_stand, given_as_they_stand, Transcript, TranscriptEntry,
+};
 use caelumora_domain::work::TurnId;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -21,7 +23,8 @@ use uuid::Uuid;
 pub(crate) type Given = (EntityKind, Uuid);
 
 /// An entry of the active path of a transcript, as a compaction reads it: its digest, what it gives
-/// if it is one given (`TranscriptEntry::Given`), and its message as it stands, if it holds one.
+/// if it is one given as the model is given it (`given_as_they_stand`), and its message as it
+/// stands, if it holds one.
 type Entry = (Digest, Option<Given>, Option<Message>);
 
 /// An agent's transcript cut for a compaction: the part replaced, without the prompt parts carried
@@ -52,8 +55,17 @@ impl Cut {
     ) -> Option<Self> {
         let whole = kept_whole(transcript.entries().map(|node| &node.entry));
         let carried = transcript.carried_parts();
+        // What gives knowledge as the model is given it: not what a turn given up as `Lowered`
+        // gave, which it does not see.
+        let gives: HashSet<Digest> = given_as_they_stand(transcript.entries())
+            .into_iter()
+            .map(|(node, _)| node.digest)
+            .collect();
         let mut path: Vec<Entry> = as_they_stand(transcript.entries())
-            .map(|(node, message)| (node.digest, node.entry.knowledge().and_then(given), message))
+            .map(|(node, message)| {
+                let what = node.entry.knowledge().filter(|_| gives.contains(&node.digest));
+                (node.digest, what.and_then(given), message)
+            })
             .collect();
         let at = cut_at(&path, positions, keep, under_way, &whole, &carried)?;
         let kept = path.split_off(at);
@@ -87,8 +99,11 @@ impl Cut {
 
     /// What was given in the part replaced and is not still there, as it was given, in the part
     /// kept: each once, in the order it was first given, with the message it was first given in -
-    /// whose sender gave it (issue 539). Read as the entries stand: a gift taken back is neither
-    /// given again nor still there (issue 234).
+    /// whose sender gave it (issue 539). Read as the model is given it (`given_as_they_stand`): a
+    /// gift taken back, or of a turn given up as `Lowered`, is neither given again nor still there
+    /// (issue 234). Still there is an entity by its kind and id, whatever text of it the part
+    /// kept holds: a compaction gives again what it takes away, not what changed since - which the
+    /// model loads anew if it needs it, and which is given then, as the text differs (issue 541).
     pub(crate) fn wanted(&self) -> Vec<(Given, &Message)> {
         let still_there: Vec<Given> = given_in(&self.kept).into_iter().map(|(g, _)| g).collect();
         given_in(&self.replaced).into_iter().filter(|(g, _)| !still_there.contains(g)).collect()
@@ -195,7 +210,7 @@ fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet
 /// What was given in `entries`, each once, in the order it was first given
 /// (`TranscriptEntry::Given`), with the message it was first given in: a skill a user gave and one
 /// the model loaded alike (issue 389). A gift taken back holds no message any more, and gives
-/// nothing.
+/// nothing; neither does one of a turn given up as `Lowered`, which the model does not see.
 fn given_in(entries: &[Entry]) -> Vec<(Given, &Message)> {
     let mut given: Vec<(Given, &Message)> = Vec::new();
     for (what, message) in entries.iter().filter_map(|(_, gives, m)| gives.zip(m.as_ref())) {
@@ -469,6 +484,54 @@ mod tests {
             [(Uuid::from(review), "alice".to_string())],
             "not the one taken back; the one taken back in the part kept does not stand for it"
         );
+    }
+
+    /// What a turn given up as `Lowered` gave is hidden from the model as that turn's messages
+    /// are: in the part kept, it does not stand for a gift in the part replaced; in the part
+    /// replaced, it is not given again.
+    #[test]
+    fn a_gift_of_a_turn_given_up_as_lowered_is_neither_still_there_nor_given_again() {
+        let skill = WorkspaceId::new();
+        let lowered = TurnId::new();
+        let gift = |turn| {
+            let message = message("[Skill]", MessageRole::System, turn, Classification::PUBLIC);
+            let source = KnowledgeSource::entity::<Workspace>(skill, None);
+            (message, Some(GivenSource::Knowledge(source)))
+        };
+        let said = |text| message(text, MessageRole::User, None, Classification::PUBLIC);
+        let mut transcript = Transcript::default();
+        let (first, source) = gift(None);
+        transcript.give(first, source);
+        transcript.push(said("u1"));
+        let (hidden, source) = gift(Some(lowered));
+        transcript.give(hidden, source);
+        let reason = GivenUpReason::Lowered { channel: Classification::PUBLIC };
+        transcript.record(TranscriptEntry::TurnGivenUp {
+            turn_id: lowered,
+            reason,
+            at: Utc::now(),
+        });
+        transcript.push(said("u2"));
+
+        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 30, 40], 35, TurnId::new()).expect("cut");
+        assert_eq!(cut.keep_from(), Some(transcript.entries().nth(1).unwrap().digest), "before u1");
+        let wanted: Vec<_> = cut.wanted().iter().map(|((_, id), _)| *id).collect();
+        assert_eq!(wanted, [Uuid::from(skill)], "given again");
+
+        let mut transcript = Transcript::default();
+        let (hidden, source) = gift(Some(lowered));
+        transcript.give(hidden, source);
+        let reason = GivenUpReason::Lowered { channel: Classification::PUBLIC };
+        transcript.record(TranscriptEntry::TurnGivenUp {
+            turn_id: lowered,
+            reason,
+            at: Utc::now(),
+        });
+        transcript.push(said("u1"));
+        transcript.push(said("u2"));
+        let cut = Cut::of(&transcript, &[0, 10, 10, 20, 30], 15, TurnId::new()).expect("cut");
+        assert_eq!(cut.keep_from(), Some(transcript.entries().nth(3).unwrap().digest), "before u2");
+        assert!(cut.wanted().is_empty(), "in the part replaced, nor is it given again");
     }
 
     #[test]
