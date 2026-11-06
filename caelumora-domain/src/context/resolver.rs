@@ -298,7 +298,7 @@ impl<'a> ContextResolver<'a> {
         for (node, message) in as_they_stand(self.transcript.entries()) {
             let message = match message {
                 Some(message) => {
-                    as_given(profile, &texts, &node.entry, message, agent, false, time_zone)?
+                    framed(profile, &texts, &node.entry, message, agent, false, time_zone)?
                 }
                 None => match participant_notice(
                     &texts,
@@ -307,7 +307,7 @@ impl<'a> ContextResolver<'a> {
                     agent,
                     profile.sender_style,
                 )? {
-                    Some(notice) => profile.given(notice, agent, false, time_zone),
+                    Some(notice) => profile.as_said(notice, agent, false, time_zone),
                     None => continue,
                 },
             };
@@ -377,7 +377,7 @@ impl<'a> ContextResolver<'a> {
             // placed after any of them.
             if let Some(message) = message {
                 given.push(ContextItem::Conversation {
-                    message: as_given(
+                    message: framed(
                         profile,
                         &texts,
                         &node.entry,
@@ -390,7 +390,7 @@ impl<'a> ContextResolver<'a> {
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
                 given.push(ContextItem::Conversation {
-                    message: profile.given(
+                    message: profile.as_said(
                         given_up_notice(&texts, *turn_id, reason, *at)?,
                         agent,
                         false,
@@ -402,7 +402,7 @@ impl<'a> ContextResolver<'a> {
                 participant_notice(&texts, &node.entry, &node.digest, agent, profile.sender_style)?
             {
                 given.push(ContextItem::Conversation {
-                    message: profile.given(notice, agent, false, time_zone),
+                    message: profile.as_said(notice, agent, false, time_zone),
                 });
             }
             let Some(parts) = placed_at(PromptAt::After(node.digest)) else { return Ok(None) };
@@ -421,11 +421,12 @@ impl<'a> ContextResolver<'a> {
 
 /// `message`, which `entry` records, as `profile` gives it to the model of `agent` in `time_zone`,
 /// `in_turn` if the turn under way produced it: what was given to read as such
-/// (`ModelProfile::given_to_read`, worded by `texts`, issue 539), what was said framed as said.
+/// (`ModelProfile::given_to_read`, worded by `texts`, issue 539), what was said as said
+/// (`ModelProfile::as_said`).
 ///
 /// # Errors
 /// `PromptError` if a text cannot be had.
-fn as_given(
+fn framed(
     profile: &ModelProfile,
     texts: &PromptTexts,
     entry: &TranscriptEntry,
@@ -436,7 +437,7 @@ fn as_given(
 ) -> Result<Message, PromptError> {
     match entry {
         TranscriptEntry::Given { .. } => profile.given_to_read(message, agent, in_turn, texts),
-        _ => Ok(profile.given(message, agent, in_turn, time_zone)),
+        _ => Ok(profile.as_said(message, agent, in_turn, time_zone)),
     }
 }
 

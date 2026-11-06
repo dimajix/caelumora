@@ -98,3 +98,7 @@ Decided with the maintainer, in steps of their own:
   Left open: an external agent is handed a gift as `Said` with the giver as its `sender`, which A2A
   ignores; a protocol that carries the sender would show it as the giver's message, to be decided
   when there is one.
+- **2026-11-06** — Decided with the maintainer and done, as a step of its own: `ModelProfile::given`
+  is `as_said`, beside `given_to_read`, and the resolver's dispatch between them `framed`. *Given*
+  keeps the meaning issue [398](398-given-means-four-things.md) found for it - given to the agent
+  or its model -; the two methods name which messages they frame.

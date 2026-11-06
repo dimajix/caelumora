@@ -108,7 +108,7 @@ impl ModelProfile {
     /// `message`, said or heard, as the model of `agent` is given it - what was given to it to
     /// read is given by `given_to_read` -; `in_turn` says whether the turn under way produced the
     /// message, `time_zone` is the one its time is written in.
-    pub fn given(
+    pub fn as_said(
         &self,
         message: Message,
         agent: ActorId,
@@ -121,10 +121,10 @@ impl ModelProfile {
 
     /// `message`, given to `agent` to read (`TranscriptEntry::Given`, issue 539) - a skill, a
     /// summary, a prompt part -, as its model is given it, `in_turn` if the turn under way was
-    /// given it: its reasoning and notes as for a message said (`given`), but a system message - a
-    /// user message where the model keeps none there (`place_system_messages`) -, never marked as
-    /// said by anyone, its title in brackets the mark of what is given; worded by `texts` as given
-    /// by its sender (`kernel.given_by`) if another participant, a user or agent, gave it.
+    /// given it: its reasoning and notes as for a message said (`as_said`), but a system message -
+    /// a user message where the model keeps none there (`place_system_messages`) -, never marked
+    /// as said by anyone, its title in brackets the mark of what is given; worded by `texts` as
+    /// given by its sender (`kernel.given_by`) if another participant, a user or agent, gave it.
     ///
     /// # Errors
     /// `PromptError` if the text cannot be had.
@@ -448,7 +448,7 @@ mod tests {
             ..text("look")
         };
         let given = |profile: ModelProfile, message: Message| {
-            profile.given(message, agent, false, Default::default()).content.unwrap_or_default()
+            profile.as_said(message, agent, false, Default::default()).content.unwrap_or_default()
         };
 
         let xml = ModelProfile {
@@ -493,7 +493,7 @@ mod tests {
             ..text("")
         };
         let result = |profile: ModelProfile| {
-            profile.given(drew.clone(), agent, false, Default::default()).tool_results[0]
+            profile.as_said(drew.clone(), agent, false, Default::default()).tool_results[0]
                 .content
                 .clone()
         };
@@ -505,7 +505,7 @@ mod tests {
         assert!(result(xml).ends_with("shown=\"yes\"/>"), "{}", result(xml));
         let mut silent = drew.clone();
         silent.tool_results[0].content.clear();
-        let given = blind.given(silent, agent, false, Default::default());
+        let given = blind.as_said(silent, agent, false, Default::default());
         assert!(given.tool_results[0].content.starts_with("[attachment a3: "), "the note alone");
     }
 
@@ -522,7 +522,7 @@ mod tests {
         let alice = ActorId::User(UserId::new());
         let given = |sender_format, sender_style, message| {
             ModelProfile { sender_format, sender_style, ..ModelProfile::default() }
-                .given(message, agent, false, Default::default())
+                .as_said(message, agent, false, Default::default())
                 .content
                 .unwrap_or_default()
         };
@@ -591,7 +591,7 @@ mod tests {
             ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
         assert_eq!(
             profile
-                .given(
+                .as_said(
                     said(alice, "Alice", MessageRole::User, "hi"),
                     agent,
                     false,
@@ -689,7 +689,7 @@ mod tests {
         let berlin = TimeZone::new("Europe/Berlin").unwrap();
         let given = |sender_format, message| {
             ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }
-                .given(message, agent, false, berlin)
+                .as_said(message, agent, false, berlin)
                 .content
                 .unwrap_or_default()
         };
@@ -715,7 +715,7 @@ mod tests {
         );
         let without = ModelProfile { sender_format: SenderFormat::Xml, ..ModelProfile::default() };
         assert_eq!(
-            without.given(said(alice, "hi"), agent, false, berlin).content.as_deref(),
+            without.as_said(said(alice, "hi"), agent, false, berlin).content.as_deref(),
             Some("<message from=\"@alice\">hi</message>"),
             "without the switch"
         );

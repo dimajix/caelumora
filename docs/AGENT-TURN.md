@@ -541,10 +541,10 @@ messages too -, before the sender is marked: a marker in code, as the sender's i
 the form of the sender's. With `xml` `<attachment ref="a3" name="report.pdf" type="application/pdf"
 size="2.3 MB" shown="no"/>`, else `[attachment a3: report.pdf, application/pdf, 2.3 MB, not shown]`.
 A message of attachments alone has its note as its text. Every reader of a message for a model
-that frames it passes the profile (`ModelProfile::given`): the turn's context, the decision policy,
-an external agent's remote agent. `read_history`, which gives another channel's messages as data,
-names each message's attachments there - name, type, size - without a number: they are none of
-the agent's transcript.
+that frames it passes the profile (`ModelProfile::as_said`): the turn's context, the decision
+policy, an external agent's remote agent. `read_history`, which gives another channel's messages as
+data, names each message's attachments there - name, type, size - without a number: they are none
+of the agent's transcript.
 
 *   **The number** (`a3`) is how the model names an attachment; each agent numbers the attachments
     as they enter its transcript, so that the same image may be `a3` to one agent and `a1` to
