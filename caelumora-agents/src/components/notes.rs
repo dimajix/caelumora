@@ -274,14 +274,11 @@ impl NotesComponent {
         let here = turn.situation().channel_id();
         let mut listed = Vec::new();
         let mut read = Vec::new();
+        let mut knowledge = Vec::new();
         for channel in channels {
             let mut notes = Vec::new();
             for agent_notes in channel.notes().await? {
-                if let Some(reference) =
-                    notes_ref(channel.id(), channel.session().id(), &agent_notes)
-                {
-                    turn.record_knowledge(reference);
-                }
+                knowledge.extend(notes_ref(channel.id(), channel.session().id(), &agent_notes));
                 for note in agent_notes.notes {
                     notes.push(listed_note(&agent_notes.name, &note, channel.id() == here));
                     read.push(note.classification);
@@ -290,7 +287,11 @@ impl NotesComponent {
             listed.push(serde_json::json!({ "channel": channel.name(), "notes": notes }));
         }
         let value = serde_json::json!({ "channels": listed });
-        Ok(ToolOutput { classification: Classification::join_all(&read), ..value.into() })
+        Ok(ToolOutput {
+            classification: Classification::join_all(&read),
+            knowledge,
+            ..value.into()
+        })
     }
 }
 
@@ -431,6 +432,7 @@ mod tests {
     use caelumora_kernel::session::testing::detached_participant_in;
     use caelumora_kernel::testing::Discard;
     use caelumora_kernel::testing::TestKernel;
+    use caelumora_kernel::testing::World;
     use caelumora_security::OwnershipPolicy;
     use chrono::Utc;
     use std::iter;
@@ -813,5 +815,32 @@ mod tests {
         );
         let read = tools.iter().find(|t| t.name == READ_NOTES_TOOL_NAME).unwrap();
         assert_eq!(read.presentation, NOTE_LIST_PRESENTATION);
+    }
+
+    /// Issue 538: what `read_notes` read it gives with its output, for the executor to record:
+    /// the notes of each agent of each channel it read, by that channel and its session.
+    #[tokio::test]
+    async fn what_it_read_is_given_with_its_output_by_the_channel_read() {
+        let world = testing::world().await;
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let main = &session.channels()[0];
+        let tools =
+            NotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts()).unwrap();
+        let mut state = AgentChannelState::default();
+        let mut turn = testing::turn(&session, helper, world.alice, &mut state);
+
+        let read = tools
+            .execute(READ_NOTES_TOOL_NAME, &serde_json::json!({}), None, &mut turn)
+            .await
+            .unwrap();
+        assert!(
+            matches!(read.knowledge.as_slice(), [k] if k.channel == main.id() && k.session == session.id() && k.source == KnowledgeSource::Notes { agent: helper, digest: None }),
+            "the helper's notes of main, none yet: {:?}",
+            read.knowledge
+        );
+        drop(turn);
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

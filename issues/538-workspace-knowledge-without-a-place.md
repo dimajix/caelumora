@@ -98,3 +98,13 @@ its own.
   digest -, so that a listing and a search of different directories are two pieces of knowledge
   now. What an agent saw shows the place (`KnowledgeRefResponse::place`, the web UI's context
   panel).
+- **2026-11-06** — Step 2 done: a tool gives what it read with its output (`ToolOutput::knowledge`),
+  which the `ToolExecutor` records with the turn and keeps on the result - where the result goes
+  to the model, not where it is withheld, whose knowledge a tool used to record all the same. The
+  result keeps the whole `KnowledgeRef`, not its source alone as planned: `read_history` and
+  `read_notes` read other channels, which the source does not name. It is never given to the
+  model nor published (`Message::published`, `names_only`): whoever may read what the agent saw
+  reads it. The file tools, `read_history` and `read_notes` record nothing themselves any more,
+  and `Turn::record_knowledge` is the crate's. `write_file` and `replace_in_file` give what they
+  wrote, by its place and the digest of what they wrote; a replacement no longer gives the file as
+  it read it.

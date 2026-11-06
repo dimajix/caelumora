@@ -218,8 +218,9 @@ impl Message {
     /// out, a call whose arguments are has them set to `null`, a result
     /// that is is emptied - with the record of the answers to its
     /// questions and what it gave and showed its model - and such reasoning
-    /// is dropped, and so is what it was produced from. `None` if nothing is
-    /// left to show.
+    /// is dropped, and so is what it was produced from and what its tools
+    /// read or wrote (`ToolCallResult::knowledge`, issue 538), which whoever
+    /// may read what the agent saw reads. `None` if nothing is left to show.
     pub fn published(&self) -> Option<Message> {
         let mut message = Message { context_transcript: None, context_frame: None, ..self.clone() };
         if !message.reasoning_visibility.is_channel() {
@@ -233,6 +234,7 @@ impl Message {
         }
         message.tool_results.retain(|r| r.visibility.call.is_channel());
         for result in &mut message.tool_results {
+            result.knowledge.clear();
             if !result.visibility.result.is_channel() {
                 result.content.clear();
                 result.answers = None;
@@ -249,10 +251,10 @@ impl Message {
     }
 
     /// What a model is given of the message where what it said may not be given (issue 258): which
-    /// tools it called and how they ended, without its content, reasoning, attachments, arguments
-    /// or what the calls returned, classified `classification`. For a turn given up because its
-    /// channel was lowered below it (issue 141), whose content its owner never released. `None` if
-    /// nothing is left: no call, no result.
+    /// tools it called and how they ended, without its content, reasoning, attachments, arguments,
+    /// what the calls returned or what they read, classified `classification`. For a turn given up
+    /// because its channel was lowered below it (issue 141), whose content its owner never
+    /// released. `None` if nothing is left: no call, no result.
     pub fn names_only(&self, classification: &Classification) -> Option<Message> {
         if self.tool_calls.is_empty() && self.tool_results.is_empty() {
             return None;
@@ -274,6 +276,7 @@ impl Message {
             result.answers = None;
             result.media.clear();
             result.shown.clear();
+            result.knowledge.clear();
             result.classification = classification.clone();
         }
         Some(message)
@@ -525,9 +528,12 @@ pub mod testing {
 pub(crate) mod tests {
     use super::testing::{id, make_message};
     use super::*;
+    use crate::channel::ChannelId;
     use crate::confidentiality::Confidentiality;
     use crate::content::testing::make_content_ref;
+    use crate::context::{KnowledgeRef, KnowledgeSource};
     use crate::query::meets_exactly_its_equals;
+    use crate::session::SessionId;
     use crate::tool::ToolVisibility;
     use chrono::Duration;
 
@@ -566,6 +572,7 @@ pub(crate) mod tests {
             approval: Vec::new(),
             media: Vec::new(),
             shown: Vec::new(),
+            knowledge: Vec::new(),
         }
     }
 
@@ -696,6 +703,30 @@ pub(crate) mod tests {
                 unheard.role
             );
         }
+    }
+
+    /// Issue 538: what a message's tools read or wrote is no part of what anyone else is given of
+    /// it - published or given by name only -, whoever may see its results: who may read what the
+    /// agent saw reads it.
+    #[test]
+    fn what_its_tools_read_is_neither_published_nor_given_by_name() {
+        let read = KnowledgeRef {
+            channel: ChannelId::new(),
+            session: SessionId::new(),
+            source: KnowledgeSource::History { digest: None, from: None },
+            classification: None,
+        };
+        let shown = ToolCallResult { knowledge: vec![read], ..result("1", ToolVisibility::SHOWN) };
+        let message = Message {
+            tool_calls: vec![call("1", ToolVisibility::SHOWN)],
+            tool_results: vec![shown],
+            ..make_message(MessageId::new())
+        };
+        let published = message.published().expect("a call and its result the channel sees");
+        assert!(published.tool_results[0].knowledge.is_empty(), "not published");
+        let named = message.names_only(&Classification::PUBLIC).expect("its call is left");
+        assert!(named.tool_results[0].knowledge.is_empty(), "nor given by name");
+        assert!(!message.tool_results[0].knowledge.is_empty(), "the message keeps it");
     }
 
     #[test]

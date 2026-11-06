@@ -155,16 +155,18 @@ channels.
 
 ## Recording what was read
 
-Every read is recorded as a `KnowledgeRef`: the channel and its session, so that knowledge from
-another session can be told, and what was read there (`KnowledgeSource`) with its digest - an
-agent's notes or the agent's own private notes in the channel, the channel's history up to where and
-from where, the agent's memory once per channel its recalled entries were written in, an entity - a
-skill loaded into the turn as a whole, a file or directory of the session's workspace by its place
-within it, its path.
+Every read is recorded as a `KnowledgeRef` - and what a tool wrote, which the agent knows as it
+wrote it: the channel and its session, so that knowledge from another session can be told, and what
+was read there (`KnowledgeSource`) with its digest - an agent's notes or the agent's own private
+notes in the channel, the channel's history up to where and from where, the agent's memory once per
+channel its recalled entries were written in, an entity - a skill loaded into the turn as a whole, a
+file or directory of the session's workspace by its place within it, its path.
 
 A read is recorded with the turn (`Turn::record_knowledge`) and goes into the `ContextRef` of every
 message produced after it. A `PromptProvider` returns the knowledge its part contains with the part,
-so prompt parts record their reads as well. What was read is shown with the context of a message
+so prompt parts record their reads as well; a tool returns what it read with its output, which the
+`ToolExecutor` records and keeps on the result as well, so that the transcript holds it (see
+[TOOLS.md](TOOLS.md)). What was read is shown with the context of a message
 (see [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)). A turn that read private notes or
 memory has seen private knowledge, which makes its reasoning private (see
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).

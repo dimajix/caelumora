@@ -4,16 +4,17 @@
 //! are relative to the workspace's top directory and made `WorkspacePath`s before anything is
 //! asked.
 //!
-//! - `list_files`, `read_file` and `grep_files` only read; what they read is recorded as the
-//!   turn's knowledge by its path within the workspace (`KnowledgeSource::within`, issue 538), a
-//!   file's content with its digest. `publish_file` reads too: it offers a file for download as a
-//!   link to it as it is now, with its digest (issue 273), to those who may use the workspace in
-//!   the channel - which gives nothing away, so it never needs approval (issue 275).
-//! - `write_file`, `replace_in_file`, `move_file` and `delete_file` change;
-//!   the approver reads the change whole, and a rule derived from an
-//!   approved one covers the file, whatever is written - for a move, that
-//!   move (`matcher`). `move_file` renames as well (issue 267): renaming is
-//!   moving within a directory.
+//! - `list_files`, `read_file` and `grep_files` only read; what they read they give with their
+//!   output as knowledge (`ToolOutput::knowledge`, issue 538), by its path within the workspace
+//!   (`KnowledgeSource::within`), a file's content with its digest, for the executor to record.
+//!   `publish_file` reads too: it offers a file for download as a link to it as it is now, with its
+//!   digest (issue 273), to those who may use the workspace in the channel - which gives nothing
+//!   away, so it never needs approval (issue 275).
+//! - `write_file`, `replace_in_file`, `move_file` and `delete_file` change; the approver reads the
+//!   change whole, and a rule derived from an approved one covers the file, whatever is written -
+//!   for a move, that move (`matcher`). `move_file` renames as well (issue 267): renaming is moving
+//!   within a directory. `write_file` and `replace_in_file` give what they wrote as knowledge, by
+//!   its path and the digest of what they wrote: what the agent knows of the file now.
 //!
 //! A file is read whole, up to `READ_LIMIT`, and given as text: one that is
 //! no UTF-8 is refused. A replacement reads, replaces and writes: what
@@ -22,7 +23,7 @@
 use super::tool;
 use crate::component::{WorkspaceComponent, WorkspaceParams};
 use bytes::Bytes;
-use caelumora_agents::tool::{arguments, page_of, ToolError, ToolResult};
+use caelumora_agents::tool::{arguments, page_of, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::terminal::{
     ByteStream, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
@@ -374,9 +375,16 @@ async fn text(terminal: &dyn TerminalReader, at: &WorkspacePath) -> ToolResult<(
     Ok((text, digest))
 }
 
-async fn write(terminal: &dyn Terminal, at: &WorkspacePath, content: String) -> ToolResult<u64> {
+/// Writes `content` to the file `at`: how many bytes were written, and the digest of what was.
+async fn write(
+    terminal: &dyn Terminal,
+    at: &WorkspacePath,
+    content: String,
+) -> ToolResult<(u64, Digest)> {
+    let digest = digest::content(content.as_bytes());
     let stream: ByteStream = Box::pin(stream::iter([Ok(Bytes::from(content))]));
-    terminal.write(at, stream).await.map_err(ToolError::from)
+    let written = terminal.write(at, stream).await.map_err(ToolError::from)?;
+    Ok((written, digest))
 }
 
 /// The digest of the file `at`, read in parts, at most the largest file a workspace takes.
@@ -477,50 +485,50 @@ async fn search(
     )
 }
 
-/// Records in `turn` that the work read `at` in the files of `workspace` - its id and its
-/// classification - (issue 538), as of `digest` where a file was read whole.
+/// `value`, given with the knowledge that the work in `turn` read `at` in the files of
+/// `workspace` - its id and its classification - (issue 538), as of `digest` where a file was read
+/// or written whole: what it knows of it now.
 fn known(
-    turn: &mut Turn<'_>,
+    value: Value,
+    turn: &Turn<'_>,
     (id, classification): (WorkspaceId, &Classification),
     at: &WorkspacePath,
     digest: Option<Digest>,
-) {
-    turn.record_knowledge(KnowledgeRef {
+) -> ToolOutput {
+    let knowledge = KnowledgeRef {
         channel: turn.situation().channel_id(),
         session: turn.situation().session_id(),
         source: KnowledgeSource::within::<Workspace>(id, at.to_string(), digest),
         classification: Some(classification.clone()),
-    })
+    };
+    ToolOutput { knowledge: vec![knowledge], ..value.into() }
 }
 
 /// Runs the file tool `name` of `component` that only reads (`read_only`) with `params` on
 /// `terminal`, the files of `workspace` - its id and its classification -, as `component` is
-/// configured, with the texts its results give, recording in `turn` what was read.
+/// configured, with the texts its results give, in `turn`: its value, with what it read.
 pub(super) async fn read(
     component: &WorkspaceComponent,
     name: &str,
     params: &Value,
     terminal: &dyn TerminalReader,
     workspace: (WorkspaceId, &Classification),
-    turn: &mut Turn<'_>,
-) -> ToolResult<Value> {
+    turn: &Turn<'_>,
+) -> ToolResult<ToolOutput> {
     let prompts = &component.prompts;
-    let read = |turn: &mut Turn<'_>, at: &WorkspacePath, digest| known(turn, workspace, at, digest);
+    let read = |value, at: &WorkspacePath, digest| known(value, turn, workspace, at, digest);
     match name {
         LIST_FILES => {
             let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
             let entries = terminal.list(&at).await?;
-            read(turn, &at, None);
             let listed: Vec<Value> = entries.iter().take(MAX_ENTRIES).map(entry).collect();
-            Ok(
-                json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES }),
-            )
+            let value = json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES });
+            Ok(read(value, &at, None))
         }
         READ_FILE => {
             let Read { path: at, start_line, line_count } = arguments(params)?;
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
-            read(turn, &at, Some(digest));
             let mut result = page_of(
                 &text,
                 &format!("'{at}'"),
@@ -530,7 +538,7 @@ pub(super) async fn read(
             )?
             .value(prompts);
             result["path"] = json!(at.to_string());
-            Ok(result)
+            Ok(read(result, &at, Some(digest)))
         }
         GREP_FILES => {
             let Grep { pattern, path: at, max_matches } = arguments(params)?;
@@ -555,8 +563,7 @@ pub(super) async fn read(
                 max_matches.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES),
             )
             .await?;
-            read(turn, &at, None);
-            Ok(found)
+            Ok(read(found, &at, None))
         }
         PUBLISH_FILE => {
             let Publish { path: at, name, description } = arguments(params)?;
@@ -578,35 +585,35 @@ pub(super) async fn read(
                 return Err(ToolError::InvalidParameter(format!("'{name}' is no name to offer a file under: at most {MAX_NAME_CHARS} characters, no slashes")));
             }
             let (size, digest) = digest(terminal, &at).await?;
-            read(turn, &at, Some(digest));
             let mut result = json!({ "workspace": workspace.0, "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
             if let Some(description) =
                 description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty())
             {
                 result["description"] = json!(description);
             }
-            Ok(result)
+            Ok(read(result, &at, Some(digest)))
         }
         _ => Err(ToolError::UnknownTool(name.to_string())),
     }
 }
 
 /// Runs the file tool `name` that changes the files with `params` on `terminal`, the files of
-/// `workspace` - its id and its classification -, recording in `turn` what was read.
+/// `workspace` - its id and its classification -, in `turn`: its value, with what it knows of a
+/// file it wrote, its content as written (issue 538).
 pub(super) async fn change(
     name: &str,
     params: &Value,
     terminal: &dyn Terminal,
     workspace: (WorkspaceId, &Classification),
-    turn: &mut Turn<'_>,
-) -> ToolResult<Value> {
-    let read = |turn: &mut Turn<'_>, at: &WorkspacePath, digest| known(turn, workspace, at, digest);
+    turn: &Turn<'_>,
+) -> ToolResult<ToolOutput> {
+    let wrote = |value, at: &WorkspacePath, digest| known(value, turn, workspace, at, Some(digest));
     match name {
         WRITE_FILE => {
             let Write { path: at, content } = arguments(params)?;
             let at = path(&at)?;
-            let written = write(terminal, &at, content).await?;
-            Ok(json!({ "path": at.to_string(), "bytes": written }))
+            let (written, digest) = write(terminal, &at, content).await?;
+            Ok(wrote(json!({ "path": at.to_string(), "bytes": written }), &at, digest))
         }
         REPLACE_IN_FILE => {
             let Replace { path: at, old_text, new_text, replace_all } = arguments(params)?;
@@ -616,16 +623,15 @@ pub(super) async fn change(
                 ));
             }
             let at = path(&at)?;
-            let (text, digest) = text(terminal, &at).await?;
-            read(turn, &at, Some(digest));
+            let (text, _) = text(terminal, &at).await?;
             let found = text.matches(old_text.as_str()).count();
             let replaced = match (found, replace_all) {
                 (0, _) => return Err(ToolError::InvalidParameter(format!("'old_text' does not occur in '{at}'"))),
                 (1, _) | (_, true) => text.replace(old_text.as_str(), &new_text),
                 (many, false) => return Err(ToolError::InvalidParameter(format!("'old_text' occurs {many} times in '{at}': give more of what surrounds it, or set replace_all"))),
             };
-            write(terminal, &at, replaced).await?;
-            Ok(json!({ "path": at.to_string(), "replacements": found }))
+            let (_, digest) = write(terminal, &at, replaced).await?;
+            Ok(wrote(json!({ "path": at.to_string(), "replacements": found }), &at, digest))
         }
         MOVE_FILE => {
             let Move { from, to } = arguments(params)?;
@@ -638,9 +644,7 @@ pub(super) async fn change(
                 }
                 e => ToolError::from(e),
             })?;
-            Ok(
-                json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }),
-            )
+            Ok(json!({ "from": from.to_string(), "to": to.to_string(), "renamed": renames(&from, &to) }).into())
         }
         DELETE_FILE => {
             let at = path(&arguments::<Delete>(params)?.path)?;
@@ -650,7 +654,7 @@ pub(super) async fn change(
                 ),
                 e => ToolError::from(e),
             })?;
-            Ok(json!({ "path": at.to_string(), "deleted": true }))
+            Ok(json!({ "path": at.to_string(), "deleted": true }).into())
         }
         _ => Err(ToolError::UnknownTool(name.to_string())),
     }
@@ -684,6 +688,8 @@ mod tests {
         let mut turn = workspace_turn(&world, &mut state);
         let tool = component(json!({}));
         let run = |name: &'static str, params: Value| (name, params);
+        // What each call that succeeded gives with its value, the executor records (issue 538).
+        let mut known: Vec<KnowledgeRef> = Vec::new();
 
         let calls = [
             run(
@@ -695,17 +701,17 @@ mod tests {
         for (name, params) in calls {
             let written = tool.execute(name, &params, None, &mut turn).await.unwrap();
             assert_eq!(written.classification.as_ref(), Some(&world.workspace.classification));
+            known.extend(written.knowledge);
         }
         assert_eq!(
             fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(),
             "# Plan\nfirst step\nsecond step\n"
         );
 
-        let listed = tool
-            .execute(LIST_FILES, &json!({ "path": "docs" }), None, &mut turn)
-            .await
-            .unwrap()
-            .value;
+        let listed =
+            tool.execute(LIST_FILES, &json!({ "path": "docs" }), None, &mut turn).await.unwrap();
+        known.extend(listed.knowledge);
+        let listed = listed.value;
         let names: Vec<&str> = listed["entries"]
             .as_array()
             .unwrap()
@@ -722,8 +728,9 @@ mod tests {
                 &mut turn,
             )
             .await
-            .unwrap()
-            .value;
+            .unwrap();
+        known.extend(read.knowledge);
+        let read = read.value;
         assert_eq!(
             (read["content"].as_str(), read["end_line"].as_u64(), read["total_lines"].as_u64()),
             (Some("first step\n"), Some(2), Some(3))
@@ -732,8 +739,9 @@ mod tests {
         let found = tool
             .execute(GREP_FILES, &json!({ "pattern": "step$" }), None, &mut turn)
             .await
-            .unwrap()
-            .value;
+            .unwrap();
+        known.extend(found.knowledge);
+        let found = found.value;
         let hits: Vec<(String, u64)> = found["matches"]
             .as_array()
             .unwrap()
@@ -762,9 +770,11 @@ mod tests {
             matches!(&ambiguous, Err(ToolError::InvalidParameter(why)) if why.contains("occurs 2 times")),
             "{ambiguous:?}"
         );
-        let replaced = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "first step", "new_text": "first move" }), None, &mut turn).await.unwrap().value;
-        assert_eq!(replaced["replacements"], 1);
-        tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "stride", "replace_all": true }), None, &mut turn).await.unwrap();
+        let replaced = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "first step", "new_text": "first move" }), None, &mut turn).await.unwrap();
+        assert_eq!(replaced.value["replacements"], 1);
+        known.extend(replaced.knowledge);
+        let replaced = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "stride", "replace_all": true }), None, &mut turn).await.unwrap();
+        known.extend(replaced.knowledge);
         assert_eq!(
             fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(),
             "# Plan\nfirst move\nsecond stride\n"
@@ -794,7 +804,8 @@ mod tests {
         assert!(matches!(outside, Err(ToolError::InvalidParameter(_))), "the model's to correct");
 
         drop(turn);
-        let read: Vec<(Option<String>, Option<Digest>)> = knowledge(&state)
+        assert!(knowledge(&state).is_empty(), "recorded by the executor, not by the tool");
+        let read: Vec<(Option<String>, Option<Digest>)> = known
             .into_iter()
             .map(|k| match k.source.about::<Workspace>() {
                 Some((workspace, digest)) => {
@@ -811,18 +822,22 @@ mod tests {
                 None => panic!("{:?}", k.source),
             })
             .collect();
-        // Each by its place (issue 538): the listing of `docs`, the file as written, the search of
-        // the whole workspace, the file after the first replacement and after the second.
-        let read: Vec<(Option<&str>, bool)> =
-            read.iter().map(|(place, digest)| (place.as_deref(), digest.is_some())).collect();
+        // Each by its place (issue 538): the two files as written, the listing of `docs`, the
+        // file as read, the search of the whole workspace, the file after the first replacement
+        // and after the second - as written, as read, as replaced.
+        let plan = |text: &str| Some(digest::content(text.as_bytes()));
+        let read: Vec<(Option<&str>, Option<Digest>)> =
+            read.iter().map(|(place, digest)| (place.as_deref(), *digest)).collect();
         assert_eq!(
             read,
             [
-                (Some("docs"), false),
-                (Some("docs/plan.md"), true),
-                (Some(""), false),
-                (Some("docs/plan.md"), true),
-                (Some("docs/plan.md"), true)
+                (Some("docs/plan.md"), plan("# Plan\nfirst step\nsecond step\n")),
+                (Some("docs/notes.txt"), plan("a side step\n")),
+                (Some("docs"), None),
+                (Some("docs/plan.md"), plan("# Plan\nfirst step\nsecond step\n")),
+                (Some(""), None),
+                (Some("docs/plan.md"), plan("# Plan\nfirst move\nsecond step\n")),
+                (Some("docs/plan.md"), plan("# Plan\nfirst move\nsecond stride\n"))
             ]
         );
     }
@@ -971,6 +986,7 @@ mod tests {
         fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
 
         let offered = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": " Report Q3.csv ", "description": "The figures" }), None, &mut turn).await.unwrap();
+        let read: Vec<_> = offered.knowledge.iter().map(|k| k.source.clone()).collect();
         let value = offered.value;
         assert_eq!(
             (
@@ -1015,11 +1031,11 @@ mod tests {
         assert!(world.dir().join("out/report.csv").is_file(), "nothing changed");
 
         drop(turn);
-        let read: Vec<_> = knowledge(&state).into_iter().map(|k| k.source).collect();
         assert!(
             matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d == Some(digest)) && source.place() == Some("out/report.csv")),
-            "what was read, once, by its place: {read:?}"
+            "what was read, by its place: {read:?}"
         );
+        assert!(knowledge(&state).is_empty(), "recorded by the executor, not by the tool");
     }
 
     #[tokio::test]

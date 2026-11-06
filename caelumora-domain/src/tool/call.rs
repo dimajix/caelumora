@@ -7,6 +7,7 @@ use crate::actor::ActorEvent;
 use crate::approval::{ApprovalDecision, ApprovalId, ToolMatcher};
 use crate::confidentiality::Classification;
 use crate::content::ContentRef;
+use crate::context::KnowledgeRef;
 use crate::question::{Answers, QuestionId, Questions};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -118,6 +119,13 @@ pub struct ToolCallResult {
     /// content kept again (issue 282); published as `content` is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shown: Vec<ContentRef>,
+    /// What the tool read or wrote for the result its model was given (issue 538) - a file of a
+    /// workspace by its place, the history of a channel of a session -, so that the transcript
+    /// holds what the agent knows, as a `TranscriptEntry::Given` does; recorded with the turn as
+    /// well. Never given to the model, nor published (`Message::published`): who may read what the
+    /// agent saw reads it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub knowledge: Vec<KnowledgeRef>,
 }
 
 impl ToolCallResult {
@@ -143,18 +151,20 @@ impl ToolCallResult {
             approval: Vec::new(),
             media: Vec::new(),
             shown: Vec::new(),
+            knowledge: Vec::new(),
         }
     }
 
     /// The result as a model is given it in words: without the record of the answers to the call's
-    /// questions and of who approved it, which are not the model's, and without what it gave and
-    /// showed, which a model is given as what it is, not as text.
+    /// questions, of who approved it and of what the tool read, which are not the model's, and
+    /// without what it gave and showed, which a model is given as what it is, not as text.
     pub fn for_the_model(&self) -> ToolCallResult {
         ToolCallResult {
             answers: None,
             approval: Vec::new(),
             media: Vec::new(),
             shown: Vec::new(),
+            knowledge: Vec::new(),
             ..self.clone()
         }
     }
@@ -185,6 +195,10 @@ pub struct ToolCallState {
 /// Where a tool call stands in its life - not how it ended, which its
 /// result says (`ToolResultStatus`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "kept once per call of a step; boxing the result would only cost an allocation"
+)]
 pub enum ToolCallStatus {
     /// A person decides whether it may run (issue 13). They are shown
     /// `description` - a decision of their own if `explicit`, which no rule

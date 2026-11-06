@@ -400,6 +400,8 @@ it whole (issue 417). What anyone else is given of it is redacted by one rule
 *   a result that is the owner's is emptied, the record of the answers to its questions and what
     the tool gave and showed its model included;
 *   reasoning that is the owner's is dropped;
+*   what its tools read or wrote (`ToolCallResult::knowledge`) is dropped whatever is shown of them,
+    as what the message was produced from is: whoever may read what the agent saw reads it;
 *   of a message with nothing left, nothing is given: it is recorded as gone to nobody.
 
 The channel applies it as the event enters: the moderator decides on the published form, and that

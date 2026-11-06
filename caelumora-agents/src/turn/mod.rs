@@ -342,9 +342,10 @@ impl<'a> Turn<'a> {
         })
     }
 
-    /// Records that the turn read `reference` (issue 17): it is recorded
-    /// with every message the turn produces from now on.
-    pub fn record_knowledge(&mut self, reference: KnowledgeRef) {
+    /// Records that the turn read `reference` (issue 17): it is recorded with every message the
+    /// turn produces from now on. A tool gives what it read with its output
+    /// (`ToolOutput::knowledge`), which the `ToolExecutor` records (issue 538).
+    pub(crate) fn record_knowledge(&mut self, reference: KnowledgeRef) {
         self.current_mut().work.record_knowledge(reference);
     }
 

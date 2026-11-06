@@ -169,6 +169,12 @@ say, with the knowledge it is. It is written after the results of the step, sinc
 between the calls and their results (see
 [AGENT-TURN.md](AGENT-TURN.md#beginning-and-ending-a-turn)).
 
+What a tool read for its result - a file by its place, a channel's history, notes - it gives with
+its output (`ToolOutput::knowledge`), never records itself (issue 538). The executor records it with
+the turn and keeps it on the result (`ToolCallResult::knowledge`) where the result goes to the
+model, not where it is withheld: the transcript holds what the agent read, as an entry given holds
+what it was given, and the model is never given the record.
+
 ### Media a tool gives its model
 
 A tool may give its model files to see besides its value (`ToolOutput::media`, issue 512) - an
@@ -310,10 +316,11 @@ leaves the workspace is the model's to correct, as is a file that is not there o
 is bounded, and says where to read on. A replacement must find its text exactly once, unless every
 occurrence is to be replaced; it reads, replaces and writes, so what changed the file in between is
 overwritten. Nothing is moved over, which would be a deletion, and the workspace's top is neither
-moved nor moved over. What was read is recorded as the turn's knowledge, a file's content by its
-digest (see [MEMORY.md](MEMORY.md#recording-what-was-read)). The approver reads a change whole, and
-a rule derived from an approved change covers the file, whatever is written into it - for a move,
-both places.
+moved nor moved over. What was read is knowledge, by its path, a file's content with its digest
+(see [MEMORY.md](MEMORY.md#recording-what-was-read)); so is what `write_file` and `replace_in_file`
+wrote, by its path and the digest of what they wrote - what the agent knows of the file now, not
+what it found before a replacement. The approver reads a change whole, and a rule derived from an
+approved change covers the file, whatever is written into it - for a move, both places.
 
 `publish_file` offers a file for download at the message that calls it: a link to the file as it is
 now, with its digest, downloaded through the channel's workspace by whoever may use it there. It
