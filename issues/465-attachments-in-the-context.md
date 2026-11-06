@@ -56,3 +56,9 @@ well.
 - **2026-10-24** — Opened at the maintainer's request, moved out of issue 282, where it was the
   last question open (*The context window*): the threshold - configured, or a share of the model's
   context window - and whether images are kept to it as well.
+- **2026-11-06** — The same question for what a tool gives back, found in the comparison of Claude
+  Code's session logs that led to issue [537](537-prompt-parts-placed-anew-every-turn.md): a tool
+  result larger than `max_output_bytes` of `workspace` is cut off, where Claude Code keeps it
+  whole apart and gives the model a preview with a reference to fetch the rest
+  (`<persisted-output>`). A large result could be an attachment of the tool result, given along
+  or fetched by the same bound - to be decided with it.

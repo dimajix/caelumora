@@ -214,6 +214,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [07](07-session-deletion-audit.md) | in progress | Deletion works since `540e482`; what remains open is whether and how a deletion is recorded. |
 | [140](140-audit-log.md) | open | Acts that change who may see what - releases, participants, approvals, deletions - leave no record of who did them and when. |
 | [164](164-soft-deletion-and-former-members.md) | done | Deleting a session, channel or agent and removing a participant erase them from the store, so nothing can say later that they were there, who removed them or when. |
+| [540](540-what-an-agent-saw-worded-anew.md) | open | What an agent saw when it wrote a message is resolved with the catalogue's texts and the resolver's code as they are when it is asked, so it differs from what was sent once a template or the resolver changed, and nothing tells that it does. |
 
 ## Tools and approvals
 
@@ -404,6 +405,8 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [518](518-memory-is-reached-through-the-agents-state.md) | open | An agent's memory is part of its state, which the agent side is handed whole and changes through three calls of its `ActorRuntime`, and the agent side itself decides which entries may be recalled where, while the workspace, skills and artifacts are system services reached through a reader and a writer. |
 | [529](529-the-profile-resolves-a-transcript.md) | done | `ModelProfile::given_messages` resolves what an external agent's remote agent is given of a transcript - the messages as they stand, a notice where someone joined or left, each framed - beside `ContextResolver`, which resolves what a model is given, so that the profile depends on the transcript and the notices of a channel are made in two files. |
 | [537](537-prompt-parts-placed-anew-every-turn.md) | open | A prompt part before the turn's input is built anew in every turn and stands elsewhere in the next, so a model's prompt cache loses the whole turn before with every turn; only an external agent is told a part once and then only when it changed, and that in two ways, by its components and by its actor. |
+| [538](538-workspace-knowledge-without-a-place.md) | open | What an agent read of a workspace is recorded as the workspace and a digest, without the file, and only in the frame of the turn that read it, so a compaction cannot give a file read again, nothing tells that a file read has changed since, and a replacement overwrites what changed in between. |
+| [539](539-given-messages-framed-by-their-giver.md) | open | What is given into an agent's transcript - a skill, a compaction's summary, a prompt part - takes the role and sender its giver chooses, so the model cannot tell given context from what was said, and a skill a user loaded is given again after a compaction as the agent's own. |
 
 ## Maintenance
 
