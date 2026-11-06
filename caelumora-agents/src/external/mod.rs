@@ -25,7 +25,8 @@ pub struct Said {
     /// carry a sender itself; A2A cannot (issue 135), so `text` names them.
     pub sender: String,
     /// What they said, as the remote agent is given it: marked with the
-    /// sender as the component's profile says.
+    /// sender as the component's profile says - or, what was given to the agent
+    /// to read, worded as given (issue 539).
     pub text: String,
 }
 

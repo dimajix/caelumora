@@ -708,8 +708,9 @@ async fn with_a_skilled_agent() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, A
 /// A skill loaded by a command (issue 22) is loaded by the agent for its
 /// owner, on the word of whoever asked: bob's `/skill` loads alice's skill
 /// into her agent - `UseSkill` asked as the agent for alice, bob the
-/// initiator. Its text goes into the agent's transcript in bob's name, and
-/// the channel's history records the command, not the text.
+/// initiator. Its text goes into the agent's transcript in bob's name, as
+/// what is given to read, and the channel's history records the command, not
+/// the text.
 #[tokio::test]
 async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
     let (world, session, main, helper, mut his) = with_a_skilled_agent().await;
@@ -746,8 +747,8 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
     );
     assert_eq!(
         (given.sender_id, given.role),
-        (ActorId::User(world.bob), MessageRole::User),
-        "in his name"
+        (ActorId::User(world.bob), MessageRole::System),
+        "in his name, as what is given to read (issue 539)"
     );
     let history = world.store.state_store().get_channel_state(main.id()).await.unwrap().history;
     assert!(

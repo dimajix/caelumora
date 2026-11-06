@@ -288,16 +288,15 @@ pub fn message_reclassified(
     e.finish()
 }
 
-/// The digest of a transcript (issue 50) ending in `entry`, whose
-/// predecessor chain has the digest `previous`: a message as
-/// `message_chain`, so that every digest recorded before issue 197 names
-/// what it named - one given to read (issue 16) alike, since the model is
-/// given the same; a turn's end (issue 258) by what it says - the turn and,
-/// given up, the reason, not the time - in schemes of their own, and where a
-/// compaction's part ends (issue 387) by its place alone, a change of who
-/// takes part (issue 408) as `taking_part`; a message
-/// modified, taken back or reclassified as `message_modified`,
-/// `message_revoked` and `message_reclassified`.
+/// The digest of a transcript (issue 50) ending in `entry`, whose predecessor chain has the digest
+/// `previous`: a message as `message_chain`, so that every digest recorded before issue 197 names
+/// what it named - one given to read (issue 16) alike: the model is given it framed otherwise
+/// (issue 539), but a message's id is its own, so that no entry given to read holds a message
+/// another entry says; a turn's end (issue 258) by what it says - the turn and, given up, the
+/// reason, not the time - in schemes of their own, and where a compaction's part ends (issue 387)
+/// by its place alone, a change of who takes part (issue 408) as `taking_part`; a message
+/// modified, taken back or reclassified as `message_modified`, `message_revoked` and
+/// `message_reclassified`.
 pub fn transcript_chain(previous: Option<&Digest>, entry: &TranscriptEntry) -> Digest {
     match entry {
         TranscriptEntry::Message(message) | TranscriptEntry::Given { message, .. } => {

@@ -29,7 +29,8 @@ pub enum TranscriptEntry {
     /// not heard from another -, and what it is: knowledge - a skill loaded
     /// for it (issue 22), say -, or the part of a prompt component given
     /// where it changed (issue 537); the summary of a compaction is neither
-    /// (issue 389). Given to the model as the message is; `source` says what
+    /// (issue 389). Given to the model as what it was given to read, whoever
+    /// gave it (`ModelProfile::given_to_read`, issue 539); `source` says what
     /// it was given, so that what the agent knows can be told from the
     /// transcript - a compaction gives a skill again, and keeps a part. `source`
     /// is not covered by the digest: the model is given the message alone.

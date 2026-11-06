@@ -3,7 +3,9 @@
 //! `classification`), under the title `title` if it names one (issue 249),
 //! in the form of every part the agents write (`agents.titled` of the
 //! prompt catalogue, issue 57). It has none unless it names one: the text
-//! may carry its own.
+//! may carry its own - but given into the transcript (`position: given`)
+//! it names one, since a title in brackets is what marks what is given to
+//! read (issue 539).
 
 use crate::prompt::{
     texts_of, writing_for_the_model, ContextError, Prompt, PromptPosition, PromptProvider,
@@ -66,12 +68,19 @@ impl SystemPromptComponent {
     /// `position`, classified `classification`.
     ///
     /// # Errors
-    /// `ComponentError::InvalidConfig` if `prompt` is missing or a parameter
-    /// is not what it should be; `ComponentError::Prompt` if the form of a
-    /// titled part cannot be had.
+    /// `ComponentError::InvalidConfig` if `prompt` is missing, a parameter
+    /// is not what it should be, or it is given into the transcript without a
+    /// `title`; `ComponentError::Prompt` if the form of a titled part cannot
+    /// be had.
     fn of_params(params: &Value, prompts: &PromptTexts) -> Result<Self, ComponentError> {
         let SystemPromptParams { prompt, title, position, classification } =
             SystemPromptParams::read(params)?;
+        if position == PromptPosition::Given && title.is_none() {
+            return Err(ComponentError::InvalidConfig(
+                "`title` is required where `position` is `given`: its title marks what is given"
+                    .to_string(),
+            ));
+        }
         let prompt = match title {
             // A part that says nothing is no part.
             Some(title) if !prompt.is_empty() => prompts
@@ -139,5 +148,15 @@ mod tests {
             SystemPromptComponent::of_params(&json!({ "prompt": "x", "title": 1 }), &prompts),
             Err(ComponentError::InvalidConfig(_))
         ));
+        let given = |params: Value| SystemPromptComponent::of_params(&params, &prompts);
+        assert!(
+            matches!(
+                given(json!({ "prompt": "[Rules]\nBe brief.", "position": "given" })),
+                Err(ComponentError::InvalidConfig(_))
+            ),
+            "given into the transcript, it names its title (issue 539)"
+        );
+        let titled = given(json!({ "prompt": "Be brief.", "title": "Rules", "position": "given" }));
+        assert_eq!(titled.unwrap().prompt, "[Rules]\nBe brief.\n");
     }
 }

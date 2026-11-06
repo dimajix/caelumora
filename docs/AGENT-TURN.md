@@ -272,7 +272,8 @@ a compaction - is recorded by `Turn::give`: into the transcript as a `Given` ent
 knowledge it is, if it is knowledge - of an entity, `KnowledgeSource::Entity { kind, id, digest }`
 (issue 323) - and none for a summary (issue 389); into the history without a context, since the
 agent did not produce it. It is not published, the turn has seen it, and its digest is that of the
-message, since the model is given the same. A tool gives what it gives while it runs, but nothing
+message - framed as given to read ([what is given to read](#what-is-given-to-read)), but no other
+entry holds a message of its id. A tool gives what it gives while it runs, but nothing
 may stand between the calls of a step and their results, which the models refuse: while the calls
 run, what is given is put aside with the turn (`TurnState::after_step`) and written right after
 the step's tool message - and so is a leave noted while the turn waits for a person.
@@ -522,6 +523,17 @@ same after the session's changed. `read_history` writes the times of what it rea
 A marker is a claim like any text: a participant can write another's into their own message, and
 models believe it. Nothing with consequences may rest on whom the model believes said something.
 
+### What is given to read
+
+What the agent is given to read rather than told - a skill, a compaction's summary, a part at
+`Given` -, each a `Given` entry of its transcript, is framed by the `ContextResolver` by one rule,
+whoever gave it (`ModelProfile::given_to_read`, issue 539): as a system message where the model
+keeps one, else as a user message, never marked as said by anyone. Its mark is its title in
+brackets - `[Skill: release-notes]` -, which every text given has, and the explanation of the
+markers says so (`kernel.framing`). One another participant gave - a skill given with `/skill` -
+says who: "@alice gave you this to read:", then the text, named as senders are; the transcript
+keeps the giver as the message's sender. An external agent's remote agent is given it so too.
+
 ### Attachments
 
 A message's attachments (issue 282) are noted after its text, whoever said it - the agent's own
@@ -529,10 +541,10 @@ messages too -, before the sender is marked: a marker in code, as the sender's i
 the form of the sender's. With `xml` `<attachment ref="a3" name="report.pdf" type="application/pdf"
 size="2.3 MB" shown="no"/>`, else `[attachment a3: report.pdf, application/pdf, 2.3 MB, not shown]`.
 A message of attachments alone has its note as its text. Every reader of a message for a model
-that frames it passes the profile (`ModelProfile::given`): the turn's context, the decision policy,
-an external agent's remote agent. `read_history`, which gives another channel's messages as data,
-names each message's attachments there - name, type, size - without a number: they are none of
-the agent's transcript.
+that frames it passes the profile (`ModelProfile::as_said`): the turn's context, the decision
+policy, an external agent's remote agent. `read_history`, which gives another channel's messages as
+data, names each message's attachments there - name, type, size - without a number: they are none
+of the agent's transcript.
 
 *   **The number** (`a3`) is how the model names an attachment; each agent numbers the attachments
     as they enter its transcript, so that the same image may be `a3` to one agent and `a1` to
@@ -649,16 +661,17 @@ What the agent had been given in the part replaced and is not still there in the
 given again after the replacement, as it is now, by the component that gave it, if the agent still
 needs it: a `KnowledgeRestorer` (issue 323), a facet that names its kind and answers, of the
 entities of that kind given - each a `Given` entry of the transcript whose source is a
-`KnowledgeSource::Entity` (issue 389) -, which it can give again and as what text. Whether the agent
-still needs it is the strategy's to answer (issue 413): it is told what can be given again, by kind
-and name, and the work still open is what it reads. `summary_compaction` has the summary leave its
-text out and asks its model after the summary which of it the work still needs; an answer it
-cannot read, or no answer at all, gives all of it again. What was given without a source - an
-earlier summary - is replaced with the rest. The `skills` component gives the skills the agent may
-still load there ([SKILLS.md](SKILLS.md)); what no component gives again - a workspace's files -
-is not, and neither the compaction nor its strategy knows a kind itself. `/compact` tells the
-channel what was given again and what was no longer needed, by kind and name, and how much could
-no longer be given.
+`KnowledgeSource::Entity` (issue 389) -, which it can give again and as what text. It is given again
+as whoever first gave it: a skill alice gave with `/skill` as alice's, framed as given by alice,
+one the model loaded as the agent's. Whether the agent still needs it is the strategy's to answer
+(issue 413): it is told what can be given again, by kind and name, and the work still open is what
+it reads. `summary_compaction` has the summary leave its text out and asks its model after the
+summary which of it the work still needs; an answer it cannot read, or no answer at all, gives all
+of it again. What was given without a source - an earlier summary - is replaced with the rest. The
+`skills` component gives the skills the agent may still load there ([SKILLS.md](SKILLS.md)); what no
+component gives again - a workspace's files - is not, and neither the compaction nor its strategy
+knows a kind itself. `/compact` tells the channel what was given again and what was no longer
+needed, by kind and name, and how much could no longer be given.
 
 ## Prompt parts
 
@@ -776,12 +789,13 @@ introductions, read at the start of every turn - each as the views describe it
 (`ParticipantView::describe`), in the same `ActorDescription` a responder policy is given of a
 running actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
-also explains how the others' messages are marked. Where the others include an agent, it says when
-to write an `@handle` - or `@all` - and when a name (issues 438, 442): a handle only when that
-participant's answer or action is needed now, since it makes an agent take a turn of its own; the
-name, without `@`, to greet, thank, praise, agree, answer or speak about someone. It does not offer
-the handles as the way to address the others: to a model a mention reads as a form of address, and
-agents that greet each other with `@` keep asking the next one to answer.
+also explains how the others' messages are marked, and what is given to read. Where the others
+include an agent, it says when to write an `@handle` - or `@all` - and when a name (issues 438,
+442): a handle only when that participant's answer or action is needed now, since it makes an
+agent take a turn of its own; the name, without `@`, to greet, thank, praise, agree, answer or speak
+about someone. It does not offer the handles as the way to address the others: to a model a mention
+reads as a form of address, and agents that greet each other with `@` keep asking the next one to
+answer.
 
 ### When to mention
 
@@ -859,10 +873,16 @@ Some models' chat templates move every system message to the front, so that one 
 its place and the prompt cache. Where a model keeps them is part of its profile
 (`ModelProfile::system_messages`):
 
-| Rule | A system message after the first message that is none is given |
+| Rule | A system message after the system prompt is given |
 |---|---|
 | `only_at_start` | as a user message - the default, which holds for every model |
 | `anywhere` | as a system message, where it stands |
+
+The system prompt is the system messages among the parts at `Start` alone, which the resolver
+places before everything (issue 539): a message of the transcript is none of it, also where it
+stands at the start - the summary that begins a branch after a compaction, a channel's notice, what
+is given after it -, so that a model that merges the system messages does not take it for
+instructions, and a context given to it holds a user message after its system prompt.
 
 ### The turn's context and the resolver
 

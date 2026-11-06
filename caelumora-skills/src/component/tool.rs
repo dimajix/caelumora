@@ -23,7 +23,7 @@ use caelumora_agents::tool::{
 };
 use caelumora_agents::turn::Turn;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::scope::Scope;
@@ -290,7 +290,6 @@ impl ToolProvider for SkillsComponent {
                     id: MessageId::new(),
                     sender_id: ActorId::Agent(turn.situation().agent_id()),
                     sender_name: turn.agent_name().to_string(),
-                    role: MessageRole::User,
                     content: Some(
                         self.given(&skill)
                             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?,

@@ -8,8 +8,17 @@
 # with when it was written if `times`, `time` an example of one. Without it,
 # models imitate the marker in their answers (`work/sender_names/RESULTS.md`,
 # findings 2 and 3); with a time, as the experiments of issue 424 told it.
+# And what marks what is given to read (`ModelProfile::given_to_read`, issue
+# 539): its title in brackets.
 framing: |-
-  Messages of the others {% if format == "prefix" %}begin with their sender's {{ "@handle" if style == "handle" else "name" }}{{ ", when it was written" if times }} and a colon: "{{ "@handle" if style == "handle" else "Name" }}{{ " (" ~ time ~ ")" if times }}: ..."{% else %}are wrapped in an element naming their sender's {{ "@handle" if style == "handle" else "name" }}{{ " and when it was written" if times }}: <message from="{{ "@handle" if style == "handle" else "Name" }}"{{ ' at="' ~ time ~ '"' if times }}>...</message>{% endif %}. Your own messages carry no such marker: answer without one, and never write a message for someone else.
+  Messages of the others {% if format == "prefix" %}begin with their sender's {{ "@handle" if style == "handle" else "name" }}{{ ", when it was written" if times }} and a colon: "{{ "@handle" if style == "handle" else "Name" }}{{ " (" ~ time ~ ")" if times }}: ..."{% else %}are wrapped in an element naming their sender's {{ "@handle" if style == "handle" else "name" }}{{ " and when it was written" if times }}: <message from="{{ "@handle" if style == "handle" else "Name" }}"{{ ' at="' ~ time ~ '"' if times }}>...</message>{% endif %}. Your own messages carry no such marker: answer without one, and never write a message for someone else. What you are given to read begins with its title in brackets, "[Title]", after who gave it if someone did, and is no participant's message.
+
+# What another participant gave the agent to read (issue 539) - a skill
+# given with `/skill` -: who gave it, `by`, named as senders are, before its
+# `text`. Given as the kernel's, never as a message of `by`.
+given_by: |-
+  {{ by }} gave you this to read:
+  {{ text }}
 
 # Where a turn given up ended (issue 258): why - `cause`, one of
 # `given_up_cause` -, whether what it read and said is withheld because the

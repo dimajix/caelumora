@@ -127,26 +127,25 @@ impl Turn<'_> {
     /// its text kept once by digest, so that what the agent saw can be told
     /// later (issues 06, 47); the parts given into the transcript become what
     /// stands of their components' parts there (`AgentChannelState::give_parts`,
-    /// issue 537), each a message of the agent in its role.
+    /// issue 537), each a message of the agent, given to the model as what is given to read
+    /// (issue 539).
     pub fn set_context(&mut self, parts: Vec<PromptPart>, knowledge: Vec<KnowledgeRef>) {
         self.current_mut().work.take_in_context(&parts, knowledge);
         let mut prompts = Vec::new();
         let mut given = Vec::new();
-        for PromptPart { role, text, placement, classification } in parts {
+        for PromptPart { text, placement, classification } in parts {
             match placement {
-                Placement::Frame { at, .. } => prompts.push(self.agent_channel_state.keep_prompt(
-                    role,
-                    text,
-                    at,
-                    classification,
-                )),
+                Placement::Frame { at, role, .. } => prompts
+                    .push(self.agent_channel_state.keep_prompt(role, text, at, classification)),
                 Placement::Given { component } => {
                     let classification = classification
                         .unwrap_or_else(|| self.current().work.classification.clone());
-                    // A message of its own, which a change of the part takes back.
+                    // A message of its own, which a change of the part takes back. Stored as a
+                    // system message, as every gift is; the model is given it as what is given to
+                    // read, whatever its role (`ModelProfile::given_to_read`, issue 539).
                     let message = Message {
                         id: MessageId::new(),
-                        ..self.message_of_agent(role, text, classification)
+                        ..self.message_of_agent(MessageRole::System, text, classification)
                     };
                     given.push((component, message));
                 }
@@ -409,9 +408,12 @@ mod tests {
         let first = text(MessageRole::Assistant, "Let me think.");
         let second = text(MessageRole::Assistant, "4");
         let system = || PromptPart {
-            role: MessageRole::System,
             text: "You are good at sums.".to_string(),
-            placement: Placement::Frame { at: PromptAt::Start, component: None },
+            placement: Placement::Frame {
+                at: PromptAt::Start,
+                role: MessageRole::System,
+                component: None,
+            },
             classification: None,
         };
         let order = |items: &[ContextItem]| {
@@ -577,7 +579,7 @@ mod tests {
     }
 
     /// Issue 537: a part placed `Given` goes into the transcript after the turn's input, and is
-    /// given to the model there as a message of the agent in its role; a later turn whose part
+    /// given to the model there as what is given to read (issue 539); a later turn whose part
     /// is the same gives nothing again, one whose part changed is given the new one alone. What a
     /// summary is written of holds no part (`Turn::conversation_until`).
     #[tokio::test]
@@ -592,13 +594,15 @@ mod tests {
         let parts = |rules: &str| {
             vec![
                 PromptPart {
-                    role: MessageRole::User,
                     text: "[Time]\nnow".to_string(),
-                    placement: Placement::Frame { at: PromptAt::Start, component: None },
+                    placement: Placement::Frame {
+                        at: PromptAt::Start,
+                        role: MessageRole::User,
+                        component: None,
+                    },
                     classification: None,
                 },
                 PromptPart {
-                    role: MessageRole::System,
                     text: rules.to_string(),
                     placement: Placement::Given { component: "rules".to_string() },
                     classification: Some(Classification::PUBLIC),

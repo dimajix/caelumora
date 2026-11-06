@@ -366,7 +366,7 @@ def framed(message, me, profile, zone):
 
 
 def ollama_messages(message, me, profile, zone, in_turn):
-    """`OllamaChatMessage::from` of a message as `ModelProfile::given` gives it."""
+    """`OllamaChatMessage::from` of a message as `ModelProfile::as_said` gives it."""
     keeps_reasoning = message["sender"] == me and {
         "never": False, "current_turn": in_turn, "always": True}[profile.get("reasoning_history", "current_turn")]
     content = framed(message, me, profile, zone)

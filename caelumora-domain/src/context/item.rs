@@ -166,12 +166,11 @@ impl KnowledgeSource {
     }
 }
 
-/// A prompt part as a `ContextProvider` places it: its text, the role it is
-/// given in, where it goes, and how what it holds besides knowledge is
-/// classified, `None` if that is not known (issue 168).
+/// A prompt part as a `ContextProvider` places it: its text, where it goes,
+/// and how what it holds besides knowledge is classified, `None` if that is
+/// not known (issue 168).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PromptPart {
-    pub role: MessageRole,
     pub text: String,
     pub placement: Placement,
     pub classification: Option<Classification>,
@@ -181,12 +180,13 @@ pub struct PromptPart {
 /// from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
-    /// Into the frame, at `at`, placed anew in every turn. `component` is
-    /// the one it came from, if from one alone (issue 214): what an external
-    /// agent's actor tells the parts it gives apart by.
-    Frame { at: PromptAt, component: Option<String> },
+    /// Into the frame, at `at`, placed anew in every turn, given in `role`.
+    /// `component` is the one it came from, if from one alone (issue 214):
+    /// what an external agent's actor tells the parts it gives apart by.
+    Frame { at: PromptAt, role: MessageRole, component: Option<String> },
     /// Into the transcript as the part of `component`, where its text
-    /// changed (`AgentChannelState::give_parts`).
+    /// changed (`AgentChannelState::give_parts`), given as what is given to
+    /// read, in no role of its own (issue 539).
     Given { component: String },
 }
 

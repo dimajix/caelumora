@@ -105,10 +105,10 @@ pub fn message_times_by_default() -> bool {
 const TIME_EXAMPLE: &str = "Sun 18 Oct 2026, 14:32";
 
 impl ModelProfile {
-    /// `message` as the model of `agent` is given it; `in_turn` says whether
-    /// the turn under way produced the message, `time_zone` is the one its
-    /// time is written in.
-    pub fn given(
+    /// `message`, said or heard, as the model of `agent` is given it - what was given to it to
+    /// read is given by `given_to_read` -; `in_turn` says whether the turn under way produced the
+    /// message, `time_zone` is the one its time is written in.
+    pub fn as_said(
         &self,
         message: Message,
         agent: ActorId,
@@ -116,7 +116,36 @@ impl ModelProfile {
         time_zone: TimeZone,
     ) -> Message {
         let message = self.reasoning_history.given(message, agent, in_turn);
-        self.frame(message, agent, time_zone)
+        self.marked(self.with_notes(message), agent, time_zone)
+    }
+
+    /// `message`, given to `agent` to read (`TranscriptEntry::Given`, issue 539) - a skill, a
+    /// summary, a prompt part -, as its model is given it, `in_turn` if the turn under way was
+    /// given it: its reasoning and notes as for a message said (`as_said`), but a system message -
+    /// a user message where the model keeps none there (`place_system_messages`) -, never marked
+    /// as said by anyone, its title in brackets the mark of what is given; worded by `texts` as
+    /// given by its sender (`kernel.given_by`) if another participant, a user or agent, gave it.
+    ///
+    /// # Errors
+    /// `PromptError` if the text cannot be had.
+    pub(super) fn given_to_read(
+        &self,
+        message: Message,
+        agent: ActorId,
+        in_turn: bool,
+        texts: &PromptTexts,
+    ) -> Result<Message, PromptError> {
+        let mut message = self.with_notes(self.reasoning_history.given(message, agent, in_turn));
+        message.role = MessageRole::System;
+        if another_participant(message.sender_id, agent) {
+            if let Some(text) = message.content.take() {
+                let by = self.sender_style.of(&message.sender_name);
+                let given_by =
+                    texts.render(&format!("{KERNEL}.given_by"), context! { by, text })?;
+                message.content = Some(given_by);
+            }
+        }
+        Ok(message)
     }
 
     /// Whether the model is given `attachment` along with its message rather
@@ -143,12 +172,10 @@ impl ModelProfile {
             )
     }
 
-    /// `message` framed as the model of `agent` is given it: its attachments noted after its text
-    /// (`noted`), whoever said it, and what each of its tool results gave the model after the
-    /// result's text (issue 512), so that the model can name it; then marked with its sender as
-    /// `sender_format` and `sender_style` say, and with when it was written in `time_zone` where
-    /// `message_times` says so - if another participant, a user or agent, said it.
-    fn frame(&self, mut message: Message, agent: ActorId, time_zone: TimeZone) -> Message {
+    /// `message` with its attachments noted after its text (`noted`), whoever said it, and what
+    /// each of its tool results gave the model after the result's text (issue 512), so that the
+    /// model can name it.
+    fn with_notes(&self, mut message: Message) -> Message {
         if let Some(note) = self.noted(&message.attachments) {
             message.content = Some(with_note(message.content.take().unwrap_or_default(), note));
         }
@@ -157,9 +184,15 @@ impl ModelProfile {
                 result.content = with_note(mem::take(&mut result.content), note);
             }
         }
-        let said_by_another = message.sender_id != agent
-            && matches!(message.sender_id, ActorId::User(_) | ActorId::Agent(_))
-            && message.role == MessageRole::User;
+        message
+    }
+
+    /// `message` marked with its sender as `sender_format` and `sender_style` say, and with when it
+    /// was written in `time_zone` where `message_times` says so - if another participant, a user
+    /// or agent, said it.
+    fn marked(&self, mut message: Message, agent: ActorId, time_zone: TimeZone) -> Message {
+        let said_by_another =
+            another_participant(message.sender_id, agent) && message.role == MessageRole::User;
         if self.sender_format == SenderFormat::None || !said_by_another {
             return message;
         }
@@ -204,9 +237,10 @@ impl ModelProfile {
         (!lines.is_empty()).then(|| lines.join("\n"))
     }
 
-    /// What the model is to be told of how the messages of others are framed
-    /// (`frame`) - their senders, and when they were written -, worded by
-    /// `texts` (`kernel.framing`); `None` if they are not (issues 135, 424).
+    /// What the model is to be told of how the messages of others are marked (`marked`) - their
+    /// senders, and when they were written - and what is given to read (`given_to_read`, issue
+    /// 539), worded by `texts` (`kernel.framing`); `None` if senders are not marked (issues 135,
+    /// 424).
     ///
     /// # Errors
     /// `PromptError` if the text cannot be had.
@@ -234,15 +268,16 @@ impl ModelProfile {
         PromptTexts::new(Arc::clone(catalogue), self.prompt_texts)
     }
 
-    /// Gives every system message of `items` that does not lead them - a
-    /// prompt part or a message of the conversation - in the role the
-    /// model keeps where it stands (issue 49).
+    /// Gives every system message of `items` - what the model is given after its system prompt,
+    /// the parts at `PromptAt::Start` - in the role the model keeps there (issues 49, 539): a
+    /// prompt part or a message of the conversation, a user message where the model keeps system
+    /// messages only at the start. Where the system prompt ends is its builder's to say: a
+    /// message of the transcript at the start is none of it.
     pub(super) fn place_system_messages(&self, items: &mut [ContextItem]) {
         if self.system_messages == SystemMessages::Anywhere {
             return;
         }
-        let leading = items.iter().take_while(|item| item.role() == MessageRole::System).count();
-        for item in &mut items[leading..] {
+        for item in items {
             let role = match item {
                 ContextItem::Conversation { message } => &mut message.role,
                 ContextItem::Prompt { role, .. } => role,
@@ -261,8 +296,10 @@ impl ModelProfile {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SystemMessages {
-    /// Only those before everything else, the system prompt; any later one
-    /// is given as a user message. The default: it holds for every model.
+    /// Only the system prompt, the parts at `PromptAt::Start` before
+    /// everything else; any other one - a message of the transcript at the
+    /// start too (issue 539) - is given as a user message. The default: it
+    /// holds for every model.
     #[default]
     OnlyAtStart,
     /// Wherever they stand.
@@ -331,6 +368,11 @@ fn with_note(text: String, note: String) -> String {
     } else {
         format!("{text}\n{note}")
     }
+}
+
+/// Whether `sender` is a participant other than `agent`: a user, or another agent.
+fn another_participant(sender: ActorId, agent: ActorId) -> bool {
+    sender != agent && matches!(sender, ActorId::User(_) | ActorId::Agent(_))
 }
 
 /// `text` as the value of an attribute of a marker: what would end it or open an element escaped,
@@ -406,7 +448,7 @@ mod tests {
             ..text("look")
         };
         let given = |profile: ModelProfile, message: Message| {
-            profile.given(message, agent, false, Default::default()).content.unwrap_or_default()
+            profile.as_said(message, agent, false, Default::default()).content.unwrap_or_default()
         };
 
         let xml = ModelProfile {
@@ -451,7 +493,7 @@ mod tests {
             ..text("")
         };
         let result = |profile: ModelProfile| {
-            profile.given(drew.clone(), agent, false, Default::default()).tool_results[0]
+            profile.as_said(drew.clone(), agent, false, Default::default()).tool_results[0]
                 .content
                 .clone()
         };
@@ -463,7 +505,7 @@ mod tests {
         assert!(result(xml).ends_with("shown=\"yes\"/>"), "{}", result(xml));
         let mut silent = drew.clone();
         silent.tool_results[0].content.clear();
-        let given = blind.given(silent, agent, false, Default::default());
+        let given = blind.as_said(silent, agent, false, Default::default());
         assert!(given.tool_results[0].content.starts_with("[attachment a3: "), "the note alone");
     }
 
@@ -480,7 +522,7 @@ mod tests {
         let alice = ActorId::User(UserId::new());
         let given = |sender_format, sender_style, message| {
             ModelProfile { sender_format, sender_style, ..ModelProfile::default() }
-                .given(message, agent, false, Default::default())
+                .as_said(message, agent, false, Default::default())
                 .content
                 .unwrap_or_default()
         };
@@ -549,7 +591,7 @@ mod tests {
             ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
         assert_eq!(
             profile
-                .given(
+                .as_said(
                     said(alice, "Alice", MessageRole::User, "hi"),
                     agent,
                     false,
@@ -589,6 +631,49 @@ mod tests {
         );
     }
 
+    /// Issue 539: what is given to read is never marked as said, in any format, and is explained
+    /// with the markers.
+    #[test]
+    fn what_is_given_to_read_is_never_marked_as_said() {
+        let agent = ActorId::Agent(AgentId::new());
+        let texts = ModelProfile::default().texts(kernel_catalogue());
+        let given = |profile: ModelProfile, sender: ActorId| {
+            let message = Message {
+                sender_id: sender,
+                sender_name: "Alice".to_string(),
+                role: MessageRole::User,
+                ..text("[Skill: notes]\nCollect.")
+            };
+            let message = profile.given_to_read(message, agent, false, &texts).unwrap();
+            (message.role, message.content.unwrap_or_default())
+        };
+        let alice = ActorId::User(UserId::new());
+        for sender_format in [SenderFormat::None, SenderFormat::Prefix, SenderFormat::Xml] {
+            let profile = ModelProfile { sender_format, ..ModelProfile::default() };
+            assert_eq!(
+                given(profile, alice),
+                (
+                    MessageRole::System,
+                    "@alice gave you this to read:\n[Skill: notes]\nCollect.".to_string()
+                ),
+                "{sender_format:?}: given by another participant, as the kernel's"
+            );
+            assert_eq!(
+                given(profile, agent),
+                (MessageRole::System, "[Skill: notes]\nCollect.".to_string()),
+                "{sender_format:?}: by the agent itself, as written"
+            );
+        }
+        let by_name = ModelProfile { sender_style: SenderStyle::Name, ..ModelProfile::default() };
+        assert!(given(by_name, alice).1.starts_with("Alice gave you"), "named as senders are");
+        let prefix =
+            ModelProfile { sender_format: SenderFormat::Prefix, ..ModelProfile::default() };
+        assert!(prefix
+            .framing_explanation(&texts)
+            .unwrap()
+            .is_some_and(|text| text.contains("begins with its title in brackets, \"[Title]\"")));
+    }
+
     #[test]
     fn the_messages_of_others_say_when_they_were_written_where_the_profile_says_so() {
         let agent = ActorId::Agent(AgentId::new());
@@ -604,7 +689,7 @@ mod tests {
         let berlin = TimeZone::new("Europe/Berlin").unwrap();
         let given = |sender_format, message| {
             ModelProfile { sender_format, message_times: true, ..ModelProfile::default() }
-                .given(message, agent, false, berlin)
+                .as_said(message, agent, false, berlin)
                 .content
                 .unwrap_or_default()
         };
@@ -630,7 +715,7 @@ mod tests {
         );
         let without = ModelProfile { sender_format: SenderFormat::Xml, ..ModelProfile::default() };
         assert_eq!(
-            without.given(said(alice, "hi"), agent, false, berlin).content.as_deref(),
+            without.as_said(said(alice, "hi"), agent, false, berlin).content.as_deref(),
             Some("<message from=\"@alice\">hi</message>"),
             "without the switch"
         );

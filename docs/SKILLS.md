@@ -68,7 +68,8 @@ participants who may not read the skill.
     and the model is told not to quote it.
 *   **`/skill @agent <name>`** - a participant gives one to an agent, a command the agent carries
     out itself. In its command turn the skill's text is given to the agent (`Turn::give`): into its
-    transcript in the participant's name and role, as a `Given` entry that names the skill. The
+    transcript in the participant's name, as a `Given` entry that names the skill, which the model
+    is told the participant gave it ([AGENT-TURN.md](AGENT-TURN.md#what-is-given-to-read)). The
     channel's history records the command, and the text as what the agent was given, gone to
     nobody but read by whom may read what the agent saw (issue 417).
 *   **`list_skills`** gives the catalogue as a tool, for a model whose prompt was built before a
@@ -81,10 +82,11 @@ classified at least so.
 
 A compaction gives again the skills loaded in the part of the transcript it replaces - given or
 loaded by the model, either way a `Given` entry - that the work still open needs, as the agent's
-model answers after its summary (issue 413): as each is now and only if the agent may still load
-it, unless the part kept still holds it. A skill of a task that is over is not given again; it
-stays in the catalogue, to be loaded again. The compaction asks the `skills` component for them, as
-its `KnowledgeRestorer` (issue 323): it knows no skills itself.
+model answers after its summary (issue 413): as each is now and only if the agent may still load it,
+unless the part kept still holds it, and as whoever first gave it - a skill a participant gave as
+theirs. A skill of a task that is over is not given again; it stays in the catalogue, to be loaded
+again. The compaction asks the `skills` component for them, as its `KnowledgeRestorer` (issue 323):
+it knows no skills itself.
 
 ## Agents write skills
 

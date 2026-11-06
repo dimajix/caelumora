@@ -5,15 +5,16 @@
 //! stands; where the cut lies is the [`Cut`]'s. What replaces the part before it is asked of the
 //! agent's [`CompactionStrategy`]; what the agent had been given there is given again, as it is
 //! now, by the component that gave it, its [`KnowledgeRestorer`] (issue 323), after the
-//! replacement - what the strategy answers the agent still needs of it (issue 413). Nothing changes
-//! until all of it is had: then the context moves to the compacted one at once (`Turn::compact`).
+//! replacement - what the strategy answers the agent still needs of it (issue 413) -, as whoever
+//! first gave it: a skill a participant gave as theirs (issue 539). Nothing changes until all of it
+//! is had: then the context moves to the compacted one at once (`Turn::compact`).
 
-use crate::cut::{Cut, Given};
+use crate::cut::{given, Cut, Given};
 use crate::{Compaction, CompactionError, CompactionStrategy, GivenAgain, KnowledgeRestorer};
 use caelumora_agents::turn::Turn;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::context::KnowledgeRef;
-use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::message::{Message, MessageId};
 use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -64,10 +65,10 @@ impl Compactor {
             );
             CompactionError::TranscriptUnreadable
         })?;
-        let given: Vec<String> = restored.iter().map(|(name, _)| name.clone()).collect();
+        let given: Vec<String> = restored.iter().map(|r| r.name.clone()).collect();
         let replacement = self.strategy.replace(turn, part, &given).await?;
         let (needed, not_needed): (Vec<_>, Vec<_>) =
-            restored.into_iter().partition(|(name, _)| replacement.still_needed.contains(name));
+            restored.into_iter().partition(|r| replacement.still_needed.contains(&r.name));
 
         let (owner, classification) = cut.replaced_as(turn.situation().label());
         let agent = ActorId::Agent(turn.situation().agent_id());
@@ -75,7 +76,6 @@ impl Compactor {
             id: MessageId::new(),
             sender_id: agent,
             sender_name: turn.agent_name().to_string(),
-            role: MessageRole::User,
             content: Some(replacement.text),
             timestamp: Utc::now(),
             prompt_tokens: replacement.call.prompt_tokens,
@@ -85,25 +85,24 @@ impl Compactor {
             ..Message::new(classification)
         };
         let mut messages: Vec<(Message, Option<KnowledgeRef>)> = vec![(instead, None)];
-        for (_, given) in &needed {
+        for Restored { again, giver, .. } in &needed {
             let message = Message {
                 id: MessageId::new(),
-                sender_id: agent,
-                sender_name: turn.agent_name().to_string(),
-                role: MessageRole::User,
-                content: Some(given.text.clone()),
+                sender_id: giver.sender_id,
+                sender_name: giver.sender_name.clone(),
+                content: Some(again.text.clone()),
                 timestamp: Utc::now(),
                 // Given in the turn, as `Turn::give` gives.
                 turn_id: Some(turn.turn_id()),
                 ..Message::new(
-                    given
+                    again
                         .knowledge
                         .classification
                         .clone()
                         .unwrap_or_else(|| turn.situation().label()),
                 )
             };
-            messages.push((message, Some(given.knowledge.clone())));
+            messages.push((message, Some(again.knowledge.clone())));
         }
         // Nothing can fail from here on: the transcript changes at once.
         turn.compact(messages, cut.keep_from())?.ok_or(CompactionError::NotReplaced)?;
@@ -111,8 +110,8 @@ impl Compactor {
         Ok(Some(Compaction {
             replaced: cut.messages_replaced(),
             kept: cut.messages_kept(),
-            given_again: needed.into_iter().map(|(name, _)| name).collect(),
-            not_needed: not_needed.into_iter().map(|(name, _)| name).collect(),
+            given_again: needed.into_iter().map(|r| r.name).collect(),
+            not_needed: not_needed.into_iter().map(|r| r.name).collect(),
             lost,
         }))
     }
@@ -138,31 +137,48 @@ impl Compactor {
         (self.keep * size as f64) as u64
     }
 
-    /// What `wanted` - given in the part replaced and not in the part kept - can be given again by
-    /// the restorer of its kind, each by its kind and name - `skill release-notes` -, and how much
-    /// of it can no longer be given. What no restorer gives - a workspace's files - is not given
-    /// again, and not lost either.
-    async fn give_again(
+    /// What `wanted` - given in the part replaced and not in the part kept, each with the message
+    /// it was first given in - can be given again by the restorer of its kind, and how much of it
+    /// can no longer be given. What no restorer gives - a workspace's files - is not given again,
+    /// and not lost either; what a restorer gives that was not wanted is left out.
+    async fn give_again<'a>(
         &self,
         turn: &mut Turn<'_>,
-        wanted: &[Given],
-    ) -> Result<(Vec<(String, GivenAgain)>, usize), CompactionError> {
+        wanted: &[(Given, &'a Message)],
+    ) -> Result<(Vec<Restored<'a>>, usize), CompactionError> {
         let mut restored = Vec::new();
         let mut lost = 0;
         for restorer in &self.restorers {
             let kind = restorer.kind();
             let ids: Vec<Uuid> =
-                wanted.iter().filter(|(of, _)| *of == kind).map(|(_, id)| *id).collect();
+                wanted.iter().filter(|((of, _), _)| *of == kind).map(|((_, id), _)| *id).collect();
             if ids.is_empty() {
                 continue;
             }
-            let given = restorer.give_again(turn, &ids).await?;
-            lost += ids.len().saturating_sub(given.len());
-            restored
-                .extend(given.into_iter().map(|given| (format!("{} {}", kind, given.name), given)));
+            let again: Vec<_> = restorer
+                .give_again(turn, &ids)
+                .await?
+                .into_iter()
+                .filter_map(|again| {
+                    let what = given(&again.knowledge.source)?;
+                    let (_, giver) = wanted.iter().find(|(g, _)| *g == what)?;
+                    let name = format!("{} {}", kind, again.name);
+                    Some(Restored { name, again, giver })
+                })
+                .collect();
+            lost += ids.len().saturating_sub(again.len());
+            restored.extend(again);
         }
         Ok((restored, lost))
     }
+}
+
+/// What a restorer gives again, by its kind and name - `skill release-notes` -, with the message it
+/// was first given in, whose sender gives it again.
+struct Restored<'a> {
+    name: String,
+    again: GivenAgain,
+    giver: &'a Message,
 }
 
 #[cfg(test)]
@@ -177,6 +193,7 @@ mod tests {
     use caelumora_domain::context::{
         KnowledgeSource, ModelProfile, Placement, PromptPart, SenderFormat,
     };
+    use caelumora_domain::message::MessageRole;
     use caelumora_domain::store::{EntityKind, Stored};
     use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
     use caelumora_domain::user::UserId;
@@ -185,6 +202,10 @@ mod tests {
     use caelumora_domain::workspace::{Workspace, WorkspaceId};
     use caelumora_kernel::testing::participant_runtime_in;
     use caelumora_kernel::workspace::testing::{session_with_workspace, WithWorkspace};
+
+    /// What the agent of `an_agent_with_a_skill_given` answers: more than the tenth of the context
+    /// a compaction keeps, so that only what follows it is kept.
+    const A1: &str = "a1 - an answer of more than a tenth of the context";
 
     /// The text of a prompt part given into the transcript (issue 537).
     const RULES: &str = "[Rules]\nBe brief.";
@@ -206,7 +227,7 @@ mod tests {
     }
 
     /// Gives again what it knows, as the component that gave it would: `Some` the one id it can
-    /// still give.
+    /// still give, whenever it is asked for anything - one not asked for if it is another.
     #[derive(Debug)]
     struct Restorer(Option<WorkspaceId>);
 
@@ -221,17 +242,18 @@ mod tests {
             turn: &mut Turn<'_>,
             given: &[Uuid],
         ) -> Result<Vec<GivenAgain>, CompactionError> {
-            Ok(given
-                .iter()
-                .filter(|id| self.0.is_some_and(|known| known == WorkspaceId::from(**id)))
+            Ok(self
+                .0
+                .filter(|_| !given.is_empty())
                 .map(|id| GivenAgain {
                     name: "release-notes".to_string(),
                     text: GIVEN.to_string(),
                     knowledge: KnowledgeRef {
-                        source: KnowledgeSource::entity::<Workspace>(WorkspaceId::from(*id), None),
+                        source: KnowledgeSource::entity::<Workspace>(id, None),
                         ..turn_knowledge(turn)
                     },
                 })
+                .into_iter()
                 .collect())
         }
     }
@@ -258,8 +280,8 @@ mod tests {
         state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect()
     }
 
-    /// The world's agent heard `u1`, was given `release-notes` - as a participant gives a skill
-    /// with `/skill` -, answered `a1` in a turn of its own, then heard `u2`.
+    /// The world's agent heard `u1`, was given `release-notes` by alice - as a participant gives a
+    /// skill with `/skill` -, answered `A1` in a turn of its own, then heard `u2`.
     async fn an_agent_with_a_skill_given(
         world: &WithWorkspace,
         state: &mut AgentChannelState,
@@ -274,6 +296,8 @@ mod tests {
         let mut turn = workspace_turn(world, state);
         turn.give(
             Message {
+                sender_id: ActorId::User(UserId::new()),
+                sender_name: "alice".to_string(),
                 content: Some(GIVEN.to_string()),
                 ..Message::new(Classification::general(Confidentiality::Internal))
             },
@@ -286,7 +310,7 @@ mod tests {
         state.said(Message {
             sender_id: ActorId::Agent(world.agent),
             role: MessageRole::Assistant,
-            ..heard("a1")
+            ..heard(A1)
         });
         let answered = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(answered, Vec::new(), Vec::new());
@@ -322,7 +346,7 @@ mod tests {
         let asked: Vec<_> = part.iter().filter_map(|m| m.content.clone()).collect();
         assert!(
             asked.iter().any(|t| t == "u1")
-                && asked.iter().any(|t| t == "a1")
+                && asked.iter().any(|t| t == A1)
                 && !asked.iter().any(|t| t == "u2"),
             "the older messages, not those kept: {asked:?}"
         );
@@ -350,6 +374,11 @@ mod tests {
             "classified by what it replaces"
         );
         assert_eq!(replacement[1].turn_id, under_way, "what is given again is given in the turn");
+        assert!(
+            matches!(replacement[1].sender_id, ActorId::User(_))
+                && replacement[1].sender_name == "alice",
+            "as alice's, who gave it (issue 539)"
+        );
         let knowledge = &state.turn.as_ref().unwrap().work.context.frame.knowledge;
         assert!(
             knowledge
@@ -380,7 +409,6 @@ mod tests {
         let mut turn = workspace_turn(&world, &mut state);
         turn.set_context(
             vec![PromptPart {
-                role: MessageRole::System,
                 text: RULES.to_string(),
                 placement: Placement::Given { component: "rules".to_string() },
                 classification: Some(Classification::PUBLIC),
@@ -445,6 +473,29 @@ mod tests {
         );
         let (_, given) = strategy.asked.lock().unwrap().pop().expect("its strategy was asked");
         assert!(given.is_empty(), "nothing is given again");
+        assert_eq!(texts(&state), [SUMMARY, "u2"]);
+    }
+
+    /// What a restorer gives that was not asked of it - another entity than any given - is not
+    /// given again, and what was asked of it is lost.
+    #[tokio::test]
+    async fn what_a_restorer_gives_that_was_not_wanted_is_left_out() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        an_agent_with_a_skill_given(&world, &mut state).await;
+        let strategy = Arc::new(Scripted::default());
+        let other = WorkspaceId::new();
+        let compactor = compactor(&strategy, vec![Arc::new(Restorer(Some(other)))]);
+
+        let mut turn = workspace_turn(&world, &mut state);
+        let compaction = compactor.compact(&mut turn).await.expect("compacted");
+        drop(turn);
+
+        assert_eq!(
+            compaction.map(|c| (c.given_again, c.lost)),
+            Some((Vec::new(), 1)),
+            "the one wanted lost, the other not given"
+        );
         assert_eq!(texts(&state), [SUMMARY, "u2"]);
     }
 
@@ -612,9 +663,10 @@ mod tests {
         };
         turn.record_said(said("a", MessageRole::Assistant));
         turn.record_said(said("r", MessageRole::Tool));
-        // Loaded by the call of `a`: given after its result.
+        // Loaded by the call of `a`: given after its result, in the agent's name.
         turn.give(
             Message {
+                sender_id: ActorId::Agent(world.agent),
                 content: Some(GIVEN.to_string()),
                 ..Message::new(Classification::general(Confidentiality::Internal))
             },
@@ -631,6 +683,11 @@ mod tests {
             "its text was replaced: given again"
         );
         assert_eq!(texts(&state)[1], GIVEN, "after the replacement");
+        assert_eq!(
+            state.transcript.messages()[1].sender_id,
+            ActorId::Agent(world.agent),
+            "as the agent's, which loaded it"
+        );
     }
 
     /// What was given without being knowledge - an earlier summary, say - is replaced with the

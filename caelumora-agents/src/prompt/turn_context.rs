@@ -52,10 +52,8 @@ impl ContextProvider for TurnContextProvider {
                 PromptPosition::Start => start.push(part),
                 PromptPosition::BeforeTurnInput => before_input.push(part),
                 PromptPosition::End => end.push(part),
-                // A system message where the model keeps one, as the
-                // channel's notices are: no participant's words.
+                // Framed as what is given to read (issue 539).
                 PromptPosition::Given => given.push(PromptPart {
-                    role: MessageRole::System,
                     text: part.0,
                     placement: Placement::Given { component: provider.id.clone() },
                     classification: part.1,
@@ -86,9 +84,8 @@ fn framed(
     }
     let (text, classification) = joined(parts);
     Some(PromptPart {
-        role,
         text,
-        placement: Placement::Frame { at, component: None },
+        placement: Placement::Frame { at, role, component: None },
         classification,
     })
 }
@@ -322,7 +319,6 @@ mod tests {
         assert_eq!(
             parts,
             [PromptPart {
-                role: MessageRole::System,
                 text: "Be brief.".to_string(),
                 placement: Placement::Given { component: "rules".to_string() },
                 classification: Some(Classification::PUBLIC),
@@ -351,10 +347,10 @@ mod tests {
         agent_channel_state.transcript.push(message("hello"));
         let turn = Turn::begun(AgentId::new(), &mut agent_channel_state);
         let (parts, _) = provider.current_context(&turn.situation()).await.unwrap();
-        let placed: Vec<_> = parts.iter().map(|p| (p.role, p.placement.clone())).collect();
+        let placed: Vec<_> = parts.iter().map(|p| p.placement.clone()).collect();
         assert_eq!(
             placed,
-            [(MessageRole::User, Placement::Frame { at: PromptAt::End, component: None })],
+            [Placement::Frame { at: PromptAt::End, role: MessageRole::User, component: None }],
             "one part, at the end, whatever the transcript holds"
         );
         assert!(parts[0].text.contains("[Time]") && parts[0].text.contains("[Why]"), "joined");

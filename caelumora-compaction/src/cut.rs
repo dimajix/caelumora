@@ -4,8 +4,8 @@
 //! into a turn given up because its channel was lowered below it, and within the turn under way
 //! before a call of its model but the first. The prompt parts given into the transcript that stand
 //! before it are not replaced but carried over (issue 537): they count as kept. What was given in
-//! the part replaced and is not still there in the part kept is what is given again; whose the
-//! replacement is and how it is classified follows from what it replaces.
+//! the part replaced and is not still there in the part kept is what is given again, as whoever
+//! first gave it; whose the replacement is and how it is classified follows from what it replaces.
 
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::KnowledgeSource;
@@ -94,10 +94,12 @@ impl Cut {
     }
 
     /// What was given in the part replaced and is not still there, as it was given, in the part
-    /// kept: each once, in the order it was first given.
-    pub(crate) fn wanted(&self) -> Vec<Given> {
-        let still_there = given_in(&self.kept);
-        given_in(&self.replaced).into_iter().filter(|g| !still_there.contains(g)).collect()
+    /// kept: each once, in the order it was first given, with the message it was first given in -
+    /// whose sender gave it (issue 539). Read as the entries stand: a gift taken back is neither
+    /// given again nor still there (issue 234).
+    pub(crate) fn wanted(&self) -> Vec<(Given, &Message)> {
+        let still_there: Vec<Given> = given_in(&self.kept).into_iter().map(|(g, _)| g).collect();
+        given_in(&self.replaced).into_iter().filter(|(g, _)| !still_there.contains(g)).collect()
     }
 
     /// Whose the replacement is and how it is classified. One that holds messages of the turn under
@@ -128,7 +130,7 @@ fn messages(entries: &[Entry]) -> usize {
 }
 
 /// What `source` gave, if it is knowledge of an entity.
-fn given(source: &KnowledgeSource) -> Option<Given> {
+pub(crate) fn given(source: &KnowledgeSource) -> Option<Given> {
     match *source {
         KnowledgeSource::Entity { kind, id, .. } => Some((kind, id)),
         _ => None,
@@ -199,12 +201,14 @@ fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet
 }
 
 /// What was given in `entries`, each once, in the order it was first given
-/// (`TranscriptEntry::Given`): a skill a user gave and one the model loaded alike (issue 389).
-fn given_in(entries: &[Entry]) -> Vec<Given> {
-    let mut given = Vec::new();
-    for what in entries.iter().filter_map(|(_, gives, _)| gives.as_ref()) {
-        if !given.contains(what) {
-            given.push(*what);
+/// (`TranscriptEntry::Given`), with the message it was first given in: a skill a user gave and one
+/// the model loaded alike (issue 389). A gift taken back holds no message any more, and gives
+/// nothing.
+fn given_in(entries: &[Entry]) -> Vec<(Given, &Message)> {
+    let mut given: Vec<(Given, &Message)> = Vec::new();
+    for (what, message) in entries.iter().filter_map(|(_, gives, m)| gives.zip(m.as_ref())) {
+        if !given.iter().any(|(g, _)| *g == what) {
+            given.push((what, message));
         }
     }
     given
@@ -213,11 +217,15 @@ fn given_in(entries: &[Entry]) -> Vec<Given> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::AgentId;
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::digest;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::turn::GivenUpReason;
+    use caelumora_domain::user::UserId;
+    use caelumora_domain::workspace::{Workspace, WorkspaceId};
     use chrono::Utc;
 
     /// A message saying `content` in `role`, of the turn `turn` if any, classified
@@ -381,6 +389,92 @@ mod tests {
             cut.replaced_as(Classification::PUBLIC),
             (None, Classification::PUBLIC),
             "classified by what it replaces, without the part"
+        );
+    }
+
+    /// Issue 539: what is given again is wanted with the message it was first given in - a skill
+    /// alice gave and the model loaded again is alice's -, each once, and only if the part kept
+    /// does not hold it.
+    #[test]
+    fn what_is_wanted_is_named_with_the_message_it_was_first_given_in() {
+        let (release_notes, review) = (WorkspaceId::new(), WorkspaceId::new());
+        let skill = |id| {
+            let source = KnowledgeSource::entity::<Workspace>(id, None);
+            Some(GivenSource::Knowledge(source))
+        };
+        let given = |by: ActorId, name: &str, id| {
+            let message = Message {
+                sender_id: by,
+                sender_name: name.to_string(),
+                ..message("[Skill]", MessageRole::System, None, Classification::PUBLIC)
+            };
+            (message, skill(id))
+        };
+        let (alice, agent) = (ActorId::User(UserId::new()), ActorId::Agent(AgentId::new()));
+        let mut transcript = Transcript::default();
+        for (gift, source) in [
+            given(alice, "alice", release_notes),
+            given(agent, "Helper", release_notes),
+            given(agent, "Helper", review),
+        ] {
+            transcript.give(gift, source);
+        }
+        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
+        let (gift, source) = given(agent, "Helper", review);
+        transcript.give(gift, source);
+        transcript.push(message("u2", MessageRole::User, None, Classification::PUBLIC));
+
+        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 40, 50, 60], 20, TurnId::new());
+        let wanted = cut.as_ref().expect("cut").wanted();
+        let wanted: Vec<_> = wanted.iter().map(|((_, id), m)| (*id, m.sender_id)).collect();
+        assert_eq!(
+            wanted,
+            [(Uuid::from(release_notes), alice)],
+            "alice's, once; not what the part kept holds"
+        );
+    }
+
+    /// Issue 234: a gift taken back is read as it stands - the model is no longer given it -, so it
+    /// is not given again, nor does it stand for a gift in the part replaced.
+    #[test]
+    fn a_gift_taken_back_is_neither_wanted_nor_still_there() {
+        let (release_notes, review) = (WorkspaceId::new(), WorkspaceId::new());
+        let given = |id, sender_name: &str| {
+            let message = Message {
+                sender_name: sender_name.to_string(),
+                ..message("[Skill]", MessageRole::System, None, Classification::PUBLIC)
+            };
+            let source =
+                Some(GivenSource::Knowledge(KnowledgeSource::entity::<Workspace>(id, None)));
+            (message, source)
+        };
+        let said = |text| message(text, MessageRole::User, None, Classification::PUBLIC);
+        let mut transcript = Transcript::default();
+        let mut taken_back = Vec::new();
+        for (id, sender_name, back) in [(release_notes, "alice", true), (review, "alice", false)] {
+            let (gift, source) = given(id, sender_name);
+            taken_back.extend(back.then_some(gift.id));
+            transcript.give(gift, source);
+        }
+        transcript.push(said("u1"));
+        transcript.push(said("u2"));
+        let (gift, source) = given(review, "Helper");
+        taken_back.push(gift.id);
+        transcript.give(gift, source);
+        transcript.push(said("u3"));
+        for id in taken_back {
+            assert!(transcript.revoke(id, Utc::now()));
+        }
+
+        let positions = [0, 10, 20, 30, 40, 50, 60, 60, 60];
+        let cut = Cut::of(&transcript, &positions, 30, TurnId::new()).expect("cut");
+        assert_eq!(cut.keep_from(), Some(transcript.entries().nth(3).unwrap().digest), "before u2");
+        let wanted: Vec<_> =
+            cut.wanted().iter().map(|((_, id), m)| (*id, m.sender_name.clone())).collect();
+        assert_eq!(
+            wanted,
+            [(Uuid::from(review), "alice".to_string())],
+            "not the one taken back; the one taken back in the part kept does not stand for it"
         );
     }
 

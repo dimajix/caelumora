@@ -106,7 +106,8 @@ pub trait KnowledgeRestorer: Send + Sync + Debug {
 /// What a `KnowledgeRestorer` gives again: its name, as the agent's owners
 /// are told it, the text the agent is given, as the message that follows
 /// the summary - classified as `knowledge` says -, and the knowledge that
-/// message records.
+/// message records: of the entity given again, by which the compaction
+/// tells who first gave it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GivenAgain {
     pub name: String,

@@ -266,7 +266,7 @@ impl DecisionPolicy {
             // Who is to respond is decided by what was said, not when: the
             // profile gives no times, and the time zone is none's.
             if let Some(text) =
-                self.profile.given(message, ActorId::None, false, TimeZone::UTC).content
+                self.profile.as_said(message, ActorId::None, false, TimeZone::UTC).content
             {
                 texts.push_back((text, to_answer));
             }
