@@ -134,9 +134,13 @@ function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
       return `Private notes of ${agent} in ${channel}`;
     case 'memory':
       return `Memory of ${agent}, from ${channel}`;
-    case 'workspace':
-      // The digest is a file's content as read; none for a listing or a search.
-      return knowledge.digest ? `A file of the workspace, read in ${channel}` : `The files of the workspace, listed or searched in ${channel}`;
+    case 'workspace': {
+      // The digest is a file's content as read; none for a listing or a search. The place is the
+      // path read (issue 538), the workspace's top directory an empty one.
+      const at = knowledge.place === undefined ? '' : ` '${knowledge.place || '/'}'`;
+      if (knowledge.digest) return at ? `The file${at} of the workspace, read in ${channel}` : `A file of the workspace, read in ${channel}`;
+      return `The files of the workspace${at ? ` in${at}` : ''}, listed or searched in ${channel}`;
+    }
     case 'skill':
       // The digest is the skill's text as it was loaded (issue 22).
       return `A skill, loaded in ${channel}`;

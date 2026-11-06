@@ -269,17 +269,18 @@ external agent publishes its answers through the same `Answering`.
 
 **A message given** to the agent to read - a skill a participant or the model loaded, the summary of
 a compaction - is recorded by `Turn::give`: into the transcript as a `Given` entry, which keeps what
-knowledge it is, if it is knowledge - of an entity, `KnowledgeSource::Entity { kind, id, digest }`
-(issue 323) - and none for a summary (issue 389); into the history without a context, since the
-agent did not produce it. It is not published, the turn has seen it, and its digest is that of the
-message - framed as given to read ([what is given to read](#what-is-given-to-read)), but no other
-entry holds a message of its id. A tool gives what it gives while it runs, but nothing may stand
-between the calls of a step and their results, which the models refuse: while the calls run, what is
-given is put aside with the turn (`TurnState::after_step`) and written right after the step's tool
-message - and so is a leave noted while the turn waits for a person. Knowledge that stands given
-already - the same, with the same text and classification, as the model is given it or put aside -
-is not given a second time: `Turn::give` records it with the turn and answers that it gave nothing,
-as a prompt part that stands is not given again.
+knowledge it is, if it is knowledge - of an entity,
+`KnowledgeSource::Entity { kind, id, place, digest }` (issue 323) - and none for a summary
+(issue 389); into the history without a context, since the agent did not produce it. It is not
+published, the turn has seen it, and its digest is that of the message - framed as given to read
+([what is given to read](#what-is-given-to-read)), but no other entry holds a message of its id. A
+tool gives what it gives while it runs, but nothing may stand between the calls of a step and their
+results, which the models refuse: while the calls run, what is given is put aside with the turn
+(`TurnState::after_step`) and written right after the step's tool message - and so is a leave noted
+while the turn waits for a person. Knowledge that stands given already - the same, with the same
+text and classification, as the model is given it or put aside - is not given a second time:
+`Turn::give` records it with the turn and answers that it gave nothing, as a prompt part that stands
+is not given again.
 
 ### A command turn
 
@@ -660,24 +661,27 @@ what the turn read, and goes with it if the turn is given up as `Lowered`; one o
 turn alone is no turn's and classified by what it replaces, since its call was given the transcript
 alone.
 
-What the agent had been given in the part replaced and is not still there in the part kept is given
-again after the replacement, as it is now, by the component that gave it, if the agent still needs
-it: a `KnowledgeRestorer` (issue 323), a facet that names its kind and answers, of the entities of
-that kind given - each a `Given` entry of the transcript whose source is a `KnowledgeSource::Entity`
-(issue 389) -, which it can give again and as what text. Still there means given as the model is
-given it, the entity by its kind and id whatever its text - unlike what stands given for
-`Turn::give`, which compares the text: a compaction gives again what it takes away, not what changed
-since, which the model loads anew if it needs it. It is given again as whoever first gave it: a
-skill alice gave with `/skill` as alice's, framed as given by alice, one the model loaded as the
-agent's. Whether the agent still needs it is the strategy's to answer (issue 413): it is told what
-can be given again, by kind and name, and the work still open is what it reads. `summary_compaction`
-has the summary leave its text out and asks its model after the summary which of it the work still
-needs; an answer it cannot read, or no answer at all, gives all of it again. What was given without
-a source - an earlier summary - is replaced with the rest. The `skills` component gives the skills
-the agent may still load there ([SKILLS.md](SKILLS.md)); what no component gives again - a
-workspace's files - is not, and neither the compaction nor its strategy knows a kind itself.
-`/compact` tells the channel what was given again and what was no longer needed, by kind and name,
-and how much could no longer be given.
+What the agent knew in the part replaced and does not still know in the part kept is given again
+after the replacement, as it is now, by the component whose it is, if the agent still needs it: an
+entity read whole - a `Given` entry of the transcript whose source is a `KnowledgeSource::Entity`
+(issue 389), or what a tool read or wrote whole, kept on its result (issue 538) -, each once, by its
+place within the entity where it has one. A `KnowledgeRestorer` (issue 323), a facet that names its
+kind, answers which of the knowledge of that kind it can give again and as what text. Still known
+means seen as the model sees it, the same entity, or the same place within it, whatever was read of
+it - unlike what stands given for `Turn::give`, which compares the text: a compaction gives again
+what it takes away, not what changed since, which the model loads or reads anew if it needs it. It
+is given again as whoever first gave it: a skill alice gave with `/skill` as alice's, framed as
+given by alice, one the model loaded as the agent's. Whether the agent still needs it is the
+strategy's to answer (issue 413): it is told what can be given again, by kind and name, and the work
+still open is what it reads. `summary_compaction` has the summary leave its text out and asks its
+model after the summary which of it the work still needs; an answer it cannot read, or no answer at
+all, gives all of it again. What was given without a source - an earlier summary - is replaced with
+the rest. The `skills` component gives the skills the agent may still load there
+([SKILLS.md](SKILLS.md)), the `workspace` component the files of the workspace its channel may still
+use, as they are now, each under its path, up to what a result holds
+([TOOLS.md](TOOLS.md#the-workspace)); what no component gives again is not, and neither the
+compaction nor its strategy knows a kind itself. `/compact` tells the channel what was given again
+and what was no longer needed, by kind and name, and how much could no longer be given.
 
 ## Prompt parts
 

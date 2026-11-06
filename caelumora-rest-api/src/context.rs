@@ -71,6 +71,10 @@ pub struct KnowledgeRefResponse {
     /// The entity read, for a kind.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entity_id: Option<Uuid>,
+    /// Where within the entity what was read lies - for a workspace the path of the file or
+    /// directory read (issue 538) -; absent for an entity read as a whole.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub place: Option<String>,
     /// Whose notes, for `"notes"` and `"private_notes"`.
     pub agent_id: Option<ActorId>,
     pub agent_name: Option<String>,

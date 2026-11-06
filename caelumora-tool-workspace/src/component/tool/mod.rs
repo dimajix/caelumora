@@ -6,9 +6,8 @@
 //!   ends it.
 //! - The files (`files`): `list_files`, `read_file`, `grep_files` and
 //!   `publish_file` read; `write_file`, `replace_in_file`, `move_file` and
-//!   `delete_file` change.
-//!   What was read is recorded as the turn's knowledge
-//!   (`KnowledgeSource::Entity`).
+//!   `delete_file` change. What was read, and what was written, is given with the result as
+//!   knowledge by its path (`ToolOutput::knowledge`, issue 538), which the executor records.
 //!
 //! A turn is offered the tools that may be called on the workspace its channel may use (issue 290):
 //! none where there is none, none that change where its access list grants reading alone, no shell
@@ -24,7 +23,7 @@
 mod files;
 mod shell;
 
-pub(super) use files::READ_FILE;
+pub(super) use files::{known, text, READ_FILE};
 
 use super::{WorkspaceComponent, WorkspaceParams, WORKSPACE_KIND};
 use crate::NAMESPACE;
@@ -180,7 +179,7 @@ impl ToolProvider for WorkspaceComponent {
         let Some(using) = Use::of(name) else {
             return Err(ToolError::UnknownTool(name.to_string()));
         };
-        let (value, classification) = match using {
+        let (output, classification) = match using {
             Use::Shell => {
                 let (workspace, shell) = workspace_writer(turn).await?.shell().await?;
                 let shell = shell.ok_or_else(|| {
@@ -188,23 +187,23 @@ impl ToolProvider for WorkspaceComponent {
                         "the workspace's storage gives it no shell".to_string(),
                     )
                 })?;
-                (shell::execute(self, name, params, shell).await?, workspace.classification)
+                (shell::execute(self, name, params, shell).await?.into(), workspace.classification)
             }
             Use::Read => {
                 let (workspace, terminal) =
                     workspace_reader(&turn.situation()).await?.terminal().await?;
                 let seen = (workspace.id, &workspace.classification);
-                let value = files::read(self, name, params, terminal.as_ref(), seen, turn).await?;
-                (value, workspace.classification)
+                let output = files::read(self, name, params, terminal.as_ref(), seen, turn).await?;
+                (output, workspace.classification)
             }
             Use::Change => {
                 let (workspace, terminal) = workspace_writer(turn).await?.terminal().await?;
                 let seen = (workspace.id, &workspace.classification);
-                let value = files::change(name, params, terminal.as_ref(), seen, turn).await?;
-                (value, workspace.classification)
+                let output = files::change(name, params, terminal.as_ref(), seen, turn).await?;
+                (output, workspace.classification)
             }
         };
-        Ok(ToolOutput::classified(value, classification))
+        Ok(ToolOutput { classification: Some(classification), ..output })
     }
 }
 

@@ -1,11 +1,13 @@
 //! The component kind `workspace` (issues 251, part C, 532 and 534): the session's workspace, for
 //! the agents of the channels that may use it - what it is configured with: how long a command is
 //! followed, how much a result holds, which calls ask, where its prompt part goes and which files
-//! say how to work on a workspace. It serves two facets: the tools on the workspace's files and its
-//! shell (`tool`), and the prompt part that tells the agent which workspace that is (`prompt`).
+//! say how to work on a workspace. It serves three facets: the tools on the workspace's files and
+//! its shell (`tool`), the prompt part that tells the agent which workspace that is (`prompt`), and
+//! the files the agent knew given again after a compaction (`knowledge`, issue 538).
 //! Generic over the terminal: what it can do is what the workspace's storage gives, and the
 //! component knows no provider.
 
+mod knowledge;
 mod prompt;
 #[cfg(test)]
 mod testing;
@@ -18,6 +20,7 @@ use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::terminal::WorkspacePath;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
+use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::tool::Tool;
 use serde::Deserialize;
@@ -137,6 +140,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
                 .params::<WorkspaceParams>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>()
+                .provides::<dyn KnowledgeRestorer>()
                 .reads::<dyn WorkspaceReader>()
                 .writes::<dyn WorkspaceWriter>(),
         ),
@@ -146,7 +150,8 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
             let component = Arc::new(WorkspaceComponent::new(params, prompts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<WorkspaceComponent>::clone(&component));
-            facets.insert::<dyn PromptProvider>(component);
+            facets.insert::<dyn PromptProvider>(Arc::<WorkspaceComponent>::clone(&component));
+            facets.insert::<dyn KnowledgeRestorer>(component);
             Ok(facets)
         },
     );

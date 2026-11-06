@@ -31,6 +31,7 @@ use caelumora_api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult,
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::confidentiality::{Classification, Compartment, Confidentiality};
 use caelumora_domain::content::ContentRef;
+use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::{Answers, Questions};
 use caelumora_domain::tool::{
@@ -189,13 +190,16 @@ impl From<TerminalError> for ToolError {
 /// configuration or the channel (`ToolExecutor`). And what its model is given with the result as
 /// it is given an attachment: the attachments of its channel the tool shows it again (issue 282,
 /// `ToolCallResult::shown`), and the media the tool gives it (issue 512), which the executor keeps
-/// as the result's (`ToolCallResult::media`).
+/// as the result's (`ToolCallResult::media`). And what the tool read for it (issue 538), which the
+/// executor records with the turn and keeps on the result (`ToolCallResult::knowledge`) where the
+/// model is given it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolOutput {
     pub value: Value,
     pub classification: Option<Classification>,
     pub shown: Vec<ContentRef>,
     pub media: Vec<ToolMedia>,
+    pub knowledge: Vec<KnowledgeRef>,
 }
 
 impl ToolOutput {
@@ -208,7 +212,13 @@ impl ToolOutput {
 /// A value the tool does not classify.
 impl From<Value> for ToolOutput {
     fn from(value: Value) -> Self {
-        Self { value, classification: None, shown: Vec::new(), media: Vec::new() }
+        Self {
+            value,
+            classification: None,
+            shown: Vec::new(),
+            media: Vec::new(),
+            knowledge: Vec::new(),
+        }
     }
 }
 
@@ -863,12 +873,14 @@ impl ToolExecutor {
     /// withheld - with what it showed (issue 282) - if that, or what it showed, may not flow into
     /// the channel (`ActorRuntime::may_publish`, in the agent's name: the result enters
     /// its context in the channel). The media it gave are kept as the result's (`keep`, issue 512)
-    /// only where it is not withheld; what cannot be kept fails the call.
+    /// only where it is not withheld; what cannot be kept fails the call. What it read or wrote is
+    /// recorded with `turn` and kept on the result where the model is given the result (issue
+    /// 538), and neither where it is withheld or fails.
     async fn admitted(
         &self,
         call: &ToolCall,
         output: ToolOutput,
-        turn: &Turn<'_>,
+        turn: &mut Turn<'_>,
     ) -> ToolCallResult {
         let channel = turn.situation().classification();
         let configured = turn
@@ -893,11 +905,17 @@ impl ToolExecutor {
         }
         match successful_result(&turn.situation().texts(), output.value, call.visibility) {
             Ok(content) => match self.keep(output.media, &classification, turn).await {
-                Ok(media) => ToolCallResult {
-                    media,
-                    shown: output.shown,
-                    ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification)
-                },
+                Ok(media) => {
+                    for read in &output.knowledge {
+                        turn.record_knowledge(read.clone());
+                    }
+                    ToolCallResult {
+                        media,
+                        shown: output.shown,
+                        knowledge: output.knowledge,
+                        ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification)
+                    }
+                }
                 Err(e) => {
                     warn!("What tool call '{}' gave was not kept: {}", call.function_name, e);
                     self.failed(call, e, turn)
@@ -1080,7 +1098,9 @@ mod tests {
     use caelumora_domain::config::{AppConfig, ApprovalsConfig};
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::content::ContentId;
-    use caelumora_domain::context::{ContextRef, FrameRef};
+    use caelumora_domain::context::{ContextRef, FrameRef, KnowledgeSource};
+    use caelumora_domain::digest;
+    use caelumora_domain::digest::Digest;
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::note::NoteId;
     use caelumora_domain::session::testing::bare_session;
@@ -1184,7 +1204,9 @@ mod tests {
     /// `test_tool` does not classify its result; `hr_tool` classifies it as
     /// HR's; `configured_tool` does not classify, but is configured as HR's;
     /// `showing_tool` shows an attachment of the channel's, `showing_hr_tool`
-    /// one of HR's (issue 282).
+    /// one of HR's (issue 282); `reading_tool` read the channel's history,
+    /// `reading_hr_tool` read it too and classifies its result as HR's
+    /// (issue 538).
     #[derive(Debug)]
     struct MockToolProvider {
         requires_approval: bool,
@@ -1222,6 +1244,8 @@ mod tests {
                 tool("hanging_tool", self.requires_approval, None),
                 tool("showing_tool", self.requires_approval, None),
                 tool("showing_hr_tool", self.requires_approval, None),
+                tool("reading_tool", self.requires_approval, None),
+                tool("reading_hr_tool", self.requires_approval, None),
             ]
         }
         async fn execute(
@@ -1229,10 +1253,19 @@ mod tests {
             name: &str,
             _params: &Value,
             _answers: Option<&Answers>,
-            _turn: &mut Turn,
+            turn: &mut Turn,
         ) -> ToolResult<ToolOutput> {
             match name {
                 "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
+                "reading_tool" => {
+                    let read = history_read(turn, None);
+                    Ok(ToolOutput { knowledge: vec![read], ..json!({"read": true}).into() })
+                }
+                "reading_hr_tool" => {
+                    let read = history_read(turn, Some(digest::prompt("hr")));
+                    let output = ToolOutput::classified(json!({"read": true}), hr());
+                    Ok(ToolOutput { knowledge: vec![read], ..output })
+                }
                 "configured_tool" => Ok(json!({"salary": 2}).into()),
                 "hanging_tool" => future::pending().await,
                 "showing_tool" | "showing_hr_tool" => {
@@ -1246,6 +1279,16 @@ mod tests {
                 }
                 _ => Ok(json!({"result": "ok"}).into()),
             }
+        }
+    }
+
+    /// That the work of `turn` read its channel's history as of `digest`.
+    fn history_read(turn: &Turn<'_>, digest: Option<Digest>) -> KnowledgeRef {
+        KnowledgeRef {
+            channel: turn.situation().channel_id(),
+            session: turn.situation().session_id(),
+            source: KnowledgeSource::History { digest, from: None },
+            classification: None,
         }
     }
 
@@ -1892,6 +1935,34 @@ mod tests {
             withheld.content.contains("internal {hr}"),
             "the model is told why: {}",
             withheld.content
+        );
+    }
+
+    /// Issue 538: what a tool read is recorded with the turn and kept on its result where the model
+    /// is given the result; withheld, neither.
+    #[tokio::test]
+    async fn what_a_tool_read_goes_with_its_result_where_the_model_is_given_it() {
+        let executor = with_hr();
+        let mut agent_channel_state = agent_turn(&executor).await;
+        let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
+        let history = KnowledgeSource::History { digest: None, from: None };
+
+        let withheld =
+            executor.execute(&call("reading_hr_tool"), None, &mut turn, future::pending()).await;
+        assert_eq!(withheld.status, ToolResultStatus::Withheld);
+        assert!(withheld.knowledge.is_empty(), "nothing on the result");
+        let read =
+            executor.execute(&call("reading_tool"), None, &mut turn, future::pending()).await;
+        assert_eq!(read.status, ToolResultStatus::Ok, "{}", read.content);
+        let kept: Vec<_> = read.knowledge.iter().map(|k| k.source.clone()).collect();
+        assert_eq!(kept, vec![history.clone()], "on the result, for the transcript");
+        assert!(read.for_the_model().knowledge.is_empty(), "never given to the model");
+
+        drop(turn);
+        let recorded = &agent_channel_state.turn.as_ref().unwrap().work.context.frame.knowledge;
+        assert!(
+            matches!(recorded.as_slice(), [k] if k.source == history),
+            "and with the turn, but what was withheld: {recorded:?}"
         );
     }
 

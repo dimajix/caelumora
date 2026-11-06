@@ -66,6 +66,7 @@ flowchart TD
     decision & kernel & open_terminal & rest_server & store & store_json & store_postgres --> security
     a2a & compaction & tool_attachment & tool_image & tool_mcp & tool_workspace --> agents
     libraries --> api
+    tool_workspace --> compaction
     libraries --> domain
     agents -. "test-support" .-> kernel
     agents -. "test-support" .-> store

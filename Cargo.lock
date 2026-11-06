@@ -918,6 +918,7 @@ dependencies = [
  "bytes",
  "caelumora-agents",
  "caelumora-api",
+ "caelumora-compaction",
  "caelumora-domain",
  "caelumora-kernel",
  "caelumora-security",

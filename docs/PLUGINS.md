@@ -248,10 +248,10 @@ which knows the error types of those facets and asks the API's judgement for the
 (`caelumora_api::error::user_message_with`, issues 370, 516). A registry of judgements the plugins
 add is not needed, and would be the registry of downcasts rejected below. A library may define a
 facet in turn that other libraries serve - `caelumora-compaction` the `KnowledgeRestorer`, which the
-`skills` component serves (issue 464) -: they depend on it and answer in its error type,
-`CompactionError`, as they answer the agents in theirs; what is shown of it, the defining library
-decides where it answers the agents - the `compaction` component carries its text into its
-`ActivityError` and `CommandError`.
+`skills` and `workspace` components serve (issues 464, 538) -: they depend on it and answer in its
+error type, `CompactionError`, as they answer the agents in theirs; what is shown of it, the
+defining library decides where it answers the agents - the `compaction` component carries its text
+into its `ActivityError` and `CommandError`.
 
 So the trait names its error type, and the plugin translates its own error into it where it
 answers - deciding there what may be shown, what is a refusal and what is a failure:

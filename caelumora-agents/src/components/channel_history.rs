@@ -143,12 +143,12 @@ impl ToolProvider for ChannelHistoryComponent {
             digest: page.digest,
             from: Some(channel.visible_from().await?).filter(|from| *from > Position::START),
         };
-        turn.record_knowledge(KnowledgeRef {
+        let read = KnowledgeRef {
             channel: channel.id(),
             session: channel.session().id(),
             source,
             classification: classification.clone(),
-        });
+        };
 
         let time_zone = turn.situation().time_zone();
         let value = serde_json::json!({
@@ -166,7 +166,7 @@ impl ToolProvider for ChannelHistoryComponent {
             }).collect::<Vec<_>>(),
             "more": more,
         });
-        Ok(ToolOutput { classification, ..value.into() })
+        Ok(ToolOutput { classification, knowledge: vec![read], ..value.into() })
     }
 }
 
@@ -197,10 +197,13 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing;
     use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::history::{Audience, Recorded};
     use caelumora_domain::message::MessageId;
+    use caelumora_kernel::testing::World;
 
     /// A message saying `content`, recorded as the store keeps it.
     fn said(content: &str) -> Value {
@@ -239,5 +242,29 @@ mod tests {
         .unwrap();
         assert!(wanted(None).matches(&attached), "unless it has attachments (issue 282)");
         assert!(!wanted(Some("tea")).matches(&attached), "which no query finds");
+    }
+
+    /// Issue 538: what `read_history` read it gives with its output, for the executor to record:
+    /// the history of the channel it read, by that channel and its session.
+    #[tokio::test]
+    async fn what_it_read_is_given_with_its_output_by_the_channel_read() {
+        let world = testing::world().await;
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let main = &session.channels()[0];
+        let tool = ChannelHistoryComponent::new(&testing::prompts()).unwrap();
+        let mut state = AgentChannelState::default();
+        let mut turn = testing::turn(&session, helper, world.alice, &mut state);
+
+        let params = serde_json::json!({ "channel": main.name() });
+        let read = tool.execute(READ_HISTORY_TOOL_NAME, &params, None, &mut turn).await.unwrap();
+        assert!(
+            matches!(read.knowledge.as_slice(), [k] if k.channel == main.id() && k.session == session.id() && matches!(k.source, KnowledgeSource::History { .. })),
+            "{:?}",
+            read.knowledge
+        );
+        drop(turn);
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

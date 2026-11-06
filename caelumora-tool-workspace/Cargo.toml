@@ -8,6 +8,7 @@ license.workspace = true
 caelumora-domain.workspace = true
 caelumora-api.workspace = true
 caelumora-agents.workspace = true
+caelumora-compaction.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

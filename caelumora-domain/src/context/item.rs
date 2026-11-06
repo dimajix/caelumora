@@ -120,7 +120,7 @@ pub struct KnowledgeRef {
 }
 
 /// What a [`KnowledgeRef`] read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum KnowledgeSource {
     /// The notes an agent published in the channel; the digest of its note
     /// chain, `None` while it had none.
@@ -141,26 +141,81 @@ pub enum KnowledgeSource {
     /// were written in, so that knowledge from another session can be told
     /// (issue 134).
     Memory { agent: AgentId, digest: Option<Digest> },
-    /// An entity of whatever kind (issue 323), as its kind records what was
-    /// read of it: the files of a workspace (issue 251), read through the
-    /// channel it is used in, with the digest of a file's content as it
-    /// was read - `None` for a listing or a search -; a skill (issue 22),
-    /// loaded into the turn, with the digest of its body as it was loaded
-    /// (the skills plugin's `skill::digest`).
-    Entity { kind: EntityKind, id: Uuid, digest: Option<Digest> },
+    /// An entity of whatever kind (issue 323), as its kind records what was read of it: the
+    /// files of a workspace (issue 251), read through the channel it is used in, a file or
+    /// directory by its path as `place` (issue 538) - the workspace's top directory an empty one -,
+    /// with the digest of a file's content as it was read - `None` for a listing or a search -; a
+    /// skill (issue 22), loaded into the turn whole, without a place, with the digest of its body
+    /// as it was loaded (the skills plugin's `skill::digest`).
+    Entity {
+        kind: EntityKind,
+        id: Uuid,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        place: Option<String>,
+        digest: Option<Digest>,
+    },
 }
 
 impl KnowledgeSource {
-    /// That the entity of kind `T` with `id` was read, as `digest` says.
+    /// That the entity of kind `T` with `id` was read as a whole, as `digest` says.
     pub fn entity<T: Stored>(id: T::Id, digest: Option<Digest>) -> Self {
-        Self::Entity { kind: T::KIND, id: id.into(), digest }
+        Self::Entity { kind: T::KIND, id: id.into(), place: None, digest }
+    }
+
+    /// That `place` within the entity of kind `T` with `id` was read, as `digest` says - a file
+    /// of a workspace by its path (issue 538).
+    pub fn within<T: Stored>(id: T::Id, place: String, digest: Option<Digest>) -> Self {
+        Self::Entity { kind: T::KIND, id: id.into(), place: Some(place), digest }
     }
 
     /// The id of the entity of kind `T` this is the knowledge of, and the
     /// digest of what was read; `None` for knowledge of anything else.
     pub fn about<T: Stored>(&self) -> Option<(T::Id, Option<Digest>)> {
         match *self {
-            Self::Entity { kind, id, digest } if kind == T::KIND => Some((T::Id::from(id), digest)),
+            Self::Entity { kind, id, digest, .. } if kind == T::KIND => {
+                Some((T::Id::from(id), digest))
+            }
+            _ => None,
+        }
+    }
+
+    /// The kind of the entity this is the knowledge of; `None` for knowledge of anything else.
+    pub fn kind(&self) -> Option<EntityKind> {
+        match self {
+            Self::Entity { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
+
+    /// The digest of what the model was given whole of an entity, or what a tool wrote whole of
+    /// it (issue 538) - a skill loaded, a file read or written -, which can be given again and a
+    /// write be checked against; `None` for a listing or a search, a file offered by a link, and
+    /// knowledge of anything else.
+    pub fn read_whole(&self) -> Option<Digest> {
+        match self {
+            Self::Entity { digest, .. } => *digest,
+            _ => None,
+        }
+    }
+
+    /// Whether `self` and `other` are knowledge of the same, whatever was read of it when: the
+    /// same place within the same entity, or the same entity read as a whole (issue 538) - what a
+    /// compaction gives again once; knowledge of anything else where it is equal.
+    pub fn of_the_same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::Entity { kind, id, place, .. },
+                Self::Entity { kind: other_kind, id: other_id, place: other_place, .. },
+            ) => kind == other_kind && id == other_id && place == other_place,
+            _ => self == other,
+        }
+    }
+
+    /// Where within its entity what was read lies (`within`); `None` for an entity read as a
+    /// whole, and for knowledge of anything else.
+    pub fn place(&self) -> Option<&str> {
+        match self {
+            Self::Entity { place, .. } => place.as_deref(),
             _ => None,
         }
     }
@@ -234,6 +289,31 @@ mod tests {
     use crate::content::testing::make_content_ref;
     use crate::content::ContentRef;
     use crate::context::testing::text;
+    use crate::digest;
+    use crate::workspace::{Workspace, WorkspaceId};
+
+    /// Issue 538: what was read within an entity is known by its place, kept where there is one;
+    /// an entity read as a whole is kept without, as before.
+    #[test]
+    fn a_place_within_an_entity_is_kept_where_there_is_one() {
+        let id = WorkspaceId::new();
+        let file = KnowledgeSource::within::<Workspace>(id, "docs/plan.md".to_string(), None);
+        let whole = KnowledgeSource::entity::<Workspace>(id, None);
+        assert_eq!((file.place(), whole.place()), (Some("docs/plan.md"), None));
+        assert_eq!(file.about::<Workspace>(), whole.about::<Workspace>(), "of the same entity");
+        let changed = KnowledgeSource::within::<Workspace>(
+            id,
+            "docs/plan.md".to_string(),
+            Some(digest::prompt("v2")),
+        );
+        assert!(file.of_the_same(&changed), "the same place, whatever was read of it");
+        assert!(!file.of_the_same(&whole), "not the whole entity");
+        let kept = serde_json::to_value(&whole).unwrap();
+        assert!(kept["Entity"].get("place").is_none(), "{kept}");
+        let read: KnowledgeSource =
+            serde_json::from_value(serde_json::to_value(&file).unwrap()).unwrap();
+        assert_eq!(read, file);
+    }
 
     /// Issues 282, 284: an image given along counts as `IMAGE_TOKENS` more, for a model that sees
     /// it, than for one that does not.
