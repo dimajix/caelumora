@@ -87,9 +87,10 @@ A compaction gives again the skills loaded in the part of the transcript it repl
 loaded by the model, either way a `Given` entry - that the work still open needs, as the agent's
 model answers after its summary (issue 413): as each is now and only if the agent may still load it,
 unless the part kept still holds it, and as whoever first gave it - a skill a participant gave as
-theirs. A skill of a task that is over is not given again; it stays in the catalogue, to be loaded
-again. The compaction asks the `skills` component for them, as its `KnowledgeRestorer` (issue 323):
-it knows no skills itself.
+theirs. A skill of a task that is over is not given again, nor one that finds no room in what the
+compaction gives again ([AGENT-TURN.md](AGENT-TURN.md#compaction)); it stays in the catalogue, to be
+loaded again. The compaction asks the `skills` component for them, as its `KnowledgeRestorer`
+(issue 323): it knows no skills itself.
 
 ## Agents write skills
 

@@ -49,8 +49,9 @@ pub trait CompactionStrategy: Send + Sync + Debug {
     /// What replaces `part` - the older part of `turn`'s context, as its model is given it, without
     /// the prompt parts given into the transcript, which stand after the replacement again - for
     /// the agent to go on from. `given` names, by kind and name, what the agent knew in the part -
-    /// was given, or read with its tools - and can be given again after the replacement; what the
-    /// agent still needs of it is given again (issue 413).
+    /// was given, or read with its tools - and can be given again after the replacement, as far as
+    /// it fits into what a compaction gives again (issue 542); what the agent still needs of it is
+    /// given again (issue 413).
     ///
     /// # Errors
     /// `ModelUnreachable` if a model it asks cannot be asked, `NoSummary` if it answers nothing,
@@ -88,8 +89,9 @@ pub trait KnowledgeRestorer: Send + Sync + Debug {
     fn kind(&self) -> EntityKind;
 
     /// What of `given` - knowledge of entities of its kind, each as the agent first knew it, in
-    /// that order: an entity by its id, a place within it by its place too (issue 538) - it gives
-    /// `turn`'s agent again, as each is now; one it can no longer give there is left out.
+    /// the order it last knew them: an entity by its id, a place within it by its place too (issue
+    /// 538) - it gives `turn`'s agent again, as each is now; one it can no longer give there is
+    /// left out.
     ///
     /// # Errors
     /// `KnowledgeUnreadable` if what it gives cannot be read, `NoSession`
@@ -127,6 +129,9 @@ pub struct Compaction {
     /// What could have been given again and was not, since the agent no
     /// longer needs it, each by its kind and name (issue 413).
     pub not_needed: Vec<String>,
+    /// What could have been given again and did not fit into what a compaction gives again, each
+    /// by its kind and name (issue 542).
+    pub no_room: Vec<String>,
     /// How much of what the agent knew before can no longer be given and
     /// was not given again.
     pub lost: usize,
@@ -149,6 +154,9 @@ impl Compaction {
                 " No longer needed, not given again: {}.",
                 self.not_needed.join(", ")
             ));
+        }
+        if !self.no_room.is_empty() {
+            text.push_str(&format!(" No room to give again: {}.", self.no_room.join(", ")));
         }
         if self.lost > 0 {
             text.push_str(&format!(
@@ -191,12 +199,14 @@ mod tests {
             kept: 1,
             given_again: vec!["skill release-notes".to_string()],
             not_needed: vec!["skill quiz-round".to_string()],
+            no_room: vec!["workspace docs/plan.md".to_string()],
             lost: 1,
         };
         assert_eq!(
             compaction.describe("Jonathan"),
             "Jonathan compacted its context: 3 messages replaced, 1 kept as they were. Given again: skill release-notes. \
             No longer needed, not given again: skill quiz-round. \
+            No room to give again: workspace docs/plan.md. \
             1 of what it knew can no longer be given here and was not given again."
         );
     }

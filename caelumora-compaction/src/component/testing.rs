@@ -8,9 +8,9 @@ use caelumora_agents::turn::Turn;
 use caelumora_domain::agent::AgentId;
 use std::sync::Arc;
 
-/// The component with `strategy`, keeping a tenth of the context.
+/// The component with `strategy`, keeping a tenth of the context, giving nothing again.
 pub(super) fn component(strategy: &Arc<Scripted>) -> CompactionComponent {
-    let compactor = Compactor::new(Arc::<Scripted>::clone(strategy), Vec::new(), 0.1);
+    let compactor = Compactor::new(Arc::<Scripted>::clone(strategy), Vec::new(), 0.1, 0.0);
     CompactionComponent::new(compactor, DEFAULT_THRESHOLD)
 }
 

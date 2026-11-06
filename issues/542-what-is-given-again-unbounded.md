@@ -1,6 +1,6 @@
 # 542 — What a compaction gives again is bounded per file, not in all
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -49,3 +49,19 @@ shorter.
 ## History
 
 - **2026-11-06** — Opened from the review of issue 538, step 4.
+- **2026-11-06** — Decided with the maintainer: a budget of the compaction, not of the restorer,
+  which knows neither the model's context size nor the threshold; the compaction need not weigh
+  kinds against each other where what the agent knew last comes first, whatever its kind. The
+  budget is a constant share of the room between `keep` and `threshold`, not a parameter; it bounds
+  what the strategy is offered, not what it chose - its summary leaves out the text of what it is
+  offered, which would be lost twice if cut afterwards -; and what found no room is a list of its
+  own in `Compaction`, not counted as lost.
+- **2026-11-06** — Done: what is given again takes at most `ROOM_TO_GIVE_AGAIN`, half of the room
+  between `keep` and `threshold`, of the context size (`Compactor::room`), the component handing
+  the share to the `Compactor` as it hands `keep`, so that the compactor needs no threshold. It is
+  a bound, not a guarantee: where no cut keeps as little as `keep`, the part kept is larger, and
+  what the context holds besides the transcript counts against neither. The cut
+  orders what is wanted by where it was last known, as first known and with the message it was
+  first known from (`Cut::wanted`); the compactor takes from the latest on what fits by the estimate
+  of its text, each that still fits after one that did not, and asks the strategy only about that.
+  `Compaction::no_room` names the rest, and `/compact` tells it ("No room to give again").

@@ -8,6 +8,8 @@
 //! is given again, as it is now, by the component whose it is, its [`KnowledgeRestorer`]
 //! (issue 323), after the replacement - what the strategy answers the agent still needs of it
 //! (issue 413) -, as whoever first gave it: a skill a participant gave as theirs (issue 539).
+//! What is given again fits into its `room`, a share of the context size, what the agent knew last
+//! first (issue 542); the strategy is asked only about what fits, so that it summarises the rest.
 //! Nothing changes until all of it is had: then the context moves to the compacted one at once
 //! (`Turn::compact`).
 
@@ -16,7 +18,7 @@ use crate::{Compaction, CompactionError, CompactionStrategy, GivenAgain, Knowled
 use caelumora_agents::turn::Turn;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::message::{estimated_tokens, Message, MessageId};
 use chrono::Utc;
 use std::sync::Arc;
 
@@ -31,6 +33,8 @@ pub(crate) struct Compactor {
     /// How much of the newest context is kept as it stands, as a share of the context size - of the
     /// context as it stands where no size is known.
     keep: f64,
+    /// How much room of the context what is given again has, as a share of the same size.
+    room: f64,
 }
 
 impl Compactor {
@@ -38,8 +42,9 @@ impl Compactor {
         strategy: Arc<dyn CompactionStrategy>,
         restorers: Vec<Arc<dyn KnowledgeRestorer>>,
         keep: f64,
+        room: f64,
     ) -> Self {
-        Self { strategy, restorers, keep }
+        Self { strategy, restorers, keep, room }
     }
 
     /// Compacts the context of `turn`'s agent, moving the turn's context to the compacted one: what
@@ -54,10 +59,11 @@ impl Compactor {
         &self,
         turn: &mut Turn<'_>,
     ) -> Result<Option<Compaction>, CompactionError> {
-        let Some(cut) = self.cut(turn)? else {
+        let Some((cut, size)) = self.cut(turn)? else {
             return Ok(None);
         };
-        let (restored, lost) = self.give_again(turn, &cut.wanted()).await?;
+        let (restored, lost) = self.restore(turn, &cut.wanted()).await?;
+        let (restored, no_room) = within(restored, share_of(self.room, size));
         let part = turn.conversation_until(cut.until()).await.map_err(|e| {
             tracing::warn!(
                 "Agent {}: a compaction cannot read its transcript: {:#}",
@@ -113,13 +119,15 @@ impl Compactor {
             kept: cut.messages_kept(),
             given_again: needed.into_iter().map(|r| r.name).collect(),
             not_needed: not_needed.into_iter().map(|r| r.name).collect(),
+            no_room: no_room.into_iter().map(|r| r.name).collect(),
             lost,
         }))
     }
 
-    /// Where the transcript of `turn`'s agent is cut, keeping `keep` of its model's context size;
-    /// `None` if there is nothing to replace.
-    fn cut(&self, turn: &Turn<'_>) -> Result<Option<Cut>, CompactionError> {
+    /// Where the transcript of `turn`'s agent is cut, keeping `keep` of its model's context size,
+    /// with that size - of the context as it stands where none is known; `None` if there is
+    /// nothing to replace.
+    fn cut(&self, turn: &Turn<'_>) -> Result<Option<(Cut, u64)>, CompactionError> {
         let situation = turn.situation();
         let (positions, _) =
             situation.token_positions()?.ok_or(CompactionError::TranscriptUnreadable)?;
@@ -129,20 +137,16 @@ impl Compactor {
             .and_then(|usage| usage.context_size)
             .or(positions.last().copied())
             .unwrap_or(0);
-        Ok(Cut::of(&state.transcript, &positions, self.keep_of(size), turn.turn_id()))
-    }
-
-    /// How many tokens of a context of `size` are kept as they stand.
-    fn keep_of(&self, size: u64) -> u64 {
-        // A share of a token count: rounded down, what is lost is a token.
-        (self.keep * size as f64) as u64
+        let keep = share_of(self.keep, size);
+        Ok(Cut::of(&state.transcript, &positions, keep, turn.turn_id()).map(|cut| (cut, size)))
     }
 
     /// What `wanted` - known in the part replaced and not in the part kept, each with the message
-    /// it was first known from - can be given again by the restorer of its kind, and how much of it
-    /// can no longer be given. What no restorer gives is not given again, and not lost either; what
-    /// a restorer gives that was not wanted is left out.
-    async fn give_again<'a>(
+    /// it was first known from, in the order it was last known - can be given again by the
+    /// restorer of its kind, in that order, and how much of it can no longer be given. What no
+    /// restorer gives is not given again, and not lost either; what a restorer gives that was not
+    /// wanted is left out.
+    async fn restore<'a>(
         &self,
         turn: &mut Turn<'_>,
         wanted: &[(&KnowledgeSource, &'a Message)],
@@ -165,30 +169,58 @@ impl Compactor {
                 .into_iter()
                 .filter_map(|again| {
                     let what = &again.knowledge.source;
-                    let (_, giver) = wanted.iter().find(|(k, _)| k.of_the_same(what))?;
+                    let known = wanted.iter().position(|(k, _)| k.of_the_same(what))?;
+                    let (_, giver) = wanted[known];
                     let name = format!("{} {}", kind, again.name);
-                    Some(Restored { name, again, giver })
+                    Some(Restored { name, again, giver, known })
                 })
                 .collect();
             lost += of_kind.len().saturating_sub(again.len());
             restored.extend(again);
         }
+        restored.sort_by_key(|r| r.known);
         Ok((restored, lost))
     }
 }
 
+/// How many tokens `share` of a context of `size` are.
+fn share_of(share: f64, size: u64) -> u64 {
+    // A share of a token count: rounded down, what is lost is a token.
+    (share * size as f64) as u64
+}
+
+/// Of `restored`, in the order the agent last knew each, what fits into `room` tokens and what
+/// does not, both in that order (issue 542): taken from what it knew last on, by the estimate of
+/// its text, each that still fits after one that did not.
+fn within(restored: Vec<Restored<'_>>, room: u64) -> (Vec<Restored<'_>>, Vec<Restored<'_>>) {
+    let mut left = room;
+    let (mut fits, mut no_room): (Vec<_>, Vec<_>) = restored.into_iter().rev().partition(|r| {
+        let tokens = estimated_tokens(r.again.text.len());
+        let fits = tokens <= left;
+        if fits {
+            left -= tokens;
+        }
+        fits
+    });
+    fits.reverse();
+    no_room.reverse();
+    (fits, no_room)
+}
+
 /// What a restorer gives again, by its kind and name - `skill release-notes` -, with the message it
-/// was first given in, whose sender gives it again.
+/// was first given in, whose sender gives it again, and where it stands in what was wanted: the
+/// later, the more lately the agent knew it.
 struct Restored<'a> {
     name: String,
     again: GivenAgain,
     giver: &'a Message,
+    known: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{two_calls, Scripted, SUMMARY};
+    use crate::testing::{heard, two_calls, Scripted, SUMMARY};
     use async_trait::async_trait;
     use caelumora_agents::testing::{agent_runtime, workspace_turn};
     use caelumora_domain::actor::EventContext;
@@ -198,7 +230,7 @@ mod tests {
         KnowledgeSource, ModelProfile, Placement, PromptPart, SenderFormat,
     };
     use caelumora_domain::digest;
-    use caelumora_domain::message::MessageRole;
+    use caelumora_domain::message::{MessageRole, TokenUsage};
     use caelumora_domain::store::{EntityKind, Stored};
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::time_zone::TimeZone;
@@ -271,12 +303,13 @@ mod tests {
         }
     }
 
-    /// A compactor keeping a tenth of the context, with `strategy` and `restorers`.
+    /// A compactor keeping a tenth of the context and giving again up to half of it, with
+    /// `strategy` and `restorers`.
     fn compactor(
         strategy: &Arc<Scripted>,
         restorers: Vec<Arc<dyn KnowledgeRestorer>>,
     ) -> Compactor {
-        Compactor::new(Arc::<Scripted>::clone(strategy), restorers, 0.1)
+        Compactor::new(Arc::<Scripted>::clone(strategy), restorers, 0.1, 0.5)
     }
 
     /// The texts of the transcript's active branch, as they stand.
@@ -284,29 +317,18 @@ mod tests {
         state.transcript.messages().into_iter().map(|m| m.content.unwrap_or_default()).collect()
     }
 
-    /// The world's agent heard `u1`, was given `release-notes` by alice - as a participant gives a
-    /// skill with `/skill` -, answered `A1` in a turn of its own, then heard `u2`.
-    async fn an_agent_with_a_skill_given(
+    /// The world's agent heard `u1`, was given `gifts` - each a message with the knowledge it is -
+    /// in a turn, answered `A1` in a turn of its own, then heard `u2`.
+    fn an_agent_given(
         world: &WithWorkspace,
         state: &mut AgentChannelState,
-    ) -> WorkspaceId {
-        let skill = WorkspaceId::new();
-        let heard = |text: &str| Message {
-            content: Some(text.to_string()),
-            ..Message::new(Classification::PUBLIC)
-        };
-        let u1 = heard("u1");
-        state.perceive(vec![u1]);
+        gifts: Vec<(Message, KnowledgeRef)>,
+    ) {
+        state.perceive(vec![heard("u1")]);
         let mut turn = workspace_turn(world, state);
-        turn.give(
-            Message {
-                sender_id: ActorId::User(UserId::new()),
-                sender_name: "alice".to_string(),
-                content: Some(GIVEN.to_string()),
-                ..Message::new(Classification::general(Confidentiality::Internal))
-            },
-            Some(knowledge(world, skill)),
-        );
+        for (message, known) in gifts {
+            turn.give(message, Some(known));
+        }
         drop(turn);
         let given = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(given, Vec::new(), Vec::new());
@@ -318,13 +340,50 @@ mod tests {
         });
         let answered = state.turn.take().unwrap().work.turn_id;
         state.finish_turn(answered, Vec::new(), Vec::new());
-        let u2 = heard("u2");
-        state.perceive(vec![u2]);
+        state.perceive(vec![heard("u2")]);
+    }
+
+    /// The world's agent heard `u1`, was given `release-notes` by alice - as a participant gives a
+    /// skill with `/skill` -, answered `A1` in a turn of its own, then heard `u2`.
+    async fn an_agent_with_a_skill_given(
+        world: &WithWorkspace,
+        state: &mut AgentChannelState,
+    ) -> WorkspaceId {
+        let skill = WorkspaceId::new();
+        let gift = Message {
+            sender_id: ActorId::User(UserId::new()),
+            sender_name: "alice".to_string(),
+            content: Some(GIVEN.to_string()),
+            ..Message::new(Classification::general(Confidentiality::Internal))
+        };
+        an_agent_given(world, state, vec![(gift, knowledge(world, skill))]);
         skill
     }
 
+    /// `text`, given to the world's agent by `by`, named `name`, as the file at `place` known so.
+    fn file(
+        world: &WithWorkspace,
+        place: &str,
+        text: &str,
+        by: ActorId,
+        name: &str,
+    ) -> (Message, KnowledgeRef) {
+        let source = KnowledgeSource::within::<Workspace>(
+            world.workspace.id,
+            place.to_string(),
+            Some(digest::prompt(text)),
+        );
+        let message = Message {
+            sender_id: by,
+            sender_name: name.to_string(),
+            content: Some(text.to_string()),
+            ..Message::new(Classification::PUBLIC)
+        };
+        (message, KnowledgeRef { source, ..knowledge(world, world.workspace.id) })
+    }
+
     /// Gives again every file it is asked for under its place, as the `workspace` component would -
-    /// but `gone.txt`, which is gone.
+    /// but `gone.txt`, which is gone -, `big.txt` with 400 bytes more than its place.
     #[derive(Debug)]
     struct Files;
 
@@ -346,7 +405,10 @@ mod tests {
                 })
                 .map(|(known, place)| GivenAgain {
                     name: place.to_string(),
-                    text: format!("[File: {place}]"),
+                    text: match place {
+                        "big.txt" => format!("[File: {place}]\n{}", "x".repeat(400)),
+                        _ => format!("[File: {place}]"),
+                    },
                     knowledge: KnowledgeRef { source: known.clone(), ..turn_knowledge(turn) },
                 })
                 .collect())
@@ -359,43 +421,14 @@ mod tests {
     async fn files_are_given_again_by_their_place_as_whoever_gave_them() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
-        let heard = |text: &str| Message {
-            content: Some(text.to_string()),
-            ..Message::new(Classification::PUBLIC)
-        };
         let alice = ActorId::User(UserId::new());
         let agent = ActorId::Agent(world.agent);
-        let file = |place: &str, by: ActorId, name: &str| {
-            let source = KnowledgeSource::within::<Workspace>(
-                world.workspace.id,
-                place.to_string(),
-                Some(digest::prompt(place)),
-            );
-            let message = Message {
-                sender_id: by,
-                sender_name: name.to_string(),
-                content: Some(format!("[File: {place}]")),
-                ..Message::new(Classification::PUBLIC)
-            };
-            (message, KnowledgeRef { source, ..knowledge(&world, world.workspace.id) })
-        };
-        state.perceive(vec![heard("u1")]);
-        let mut turn = workspace_turn(&world, &mut state);
-        for (message, known) in [
-            file("a.txt", alice, "alice"),
-            file("b.txt", agent, "helper"),
-            file("gone.txt", agent, "helper"),
-        ] {
-            turn.give(message, Some(known));
-        }
-        drop(turn);
-        let given = state.turn.take().unwrap().work.turn_id;
-        state.finish_turn(given, Vec::new(), Vec::new());
-        drop(workspace_turn(&world, &mut state));
-        state.said(Message { sender_id: agent, role: MessageRole::Assistant, ..heard(A1) });
-        let answered = state.turn.take().unwrap().work.turn_id;
-        state.finish_turn(answered, Vec::new(), Vec::new());
-        state.perceive(vec![heard("u2")]);
+        let gifts = ["a.txt", "b.txt", "gone.txt"]
+            .into_iter()
+            .zip([(alice, "alice"), (agent, "helper"), (agent, "helper")])
+            .map(|(place, (by, name))| file(&world, place, &format!("[File: {place}]"), by, name))
+            .collect();
+        an_agent_given(&world, &mut state, gifts);
         let compactor = compactor(&Arc::new(Scripted::default()), vec![Arc::new(Files)]);
 
         let mut turn = workspace_turn(&world, &mut state);
@@ -409,6 +442,53 @@ mod tests {
         );
         let given: Vec<_> = state.transcript.messages()[1..3].iter().map(|m| m.sender_id).collect();
         assert_eq!(given, [alice, agent], "as whoever first gave it");
+    }
+
+    /// Issue 542: what is given again takes at most its share of the context, what the agent knew
+    /// last first - a file read again counts where it was read last -, and each that still fits
+    /// after one that does not; the strategy is asked only about what fits, and the owners are told
+    /// what did not.
+    #[tokio::test]
+    async fn what_is_given_again_fits_into_its_share_of_the_context() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let agent = ActorId::Agent(world.agent);
+        let read = |place: &str, text: &str| file(&world, place, text, agent, "helper");
+        let gifts = vec![
+            read("a.txt", "[File: a.txt]"),
+            read("b.txt", "[File: b.txt]"),
+            read("c.txt", "[File: c.txt]"),
+            read("big.txt", "[File: big.txt]"),
+            read("d.txt", "[File: d.txt]"),
+            read("a.txt", "[File: a.txt]\nagain"),
+        ];
+        an_agent_given(&world, &mut state, gifts);
+        state.used = Some(TokenUsage {
+            calls: 1,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            context_size: Some(100),
+            context_tokens: 0,
+        });
+        let strategy = Arc::new(Scripted::default());
+        // 15 tokens to give again: three files of 4 each, not `big.txt`.
+        let files: Vec<Arc<dyn KnowledgeRestorer>> = vec![Arc::new(Files)];
+        let compactor = Compactor::new(Arc::<Scripted>::clone(&strategy), files, 0.1, 0.15);
+
+        let mut turn = workspace_turn(&world, &mut state);
+        let compaction = compactor.compact(&mut turn).await.expect("compacted").expect("some");
+        drop(turn);
+
+        let named = |places: &[&str]| -> Vec<String> {
+            places.iter().map(|place| format!("workspace {place}")).collect()
+        };
+        assert_eq!(
+            (compaction.given_again, compaction.no_room),
+            (named(&["c.txt", "d.txt", "a.txt"]), named(&["b.txt", "big.txt"])),
+            "the latest that fit, in the order last read"
+        );
+        let (_, given) = strategy.asked.lock().unwrap().pop().expect("its strategy was asked");
+        assert_eq!(given, named(&["c.txt", "d.txt", "a.txt"]), "asked about what fits alone");
     }
 
     #[tokio::test]
@@ -431,6 +511,7 @@ mod tests {
                 kept: 1,
                 given_again: vec!["workspace release-notes".to_string()],
                 not_needed: Vec::new(),
+                no_room: Vec::new(),
                 lost: 0
             })
         );
@@ -566,6 +647,7 @@ mod tests {
                 kept: 1,
                 given_again: Vec::new(),
                 not_needed: Vec::new(),
+                no_room: Vec::new(),
                 lost: 1
             })
         );
@@ -618,6 +700,7 @@ mod tests {
                 kept: 1,
                 given_again: Vec::new(),
                 not_needed: vec!["workspace release-notes".to_string()],
+                no_room: Vec::new(),
                 lost: 0
             })
         );
@@ -635,7 +718,7 @@ mod tests {
         state.perceive(vec![u1]);
         let before = state.transcript.digest();
         let strategy = Arc::new(Scripted::default());
-        let compactor = Compactor::new(Arc::<Scripted>::clone(&strategy), Vec::new(), 0.25);
+        let compactor = Compactor::new(Arc::<Scripted>::clone(&strategy), Vec::new(), 0.25, 0.25);
 
         let mut turn = workspace_turn(&world, &mut state);
         let compaction = compactor.compact(&mut turn).await.expect("nothing to do is no failure");
@@ -824,8 +907,8 @@ mod tests {
     }
 
     #[test]
-    fn what_it_keeps_is_a_share_of_the_context_size() {
-        let compactor = Compactor::new(Arc::new(Scripted::default()), Vec::new(), 0.25);
-        assert_eq!(compactor.keep_of(1000), 250);
+    fn a_share_of_the_context_is_rounded_down_to_a_token() {
+        assert_eq!(share_of(0.25, 1000), 250);
+        assert_eq!(share_of(0.25, 1001), 250);
     }
 }

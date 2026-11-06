@@ -55,7 +55,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [465](465-attachments-in-the-context.md) | open | medium | feature | What of a message's attachments is put into a model's context and what it has to fetch through a tool is decided by no bound, so a few images or one long text can fill the context and are sent again with every call. |
 | [518](518-memory-is-reached-through-the-agents-state.md) | open | medium | refactoring | An agent's memory is part of its state, which the agent side is handed whole and changes through three calls of its `ActorRuntime`, and the agent side itself decides which entries may be recalled where, while the workspace, skills and artifacts are system services reached through a reader and a writer. |
-| [542](542-what-is-given-again-unbounded.md) | open | medium | feature | After a compaction, every file the agent read whole in the part replaced and still needs is given again, each bounded by `max_output_bytes` but not all of them together, so a context can stay above the threshold and be compacted again and again, giving the same files each time. |
 
 ## Maintenance
 

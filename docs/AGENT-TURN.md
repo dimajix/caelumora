@@ -680,8 +680,14 @@ the rest. The `skills` component gives the skills the agent may still load there
 ([SKILLS.md](SKILLS.md)), the `workspace` component the files of the workspace its channel may still
 use, as they are now, each under its path, up to what a result holds
 ([TOOLS.md](TOOLS.md#the-workspace)); what no component gives again is not, and neither the
-compaction nor its strategy knows a kind itself. `/compact` tells the channel what was given again
-and what was no longer needed, by kind and name, and how much could no longer be given.
+compaction nor its strategy knows a kind itself. What is given again takes at most half of the room
+between `keep` and `threshold`, leaving the other half for the replacement and what the context
+holds besides the transcript, so that a compaction does not give again what puts the context above
+its threshold and is compacted again at once: what the agent knew last comes first, whatever its
+kind, and each that still fits after one that did not. The strategy is
+asked only about what fits, so that its replacement covers the rest. `/compact` tells the channel
+what was given again, what was no longer needed and what found no room, by kind and name, and how
+much could no longer be given.
 
 ## Prompt parts
 

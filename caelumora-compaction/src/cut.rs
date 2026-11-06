@@ -98,13 +98,14 @@ impl Cut {
     }
 
     /// What the agent knew in the part replaced and is not still there in the part kept - what it
-    /// was given, what its tools read or wrote (issue 538) -: each once, as it first knew it, in
-    /// that order, with the message it first knew it from - whose sender gave it (issue 539). Read
-    /// as the model sees it (`as_seen_whole`): what was taken back, or is of a turn given up as
-    /// `Lowered`, is neither given again nor still there (issue 234). Still there is the same
-    /// entity, or the same place within it (`KnowledgeSource::of_the_same`), whatever of it the
-    /// part kept holds: a compaction gives again what it takes away, not what changed since -
-    /// which the model loads or reads anew if it needs it (issue 541).
+    /// was given, what its tools read or wrote (issue 538) -: each once, as it first knew it, with
+    /// the message it first knew it from - whose sender gave it (issue 539) -, in the order it last
+    /// knew each, so that what it knew last comes last (issue 542). Read as the model sees it
+    /// (`as_seen_whole`): what was taken back, or is of a turn given up as `Lowered`, is neither
+    /// given again nor still there (issue 234). Still there is the same entity, or the same place
+    /// within it (`KnowledgeSource::of_the_same`), whatever of it the part kept holds: a compaction
+    /// gives again what it takes away, not what changed since - which the model loads or reads
+    /// anew if it needs it (issue 541).
     pub(crate) fn wanted(&self) -> Vec<(&KnowledgeSource, &Message)> {
         let still_there = known_in(&self.kept);
         let gone = |(k, _): &(&KnowledgeSource, &Message)| {
@@ -204,15 +205,20 @@ fn kept_whole<'a>(entries: impl Iterator<Item = &'a TranscriptEntry>) -> HashSet
 }
 
 /// What `entries` hold of what can be given again, each once - the same entity, or the same place
-/// within it, once (`KnowledgeSource::of_the_same`) -, as it was first known, in that order, with
-/// the message it was first known from: a skill a user gave and one the model loaded alike (issue
-/// 389), a file read and one written alike (issue 538).
+/// within it, once (`KnowledgeSource::of_the_same`) -, as it was first known, with the message it
+/// was first known from, in the order it was last known (issue 542): a skill a user gave and one
+/// the model loaded alike (issue 389), a file read and one written alike (issue 538).
 fn known_in(entries: &[Entry]) -> Vec<(&KnowledgeSource, &Message)> {
     let mut known: Vec<(&KnowledgeSource, &Message)> = Vec::new();
     for (sources, message) in entries.iter().filter_map(|(_, k, m)| Some((k, m.as_ref()?))) {
         for source in sources {
-            if !known.iter().any(|(k, _)| k.of_the_same(source)) {
-                known.push((source, message));
+            match known.iter().position(|(k, _)| k.of_the_same(source)) {
+                // Known again: last known here, as first known.
+                Some(at) => {
+                    let first = known.remove(at);
+                    known.push(first);
+                }
+                None => known.push((source, message)),
             }
         }
     }
@@ -444,6 +450,45 @@ mod tests {
             wanted,
             [(Some(release_notes), alice)],
             "alice's, once; not what the part kept holds"
+        );
+    }
+
+    /// Issue 542: what is wanted stands in the order it was last known - a skill given first and
+    /// loaded again last comes last -, as it was first known, with the message it was first known
+    /// from.
+    #[test]
+    fn what_is_wanted_stands_in_the_order_it_was_last_known() {
+        let (release_notes, review) = (WorkspaceId::new(), WorkspaceId::new());
+        let given = |text: &str, id| {
+            let source = KnowledgeSource::entity::<Workspace>(id, Some(digest::prompt(text)));
+            let gift = message(text, MessageRole::System, None, Classification::PUBLIC);
+            (gift, Some(GivenSource::Knowledge(source)))
+        };
+        let gifts = [
+            given("[Skill: release-notes]", release_notes),
+            given("[Skill: review]", review),
+            given("[Skill: release-notes] again", release_notes),
+        ];
+        let first: Vec<_> = gifts[..2].iter().map(|(gift, _)| gift.id).collect();
+        let mut transcript = Transcript::default();
+        for (gift, source) in gifts {
+            transcript.give(gift, source);
+        }
+        transcript.push(message("u1", MessageRole::User, None, Classification::PUBLIC));
+
+        let cut = Cut::of(&transcript, &[0, 10, 20, 30, 40], 10, TurnId::new()).expect("cut");
+        let wanted: Vec<_> = cut
+            .wanted()
+            .iter()
+            .map(|(k, m)| (k.about::<Workspace>().map(|(id, _)| id), k.read_whole(), m.id))
+            .collect();
+        assert_eq!(
+            wanted,
+            [
+                (Some(review), Some(digest::prompt("[Skill: review]")), first[1]),
+                (Some(release_notes), Some(digest::prompt("[Skill: release-notes]")), first[0]),
+            ],
+            "the skill loaded again last, as it was first given"
         );
     }
 

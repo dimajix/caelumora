@@ -5,9 +5,10 @@
 //!
 //! On its own, as an activity, once its context fills `threshold` of its model's context size;
 //! when asked, by `/compact @agent`, a command the agent carries out itself, for its owners alone.
-//! Either way it keeps `keep` of the context size as it stands, below `threshold`, and has the
-//! rest replaced by what its [`CompactionStrategy`] puts there (`Compactor`); it tells the channel
-//! what it did. An agent whose personality does not list it does not compact at all.
+//! Either way it keeps `keep` of the context size as it stands, below `threshold`, has the rest
+//! replaced by what its [`CompactionStrategy`] puts there (`Compactor`), and gives again what fits
+//! into a share of the room between the two (`ROOM_TO_GIVE_AGAIN`); it tells the channel what it
+//! did. An agent whose personality does not list it does not compact at all.
 
 mod activity;
 mod command;
@@ -35,6 +36,12 @@ const DEFAULT_THRESHOLD: f64 = 0.8;
 /// How much of the context a compaction keeps as it stands, as a share of its model's context
 /// size, unless configured.
 const DEFAULT_KEEP: f64 = 0.25;
+
+/// How much of the room between what a compaction keeps and its threshold what it gives again may
+/// take: the rest is left for the replacement, the context outside the transcript, and for the
+/// context to grow by until the next compaction, which would follow at once without it (issue
+/// 542).
+const ROOM_TO_GIVE_AGAIN: f64 = 0.5;
 
 /// A component of the kind `compaction`: the agent's context compacted on its own, as an activity,
 /// once it fills `threshold`, and by `/compact`.
@@ -124,7 +131,8 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
                 .into_iter()
                 .map(|restorer| restorer.facet)
                 .collect();
-            let compactor = Compactor::new(strategy, restorers, keep);
+            let room = ROOM_TO_GIVE_AGAIN * (threshold - keep);
+            let compactor = Compactor::new(strategy, restorers, keep, room);
             let component = Arc::new(CompactionComponent::new(compactor, threshold));
             let mut facets = ComponentFacets::empty();
             facets

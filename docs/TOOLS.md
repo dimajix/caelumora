@@ -333,9 +333,9 @@ places.
 After a compaction, the component gives again the files the agent read or wrote whole in the part
 replaced and still needs (`KnowledgeRestorer`, see [AGENT-TURN.md](AGENT-TURN.md#compaction)): each
 as it is now, under its path (`[File: docs/plan.md]`), and known so, so that a write checks against
-it. One that is gone, no text, or larger than a result holds (`max_output_bytes`) is not, nor any
-where the channel may no longer use the workspace or its storage cannot be reached: the model reads
-it again if it needs it.
+it. One that is gone, no text, or larger than a result holds (`max_output_bytes`) is not, nor one
+that finds no room in what the compaction gives again, nor any where the channel may no longer use
+the workspace or its storage cannot be reached: the model reads it again if it needs it.
 
 `publish_file` offers a file for download at the message that calls it: a link to the file as it is
 now, with its digest, downloaded through the channel's workspace by whoever may use it there. It
