@@ -157,8 +157,12 @@ impl<'a> ContextResolver<'a> {
         let Some(given) = self.given_path(reference, turn, agent)? else {
             return Ok(None);
         };
+        // The system prompt: the parts at the start in the role of one - a part placed there for
+        // want of an entry to follow is none of it.
+        let system_prompt =
+            given.leading.iter().take_while(|part| part.role() == MessageRole::System).count();
         let mut items = given.items(|_| false);
-        reference.frame.profile.place_system_messages(&mut items);
+        reference.frame.profile.place_system_messages(&mut items[system_prompt..]);
         let tool_sets = match &reference.frame.tools {
             Some(digest) => match self.offered_tools.get(digest) {
                 Some(sets) => sets.clone(),
@@ -194,6 +198,7 @@ impl<'a> ContextResolver<'a> {
             return Ok(None);
         };
         let mut items = given.items(|entry| entry.part_of().is_some());
+        // No system prompt: every message is the conversation's.
         profile.place_system_messages(&mut items);
         Ok(Some(items))
     }
@@ -292,16 +297,21 @@ impl<'a> ContextResolver<'a> {
         let mut given = Vec::new();
         for (node, message) in as_they_stand(self.transcript.entries()) {
             let message = match message {
-                Some(message) => Some(message),
-                None => participant_notice(
+                Some(message) => {
+                    as_given(profile, &texts, &node.entry, message, agent, false, time_zone)?
+                }
+                None => match participant_notice(
                     &texts,
                     &node.entry,
                     &node.digest,
                     agent,
                     profile.sender_style,
-                )?,
+                )? {
+                    Some(notice) => profile.given(notice, agent, false, time_zone),
+                    None => continue,
+                },
             };
-            given.extend(message.map(|message| profile.given(message, agent, false, time_zone)));
+            given.push(message);
         }
         Ok(given)
     }
@@ -353,6 +363,7 @@ impl<'a> ContextResolver<'a> {
         let Some(leading) = placed_at(PromptAt::Start) else { return Ok(None) };
         let Some(trailing) = placed_at(PromptAt::End) else { return Ok(None) };
         let mut placed = leading.len() + trailing.len();
+        let time_zone = reference.frame.time_zone;
         let mut entries = Vec::with_capacity(path.len());
         for (node, message) in path {
             let in_turn = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
@@ -366,7 +377,15 @@ impl<'a> ContextResolver<'a> {
             // placed after any of them.
             if let Some(message) = message {
                 given.push(ContextItem::Conversation {
-                    message: profile.given(message, agent, in_turn, reference.frame.time_zone),
+                    message: as_given(
+                        profile,
+                        &texts,
+                        &node.entry,
+                        message,
+                        agent,
+                        in_turn,
+                        time_zone,
+                    )?,
                 });
             }
             if let TranscriptEntry::TurnGivenUp { turn_id, reason, at } = &node.entry {
@@ -375,7 +394,7 @@ impl<'a> ContextResolver<'a> {
                         given_up_notice(&texts, *turn_id, reason, *at)?,
                         agent,
                         false,
-                        reference.frame.time_zone,
+                        time_zone,
                     ),
                 });
             }
@@ -383,7 +402,7 @@ impl<'a> ContextResolver<'a> {
                 participant_notice(&texts, &node.entry, &node.digest, agent, profile.sender_style)?
             {
                 given.push(ContextItem::Conversation {
-                    message: profile.given(notice, agent, false, reference.frame.time_zone),
+                    message: profile.given(notice, agent, false, time_zone),
                 });
             }
             let Some(parts) = placed_at(PromptAt::After(node.digest)) else { return Ok(None) };
@@ -397,6 +416,27 @@ impl<'a> ContextResolver<'a> {
             entries,
             trailing,
         }))
+    }
+}
+
+/// `message`, which `entry` records, as `profile` gives it to the model of `agent` in `time_zone`,
+/// `in_turn` if the turn under way produced it: what was given to read as such
+/// (`ModelProfile::given_to_read`, worded by `texts`, issue 539), what was said framed as said.
+///
+/// # Errors
+/// `PromptError` if a text cannot be had.
+fn as_given(
+    profile: &ModelProfile,
+    texts: &PromptTexts,
+    entry: &TranscriptEntry,
+    message: Message,
+    agent: ActorId,
+    in_turn: bool,
+    time_zone: TimeZone,
+) -> Result<Message, PromptError> {
+    match entry {
+        TranscriptEntry::Given { .. } => profile.given_to_read(message, agent, in_turn, texts),
+        _ => Ok(profile.given(message, agent, in_turn, time_zone)),
     }
 }
 
@@ -656,6 +696,84 @@ mod tests {
                 (MessageRole::Assistant, "hi".to_string()),
             ],
             "framed as the model is given them, the notice kept a system message"
+        );
+    }
+
+    /// Issue 539: what is given to read is framed by the resolver, whoever gave it - a system
+    /// message where the model keeps one, never marked as said, who gave it worded if another
+    /// participant did -, for the agent's model as for a remote agent.
+    #[test]
+    fn what_is_given_to_read_is_framed_as_given_whoever_gave_it() {
+        let agent = ActorId::Agent(AgentId::new());
+        let alice = ActorId::User(UserId::new());
+        let mut state = AgentChannelState::default();
+        state.transcript.push(Message {
+            sender_id: alice,
+            sender_name: "Alice".to_string(),
+            role: MessageRole::User,
+            ..text("hello")
+        });
+        // A skill alice gave with `/skill`, one the agent loaded itself, written as a user's.
+        state.transcript.give(
+            Message {
+                sender_id: alice,
+                sender_name: "Alice".to_string(),
+                role: MessageRole::System,
+                ..text("[Skill: notes]\nCollect.")
+            },
+            None,
+        );
+        state.transcript.give(
+            Message { sender_id: agent, role: MessageRole::User, ..text("[Skill: plan]\nOrder.") },
+            None,
+        );
+        let profile = |system_messages| ModelProfile {
+            sender_format: SenderFormat::Prefix,
+            system_messages,
+            ..ModelProfile::default()
+        };
+        let resolved = |system_messages| {
+            let reference = ContextRef {
+                transcript: state.transcript.digest(),
+                frame: FrameRef { profile: profile(system_messages), ..FrameRef::default() },
+            };
+            let resolver = ContextResolver::of(&state, kernel_catalogue());
+            let items = resolver
+                .resolve(&reference, TurnId::new(), agent)
+                .unwrap()
+                .expect("resolved")
+                .items;
+            let roles = items.iter().map(ContextItem::role);
+            roles.zip(contents(&items)).collect::<Vec<_>>()
+        };
+        let given = |role| {
+            [
+                (MessageRole::User, "@alice: hello".to_string()),
+                (role, "@alice gave you this to read:\n[Skill: notes]\nCollect.".to_string()),
+                (role, "[Skill: plan]\nOrder.".to_string()),
+            ]
+        };
+        assert_eq!(
+            resolved(SystemMessages::Anywhere),
+            given(MessageRole::System),
+            "unmarked as said, who gave it worded"
+        );
+        assert_eq!(
+            resolved(SystemMessages::OnlyAtStart),
+            given(MessageRole::User),
+            "as a user message where the model keeps no system message there"
+        );
+
+        let told: Vec<_> = ContextResolver::of(&state, kernel_catalogue())
+            .given_messages(&profile(SystemMessages::OnlyAtStart), agent, Default::default())
+            .unwrap()
+            .into_iter()
+            .map(|message| (message.role, message.content.unwrap_or_default()))
+            .collect();
+        assert_eq!(
+            told,
+            given(MessageRole::System),
+            "worded so for a remote agent too, whose agent takes the text"
         );
     }
 
@@ -1112,6 +1230,75 @@ mod tests {
         );
         assert_eq!(roles(SystemMessages::Anywhere), [System, User, System, System]);
         assert_eq!(SystemMessages::default(), SystemMessages::OnlyAtStart);
+    }
+
+    /// Issue 539: the system prompt is the parts at the start alone - what begins the transcript,
+    /// a summary given after a compaction, or a notice of who joined, is none of it, nor is what
+    /// is placed after it -, so that a model that merges the system messages takes none of it for
+    /// its instructions.
+    #[test]
+    fn what_begins_the_transcript_is_no_part_of_the_system_prompt() {
+        let agent = ActorId::Agent(AgentId::new());
+        let mut state = AgentChannelState::default();
+        state.transcript.record(TranscriptEntry::ParticipantJoined {
+            participant: agent,
+            name: "Helper".to_string(),
+            by: ActorId::System,
+            by_name: "system".to_string(),
+            at: Utc::now(),
+        });
+        state.transcript.give(text("[Summary of the conversation so far]\nAsked."), None);
+        let roles = |system_messages| {
+            let mut state = state.clone();
+            state.prompts.keep(prompt("system prompt"), || "system prompt".to_string());
+            begin(&mut state, ModelProfile { system_messages, ..ModelProfile::default() });
+            state.turn.as_mut().unwrap().work.context.frame.prompts.push(PromptRef {
+                text: prompt("system prompt"),
+                role: MessageRole::System,
+                at: PromptAt::Start,
+                classification: None,
+            });
+            place(&mut state, MessageRole::System, "the plan");
+            let next = state.turn.as_ref().unwrap().work.context.clone();
+            let resolver = ContextResolver::of(&state, kernel_catalogue());
+            let items = resolver.resolve(&next, TurnId::new(), agent).unwrap().expect("resolved");
+            items.items.iter().map(ContextItem::role).collect::<Vec<_>>()
+        };
+        use MessageRole::{System, User};
+        assert_eq!(
+            roles(SystemMessages::OnlyAtStart),
+            [System, User, User, User],
+            "the notice, the summary and the plan after the system prompt as user messages"
+        );
+        assert_eq!(roles(SystemMessages::Anywhere), [System, System, System, System]);
+    }
+
+    /// Issue 539: what a model is handed to work on the conversation has no system prompt, so that
+    /// a summary that begins it is a user message where the model keeps system messages only at
+    /// the start.
+    #[test]
+    fn the_conversation_alone_has_no_system_prompt() {
+        let agent = ActorId::Agent(AgentId::new());
+        let mut state = AgentChannelState::default();
+        state.transcript.give(text("[Summary of the conversation so far]\nAsked."), None);
+        state.transcript.push(Message {
+            sender_id: agent,
+            role: MessageRole::Assistant,
+            ..text("ok")
+        });
+        let last = state.transcript.digest().expect("an entry");
+        let roles = |system_messages| {
+            let profile = ModelProfile { system_messages, ..ModelProfile::default() };
+            let resolver = ContextResolver::of(&state, kernel_catalogue());
+            let items = resolver
+                .conversation_until(last, profile, TimeZone::UTC, TurnId::new(), agent)
+                .unwrap()
+                .expect("the transcript holds it");
+            items.iter().map(ContextItem::role).collect::<Vec<_>>()
+        };
+        use MessageRole::{Assistant, System, User};
+        assert_eq!(roles(SystemMessages::OnlyAtStart), [User, Assistant], "no system prompt");
+        assert_eq!(roles(SystemMessages::Anywhere), [System, Assistant]);
     }
 
     #[test]

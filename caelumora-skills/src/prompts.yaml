@@ -7,7 +7,7 @@
 # `description`; `load_skill`, the tool to load one with.
 catalogue: |
   [Skills you can load]
-  A skill is a procedure written down for you: how a task is done here. When a task calls for one of these, load it with `{{ load_skill }}` and follow it. A skill a user loaded for you stands in the conversation already, as their message.
+  A skill is a procedure written down for you: how a task is done here. When a task calls for one of these, load it with `{{ load_skill }}` and follow it. A skill a user loaded for you stands in the conversation already, given to you by them.
   {% for skill in skills %}
   - {{ skill.name }}: {{ skill.description }}
   {% endfor %}

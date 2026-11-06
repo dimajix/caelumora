@@ -13,7 +13,7 @@ use crate::{Compaction, CompactionError, CompactionStrategy, GivenAgain, Knowled
 use caelumora_agents::turn::Turn;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::context::KnowledgeRef;
-use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::message::{Message, MessageId};
 use chrono::Utc;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -75,7 +75,6 @@ impl Compactor {
             id: MessageId::new(),
             sender_id: agent,
             sender_name: turn.agent_name().to_string(),
-            role: MessageRole::User,
             content: Some(replacement.text),
             timestamp: Utc::now(),
             prompt_tokens: replacement.call.prompt_tokens,
@@ -90,7 +89,6 @@ impl Compactor {
                 id: MessageId::new(),
                 sender_id: agent,
                 sender_name: turn.agent_name().to_string(),
-                role: MessageRole::User,
                 content: Some(given.text.clone()),
                 timestamp: Utc::now(),
                 // Given in the turn, as `Turn::give` gives.
@@ -177,6 +175,7 @@ mod tests {
     use caelumora_domain::context::{
         KnowledgeSource, ModelProfile, Placement, PromptPart, SenderFormat,
     };
+    use caelumora_domain::message::MessageRole;
     use caelumora_domain::store::{EntityKind, Stored};
     use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
     use caelumora_domain::user::UserId;

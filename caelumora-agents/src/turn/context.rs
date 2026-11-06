@@ -127,7 +127,8 @@ impl Turn<'_> {
     /// its text kept once by digest, so that what the agent saw can be told
     /// later (issues 06, 47); the parts given into the transcript become what
     /// stands of their components' parts there (`AgentChannelState::give_parts`,
-    /// issue 537), each a message of the agent in its role.
+    /// issue 537), each a message of the agent, given to the model as what is given to read
+    /// (issue 539).
     pub fn set_context(&mut self, parts: Vec<PromptPart>, knowledge: Vec<KnowledgeRef>) {
         self.current_mut().work.take_in_context(&parts, knowledge);
         let mut prompts = Vec::new();
@@ -577,7 +578,7 @@ mod tests {
     }
 
     /// Issue 537: a part placed `Given` goes into the transcript after the turn's input, and is
-    /// given to the model there as a message of the agent in its role; a later turn whose part
+    /// given to the model there as what is given to read (issue 539); a later turn whose part
     /// is the same gives nothing again, one whose part changed is given the new one alone. What a
     /// summary is written of holds no part (`Turn::conversation_until`).
     #[tokio::test]

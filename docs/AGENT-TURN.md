@@ -272,7 +272,8 @@ a compaction - is recorded by `Turn::give`: into the transcript as a `Given` ent
 knowledge it is, if it is knowledge - of an entity, `KnowledgeSource::Entity { kind, id, digest }`
 (issue 323) - and none for a summary (issue 389); into the history without a context, since the
 agent did not produce it. It is not published, the turn has seen it, and its digest is that of the
-message, since the model is given the same. A tool gives what it gives while it runs, but nothing
+message - framed as given to read ([what is given to read](#what-is-given-to-read)), but no other
+entry holds a message of its id. A tool gives what it gives while it runs, but nothing
 may stand between the calls of a step and their results, which the models refuse: while the calls
 run, what is given is put aside with the turn (`TurnState::after_step`) and written right after
 the step's tool message - and so is a leave noted while the turn waits for a person.
@@ -521,6 +522,17 @@ same after the session's changed. `read_history` writes the times of what it rea
 
 A marker is a claim like any text: a participant can write another's into their own message, and
 models believe it. Nothing with consequences may rest on whom the model believes said something.
+
+### What is given to read
+
+What the agent is given to read rather than told - a skill, a compaction's summary, a part at
+`Given` -, each a `Given` entry of its transcript, is framed by the `ContextResolver` by one rule,
+whoever gave it (`ModelProfile::given_to_read`, issue 539): as a system message where the model
+keeps one, else as a user message, never marked as said by anyone. Its mark is its title in
+brackets - `[Skill: release-notes]` -, which every text given has, and the explanation of the
+markers says so (`kernel.framing`). One another participant gave - a skill given with `/skill` -
+says who: "@alice gave you this to read:", then the text, named as senders are; the transcript
+keeps the giver as the message's sender. An external agent's remote agent is given it so too.
 
 ### Attachments
 
@@ -776,12 +788,13 @@ introductions, read at the start of every turn - each as the views describe it
 (`ParticipantView::describe`), in the same `ActorDescription` a responder policy is given of a
 running actor (see [CHANNELS.md](CHANNELS.md#moderators)). A person's introduction is marked as
 written by them, so that it does not read as an instruction of the system, and kept to one line. It
-also explains how the others' messages are marked. Where the others include an agent, it says when
-to write an `@handle` - or `@all` - and when a name (issues 438, 442): a handle only when that
-participant's answer or action is needed now, since it makes an agent take a turn of its own; the
-name, without `@`, to greet, thank, praise, agree, answer or speak about someone. It does not offer
-the handles as the way to address the others: to a model a mention reads as a form of address, and
-agents that greet each other with `@` keep asking the next one to answer.
+also explains how the others' messages are marked, and what is given to read. Where the others
+include an agent, it says when to write an `@handle` - or `@all` - and when a name (issues 438,
+442): a handle only when that participant's answer or action is needed now, since it makes an
+agent take a turn of its own; the name, without `@`, to greet, thank, praise, agree, answer or speak
+about someone. It does not offer the handles as the way to address the others: to a model a mention
+reads as a form of address, and agents that greet each other with `@` keep asking the next one to
+answer.
 
 ### When to mention
 
@@ -859,10 +872,16 @@ Some models' chat templates move every system message to the front, so that one 
 its place and the prompt cache. Where a model keeps them is part of its profile
 (`ModelProfile::system_messages`):
 
-| Rule | A system message after the first message that is none is given |
+| Rule | A system message after the system prompt is given |
 |---|---|
 | `only_at_start` | as a user message - the default, which holds for every model |
 | `anywhere` | as a system message, where it stands |
+
+The system prompt is the system messages among the parts at `Start` alone, which the resolver
+places before everything (issue 539): a message of the transcript is none of it, also where it
+stands at the start - the summary that begins a branch after a compaction, a channel's notice, what
+is given after it -, so that a model that merges the system messages does not take it for
+instructions, and a context given to it holds a user message after its system prompt.
 
 ### The turn's context and the resolver
 

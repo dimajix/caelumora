@@ -1,6 +1,6 @@
 //! The facet `AgentCommandProvider` of `skills` (issue 22): **`/skill @agent <name>`**, a command a
-//! participant gives the agent - the skill's text goes into its transcript as a message in the
-//! participant's name, read in the command's turn, never into the channel's history -; and
+//! participant gives the agent - the skill's text goes into its transcript as given to read, in
+//! the participant's name, read in the command's turn, never into the channel's history -; and
 //! **`/skills @agent`**, which lists what it may load.
 
 use super::{reader_in, SkillsComponent};
@@ -10,7 +10,7 @@ use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_domain::command::{Command, CommandOutput};
-use caelumora_domain::message::{Message, MessageId, MessageRole};
+use caelumora_domain::message::{Message, MessageId};
 use chrono::Utc;
 use tracing::warn;
 
@@ -108,7 +108,6 @@ impl AgentCommandProvider for SkillsComponent {
                     id: MessageId::new(),
                     sender_id: issuer,
                     sender_name: issuer_name.unwrap_or_else(|| "a user".to_string()),
-                    role: MessageRole::User,
                     content: Some(self.given(&skill).map_err(|e| failed(&e.to_string()))?),
                     timestamp: Utc::now(),
                     ..Message::new(skill.classification.clone())
