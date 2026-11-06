@@ -827,6 +827,7 @@ async fn knowledge_response(
         channel_deleted,
         source,
         entity_id,
+        place: knowledge.source.place().map(str::to_string),
         agent_id,
         agent_name,
         digest,

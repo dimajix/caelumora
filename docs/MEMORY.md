@@ -158,8 +158,9 @@ channels.
 Every read is recorded as a `KnowledgeRef`: the channel and its session, so that knowledge from
 another session can be told, and what was read there (`KnowledgeSource`) with its digest - an
 agent's notes or the agent's own private notes in the channel, the channel's history up to where and
-from where, the agent's memory once per channel its recalled entries were written in, a file of the
-session's workspace, a skill loaded into the turn.
+from where, the agent's memory once per channel its recalled entries were written in, an entity - a
+skill loaded into the turn as a whole, a file or directory of the session's workspace by its place
+within it, its path.
 
 A read is recorded with the turn (`Turn::record_knowledge`) and goes into the `ContextRef` of every
 message produced after it. A `PromptProvider` returns the knowledge its part contains with the part,

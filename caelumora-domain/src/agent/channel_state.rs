@@ -350,7 +350,8 @@ impl AgentChannelState {
             turn.after_step.push(AfterStep::Given { message, knowledge });
             return !stands;
         }
-        let source = knowledge.as_ref().map(|knowledge| GivenSource::Knowledge(knowledge.source));
+        let source =
+            knowledge.as_ref().map(|knowledge| GivenSource::Knowledge(knowledge.source.clone()));
         if let (Some(turn), Some(knowledge)) = (self.turn.as_mut(), knowledge) {
             turn.work.record_knowledge(knowledge);
         }
@@ -464,7 +465,7 @@ impl AgentChannelState {
         let given = replacement
             .iter()
             .map(|(message, knowledge)| {
-                let source = knowledge.as_ref().map(|knowledge| knowledge.source);
+                let source = knowledge.as_ref().map(|knowledge| knowledge.source.clone());
                 (message.clone(), source.map(GivenSource::Knowledge))
             })
             .collect();
@@ -1400,7 +1401,7 @@ mod tests {
             WorkspaceId::new(),
             Some(digest::prompt("Collect, group, write.")),
         );
-        let knowledge = knowledge(source, Some(Classification::CHANNEL_DEFAULT));
+        let knowledge = knowledge(source.clone(), Some(Classification::CHANNEL_DEFAULT));
 
         state.given(skill.clone(), Some(knowledge.clone()));
         assert_eq!(

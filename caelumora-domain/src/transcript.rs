@@ -617,7 +617,7 @@ mod tests {
         let (mut given, mut said) = (Transcript::default(), Transcript::default());
         given.push(make_message(id(1)));
         said.push(make_message(id(1)));
-        given.give(make_message(id(2)), Some(GivenSource::Knowledge(source)));
+        given.give(make_message(id(2)), Some(GivenSource::Knowledge(source.clone())));
         said.push(make_message(id(2)));
         assert_eq!(given.digest(), said.digest(), "the model is given the same");
         assert_eq!(given.messages().iter().map(|m| m.id).collect::<Vec<_>>(), [id(1), id(2)]);
@@ -1022,7 +1022,7 @@ mod tests {
             .compact(
                 vec![
                     (make_message(id(10)), None),
-                    (make_message(id(11)), Some(GivenSource::Knowledge(source))),
+                    (make_message(id(11)), Some(GivenSource::Knowledge(source.clone()))),
                 ],
                 Some(old[1]),
             )

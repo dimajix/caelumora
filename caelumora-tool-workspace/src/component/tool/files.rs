@@ -4,12 +4,11 @@
 //! are relative to the workspace's top directory and made `WorkspacePath`s before anything is
 //! asked.
 //!
-//! - `list_files`, `read_file` and `grep_files` only read; what they read
-//!   is recorded as the turn's knowledge (`KnowledgeSource::Entity`), a
-//!   file's content by its digest. `publish_file` reads too: it offers a
-//!   file for download as a link to it as it is now, with its digest
-//!   (issue 273), to those who may use the workspace in the channel - which
-//!   gives nothing away, so it never needs approval (issue 275).
+//! - `list_files`, `read_file` and `grep_files` only read; what they read is recorded as the
+//!   turn's knowledge by its path within the workspace (`KnowledgeSource::within`, issue 538), a
+//!   file's content with its digest. `publish_file` reads too: it offers a file for download as a
+//!   link to it as it is now, with its digest (issue 273), to those who may use the workspace in
+//!   the channel - which gives nothing away, so it never needs approval (issue 275).
 //! - `write_file`, `replace_in_file`, `move_file` and `delete_file` change;
 //!   the approver reads the change whole, and a rule derived from an
 //!   approved one covers the file, whatever is written - for a move, that
@@ -478,17 +477,18 @@ async fn search(
     )
 }
 
-/// Records in `turn` that the work read the files of `workspace` - its id and its classification -,
-/// as of `digest` where one file was read whole.
+/// Records in `turn` that the work read `at` in the files of `workspace` - its id and its
+/// classification - (issue 538), as of `digest` where a file was read whole.
 fn known(
     turn: &mut Turn<'_>,
     (id, classification): (WorkspaceId, &Classification),
+    at: &WorkspacePath,
     digest: Option<Digest>,
 ) {
     turn.record_knowledge(KnowledgeRef {
         channel: turn.situation().channel_id(),
         session: turn.situation().session_id(),
-        source: KnowledgeSource::entity::<Workspace>(id, digest),
+        source: KnowledgeSource::within::<Workspace>(id, at.to_string(), digest),
         classification: Some(classification.clone()),
     })
 }
@@ -505,12 +505,12 @@ pub(super) async fn read(
     turn: &mut Turn<'_>,
 ) -> ToolResult<Value> {
     let prompts = &component.prompts;
-    let read = |turn: &mut Turn<'_>, digest| known(turn, workspace, digest);
+    let read = |turn: &mut Turn<'_>, at: &WorkspacePath, digest| known(turn, workspace, at, digest);
     match name {
         LIST_FILES => {
             let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
             let entries = terminal.list(&at).await?;
-            read(turn, None);
+            read(turn, &at, None);
             let listed: Vec<Value> = entries.iter().take(MAX_ENTRIES).map(entry).collect();
             Ok(
                 json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES }),
@@ -520,7 +520,7 @@ pub(super) async fn read(
             let Read { path: at, start_line, line_count } = arguments(params)?;
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
-            read(turn, Some(digest));
+            read(turn, &at, Some(digest));
             let mut result = page_of(
                 &text,
                 &format!("'{at}'"),
@@ -550,12 +550,12 @@ pub(super) async fn read(
             let at = path(&at.unwrap_or_default())?;
             let found = search(
                 terminal,
-                at,
+                at.clone(),
                 &pattern,
                 max_matches.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES),
             )
             .await?;
-            read(turn, None);
+            read(turn, &at, None);
             Ok(found)
         }
         PUBLISH_FILE => {
@@ -578,7 +578,7 @@ pub(super) async fn read(
                 return Err(ToolError::InvalidParameter(format!("'{name}' is no name to offer a file under: at most {MAX_NAME_CHARS} characters, no slashes")));
             }
             let (size, digest) = digest(terminal, &at).await?;
-            read(turn, Some(digest));
+            read(turn, &at, Some(digest));
             let mut result = json!({ "workspace": workspace.0, "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
             if let Some(description) =
                 description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty())
@@ -600,7 +600,7 @@ pub(super) async fn change(
     workspace: (WorkspaceId, &Classification),
     turn: &mut Turn<'_>,
 ) -> ToolResult<Value> {
-    let read = |turn: &mut Turn<'_>, digest| known(turn, workspace, digest);
+    let read = |turn: &mut Turn<'_>, at: &WorkspacePath, digest| known(turn, workspace, at, digest);
     match name {
         WRITE_FILE => {
             let Write { path: at, content } = arguments(params)?;
@@ -617,7 +617,7 @@ pub(super) async fn change(
             }
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
-            read(turn, Some(digest));
+            read(turn, &at, Some(digest));
             let found = text.matches(old_text.as_str()).count();
             let replaced = match (found, replace_all) {
                 (0, _) => return Err(ToolError::InvalidParameter(format!("'old_text' does not occur in '{at}'"))),
@@ -794,7 +794,7 @@ mod tests {
         assert!(matches!(outside, Err(ToolError::InvalidParameter(_))), "the model's to correct");
 
         drop(turn);
-        let read: Vec<Option<Digest>> = knowledge(&state)
+        let read: Vec<(Option<String>, Option<Digest>)> = knowledge(&state)
             .into_iter()
             .map(|k| match k.source.about::<Workspace>() {
                 Some((workspace, digest)) => {
@@ -806,21 +806,24 @@ mod tests {
                             world.session.channels()[0].id()
                         )
                     );
-                    digest
+                    (k.source.place().map(str::to_string), digest)
                 }
                 None => panic!("{:?}", k.source),
             })
             .collect();
-        // The listing and the search are one entry, each content read is
-        // one: the file as written, after the first replacement, after the
-        // second.
+        // Each by its place (issue 538): the listing of `docs`, the file as written, the search of
+        // the whole workspace, the file after the first replacement and after the second.
+        let read: Vec<(Option<&str>, bool)> =
+            read.iter().map(|(place, digest)| (place.as_deref(), digest.is_some())).collect();
         assert_eq!(
-            (
-                read.iter().filter(|d| d.is_none()).count(),
-                read.iter().filter(|d| d.is_some()).count()
-            ),
-            (1, 3),
-            "{read:?}"
+            read,
+            [
+                (Some("docs"), false),
+                (Some("docs/plan.md"), true),
+                (Some(""), false),
+                (Some("docs/plan.md"), true),
+                (Some("docs/plan.md"), true)
+            ]
         );
     }
 
@@ -1014,8 +1017,8 @@ mod tests {
         drop(turn);
         let read: Vec<_> = knowledge(&state).into_iter().map(|k| k.source).collect();
         assert!(
-            matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d == Some(digest))),
-            "what was read, once: {read:?}"
+            matches!(&read[..], [source] if source.about::<Workspace>().is_some_and(|(_, d)| d == Some(digest)) && source.place() == Some("out/report.csv")),
+            "what was read, once, by its place: {read:?}"
         );
     }
 

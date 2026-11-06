@@ -246,7 +246,7 @@ impl PromptProvider for AgentMemoryComponent {
                 knowledge.push(KnowledgeRef {
                     channel: memory.origin.channel,
                     session: memory.origin.session.id,
-                    source,
+                    source: source.clone(),
                     classification: Classification::join_all(from_there),
                 });
             }

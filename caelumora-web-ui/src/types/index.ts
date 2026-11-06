@@ -1508,6 +1508,11 @@ export interface KnowledgeRef {
   source: string;
   /** The entity read, for a kind. */
   entity_id?: string;
+  /**
+   * Where within the entity what was read lies - for a `workspace` the path of the file or
+   * directory read (issue 538); absent for an entity read as a whole.
+   */
+  place?: string;
   /** Whose notes or memory, for `notes`, `private_notes` and `memory`. */
   agent_id: ActorId | null;
   agent_name: string | null;

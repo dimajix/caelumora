@@ -269,17 +269,18 @@ external agent publishes its answers through the same `Answering`.
 
 **A message given** to the agent to read - a skill a participant or the model loaded, the summary of
 a compaction - is recorded by `Turn::give`: into the transcript as a `Given` entry, which keeps what
-knowledge it is, if it is knowledge - of an entity, `KnowledgeSource::Entity { kind, id, digest }`
-(issue 323) - and none for a summary (issue 389); into the history without a context, since the
-agent did not produce it. It is not published, the turn has seen it, and its digest is that of the
-message - framed as given to read ([what is given to read](#what-is-given-to-read)), but no other
-entry holds a message of its id. A tool gives what it gives while it runs, but nothing may stand
-between the calls of a step and their results, which the models refuse: while the calls run, what is
-given is put aside with the turn (`TurnState::after_step`) and written right after the step's tool
-message - and so is a leave noted while the turn waits for a person. Knowledge that stands given
-already - the same, with the same text and classification, as the model is given it or put aside -
-is not given a second time: `Turn::give` records it with the turn and answers that it gave nothing,
-as a prompt part that stands is not given again.
+knowledge it is, if it is knowledge - of an entity,
+`KnowledgeSource::Entity { kind, id, place, digest }` (issue 323) - and none for a summary
+(issue 389); into the history without a context, since the agent did not produce it. It is not
+published, the turn has seen it, and its digest is that of the message - framed as given to read
+([what is given to read](#what-is-given-to-read)), but no other entry holds a message of its id. A
+tool gives what it gives while it runs, but nothing may stand between the calls of a step and their
+results, which the models refuse: while the calls run, what is given is put aside with the turn
+(`TurnState::after_step`) and written right after the step's tool message - and so is a leave noted
+while the turn waits for a person. Knowledge that stands given already - the same, with the same
+text and classification, as the model is given it or put aside - is not given a second time:
+`Turn::give` records it with the turn and answers that it gave nothing, as a prompt part that stands
+is not given again.
 
 ### A command turn
 
