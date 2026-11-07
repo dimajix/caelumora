@@ -469,3 +469,9 @@ Stored memories are deleted, not migrated: a migration would be code without a l
   stays to be decided. `scripts/wrapping.sh` finds every line of prose that begins with a dash -
   `-,` and `--all` as much as `- ` -, the lines it then found rewrapped, in three resolved issues
   too, their text unchanged.
+- **2026-11-07** — The memory announces what it stored, as the maintainer decided: the
+  `MemoryManager` announces a memory made as `Created` and one changed as `Updated` without what
+  changed, to whoever may read it, its owner - as the rule of ARCHITECTURE.md asks of every writer
+  of a document, which a frontend and other instances rely on. Dropping `agent::STATE_CHANGED` in
+  step 3 for want of a listener was wrong: an announcement is part of a writer's contract, not an
+  option waiting for a user.

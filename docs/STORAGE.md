@@ -619,12 +619,13 @@ sessions at once, each with its own actor, whose turns commit to that one docume
 `MemoryManager` keeps, per agent, the number the next entry gets and a lock: a turn does not hold
 the memory, it reads what it may recall and stages changes; when it completes, the manager reads the
 document as it is stored then, under the agent's lock, has the turn's changes checked on it, applies
-and stores them. No actor thus overwrites another's changes, and every next turn sees them. Numbers
-for new entries are handed out at once, since turns in several channels may remember at the same
-time; they count on from the document as stored, and a commit raises them to what it finds there, so
-that a process does not fall behind what another wrote. Across processes, the document's revision
-refuses a write made on an outdated one, and the manager reads it again, has the turn's changes
-checked again on it and writes once more, as every writer of a document does.
+and stores them, and announces that it did, without what changed. No actor thus overwrites another's
+changes, and every next turn sees them. Numbers for new entries are handed out at once, since turns
+in several channels may remember at the same time; they count on from the document as stored, and a
+commit raises them to what it finds there, so that a process does not fall behind what another
+wrote. Across processes, the document's revision refuses a write made on an outdated one, and the
+manager reads it again, has the turn's changes checked again on it and writes once more, as every
+writer of a document does.
 
 ### One writer per state
 

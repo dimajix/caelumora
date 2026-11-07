@@ -10,14 +10,18 @@
 //! completes: several turns may remember at the same time, and each needs its number at once to
 //! tell the model. It begins from the memory as stored, read in the kernel's name - a number tells
 //! nothing of what is remembered -, and is raised to what a commit finds stored, so that it never
-//! falls behind what another process wrote.
+//! falls behind what another process wrote. A commit stored is then announced, without what it
+//! changed, to whoever may read the memory - its owner -, as every writer of a document announces
+//! what it stored.
 
 use crate::memory::{AgentMemory, AgentMemoryId, MemoryChange, MemoryId, MemoryOrigin};
 use async_trait::async_trait;
 use caelumora_domain::agent::{Agent, AgentId};
+use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::message::MessageId;
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt};
 use caelumora_kernel::agent::AgentMember;
+use caelumora_kernel::event::EventBus;
 use caelumora_kernel::scoped::purge_for_good;
 use caelumora_security::SecurityContext;
 use caelumora_store::EntityStore;
@@ -32,6 +36,8 @@ use tracing::debug;
 /// The one keeper of agents' memory.
 pub(crate) struct MemoryManager {
     memories: Arc<dyn EntityStore<AgentMemory>>,
+    /// Where what was stored is announced.
+    events: Arc<EventBus>,
     /// What is kept of each agent served since the process started: its numbers and its lock.
     agents: Mutex<HashMap<AgentId, Arc<Kept>>>,
 }
@@ -54,9 +60,9 @@ impl fmt::Debug for MemoryManager {
 }
 
 impl MemoryManager {
-    /// The keeper of the memories `memories` holds.
-    pub(crate) fn new(memories: Arc<dyn EntityStore<AgentMemory>>) -> Self {
-        Self { memories, agents: Mutex::new(HashMap::new()) }
+    /// The keeper of the memories `memories` holds, announcing what it stores on `events`.
+    pub(crate) fn new(memories: Arc<dyn EntityStore<AgentMemory>>, events: Arc<EventBus>) -> Self {
+        Self { memories, events, agents: Mutex::new(HashMap::new()) }
     }
 
     /// The memory of `agent` as it is stored, read in `context`; while it remembers nothing, an
@@ -98,7 +104,9 @@ impl MemoryManager {
     /// another. A memory not stored yet is made (`memory_of`). Changed meanwhile by another process
     /// (`StoreError::Outdated`, issue 492) - or made, where it was not stored yet -, the memory is
     /// read again and judged again, and the changes `check` then answers applied to it, as every
-    /// writer of a document writes. Nothing is changed if `check` refuses or storing fails.
+    /// writer of a document writes. Nothing is changed if `check` refuses or storing fails. What is
+    /// stored is announced: `created` for a memory made, `updated` without what changed for one
+    /// changed.
     ///
     /// # Errors
     /// What `check` answers, or whatever the store reports - a refusal; `Conflict` for a memory
@@ -141,6 +149,12 @@ impl MemoryManager {
                 self.memories.update(context, &mut memory).await.written()?
             };
             if written.is_some() {
+                let id = AgentMemoryId::of(agent);
+                let event = match made {
+                    true => GlobalEvent::created::<AgentMemory>(&id),
+                    false => GlobalEvent::updated::<AgentMemory>(&id, &()),
+                };
+                self.events.announce(event, &memory);
                 debug!("Applied {} changes to the memory of agent {}", count, agent);
                 return Ok(());
             }
@@ -179,11 +193,14 @@ mod tests {
     use super::*;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::event::EntityChange;
     use caelumora_domain::ledger::Change;
     use caelumora_domain::user::UserId;
+    use caelumora_kernel::event::SubscriptionTopic;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::{OwnershipPolicy, Policies};
     use caelumora_store::Persistence;
+    use serde_json::Value;
     use std::future;
     use std::sync::Mutex as StdMutex;
 
@@ -204,12 +221,12 @@ mod tests {
     /// again, judges it again and applies its changes to it, so that neither is lost.
     #[tokio::test]
     async fn a_commit_outdated_by_another_process_is_judged_and_made_again() {
-        let memories = Persistence::in_memory()
-            .entity_store::<AgentMemory>(&Policies::permitting_all())
-            .unwrap();
+        let policies = Policies::permitting_all();
+        let memories = Persistence::in_memory().entity_store::<AgentMemory>(&policies).unwrap();
+        let events = Arc::new(EventBus::new(&policies));
         // Two processes, each with a keeper of its own, on one store.
-        let here = MemoryManager::new(Arc::clone(&memories));
-        let there = MemoryManager::new(memories);
+        let here = MemoryManager::new(Arc::clone(&memories), Arc::clone(&events));
+        let there = MemoryManager::new(memories, events);
         let agent = AgentId::new();
         let owner = ActorId::User(UserId::new());
         let context = SecurityContext::new(owner, Default::default(), Default::default()).next(
@@ -263,7 +280,7 @@ mod tests {
         let access_policy = Arc::new(OwnershipPolicy::new());
         let policies = Policies::new(access_policy, Arc::new(ConfidentialityRules::default()));
         let memories = Persistence::in_memory().entity_store::<AgentMemory>(&policies).unwrap();
-        let manager = MemoryManager::new(memories);
+        let manager = MemoryManager::new(memories, Arc::new(EventBus::new(&policies)));
         let agent = AgentId::new();
         let in_the_name_of = |owner: ActorId| {
             SecurityContext::new(owner, Default::default(), Default::default()).next(
@@ -282,5 +299,46 @@ mod tests {
         let refused =
             manager.apply(&in_the_name_of(bob), agent, origin, MessageId::new(), his).await;
         assert!(matches!(refused, Err(StoreError::Conflict(_))), "{refused:?}");
+    }
+
+    /// What a commit stored is announced to whoever may read the memory - its owner -, without
+    /// what it changed: made, then changed.
+    #[tokio::test]
+    async fn what_a_commit_stored_is_announced_to_the_memorys_owner() {
+        let access_policy = Arc::new(OwnershipPolicy::new());
+        let policies = Policies::new(access_policy, Arc::new(ConfidentialityRules::default()));
+        let memories = Persistence::in_memory().entity_store::<AgentMemory>(&policies).unwrap();
+        let events = Arc::new(EventBus::new(&policies));
+        let manager = MemoryManager::new(memories, Arc::clone(&events));
+        let agent = AgentId::new();
+        let (alice, bob) = (UserId::new(), UserId::new());
+        let as_user = |user| {
+            SecurityContext::new(ActorId::User(user), Default::default(), Default::default())
+        };
+        let mut hers = events.subscribe(as_user(alice), vec![SubscriptionTopic::All]);
+        let mut his = events.subscribe(as_user(bob), vec![SubscriptionTopic::All]);
+        let owner = ActorId::User(alice);
+        let context = SecurityContext::new(owner, Default::default(), Default::default()).next(
+            ActorId::Agent(agent),
+            owner,
+            owner,
+        );
+        let origin = MemoryOrigin::default();
+        for (id, text) in [(1, "first"), (2, "second")] {
+            let changes = judged(vec![remember(MemoryId(id), text)]);
+            manager
+                .apply(&context, agent, origin.clone(), MessageId::new(), changes)
+                .await
+                .unwrap();
+        }
+
+        let changes: Vec<EntityChange> = hers
+            .drain()
+            .await
+            .iter()
+            .filter_map(|event| event.about::<AgentMemory>().map(|(_, change)| change.clone()))
+            .collect();
+        assert_eq!(changes, [EntityChange::Created, EntityChange::Updated(Value::Null)]);
+        assert!(his.drain().await.is_empty(), "nobody else hears of it");
     }
 }

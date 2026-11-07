@@ -15,7 +15,8 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
 
 *   `Created`, `Deleted`, `Restored` - the same for every kind;
 *   `Updated(value)` - what changed, in the form of the kind's update event (`SkillUpdateEvent`,
-    `ArtifactUpdateEvent`, …); a profile comes as it now stands;
+    `ArtifactUpdateEvent`, …); a profile comes as it now stands, an agent's memory with nothing,
+    since what it holds is its owner's to fetch;
 *   `Custom { name, data }` - something particular to the kind, under a name its module defines:
     `session::STARTED` and `STOPPED`, a channel's `STARTED`, `STOPPED`, `JOINED` and `LEFT` - with
     the `ActorId` of who joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`,

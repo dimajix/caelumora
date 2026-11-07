@@ -135,6 +135,8 @@ skills.
     manager to the memory as it is stored when the turn is taken over, under a lock per agent, so
     that actors of the same agent in other channels and sessions neither lose nor overwrite each
     other's changes; changed meanwhile by another process, the memory is read and checked again.
+    What is stored is announced, without what changed, to whoever may read the memory - its
+    owner -, made as `Created`, changed as `Updated`.
     Where a change was made - the channel, and the privacy its session has then -
     the plugin derives from the place of the work, never from what the agent side tells.
 *   **Numbers.** Unlike a note's, the number of a new entry is reserved at once by the plugin, which

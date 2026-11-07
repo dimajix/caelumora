@@ -1,7 +1,7 @@
 //! How an agent's memory is joined to the kernel (issue 518): the store of its kind, the
-//! `MemoryManager` as what is kept behind every agent, and the `MemoryReader` and the
-//! `MemoryWriter` bound to the views of an agent's work - the writer committing what a turn staged
-//! of the memory.
+//! `MemoryManager` - announcing on the event bus - as what is kept behind every agent, and the
+//! `MemoryReader` and the `MemoryWriter` bound to the views of an agent's work - the writer
+//! committing what a turn staged of the memory.
 
 use crate::extension::{MemoryReader, MemoryWriter};
 use crate::manager::MemoryManager;
@@ -23,7 +23,8 @@ impl Plugin for MemoryPlugin {
     }
 
     fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
-        let manager = Arc::new(MemoryManager::new(kernel.entity_store::<AgentMemory>()?));
+        let memories = kernel.entity_store::<AgentMemory>()?;
+        let manager = Arc::new(MemoryManager::new(memories, Arc::clone(kernel.event_bus())));
         kernel.agent_member(Arc::clone(&manager));
         let reading = Arc::clone(&manager);
         kernel.extend_readers::<dyn MemoryReader, _, _>(move |session| {
