@@ -4,7 +4,7 @@
 # (`library_side`): their faces, their components and their libraries; and the crates that are
 # plugins whole (`plugins`). The programs are not listed: they are the crates with a binary.
 libraries='caelumora-agents caelumora-a2a caelumora-compaction caelumora-tool-attachment
-caelumora-tool-image caelumora-tool-mcp caelumora-tool-workspace'
+caelumora-tool-image caelumora-tool-mcp caelumora-tool-web caelumora-tool-workspace'
 both_levels='caelumora-skills caelumora-artifacts caelumora-memory'
 library_side='extension.rs component.rs library.rs'
 plugins='caelumora-decision caelumora-model caelumora-model-ollama caelumora-model-comfyui

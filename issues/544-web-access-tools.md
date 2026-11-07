@@ -1,6 +1,6 @@
 # 544 — Agents cannot reach the web
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -150,3 +150,45 @@ host, the server's own REST API.
 
 - **2026-11-07** — Opened at the maintainer's request: tools for internet access, fetch and web
   search.
+- **2026-11-07** — Decided with the maintainer: the first search provider is Tavily. It can be
+  used at no cost (1,000 credits a month, a basic search one credit), returns results with a
+  snippet unless the page text is asked for - so search and fetch stay apart, as above -, and its
+  key is a bearer token, which `RemoteAuthConfig` already knows. Weighed against it: Brave (own
+  index, low latency, but a credit card even for its monthly credit and its key in a header of its
+  own, which `remote` does not know yet), SearXNG (no key, but the public engines behind it block
+  it - the maintainer's own instance mostly answers with no results), Exa (opaque billing of
+  content). Brave and SearXNG may follow as further providers; the acquisition of Tavily by Nebius,
+  announced in February 2026, is the open risk.
+- **2026-11-07** — Planned with the maintainer: a library `caelumora-tool-web` with two component
+  kinds, `web_fetch` (tool `fetch_page`) and `web_search` (tool `search_web`), neither asking for
+  approval unless configured; `web_search` names its `provider` from the start, `"tavily"` its one
+  value. A fetch goes through the proxy the environment names, since the server has to use it;
+  where it connects itself - an address in the URL, a host `NO_PROXY` excepts, a redirect - it
+  refuses loopback, private and link-local addresses, while through the proxy the proxy decides
+  (issue [545](545-web-fetch-through-the-proxy-reaches-anything.md)). A long page is given a page
+  at a time, as `read_file` gives a file (`start_line`, `line_count`), not by an `offset`. Steps:
+  1. the library and `web_fetch`; 2. `web_search` with Tavily; 3. the presentations of both in
+  the web UI.
+- **2026-11-07** — Step 1 done: the library `caelumora-tool-web` with the kind `web_fetch` and its
+  tool `fetch_page`, in `component/web_fetch` - a child of `component` per kind, as COMPONENTS.md
+  now says for a crate with several. A page is decoded by the charset its type names; a URL that
+  names a proxy's host is not followed, so that the resolver connects to a proxy wherever it lies
+  but fetches no page from it; a derived rule matches the host in any case. Left as they are: a
+  host written in Unicode, whose derived rule asks again; pages a browser would read in another
+  charset by a `meta` element.
+- **2026-11-07** — Step 2 done: the kind `web_search` with its tool `search_web`, searching with
+  Tavily (`provider: tavily`, its key a bearer token in the endpoint's `auth`, refused at build
+  without one), at most 20 pages of title, URL and snippet, public; its destination public unless
+  configured. Its client goes through the proxy of the environment and needs none of the checks
+  of `web_fetch`: it reaches the endpoint an operator configured, nothing a model writes. The
+  provider is an `enum` the search matches on; a trait for providers comes with a second one. The
+  result holds what the web gave alone, not the query, which is the agent's and classified as its
+  channel - a destination above public offers the tool where a query may carry more; an empty
+  query, and one the provider refuses with 400, is the model's to correct.
+- **2026-11-07** — Step 3 done: the presentations `web_page` - the page's title, linked to where
+  it was found, the lines given and their text - and `web_results` - the query and each page found,
+  its title linked to its URL, with its snippet - in the web UI; a link opens only an `http` or
+  `https` URL, in a tab of its own, without telling the page where it came from. Before it, the
+  default `requires_approval` of the three kinds that ask nobody unless configured became one
+  function, `ApprovalMode::never`. With it, the issue is done; what a fetch through the proxy may
+  reach is issue 545.

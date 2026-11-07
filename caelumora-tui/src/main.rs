@@ -44,6 +44,7 @@ use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_tool_attachment::library::AttachmentToolLibrary;
 use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
+use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use clap::Parser;
 use rustyline::error::ReadlineError;
@@ -562,6 +563,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(WorkspaceToolLibrary),
         Box::new(ImageToolLibrary),
         Box::new(AttachmentToolLibrary),
+        Box::new(WebToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
         Box::new(MemoryLibrary),

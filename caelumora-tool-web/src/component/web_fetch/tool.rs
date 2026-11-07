@@ -1,0 +1,264 @@
+//! The facet `ToolProvider` of `web_fetch` (issue 544): the tool `fetch_page`, which fetches a
+//! page of the web by its URL and gives it as text, a page at a time (`page_of`, issue 282), public
+//! as anything anyone can fetch. A rule derived from a call is about the pages of its host, not the
+//! one page (`ToolProvider::matcher`).
+
+use super::client::{FetchError, Refusal};
+use super::{WebFetchComponent, WEB_FETCH_KIND};
+use crate::NAMESPACE;
+use async_trait::async_trait;
+use caelumora_agents::tool::{
+    arguments, described, page_of, proposed_matcher, ToolError, ToolOutput, ToolProvider,
+    ToolResult,
+};
+use caelumora_agents::turn::Turn;
+use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
+use caelumora_domain::question::Answers;
+use caelumora_domain::remote::redact_endpoint;
+use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use reqwest::Url;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+
+/// The one tool of the component.
+const FETCH_PAGE: &str = "fetch_page";
+
+/// A page fetched: its `url`, and of its result the `url` it was found at and its `title`, the
+/// `content` as text with the lines it covers - `start_line`, `end_line`, `total_lines` - and where
+/// to read on (`next`).
+const WEB_PAGE_PRESENTATION: ToolPresentation = ToolPresentation::new("web_page");
+
+/// How many bytes of a page `fetch_page` gives at once, as `read_file` gives 64 KiB unless
+/// configured.
+const MAX_PAGE_BYTES: usize = 64 * 1024;
+
+/// The arguments of a call of `fetch_page`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Fetch {
+    url: String,
+    #[serde(default)]
+    start_line: Option<usize>,
+    #[serde(default)]
+    line_count: Option<usize>,
+}
+
+/// The tool `fetch_page`, its texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of its texts cannot be had.
+pub(super) fn fetch_page(
+    prompts: &PromptTexts,
+    requires_approval: bool,
+) -> Result<Tool, PromptError> {
+    let tool = Tool {
+        name: FETCH_PAGE.to_string(),
+        description: String::new(),
+        parameters: ToolParameters::object(
+            [
+                ("url", ToolParameters::string()),
+                ("start_line", ToolParameters::number()),
+                ("line_count", ToolParameters::number()),
+            ],
+            ["url"],
+        ),
+        requires_approval,
+        visibility: ToolVisibility::SHOWN,
+        classification: None,
+        presentation: WEB_PAGE_PRESENTATION,
+    };
+    described(prompts, NAMESPACE, WEB_FETCH_KIND, tool, ())
+}
+
+/// What the model is told of a page not fetched: a URL that is none, or that the rules do not
+/// follow, is its to correct; what the server or the way to it did is the call's failure.
+impl From<FetchError> for ToolError {
+    fn from(error: FetchError) -> Self {
+        match error {
+            FetchError::InvalidUrl { .. }
+            | FetchError::Refused(
+                Refusal::Scheme(_) | Refusal::InsideNetwork(_) | Refusal::Proxy(_),
+            ) => ToolError::InvalidParameter(error.to_string()),
+            _ => ToolError::ExecutionFailed(error.to_string()),
+        }
+    }
+}
+
+/// The matcher of the calls that fetch a page of the host of `url`, by any scheme of the web, on
+/// any port, in any case: what a rule derived from a call of `fetch_page` is about. None for what
+/// is no URL, or has no host. A host written in Unicode is matched in the form `Url` gives it,
+/// punycode, so that the rule does not match the call it was derived from, and a person is asked
+/// again.
+fn same_host(url: &str) -> Option<ToolMatcher> {
+    let url = Url::parse(url).ok()?;
+    let host = regex::escape(url.host_str()?);
+    // What follows the host begins a port, a path, a query or a fragment - never credentials,
+    // behind which another host would stand (`https://docs.rs:x@elsewhere`).
+    let pattern = format!("(?i)https?://{host}(:[0-9]+)?([/?#].*)?");
+    Some(ToolMatcher {
+        tool: FETCH_PAGE.to_string(),
+        arguments: BTreeMap::from([("url".to_string(), ArgumentMatcher::Pattern(pattern))]),
+    })
+}
+
+#[async_trait]
+impl ToolProvider for WebFetchComponent {
+    fn description(&self) -> String {
+        self.description.clone()
+    }
+
+    fn tools(&self) -> Vec<Tool> {
+        vec![self.tool.clone()]
+    }
+
+    /// Public: what a URL carries goes to anyone.
+    fn destination(&self) -> Option<Classification> {
+        Some(Classification::PUBLIC)
+    }
+
+    async fn execute(
+        &self,
+        name: &str,
+        params: &Value,
+        _answers: Option<&Answers>,
+        _turn: &mut Turn,
+    ) -> ToolResult<ToolOutput> {
+        if name != FETCH_PAGE {
+            return Err(ToolError::UnknownTool(name.to_string()));
+        }
+        let Fetch { url, start_line, line_count } = arguments(params)?;
+        let page = self.client.fetch(&url).await?;
+        let shown = format!("'{}'", redact_endpoint(page.url.as_str()));
+        let mut value = page_of(&page.text, &shown, start_line, line_count, MAX_PAGE_BYTES)?
+            .value(&self.prompts);
+        value["url"] = json!(page.url.as_str());
+        if let Some(title) = page.title {
+            value["title"] = json!(title);
+        }
+        Ok(ToolOutput::classified(value, Classification::PUBLIC))
+    }
+
+    /// The calls that fetch a page of the same host; as the parameters tell for any other.
+    fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
+        let url = params.get("url").and_then(Value::as_str);
+        match url.filter(|_| name == FETCH_PAGE).and_then(same_host) {
+            Some(matcher) => matcher,
+            None => proposed_matcher(&self.tools(), name, params),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::client::Client;
+    use super::super::WebFetchParams;
+    use super::*;
+    use crate::prompts;
+    use axum::routing::get;
+    use axum::Router;
+    use caelumora_agents::testing::detached_actor_runtime;
+    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::approval::Coverage;
+    use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::work::Work;
+    use tokio::net::TcpListener;
+
+    /// The component, fetching from the host itself too.
+    fn component() -> WebFetchComponent {
+        let params = WebFetchParams { requires_approval: Default::default(), description: None };
+        WebFetchComponent::new(params, Client::reaching_the_host(), prompts()).unwrap()
+    }
+
+    /// What `component` gives for a call of `fetch_page` with `params`, in a turn that reaches no
+    /// channel.
+    async fn fetched(component: &WebFetchComponent, params: Value) -> ToolResult<ToolOutput> {
+        let mut state = AgentChannelState::default();
+        state.begin_turn(Work::new(
+            Default::default(),
+            None,
+            Default::default(),
+            Default::default(),
+        ));
+        let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::new())).unwrap();
+        component.execute(FETCH_PAGE, &params, None, &mut turn).await
+    }
+
+    /// A server of the test on the host itself, with a page of three paragraphs; its port.
+    async fn server() -> u16 {
+        let page = "<title>Three</title><p>one</p><p>two</p><p>three</p>";
+        let router = Router::new()
+            .route("/page", get(move || async move { ([("content-type", "text/html")], page) }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_page_is_given_a_part_at_a_time_with_where_it_was_found_and_public() {
+        let port = server().await;
+        let url = format!("http://localhost:{port}/page");
+        let component = component();
+        assert_eq!(component.tools()[0].presentation, WEB_PAGE_PRESENTATION, "shown as a page");
+        let whole = fetched(&component, json!({ "url": url })).await.unwrap();
+        assert_eq!(whole.classification, Some(Classification::PUBLIC));
+        assert_eq!(whole.value["url"], json!(url));
+        assert_eq!(whole.value["title"], json!("Three"));
+        assert_eq!(whole.value["content"], json!("one\n\ntwo\n\nthree"));
+        let part =
+            fetched(&component, json!({ "url": url, "start_line": 3, "line_count": 1 })).await;
+        let part = part.unwrap();
+        assert_eq!(part.value["content"], json!("two\n"));
+        assert_eq!(part.value["total_lines"], json!(5), "says how much there is: {}", part.value);
+    }
+
+    #[tokio::test]
+    async fn what_cannot_be_fetched_is_told_as_the_models_to_correct_or_as_failed() {
+        let component = component();
+        let invalid = fetched(&component, json!({ "url": "ftp://example.org/" })).await;
+        assert!(matches!(invalid, Err(ToolError::InvalidParameter(_))), "{invalid:?}");
+        let inside = fetched(&component, json!({ "url": "http://10.0.0.1/" })).await;
+        assert!(
+            matches!(&inside, Err(ToolError::InvalidParameter(m))
+                if m.contains("inside the network")),
+            "{inside:?}"
+        );
+        let unreachable = fetched(&component, json!({ "url": "http://127.0.0.1:1/" })).await;
+        assert!(matches!(unreachable, Err(ToolError::ExecutionFailed(_))), "{unreachable:?}");
+    }
+
+    /// A rule derived from a call is about the pages of its host, by http or https, on any port -
+    /// and about no other host, also behind credentials.
+    #[test]
+    fn a_rule_derived_from_a_call_is_about_the_pages_of_its_host() {
+        let component = component();
+        let matcher = component.matcher(FETCH_PAGE, &json!({ "url": "https://docs.rs/tokio" }));
+        let call = |url: &str| ToolCall {
+            id: None,
+            function_name: FETCH_PAGE.to_string(),
+            arguments: json!({ "url": url }),
+            visibility: ToolVisibility::SHOWN,
+            presentation: Default::default(),
+        };
+        for url in ["https://docs.rs/serde", "http://docs.rs:8080/?q=1", "https://docs.rs"] {
+            assert_eq!(matcher.matches(&call(url)).unwrap(), Coverage::Whole, "{url}");
+        }
+        for url in
+            ["https://docs.rs.evil.org/", "https://docs.rs:x@evil.org/", "https://evil.org/docs.rs"]
+        {
+            let coverage = matcher.matches(&call(url)).unwrap();
+            assert_eq!(coverage, Coverage::Nothing, "{url}");
+        }
+        let written = "HTTPS://Docs.RS/tokio";
+        let matcher = component.matcher(FETCH_PAGE, &json!({ "url": written }));
+        assert_eq!(matcher.matches(&call(written)).unwrap(), Coverage::Whole, "in any case");
+        assert_eq!(
+            component.matcher(FETCH_PAGE, &json!({ "url": "no url" })),
+            proposed_matcher(&component.tools(), FETCH_PAGE, &json!({ "url": "no url" })),
+            "as the parameters tell where there is no host"
+        );
+    }
+}

@@ -6,7 +6,7 @@
 // what a message of its turn carries, which is shown there (issue 535).
 
 import React, {useEffect, useState} from 'react';
-import {BookOpen, CheckCircle2, Download, EyeOff, ImageIcon, Package, Paperclip, File, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
+import {BookOpen, CheckCircle2, Download, EyeOff, Globe, ImageIcon, Package, Paperclip, File, Search, ShieldCheck, ShieldX, Square, StickyNote, FileDiff, FileDown, FileInput, FilePen, FileText, Folder, FolderOpen, TextSearch, Terminal, Wrench, XCircle} from 'lucide-react';
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type WorkspaceFiles} from '../api';
 import {ApiRequestError} from '../errors';
@@ -283,31 +283,44 @@ const FailedResult: React.FC<{result?: ToolResult}> = ({result}) =>
   ) : null;
 
 /**
+ * The lines a page of a text covers (`TextPage` of the agents, issue 282) - all of them, or which
+ * of how many -, as the fields of its result name them; `null` where they name none.
+ */
+function pageLines(page: Record<string, unknown> | null): string | null {
+  const [start, end, total] = [numberOf(page, 'start_line'), numberOf(page, 'end_line'), numberOf(page, 'total_lines')];
+  if (start === null || end === null || total === null) return null;
+  return start <= 1 && end >= total ? counted(total, 'line', 'lines') : `lines ${start}-${end} of ${total}`;
+}
+
+/**
+ * The text a page of a text gave (`TextPage` of the agents, issue 282) and where to read on if not
+ * all of it fitted - or that it is not shown, or why the call failed.
+ */
+const TextPageContent: React.FC<{page: Record<string, unknown> | null; result?: ToolResult}> = ({page, result}) => {
+  const content = textOf(page, 'content');
+  const next = textOf(page, 'next');
+  if (resultHidden(result)) return <div className="mt-2 text-[11px] italic opacity-60">Content not shown</div>;
+  if (content === null) return <FailedResult result={result} />;
+  return (
+    <>
+      <FileTextBlock text={content} />
+      {next && <div className="mt-1 text-[11px] opacity-60">{next}</div>}
+    </>
+  );
+};
+
+/**
  * A file read (issue 251): its path, the lines it gave - all of them, or which of how many - and
  * their text, and where to read on if not all of it fitted.
  */
 const FileReadToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
   if (call.arguments === null) return <span className="text-[11px] italic opacity-60">File not shown</span>;
-  const args = argumentsObject(call.arguments);
   const read = resultObject(result);
-  const content = textOf(read, 'content');
-  const [start, end, total] = [numberOf(read, 'start_line'), numberOf(read, 'end_line'), numberOf(read, 'total_lines')];
-  const lines = start !== null && end !== null && total !== null
-    ? (start <= 1 && end >= total ? `${total} ${total === 1 ? 'line' : 'lines'}` : `lines ${start}-${end} of ${total}`)
-    : null;
+  const path = textOf(read, 'path') ?? textOf(argumentsObject(call.arguments), 'path');
   return (
     <>
-      <FilePath icon={<FileText size={12} />} path={textOf(read, 'path') ?? textOf(args, 'path')} detail={lines} />
-      {resultHidden(result) ? (
-        <div className="mt-2 text-[11px] italic opacity-60">Content not shown</div>
-      ) : content !== null ? (
-        <>
-          <FileTextBlock text={content} />
-          {textOf(read, 'next') && <div className="mt-1 text-[11px] opacity-60">{textOf(read, 'next')}</div>}
-        </>
-      ) : (
-        <FailedResult result={result} />
-      )}
+      <FilePath icon={<FileText size={12} />} path={path} detail={pageLines(read)} />
+      <TextPageContent page={read} result={result} />
     </>
   );
 };
@@ -939,6 +952,92 @@ const ImageToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
 };
 
 /**
+ * A URL of the web as a link that opens in a tab of its own, without telling the page where it was
+ * opened from, showing `title` where there is one, else the URL; a URL of any other scheme - one a
+ * page or a model wrote - is no link, and shows the same as text. A title wraps between words, a
+ * URL anywhere.
+ */
+const WebLink: React.FC<{url: string; title?: string | null}> = ({url, title}) => {
+  const shown = title ? <span className="wrap-break-word">{title}</span> : <span className="font-mono break-all">{url}</span>;
+  return /^https?:\/\//i.test(url) ? (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 dark:text-blue-400 hover:underline">
+      {shown}
+    </a>
+  ) : (
+    shown
+  );
+};
+
+/**
+ * A page of the web fetched (issue 544): its title - or its URL, where it names none - linked to
+ * the URL it was found at, the lines it gave - all of them, or which of how many - and their text,
+ * and where to read on if not all of it fitted.
+ */
+const WebPageToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Page not shown</span>;
+  const page = resultObject(result);
+  const url = textOf(page, 'url') ?? textOf(argumentsObject(call.arguments), 'url') ?? '?';
+  const lines = pageLines(page);
+  return (
+    <>
+      <div className="flex items-start gap-1.5 text-[11px]">
+        <Globe size={12} className="mt-0.5 opacity-60 shrink-0" />
+        <span className="min-w-0">
+          <WebLink url={url} title={textOf(page, 'title')} />
+          {lines && <span className="opacity-60"> · {lines}</span>}
+        </span>
+      </div>
+      <TextPageContent page={page} result={result} />
+    </>
+  );
+};
+
+/**
+ * The web searched (issue 544): the query and how many pages were found, and each page with its
+ * title, linked to its URL, the URL itself and the snippet the search gave of it.
+ */
+const WebResultsToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => {
+  if (call.arguments === null) return <span className="text-[11px] italic opacity-60">Search not shown</span>;
+  const query = textOf(argumentsObject(call.arguments), 'query');
+  const pages = objectsOf(resultObject(result)?.results);
+  return (
+    <>
+      <div className="flex items-start gap-1.5 text-[11px]">
+        <Search size={12} className="mt-0.5 opacity-60 shrink-0" />
+        <span className="min-w-0">
+          <span className="wrap-break-word">{query ?? '?'}</span>
+          {pages !== null && <span className="opacity-60"> · {pages.length === 0 ? 'nothing found' : counted(pages.length, 'page', 'pages')}</span>}
+        </span>
+      </div>
+      {resultHidden(result) ? (
+        <div className="mt-2 text-[11px] italic opacity-60">Pages not shown</div>
+      ) : pages !== null ? (
+        pages.length > 0 && (
+          <ResultBox>
+            <ul className="space-y-1.5">
+              {pages.map((found, i) => {
+                const url = textOf(found, 'url') ?? '?';
+                const title = textOf(found, 'title');
+                const snippet = textOf(found, 'snippet');
+                return (
+                  <li key={i} className="min-w-0">
+                    <WebLink url={url} title={title} />
+                    {title && <div className="font-mono opacity-60 break-all">{url}</div>}
+                    {snippet && <div className="opacity-80 wrap-break-word">{snippet}</div>}
+                  </li>
+                );
+              })}
+            </ul>
+          </ResultBox>
+        )
+      ) : (
+        <FailedResult result={result} />
+      )}
+    </>
+  );
+};
+
+/**
  * The handler of each presentation; one the server knows and this client does not falls back to the
  * default.
  */
@@ -960,6 +1059,8 @@ const PRESENTATIONS: Record<ToolPresentation, React.FC<ToolCallContentProps>> = 
   note: NoteToolCallContent,
   note_list: NoteListToolCallContent,
   image: ImageToolCallContent,
+  web_page: WebPageToolCallContent,
+  web_results: WebResultsToolCallContent,
   // Left out of the chat while it runs and where it succeeded (`withoutQuietCalls`).
   quiet: DefaultToolCallContent,
 };

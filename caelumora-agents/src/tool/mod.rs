@@ -713,6 +713,12 @@ pub enum ApprovalMode {
 }
 
 impl ApprovalMode {
+    /// `Never`: the default of a component whose calls ask nobody unless configured, written as
+    /// `#[serde(default = "ApprovalMode::never")]`.
+    pub fn never() -> Self {
+        ApprovalMode::Never
+    }
+
     /// Whether calls of a tool require approval, which only reads if
     /// `read_only`.
     pub fn required(self, read_only: bool) -> bool {

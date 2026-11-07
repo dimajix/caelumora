@@ -32,6 +32,7 @@ caelumora-decision.workspace = true
 caelumora-model-comfyui.workspace = true
 caelumora-tool-image.workspace = true
 caelumora-tool-attachment.workspace = true
+caelumora-tool-web.workspace = true
 caelumora-compaction.workspace = true
 axum.workspace = true
 tokio = { workspace = true, features = ["full"] }

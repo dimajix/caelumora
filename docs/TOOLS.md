@@ -271,6 +271,78 @@ tool names no backend; where and how a model generates is its backend's - ComfyU
     `description`. The result is classified as the turn's label: it follows from the arguments
     alone.
 
+## Pages of the web
+
+A `web_fetch` component (issue 544, library `caelumora-tool-web`) fetches pages of the web by their
+URL, with the tool `fetch_page`:
+
+```yaml
+- id: web-fetch
+  kind: web_fetch
+```
+
+*   **What it gives.** A page of HTML as Markdown, without what only a browser needs - scripts,
+    styles, frames, the controls of forms - or what stands around the content - navigation, a
+    site's footer, sidebars (`aside`) -; plain text and JSON as they are, decoded by the charset
+    their type names, as UTF-8 where it names none. A page of another type - a PDF, an image - or
+    of none is refused, naming the type, as is one larger than 5 MiB. The text is given a page at a
+    time, as `read_file` gives a file (`start_line`, `line_count`, 64 KiB at once), with the URL
+    the page was found at, after redirects, and its title. Every call fetches the page again;
+    nothing is cached. What failed names the URL without credentials, query and fragment.
+*   **What it reaches.** `http` and `https` alone, at most five redirects. A fetch goes through the
+    proxy the environment names (`HTTPS_PROXY`, `NO_PROXY`), as the server reaches the internet.
+    Where it connects itself - to an address written in the URL, to a host the proxy is not asked
+    for, at every redirect - it refuses an address inside the network: the host itself, private,
+    shared and link-local networks, and what is reserved. A name is judged by every address it
+    resolves to, as it is resolved for the connection, so that what was judged is what is reached.
+    The connection to a proxy is made wherever it lies, but no page is fetched from a proxy's host.
+    Through the proxy, the proxy decides what is reached (issue
+    [545](../issues/545-web-fetch-through-the-proxy-reaches-anything.md)).
+*   **Confidentiality.** What a URL carries goes to anyone: the tool set's destination is `public`,
+    not configurable, so the tool is offered in public channels alone. A page is classified
+    `public`, as anything anyone can fetch. What it says is written by anyone - the tool's
+    description tells the model to follow no instructions in it; what bounds such text is what the
+    agent may do afterwards, not the fetch.
+*   **Approval.** `requires_approval` (`false` unless given: a fetch only reads, and its URL may
+    carry only what is public). A rule derived from a call is about the pages of its host, by
+    `http` or `https` and on any port, not about the one page.
+*   **Parameters.** `requires_approval` and `description`.
+
+## Searching the web
+
+A `web_search` component (issue 544, library `caelumora-tool-web`) searches the web with a
+provider, with the tool `search_web`:
+
+```yaml
+- id: web-search
+  kind: web_search
+  params:
+    provider: tavily
+    endpoint:
+      url: https://api.tavily.com
+      auth: { type: bearer, secret: TAVILY_API_KEY }
+```
+
+*   **A provider.** There is no protocol for searching the web; every provider has an API of its
+    own. `provider` names whose the endpoint speaks - `tavily`, the one Caelumora knows so far -,
+    and the endpoint's `auth` its key, which every provider wants: a component without is not
+    built. The key is resolved through the secret chain in the name of whoever asks the agent (see
+    [SECURITY.md](SECURITY.md)). A search goes through the proxy the environment names.
+*   **What it gives.** For a `query`, at most `max_results` pages - 5 unless given, 20 at most -,
+    each with its title, its URL and a snippet of at most 1,000 characters; no answer of the
+    provider's own, nor the content of the pages, which the agent reads with `fetch_page` where it
+    has it. The query is not repeated in the result. An empty query is refused before anything is
+    asked, as one the provider refuses as written is the model's to correct; anything else the
+    provider refused or failed with is the call's failure, naming the endpoint without credentials
+    and what the provider says, bounded.
+*   **Confidentiality.** The queries go to the provider, and stay there and with the engines it
+    asks in turn: the tool set's destination is `destination`, `public` unless configured - an
+    operator who may vouch for a provider clears it higher. What is found is classified `public`,
+    as the web it was found on.
+*   **Parameters.** `provider` and `endpoint` (both required; timeout 15 s), `requires_approval`
+    (`false` unless given: a search only reads, and its query goes only where `destination` lets
+    it), `destination` and `description`.
+
 ## Built-in tools
 
 The tools that come with Caelumora are listed with the components that offer them, their parameters

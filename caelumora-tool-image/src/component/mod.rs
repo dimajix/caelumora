@@ -25,7 +25,7 @@ const IMAGE_GENERATION_KIND: &str = "image_generation";
 struct ImageGenerationParams {
     /// Whether calls require approval. Left out, they do not: a call changes nothing but the
     /// server's time, and what leaves is its arguments, which `destination` bounds.
-    #[serde(default = "approved_by_none")]
+    #[serde(default = "ApprovalMode::never")]
     requires_approval: ApprovalMode,
     /// What the servers of its models are cleared for: where the arguments of a call go - and
     /// stay, in a server's history and in the metadata of what it saves. Left out, public.
@@ -37,10 +37,6 @@ struct ImageGenerationParams {
 }
 
 impl Params for ImageGenerationParams {}
-
-fn approved_by_none() -> ApprovalMode {
-    ApprovalMode::Never
-}
 
 /// A component of the kind `image_generation`: the tool `generate_image` over the image models its
 /// agent is given.

@@ -38,7 +38,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
-| [544](544-web-access-tools.md) | open | medium | feature | An agent can neither fetch a web page by its URL nor search the web; what it knows of the world is what its model was trained on and what its workspace, its MCP servers or a person give it. |
 | [545](545-web-fetch-through-the-proxy-reaches-anything.md) | open | medium | feature | `web_fetch` refuses addresses inside the network only where it connects itself; a fetch through the proxy the environment names reaches whatever the proxy reaches, internal hosts and the cloud's metadata service among them. |
 
 ## User interaction
