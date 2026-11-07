@@ -70,6 +70,10 @@ drawn in [CRATES.md](CRATES.md):
     which keeps their content in the kernel's storages of content (issue 282) and extends the view
     of a channel with what was published in it (issue 328), and the view of a project with what lies
     in it (issue 467). See [TOOLS.md](TOOLS.md#artifacts).
+*   **`caelumora-memory`** - an agent's memory, a plugin and a library built as `caelumora-skills`
+    is: the memory of each agent as a document of its kind, its keeper, the reader and the writer of
+    an agent's work, and the component `agent_memory` (issue 518). See
+    [MEMORY.md](MEMORY.md#agent-memory).
 *   **`caelumora-tool-mcp`** - the tools of MCP servers, a library that brings nothing but its
     component kind `mcp_server`, and with it `rmcp` (issue 325). See
     [TOOLS.md](TOOLS.md#mcp-servers).
@@ -129,40 +133,41 @@ drawn in [CRATES.md](CRATES.md):
 ## Plugins
 
 A subject that is not the kernel's - a kind of entity with its manager, its components, its views
-and its routes - can be a **plugin**: a crate linked into the program, not loaded at run time
-(issue 323). It implements `Plugin` and registers what it brings with the `KernelBuilder` when the
-kernel is built: its component kinds, the store of its kind, which the configured backend opens for
-any kind, its manager as a service of the kernel, which its views and its routes reach, what an
-agent's work does with its kind, bound to the views of that work (`extend_readers`,
-`extend_writers`, issue 516), the members of a scope, and its sections of the configuration and of
-the seed. On the REST side, `RestPlugin` adds its routes, served behind the same login as the
-kernel's. A plugin's views are an extension trait on the kernel's `Views`, built from what they
-open, and what a channel's view lists of its kind one on `ChannelView`. Which plugins are in is the
-program's choice: `caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the
-kernel leaves open - the model; the kernel knows none. A plugin is one crate; one that brings a
-library beside it is cut into layers by Cargo features rather than crates. The first is
-`caelumora-skills` ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`,
-which depends on the kernel's workspaces; `caelumora-decision` brings a component of a channel
-alone, and `caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres` bring
-backends alone. What runs an agent or serves its facets is no plugin but a **library** of the agent
-side (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered as a
-plugin is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`). The
-agents are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
+and its routes - can be a **plugin**: a crate linked into the program, not loaded at run time (issue
+323). It implements `Plugin` and registers what it brings with the `KernelBuilder` when the kernel
+is built: its component kinds, the store of its kind, which the configured backend opens for any
+kind, its manager as a service of the kernel, which its views and its routes reach, what an agent's
+work does with its kind, bound to the views of that work (`extend_readers`, `extend_writers`, issue
+516), the members of a scope, and its sections of the configuration and of the seed. On the REST
+side, `RestPlugin` adds its routes, served behind the same login as the kernel's. A plugin's views
+are an extension trait on the kernel's `Views`, built from what they open, and what a channel's view
+lists of its kind one on `ChannelView`. Which plugins are in is the program's choice:
+`caelumora-app` and `caelumora-tui` each list theirs, and name the defaults the kernel leaves open -
+the model; the kernel knows none. A plugin is one crate; one that brings a library beside it is cut
+into layers by Cargo features rather than crates. The first is `caelumora-skills`
+([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
+the kernel's workspaces, the third `caelumora-memory`; `caelumora-decision` brings a component of a
+channel alone, and `caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres`
+bring backends alone. What runs an agent or serves its facets is no plugin but a **library** of the
+agent side (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered
+as a plugin is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`).
+The agents are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
 actors the channel builds (`AgentKinds`), and the kinds of their components; without it, the program
 is a chat between users. `caelumora-tool-mcp` ([TOOLS.md](TOOLS.md#mcp-servers)), `caelumora-a2a`,
 `caelumora-compaction`, `caelumora-tool-workspace`, `caelumora-tool-image` and
 `caelumora-tool-attachment` bring component kinds alone; they build on the agents' library, and a
 library that defines facets of its own for others to serve is built on in turn: `caelumora-skills`
 and `caelumora-tool-workspace` serve the `KnowledgeRestorer` of `caelumora-compaction`. A service
-with a manager of its own that extends the kernel - skills and artifacts, which plugins bring, the
-workspace, which the kernel brings itself - is a **system service**: it runs on the kernel's side,
-its manager decides with the kernel's policies, its views serve the frontends, and what an agent's
-work does with its kind it offers as extensions, a reader handed out where the work reads and a
-writer where it acts ([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Which
-plugin is trusted as the kernel and which is a library of the agent side, trusted for nothing, is
-said in [Principles](#principles) and listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the
-kernel calls a plugin, the plugin answers in the kernel's error types, not in its own: the kernel
-decides by the types it knows what a person is told of an error.
+with a manager of its own that extends the kernel - skills, artifacts and an agent's memory, which
+plugins bring, the workspace, which the kernel brings itself - is a **system service**: it runs on
+the kernel's side, its manager decides with the kernel's policies, its views serve the frontends,
+and what an agent's work does with its kind it offers as extensions, a reader handed out where the
+work reads and a writer where it acts
+([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Which plugin is trusted as
+the kernel and which is a library of the agent side, trusted for nothing, is said in
+[Principles](#principles) and listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is). Where the kernel
+calls a plugin, the plugin answers in the kernel's error types, not in its own: the kernel decides
+by the types it knows what a person is told of an error.
 
 Details: [PLUGINS.md](PLUGINS.md).
 
@@ -278,10 +283,11 @@ The path of one message shows how the parts fit together:
     what the model is given (prompt parts, the agent's transcript), the model answers, and tool
     calls in the answer are run - after approval, where a tool requires it - and their results fed
     back, until the model answers without calling a tool.
-4.  **The answer is published.** What the agent sends is stripped of what only its owner may see,
+4.  The answer is published.** What the agent sends is stripped of what only its owner may see,
     delivered to the others through the channel, and the turn is committed: the messages go into the
     agent's transcript, the channel records them in full for the agent and as published for the
-    others, staged changes to the agent's state are applied, and everything is stored.
+    others, the changes staged to its notes are applied to its state in the channel, what it staged
+    for system services is committed by their writers, and everything is stored.
 5.  **Observers are told.** The channel's events reach the participants' live streams; changes to
     entities are announced on the event bus, which the web UI follows.
 
@@ -389,8 +395,8 @@ Two stores, configured separately:
 *   the **`EntityStore`** keeps long-lived documents - personalities, templates, the component
     bundles they include, agents, users and their profiles, sessions and channels, and the kinds of
     the plugins, one store per kind, which the backend opens for any kind;
-*   the **`StateStore`** keeps what changes while a session runs - the channel's history, each
-    agent's state in each channel, and each agent's own state -, the **`HistoryStore`** reads
+*   the **`StateStore`** keeps what changes while a session runs - the channel's history and each
+    agent's state in each channel -, the **`HistoryStore`** reads
     the histories the states hold, in pages, without loading a state, and the
     **`TranscriptStore`** what lies on the older branches of an agent's transcript, which its actor
     does not hold, and the prompt texts and tool sets its model was given (see
@@ -404,12 +410,12 @@ entities and of the states, checked by the policies they are opened by - the ker
 [STORAGE.md](STORAGE.md#the-entity-store)).
 
 Every document and every kind of state has exactly **one writer**, which stores a change and only
-then announces it. For an entity, that is its manager or its controller, by what is changed
-(below), and it writes on the revision it read: a write made on an outdated one is refused, and
-the writer reads again and makes its change once more, so that no two writers overwrite each other,
-in one process or several (issue 492). For state, the writer is the channel loop, the agent's actor
-in its channel, or the agent's state handle, each changing it under a lock of its own. Agents and
-users have one controller per process, however many sessions they take part in.
+then announces it. For an entity, that is its manager or its controller, by what is changed (below),
+and it writes on the revision it read: a write made on an outdated one is refused, and the writer
+reads again and makes its change once more, so that no two writers overwrite each other, in one
+process or several (issue 492). For state, the writer is the channel loop or the agent's actor in
+its channel, each changing it under a lock of its own. Agents and users have one controller per
+process, however many sessions they take part in.
 
 The server runs in one process today, but is cut so that it can run in several: a session runs in
 exactly one instance, while agents and users may be active in several, kept in step through the
@@ -482,32 +488,30 @@ The design repeats a few decisions; new code follows them.
     event bus, projects -; the models the platform offers are a plugin's service beside it, needed
     within an agent alone (issue 520); the workspace, skills, artifacts and memory are system
     services that extend it (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - memory so far as the
-    kernel's own extension, kept in the agent's state, until a plugin brings it (issue
-    [518](../issues/518-memory-is-reached-through-the-agents-state.md)). A plugin that brings what
-    is the kernel's - a backend, a kind of entity with its manager, views and routes, a component of
-    a channel - is trusted as the kernel; what runs an agent or serves its facets is a **library**
-    of the **agent side**, trusted for nothing: `caelumora-agents`, and the crates that bring
-    components for an agent (which crate stands where is listed in
-    [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). A library is not a program: the binaries
-    (`caelumora-app`, `caelumora-tui`) link the kernel, its plugins and the libraries, and choose
-    which are in. A library sees the kernel through the kernel's API alone - an actor its
-    `ActorRuntime`, a component its `ComponentContext` and the `Turn` it is called with -, and the
-    kernel checks every call through it in the name of the actor it gave it to. A library builds no
-    `SecurityContext`, asks no policy and holds no manager, no store and no controller of the
-    kernel: what it needs decided, it asks the kernel to decide. What the kernel cannot enforce it
-    does not pretend to: a tool whose effect lies outside the system runs if the library runs it,
-    and an agent's own record - its transcript - is the agent side's; the kernel's record of a
-    conversation is the channel's history, taken at its door. A library registers with a
-    `LibraryBuilder`, which offers nothing of the kernel, and the kernel is not built where a
-    component kind of a library provides a facet the kernel builds in its own name or uses a service
-    of the kernel but the texts (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - the workspace the
+    kernel's own, skills, artifacts and memory plugins'. A plugin that brings what is the kernel's -
+    a backend, a kind of entity with its manager, views and routes, a component of a channel - is
+    trusted as the kernel; what runs an agent or serves its facets is a **library** of the **agent
+    side**, trusted for nothing: `caelumora-agents`, and the crates that bring components for an
+    agent (which crate stands where is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). A
+    library is not a program: the binaries (`caelumora-app`, `caelumora-tui`) link the kernel, its
+    plugins and the libraries, and choose which are in. A library sees the kernel through the
+    kernel's API alone - an actor its `ActorRuntime`, a component its `ComponentContext` and the
+    `Turn` it is called with -, and the kernel checks every call through it in the name of the actor
+    it gave it to. A library builds no `SecurityContext`, asks no policy and holds no manager, no
+    store and no controller of the kernel: what it needs decided, it asks the kernel to decide. What
+    the kernel cannot enforce it does not pretend to: a tool whose effect lies outside the system
+    runs if the library runs it, and an agent's own record - its transcript - is the agent side's;
+    the kernel's record of a conversation is the channel's history, taken at its door. A library
+    registers with a `LibraryBuilder`, which offers nothing of the kernel, and the kernel is not
+    built where a component kind of a library provides a facet the kernel builds in its own name or
+    uses a service of the kernel but the texts (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A library links the API,
     the domain and other libraries, never the kernel, `caelumora-security` or `caelumora-store` -
-    `scripts/library-deps.sh` checks its dependencies, run by the pre-commit hook -, so the
-    compiler refuses it what decides: a view, a manager, a controller, the runtime of a
-    participant, the `KernelBuilder`, a `SecurityContext`, a policy, the `SecretManager`, a store
-    (issue [517](../issues/517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md)).
+    `scripts/library-deps.sh` checks its dependencies, run by the pre-commit hook -, so the compiler
+    refuses it what decides: a view, a manager, a controller, the runtime of a participant, the
+    `KernelBuilder`, a `SecurityContext`, a policy, the `SecretManager`, a store (issue
+    [517](../issues/517-the-model-offers-libraries-what-only-the-kernel-may-decide-by.md)).
 *   **Refusals do not reveal.** Something the caller may not see is reported exactly like something
     that does not exist, so ids and names cannot be probed.
 *   **Records are not recomputed.** Digests, resolved mentions, whom an entry of a history went to

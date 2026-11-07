@@ -1,6 +1,6 @@
 # 518 — An agent's memory is reached through its state, not as a system service
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Context and knowledge
@@ -452,3 +452,13 @@ Stored memories are deleted, not migrated: a migration would be code without a l
   turn under way; the histories, transcripts and channel states of channels where an agent with
   `agent_memory` recalled something, whose records name the removed `KnowledgeSource::Memory`; and a
   Postgres database, whose migration `0002_states.sql` changed.
+- **2026-11-07** — Step 4: the documents describe the memory as the system service of
+  `caelumora-memory` - MEMORY.md (the document, the reader and the writer, the keeper, private
+  knowledge), ARCHITECTURE.md (the crate, memory among the plugins' system services without a
+  reservation, no agent's own state in the `StateStore` nor a writer of it), PLUGINS.md (the third
+  crate on both levels, `KernelBuilder::commits`, the staged changes), STORAGE.md (one keeper per
+  process in the place of the agent state's owner, no `agent_state` table, what goes with a purged
+  agent), EVENTS.md, SECURITY.md, CONFIDENTIALITY.md (who reclassifies an entry, where component
+  state is judged), PERMISSION-CHECKS.md (`ReclassifyMemory`, the memory's reading and commit),
+  CHANNELS.md, AGENT-TURN.md and COMPONENTS.md; the graph of CRATES.md was written in step 3. Every
+  point of *Done when* holds: done.

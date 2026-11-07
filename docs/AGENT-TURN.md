@@ -174,10 +174,10 @@ deciding right after whom to ask, leaves the sleeping out; the run loop is notif
 ## The `Turn`
 
 The agent's state in its channel is its `AgentChannelState` - history, transcript, notes, the texts
-of its prompt parts; its memory across channels the kernel keeps, a system service the turn reaches
-through its reader and its writer (see [MEMORY.md](MEMORY.md#agent-memory)). A `Turn` is the handle
-to the state in its channel while a turn is under way, and only then: between turns the actor works
-on the state itself, and taking a turn over or giving it up uses the handle up.
+of its prompt parts; its memory across channels the memory plugin keeps, a system service the turn
+reaches through its reader and its writer (see [MEMORY.md](MEMORY.md#agent-memory)). A `Turn` is the
+handle to the state in its channel while a turn is under way, and only then: between turns the actor
+works on the state itself, and taking a turn over or giving it up uses the handle up.
 
 What a turn does to the state - beginning, saying something, finishing, giving up - is a rule of the
 state, kept with it in the domain (`AgentChannelState::begin_turn`, `offer_tools`, `said`,
@@ -203,16 +203,16 @@ are now - the same for a turn, a command turn and an external agent's exchange. 
 model is given its context (`Work::given_as`) and hands the work to the state, which adds only what
 the state knows: the transcript the turn begins with (`AgentChannelState::begin_turn`).
 
-The rest is the turn's own: the changes staged to the agent's states, the tool calls, the plan, the
-state a tool requested.
+The rest is the turn's own: the changes staged to the agent's state in the channel and for system
+services, the tool calls, the plan, the state a tool requested.
 
 **The turn's situation** (`Turn::situation`, issue 399) is what is read of it: where the piece of
 work stands and what it sees from there - who works, in which channel and session, in whose name,
-bound by which classification, what it has seen so far (its label), the agent's states, the tools
-it was offered, and its session to navigate. A `Situation` is what every piece of work of an agent
-has, so an external agent's work has one too. The `Turn` reads through it and passes none of it
-on: its own methods change something - stage, say, give, compact -, act in the channel, or read
-what only the turn holds (its id, what it staged, the state a tool requested).
+bound by which classification, what it has seen so far (its label), the agent's state in its
+channel, the tools it was offered, and its session to navigate. A `Situation` is what every piece of
+work of an agent has, so an external agent's work has one too. The `Turn` reads through it and
+passes none of it on: its own methods change something - stage, say, give, compact -, act in the
+channel, or read what only the turn holds (its id, what it staged, the state a tool requested).
 
 **The turn's id** is given when it begins and stored with it, so that a turn resumed after a restart
 is the same turn. Every message the turn produces carries it (`Message::turn_id`), so which messages

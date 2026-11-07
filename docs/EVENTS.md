@@ -17,9 +17,9 @@ entity's id as text, `within` the id of the entity it lies in, and `change` an `
 *   `Updated(value)` - what changed, in the form of the kind's update event (`SkillUpdateEvent`,
     `ArtifactUpdateEvent`, …); a profile comes as it now stands;
 *   `Custom { name, data }` - something particular to the kind, under a name its module defines:
-    `session::STARTED` and `STOPPED`, `agent::STATE_CHANGED`, a channel's `STARTED`, `STOPPED`,
-    `JOINED` and `LEFT` - with the `ActorId` of who joined or left -, `AGENT_STATE_CHANGED`, with
-    the agent's id, and `SAID`, with a message others hear as it was said (see
+    `session::STARTED` and `STOPPED`, a channel's `STARTED`, `STOPPED`, `JOINED` and `LEFT` - with
+    the `ActorId` of who joined or left -, `AGENT_STATE_CHANGED`, with the agent's id, and `SAID`,
+    with a message others hear as it was said (see
     [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
 What happens to a channel's participants is a change of the channel: its readers are the ones who
@@ -34,7 +34,7 @@ kind, and with it what `within` is the id of.
 
 An event is made by the kind it is about, at its address - its id, or for a kind that lies in an
 entity that entity's id and its own (`Address<T>`): `GlobalEvent::created::<Skill>(&id)`,
-`updated::<Session>(&id, &update)`, `custom::<Agent>(&id, agent::STATE_CHANGED, &())`,
+`updated::<Session>(&id, &update)`, `custom::<Session>(&id, session::STARTED, &())`,
 `custom::<Channel>(&(session_id, channel_id), channel::JOINED, &actor)`. It is read the same way:
 `event.about::<Agent>()` answers the agent's id and the change, `event.about::<Channel>()` the
 session's id and the channel's together with the change, or `None` for an event about another

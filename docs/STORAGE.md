@@ -142,12 +142,12 @@ over one pool.
 *   **The revision beside the body** (`revision`): a write in place of a document names the one it
     read in its `WHERE`, so that two processes that change one entity at once do not overwrite
     each other (issue [492](../issues/492-a-document-is-written-under-two-locks.md)).
-*   **The states in tables of their own shape**, made by the migrations: `agent_state`,
-    `agent_channel_state` - with `has_work_under_way` and a partial index on it, the index of the
-    work under way -, `channel_state` and `user_channel_state`, each holding the state's document
-    whole, as serde writes it without what is kept apart. A put writes it whole, in one transaction
-    with what is kept apart - the chain, the items derived from it, what was given -, and marks the
-    state stored once the transaction is committed; so a crash leaves nothing to repair.
+*   **The states in tables of their own shape**, made by the migrations: `agent_channel_state` -
+    with `has_work_under_way` and a partial index on it, the index of the work under way -,
+    `channel_state` and `user_channel_state`, each holding the state's document whole, as serde
+    writes it without what is kept apart. A put writes it whole, in one transaction with what is
+    kept apart - the chain, the items derived from it, what was given -, and marks the state stored
+    once the transaction is committed; so a crash leaves nothing to repair.
 *   **A chain a row per node** (`chains`), every branch, by its position: `history_entries` and
     `transcript_entries`, a node changed in its place written over, the heads in `histories` and
     `transcripts`. A chain is read backwards in batches where the domain's rules follow it back - a
@@ -383,27 +383,27 @@ whether the caller is cleared for it, the deleted alike (issue 322, see
 its `AccessPolicy`.
 
 Purging only what is still marked keeps a purge from removing what was restored meanwhile. Where
-something lies behind an entity - an agent's state, a workspace's place, an artifact's content, a
-session's channels with their states and attachments, a project's sessions -, its purge is begun
-first (`begin_purge`, issue [492](../issues/492-a-document-is-written-under-two-locks.md)): the
-entity records it, apart from the mark of its deletion (`Stored::purging`) - deleting and purging
-are two acts, each with a permission of its own -, and no restoring takes it back from then on; then
-what lies behind it is removed, then the document. The order is written once, in
-`store::purge_behind`, which every such purge goes through: a manager's in its caller's name and in
-its own errors, what goes with the holder of its scope in the kernel's name. A purge that fails
-between leaves it deleted with its purge begun, for the next purge to finish; the record holds
-across every writer of the store, as no lock in one process could. A channel is restored only
-through its running session, so the session's purge begun keeps its channels too; and nothing that
-lies in a project - its sessions, what lies in its scope - is restored while the project is deleted,
-so the project's purge begun keeps them. Deleting, restoring and purging a session are serialised by
-the `SessionManager`, under the lock it also starts a session with, so that a purge never meets it
-half deleted or half restored. Deleting, restoring and purging a project are serialised by the
-`ProjectManager`, under one lock per project id, since each goes through the project's sessions, its
-scope and its group. Both tables of locks by id are a `LocksById`, which keeps an id's lock only
-while somebody holds it or waits for it. What the kernel removes for good that is not marked - the
-channels of a session being purged, a document whose creation failed - it marks first, in its own
-name. The state of what was deleted stays in the `StateStore` until it is purged (see
-[Deleting state](#deleting-state)).
+something lies behind an entity - an agent's states in its channels and its memory, a workspace's
+place, an artifact's content, a session's channels with their states and attachments, a project's
+sessions -, its purge is begun first (`begin_purge`, issue
+[492](../issues/492-a-document-is-written-under-two-locks.md)): the entity records it, apart from
+the mark of its deletion (`Stored::purging`) - deleting and purging are two acts, each with a
+permission of its own -, and no restoring takes it back from then on; then what lies behind it is
+removed, then the document. The order is written once, in `store::purge_behind`, which every such
+purge goes through: a manager's in its caller's name and in its own errors, what goes with the
+holder of its scope in the kernel's name. A purge that fails between leaves it deleted with its
+purge begun, for the next purge to finish; the record holds across every writer of the store, as no
+lock in one process could. A channel is restored only through its running session, so the session's
+purge begun keeps its channels too; and nothing that lies in a project - its sessions, what lies in
+its scope - is restored while the project is deleted, so the project's purge begun keeps them.
+Deleting, restoring and purging a session are serialised by the `SessionManager`, under the lock it
+also starts a session with, so that a purge never meets it half deleted or half restored. Deleting,
+restoring and purging a project are serialised by the `ProjectManager`, under one lock per project
+id, since each goes through the project's sessions, its scope and its group. Both tables of locks by
+id are a `LocksById`, which keeps an id's lock only while somebody holds it or waits for it. What
+the kernel removes for good that is not marked - the channels of a session being purged, a document
+whose creation failed - it marks first, in its own name. The state of what was deleted stays in the
+`StateStore` until it is purged (see [Deleting state](#deleting-state)).
 
 ### Demo data
 
@@ -431,8 +431,6 @@ The `StateStore` (in `caelumora-store`) stores the runtime state of channels and
     stored with what it took in: what its inbox opens at when it runs again.
     An external agent keeps instead what it keeps of the remote side: the remote conversation and
     the tasks not yet ended.
-*   **`AgentState`**: the agent itself, across its channels and sessions - so far its memory (see
-    [MEMORY.md](MEMORY.md)).
 *   **`UserChannelState`**: a user in one channel - up to where they read it (see
     [CHANNELS.md](CHANNELS.md#what-is-new-to-a-user)).
 
@@ -613,17 +611,19 @@ document as the transcript is (issue 383):
     the file before it writes one. In Postgres each is a table keyed by agent, channel and digest,
     written with `ON CONFLICT DO NOTHING`.
 
-### The agent state has one owner per process
+### An agent's memory has one keeper per process
 
-An agent may run in several channels and sessions at once, each with its own actor. The runtime of
-every one of them (`AgentRuntime`) holds the same `AgentStateHandle`, so that there is one owner of
-the agent's state per process; a work reaches the state through the memory's reader and writer the
-kernel binds to it, which find the handle an actor of the agent holds (`AgentStates::held`, issue
-518). A turn does not hold the state: it reads a snapshot and stages changes. When it completes, the
-kernel commits the staged changes to the state as it is at that moment, under the handle's lock,
-stores it and announces `agent::STATE_CHANGED` without content. No actor thus overwrites another's
-changes, and every next turn sees them. Numbers for new memory entries are handed out by the handle
-at once, since turns in several channels may remember at the same time.
+What an agent remembers across its channels is no state but a document of the memory plugin's kind,
+one per agent (see [MEMORY.md](MEMORY.md#agent-memory)). An agent may run in several channels and
+sessions at once, each with its own actor, whose turns commit to that one document. The plugin's
+`MemoryManager` keeps, per agent, the number the next entry gets and a lock: a turn does not hold
+the memory, it reads what it may recall and stages changes; when it completes, the manager reads
+the document as it is stored then, under the agent's lock, has the turn's changes checked on it,
+applies and stores them. No actor thus overwrites another's changes, and every next turn sees them.
+Numbers for new entries are handed out at once, since turns in several channels may remember at
+the same time; they count on from the document as stored, and a commit raises them to what it
+finds there, so that a process does not fall behind what another wrote. Across processes, the
+document's revision refuses a write made on an outdated one.
 
 ### One writer per state
 
@@ -634,7 +634,6 @@ not help; the rule is the kernel's to keep:
 
 *   `ChannelState`: its `ChannelLoop`;
 *   `AgentChannelState`: the actor of that agent and channel;
-*   `AgentState`: its handle;
 *   `UserChannelState`: the user's controller, one per user in the instance;
 
 each holding the state under a lock of its own while it changes and stores it.
@@ -666,8 +665,9 @@ not started. The `MemoryStore` asks the states it keeps.
 
 Deleting a session or a channel keeps its state, hidden with it; purging removes the state too, with
 its histories. The entity store and the state store may be different stores, so a purge deletes the
-state explicitly - a channel's with that of every agent and user in it, an agent's own with its
-state in every channel. It is never a side effect of the `EntityStore`.
+state explicitly - a channel's with that of every agent and user in it, an agent's in every channel,
+with what plugins keep behind it, its memory (`AgentMember`). It is never a side effect of the
+`EntityStore`.
 
 ## Controllers
 
@@ -746,9 +746,9 @@ The kernel is cut so that this stays possible:
 
 *   **A session runs in exactly one instance**, with its channels, their actors and their
     controllers. Requests for a session go to the instance that runs it.
-*   **Agents and users run in several instances at once**, with an actor, a controller and an
-    `AgentState` in each. Between instances they are kept in step through the global events, carried
-    by an event bus the instances share.
+*   **Agents and users run in several instances at once**, with an actor and a controller in each.
+    Between instances they are kept in step through the global events, carried by an event bus the
+    instances share.
 *   **Writes across instances** cannot be serialised by a lock in one process. The stores refuse a
     write made on an outdated revision (issue
     [492](../issues/492-a-document-is-written-under-two-locks.md)); events will have to carry the

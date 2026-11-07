@@ -242,10 +242,11 @@ themselves, an agent its owner (see [In whose name an agent acts](#in-whose-name
 
 What may flow where is not the ownership policy's to decide: copying, publishing and the clearance
 at a channel's door are asked of the `ConfidentialityPolicy`. Of a reclassification the policy
-decides who may - a channel its owner, a message its author or the channel's owner, a note or memory
-entry its author -, the `ConfidentialityPolicy` whether the new classification may be given there.
-Whether an agent may reach the channel it copies from at all is the policy's, asked before, as
-`GetChannel`; see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules).
+decides who may - a channel its owner, a message its author or the channel's owner, a note its
+author, an entry of an agent's memory the memory's owner (the memory plugin's `ReclassifyMemory`) -,
+the `ConfidentialityPolicy` whether the new classification may be given there. Whether an agent may
+reach the channel it copies from at all is the policy's, asked before, as `GetChannel`; see
+[CONFIDENTIALITY.md](CONFIDENTIALITY.md#who-applies-the-rules).
 
 ### How stores check
 
@@ -457,9 +458,10 @@ asks what, in whose name and by which reason is mapped, check by check, in
     `CommandExecutor`, a secret the `SecretManager`, a skill the `SkillManager`. An answer to an
     approval request is something that enters a channel: the channel asks whether its sender may
     approve the calls of the agent it names (rule 3), the approver only counts it (issue 312). A
-    component owns the acts on what it keeps - reclassifying a note, forgetting a memory entry -
-    and asks for those itself, in the turn's context; reading beyond its channel it leaves to the
-    views.
+    component owns the acts on what it keeps - reclassifying a note - and asks for those itself, in
+    the turn's context; reading beyond its channel it leaves to the views, and what a system
+    service keeps - an entry of the agent's memory - to the service, which decides as its writer
+    commits it.
 5.  **Offering is not permitting.** The views, a snapshot's flags, the filters of lists, the
     approver's choice of whom to wait for, the visible commands and the event bus ask to decide what
     to show or whom to wait for, never to permit; the act asks again when it is done, and that is no
@@ -477,12 +479,12 @@ permission, and the same one an agent asks at its next step, so that both agree 
 
 A pure access question - "may they?", asked from outside an entity to decide what to list or offer -
 is a method of `caelumora_security::AccessQuestions`, not of the entity. They are asked by the
-views, which decide what a client lists and offers; by the views an agent's turn navigates and by
-the components, deciding what an agent may read of other channels or recall, in the context of the
-turn; by an agent, deciding what it may put up for approval; and by the approver, deciding whom it
-waits for - an answer it then checks as the operation it counts for. An act has no question of its
-own: calling a tool, changing a message, reclassifying it are asked with `Enforcement::require`
-where they are decided.
+views, which decide what a client lists and offers; by the views an agent's turn navigates, deciding
+what an agent may read of other channels, and by the readers of the system services - what an agent
+may recall of its memory -, in the context of the turn; by an agent, deciding what it may put up for
+approval; and by the approver, deciding whom it waits for - an answer it then checks as the
+operation it counts for. An act has no question of its own: calling a tool, changing a message,
+reclassifying it are asked with `Enforcement::require` where they are decided.
 
 The flow is asked alike of the `ConfidentialityPolicy`, through `ConfidentialityQuestions`: the
 `may_*` to decide what to offer, the `require_*` for an act, answering a refusal with the act's own
