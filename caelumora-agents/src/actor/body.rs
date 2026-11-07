@@ -367,7 +367,6 @@ mod testing {
     use crate::prompt::external_context::ExternalContextProvider;
     use crate::testing::{detached_actor_runtime, detached_participant};
     use caelumora_domain::agent::Personality;
-    use caelumora_kernel::agent::state::AgentStateHandle;
     use caelumora_kernel::kernel::AgentRuntime;
 
     impl AgentBody {
@@ -401,8 +400,7 @@ mod testing {
                 ..Personality::clone(&self.runtime.personality())
             };
             let runtime = detached_participant(self.agent_id());
-            let runtime = AgentRuntime::in_test(runtime, AgentStateHandle::detached())
-                .with_personality(personality);
+            let runtime = AgentRuntime::in_test(runtime).with_personality(personality);
             Self { runtime: Arc::new(runtime), ..self }
         }
     }

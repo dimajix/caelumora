@@ -22,7 +22,7 @@ use crate::history::HistoryStore;
 use crate::memory::MemoryStore;
 use crate::transcript::TranscriptStore;
 use async_trait::async_trait;
-use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, AgentState, Personality};
+use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::{Channel, ChannelId, ChannelState};
 use caelumora_domain::component::ComponentBundle;
 use caelumora_domain::group::Group;
@@ -455,9 +455,6 @@ pub trait StateStore: Debug + Sync + Send {
     /// again. Read from the index, without loading a state.
     async fn channels_with_work_under_way(&self) -> StoreResult<Vec<ChannelId>>;
 
-    async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState>;
-    async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()>;
-
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState>;
     async fn put_channel_state(
         &self,
@@ -484,9 +481,10 @@ pub trait StateStore: Debug + Sync + Send {
     /// (issue 09).
     async fn delete_channel_state(&self, channel_id: ChannelId) -> StoreResult<()>;
 
-    /// Deletes the state of an agent purged for good (issue 164): its own
-    /// and its state in every channel. Nothing to delete is not an error.
-    async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()>;
+    /// Deletes the states of an agent purged for good (issue 164): its state
+    /// in every channel, with its transcripts and what was given to it there.
+    /// Nothing to delete is not an error.
+    async fn delete_agent_channel_states(&self, agent_id: AgentId) -> StoreResult<()>;
 }
 
 #[cfg(test)]

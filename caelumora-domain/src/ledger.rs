@@ -1,7 +1,7 @@
 //! A ledger: entries of text that are added, updated, removed and
 //! reclassified, kept as a chain of those changes (issue 92). An agent's notes
-//! (`crate::note`, issue 17) and its memory (`crate::memory`, issue 62) are
-//! ledgers; they work alike and differ only in what they are called and in
+//! (`crate::note`, issue 17) and its memory (the memory plugin's, issues 62,
+//! 518) are ledgers; they work alike and differ only in what they are called and in
 //! where a change is recorded to have been made - which a [`LedgerKind`]
 //! says.
 //!

@@ -31,6 +31,8 @@ use caelumora_kernel::session::{SessionManager, SessionSpec};
 use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
+use caelumora_memory::library::MemoryLibrary;
+use caelumora_memory::plugin::MemoryPlugin;
 use caelumora_model::plugin::ModelPlugin;
 use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
@@ -538,6 +540,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
         Box::new(SkillsPlugin),
         Box::new(ArtifactsPlugin),
+        Box::new(MemoryPlugin),
         Box::new(OpenTerminalPlugin),
         Box::new(ModelPlugin),
         Box::new(OllamaModelPlugin),
@@ -561,6 +564,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(AttachmentToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
+        Box::new(MemoryLibrary),
     ]
 }
 

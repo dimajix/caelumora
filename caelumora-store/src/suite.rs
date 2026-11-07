@@ -17,9 +17,7 @@ use crate::{EntityStore, EntityStores, PersistenceBackend, Presence, StateStore}
 use caelumora_domain::actor::{ActorEvent, Envelope, EventContext};
 use caelumora_domain::actor::{ActorId, ActorState};
 use caelumora_domain::agent::testing::make_personality;
-use caelumora_domain::agent::{
-    Agent, AgentChannelState, AgentId, AgentState, Personality, PersonalityId,
-};
+use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::testing::make_channel;
 use caelumora_domain::channel::{moderation_components, Channel, ChannelId, ChannelState};
@@ -982,7 +980,6 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
     let (agent, other_agent, remote_agent) = (AgentId::new(), AgentId::new(), AgentId::new());
     let (channel, other_channel) = (ChannelId::new(), ChannelId::new());
 
-    store.get_agent_state(agent).await.expect("a missing agent state is no error");
     assert!(store
         .get_agent_channel_state(agent, channel)
         .await
@@ -1058,9 +1055,6 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
     };
     assert_eq!(positions(&stored), positions(&talking), "every entry where it was added");
     assert_eq!(stored.transcript.end().get(), 2);
-
-    store.put_agent_state(agent, &mut AgentState::default()).await.expect("put agent state");
-    store.get_agent_state(agent).await.expect("get agent state");
 
     store
         .put_channel_state(channel, &mut ChannelState::new(channel))
@@ -1150,7 +1144,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         .put_agent_channel_state(agent, channel, &mut in_turn)
         .await
         .expect("put agent channel state");
-    store.delete_agent_state(agent).await.expect("delete agent state");
+    store.delete_agent_channel_states(agent).await.expect("delete agent states");
     assert!(
         store.get_agent_channel_state(agent, channel).await.expect("get").turn.is_none(),
         "the agent's states in every channel are gone"
@@ -1163,7 +1157,7 @@ pub async fn state_store_behaves(store: &dyn StateStore) {
         store.get_agent_channel_state(other_agent, other_channel).await.is_ok(),
         "another agent's stay"
     );
-    store.delete_agent_state(agent).await.expect("nothing to delete is no error");
+    store.delete_agent_channel_states(agent).await.expect("nothing to delete is no error");
     assert!(
         store.get_agent_channel_state(remote_agent, channel).await.expect("get").remote.is_empty(),
         "the external agents' states in the channel are gone"
@@ -1245,7 +1239,7 @@ pub async fn work_under_way_is_indexed(store: &dyn StateStore) {
         .expect("put");
     assert_eq!(listed().await, HashSet::from([other_channel]), "the last one's work ended");
 
-    store.delete_agent_state(agent).await.expect("delete agent state");
+    store.delete_agent_channel_states(agent).await.expect("delete agent states");
     assert!(listed().await.is_empty(), "the agent's work goes with its state");
     store.put_agent_channel_state(other_agent, channel, &mut planning).await.expect("put");
     store.delete_channel_state(channel).await.expect("delete channel state");
@@ -1758,7 +1752,7 @@ pub async fn transcript_store_behaves(states: &dyn StateStore, transcripts: &dyn
     let mut again = AgentChannelState::default();
     again.transcript.push(make_message(id(2)));
     states.put_agent_channel_state(agent, channel, &mut again).await.expect("put");
-    states.delete_agent_state(agent).await.expect("delete");
+    states.delete_agent_channel_states(agent).await.expect("delete");
     assert!(
         transcripts.in_transcript(agent, channel, &[id(2)]).await.unwrap().is_empty(),
         "and with the agent"
@@ -1876,7 +1870,7 @@ pub async fn given_store_behaves(states: &dyn StateStore, transcripts: &dyn Tran
     let mut other = AgentChannelState::default();
     other.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
     states.put_agent_channel_state(agent, elsewhere, &mut other).await.expect("put");
-    states.delete_agent_state(agent).await.expect("delete");
+    states.delete_agent_channel_states(agent).await.expect("delete");
     assert!(
         transcripts.prompts(agent, elsewhere, &[system.text]).await.unwrap().is_empty(),
         "and with the agent"

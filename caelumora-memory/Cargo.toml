@@ -1,0 +1,58 @@
+[package]
+name = "caelumora-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# The layers of the crate (issue 518), as those of `caelumora-skills`: without features the memory
+# and the document that keeps an agent's.
+[features]
+default = ["kernel", "library"]
+# What an agent's work reaches the memory by: the crate's part of the kernel's API, which the plugin
+# serves and the library calls.
+api = ["dep:caelumora-api", "dep:async-trait"]
+# The manager, the views of a work, the plugin: the kernel's side.
+kernel = [
+    "api",
+    "dep:caelumora-kernel",
+    "dep:caelumora-store",
+    "dep:caelumora-security",
+    "dep:tokio",
+    "dep:tracing",
+    "dep:anyhow",
+]
+# The component and the library: the agent side.
+library = ["api", "dep:caelumora-agents", "dep:anyhow", "dep:serde_json"]
+
+[dependencies]
+caelumora-domain.workspace = true
+serde.workspace = true
+uuid = { workspace = true, features = ["v4", "serde"] }
+caelumora-api = { workspace = true, optional = true }
+caelumora-kernel = { workspace = true, optional = true }
+caelumora-store = { workspace = true, optional = true }
+caelumora-security = { workspace = true, optional = true }
+caelumora-agents = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["sync"] }
+tracing = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+
+[dev-dependencies]
+caelumora-security = { workspace = true, features = ["test-support"] }
+caelumora-store = { workspace = true, features = ["test-support"] }
+caelumora-agents = { workspace = true, features = ["test-support"] }
+caelumora-kernel = { workspace = true, features = ["test-support"] }
+caelumora-domain = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+
+# Without the features the test is skipped rather than failing to build: it runs the plugin and
+# the library in a kernel.
+[[test]]
+name = "memory"
+required-features = ["kernel", "library"]
+
+[lints]
+workspace = true

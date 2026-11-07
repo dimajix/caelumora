@@ -54,9 +54,8 @@ pub enum EntityChange {
     Restored,
     /// Something particular to the kind, under a name of its own - a
     /// session started (`session::STARTED`), someone joined a channel
-    /// (`channel::JOINED`), an agent's state changed
-    /// (`agent::STATE_CHANGED`) -, with what the kind says of it, `null`
-    /// for nothing.
+    /// (`channel::JOINED`) -, with what the kind says of it, `null` for
+    /// nothing.
     Custom {
         name: &'static str,
         data: Value,

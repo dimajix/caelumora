@@ -5,7 +5,7 @@
 # plugins whole (`plugins`). The programs are not listed: they are the crates with a binary.
 libraries='caelumora-agents caelumora-a2a caelumora-compaction caelumora-tool-attachment
 caelumora-tool-image caelumora-tool-mcp caelumora-tool-workspace'
-both_levels='caelumora-skills caelumora-artifacts'
+both_levels='caelumora-skills caelumora-artifacts caelumora-memory'
 library_side='extension.rs component.rs library.rs'
 plugins='caelumora-decision caelumora-model caelumora-model-ollama caelumora-model-comfyui
 caelumora-open-terminal caelumora-store-json caelumora-store-postgres'

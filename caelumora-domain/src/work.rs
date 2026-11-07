@@ -186,6 +186,7 @@ mod tests {
             session: Default::default(),
             source: KnowledgeSource::History { digest: None, from: None },
             classification: Some(internal.clone()),
+            private: false,
         };
 
         work.take_in_context(&[part(Some(Classification::PUBLIC))], vec![read.clone()]);

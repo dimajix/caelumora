@@ -610,6 +610,7 @@ mod tests {
                     session: SessionId::new(),
                     source,
                     classification: None,
+                    private: false,
                 })
                 .collect();
             let call = ToolCall {

@@ -6,21 +6,18 @@
 //!   of the personality reaches it (issue 176).
 //! - An `AgentChannelState` (`channel_state`) is the agent in one channel:
 //!   its transcript, its notes, the turn under way, and the numbers its
-//!   transcript gives attachments (`AttachmentIndex`, issue 282).
-//! - An `AgentState` (`state`) is the agent itself across its channels: its
-//!   memory (issue 62).
+//!   transcript gives attachments (`AttachmentIndex`, issue 282). What it
+//!   remembers across its channels is the memory plugin's (issue 518).
 
 mod attachments;
 mod channel_state;
 mod personality;
-mod state;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
 pub use attachments::AttachmentIndex;
 pub use channel_state::{AgentChannelState, AgentChannelStateChange, RetryRefused};
 pub use personality::{HearsDuringTurn, HearsFrom, OthersWords, Personality, PersonalityKind};
-pub use state::{AgentState, AgentStateChange, STATE_CHANGED};
 
 use crate::actor::ActorId;
 use crate::removal::Removal;

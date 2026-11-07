@@ -2199,9 +2199,9 @@ mod tests {
 
     #[tokio::test]
     async fn the_agents_of_a_scope_are_announced_as_they_go_and_purged_with_their_state() {
-        use caelumora_domain::agent::{AgentState, PersonalityId};
-        use caelumora_domain::memory::{MemoryChange, MemoryId};
-        use caelumora_domain::message::MessageId;
+        use caelumora_domain::agent::{AgentChannelState, PersonalityId};
+        use caelumora_domain::channel::ChannelId;
+        use caelumora_domain::work::Work;
 
         let kernel = test_kernel();
         let agents = Arc::clone(&kernel.entity_stores().agents);
@@ -2221,19 +2221,17 @@ mod tests {
         };
         let mut sessions = agent_in(Scope::SessionScope { session_id: id });
         let mut users = agent_in(Scope::UserScope { user_id: UserId::new() });
+        let elsewhere = ChannelId::new();
         for agent in [&mut sessions, &mut users] {
             agents.create(&system, agent).await.unwrap();
-            let mut state = AgentState::default();
-            state.memory.push(
-                MemoryChange::Add {
-                    id: MemoryId(1),
-                    text: "kept".to_string(),
-                    classification: Classification::CHANNEL_DEFAULT,
-                },
+            let mut state = AgentChannelState::default();
+            state.begin_turn(Work::new(
                 Default::default(),
-                MessageId::default(),
-            );
-            states.put_agent_state(agent.id, &mut state).await.unwrap();
+                None,
+                Default::default(),
+                Default::default(),
+            ));
+            states.put_agent_channel_state(agent.id, elsewhere, &mut state).await.unwrap();
         }
 
         assert!(manager.delete(&ctx, id).await.unwrap());
@@ -2257,12 +2255,12 @@ mod tests {
 
         assert!(manager.delete(&ctx, id).await.unwrap());
         assert!(manager.purge(&ctx, id).await.unwrap());
-        let remembered = |agent: AgentId| {
+        let working = |agent: AgentId| {
             let states = Arc::clone(&states);
-            async move { states.get_agent_state(agent).await.unwrap().memory.current().len() }
+            async move { states.get_agent_channel_state(agent, elsewhere).await.unwrap().turn.is_some() }
         };
-        assert_eq!(remembered(sessions.id).await, 0, "its state is purged with it");
-        assert_eq!(remembered(users.id).await, 1, "the user's agent keeps its own");
+        assert!(!working(sessions.id).await, "its state is purged with it");
+        assert!(working(users.id).await, "the user's agent keeps its own");
     }
 
     #[tokio::test]

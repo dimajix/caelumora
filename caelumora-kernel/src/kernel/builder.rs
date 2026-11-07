@@ -6,8 +6,7 @@ use super::extension::Extensions;
 use super::Kernel;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
-use crate::agent::state::AgentStates;
-use crate::agent::{AgentManager, AgentMember, MemoryUse, RecalledMemory};
+use crate::agent::{AgentManager, AgentMember};
 use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
 use crate::channel::{ChannelLoop, Participation};
@@ -30,16 +29,16 @@ use anyhow::{bail, Context, Result};
 use caelumora_api::component::Face;
 use caelumora_api::component::{ComponentResult, Services};
 use caelumora_api::library::Library;
-use caelumora_api::memory::{MemoryReader, MemoryWriter};
+use caelumora_api::staging::Committing;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::config::{AppConfig, BackendConfig};
-use caelumora_domain::memory::MemoryChange;
 use caelumora_domain::prompt_catalogue::{
     PromptCatalogue, DEFAULT_VARIANT, KERNEL, KERNEL_PROMPTS,
 };
 use caelumora_domain::store::{StoreResult, Stored};
+use caelumora_domain::turn::StagedChange;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_security::confidentiality::ConfidentialityPolicy;
 use caelumora_security::secret::{SecretManager, SecretProvider};
@@ -77,7 +76,6 @@ pub struct KernelBuilder {
     approval_rules: Arc<[ApprovalRule]>,
     event_bus: Arc<EventBus>,
     controller_manager: Arc<ControllerManager>,
-    agent_states: Arc<AgentStates>,
     workspaces: Arc<WorkspaceManager>,
     command_reaper: Arc<CommandReaper>,
     /// The storages of content (issue 282), which their owners - a
@@ -239,10 +237,6 @@ impl KernelBuilder {
             Arc::clone(&state_store),
             persistence.history_store(),
         ));
-        let agent_states = Arc::new(AgentStates::new(
-            Arc::clone(&state_store),
-            Arc::<EventBus>::clone(&event_bus),
-        ));
         let command_reaper = CommandReaper::new(
             &entity_stores,
             &event_bus,
@@ -294,7 +288,7 @@ impl KernelBuilder {
         prompts.add(KERNEL, KERNEL_PROMPTS)?;
         let component_registry =
             ComponentRegistry::built_in(Arc::clone(&entity_stores.component_bundles));
-        let extensions = Self::kernel_extensions(&agent_states)?;
+        let extensions = Self::kernel_extensions()?;
         Ok(Self {
             persistence,
             entity_stores,
@@ -308,7 +302,6 @@ impl KernelBuilder {
             approval_rules: config.approvals.rules.clone().into(),
             event_bus,
             controller_manager,
-            agent_states,
             workspaces,
             command_reaper,
             content_storages,
@@ -330,10 +323,9 @@ impl KernelBuilder {
         })
     }
 
-    /// The kernel's own extensions (issue 516): the workspace a work may use in its channel, and
-    /// the memory of its agent, which an actor of it holds in `agent_states` (issue 518), each as
-    /// a reader and a writer - the memory's committing what a turn staged of it.
-    fn kernel_extensions(agent_states: &Arc<AgentStates>) -> Result<Extensions> {
+    /// The kernel's own extensions (issue 516): the workspace a work may use in its channel, as a
+    /// reader and a writer.
+    fn kernel_extensions() -> Result<Extensions> {
         let mut extensions = Extensions::default();
         extensions.insert::<dyn WorkspaceReader, _, _>(Face::Reader, |session| async move {
             let usable = UsableWorkspace::of_work(&session).await?;
@@ -342,23 +334,6 @@ impl KernelBuilder {
         extensions.insert::<dyn WorkspaceWriter, _, _>(Face::Writer, |session| async move {
             WorkspaceUse::of_work(&session).map(|used| Arc::new(used) as Arc<dyn WorkspaceWriter>)
         })?;
-        let states = Arc::clone(agent_states);
-        extensions.insert::<dyn MemoryReader, _, _>(Face::Reader, move |session| {
-            let states = Arc::clone(&states);
-            async move {
-                let recalled = RecalledMemory::of_work(&session, &states).await?;
-                Some(Arc::new(recalled) as Arc<dyn MemoryReader>)
-            }
-        })?;
-        let states = Arc::clone(agent_states);
-        extensions.insert::<dyn MemoryWriter, _, _>(Face::Writer, move |session| {
-            let states = Arc::clone(&states);
-            async move {
-                let used = MemoryUse::of_work(session, &states).await?;
-                Some(Arc::new(used) as Arc<dyn MemoryWriter>)
-            }
-        })?;
-        extensions.commits::<MemoryChange, dyn MemoryWriter>()?;
         Ok(extensions)
     }
 
@@ -595,6 +570,19 @@ impl KernelBuilder {
         self.extensions.insert(Face::Writer, bind)
     }
 
+    /// Lets the writer `T`, bound by `extend_writers`, commit what a turn stages as `C` (issue
+    /// 518): handed it when the turn completes (`ActorRuntime::commit_staged`).
+    ///
+    /// # Errors
+    /// If no writer is bound as `T`, or what is staged as `C` is committed already.
+    pub fn commits<C, T>(&mut self) -> Result<()>
+    where
+        C: StagedChange,
+        T: ?Sized + Committing<C> + 'static,
+    {
+        self.extensions.commits::<C, T>()
+    }
+
     /// The service `T`, if the kernel or a plugin registered before provides it.
     pub fn service<T: ?Sized + Send + Sync + 'static>(&self) -> Option<&Arc<T>> {
         self.services.get::<T>()
@@ -731,7 +719,6 @@ impl KernelBuilder {
             participation,
             commands: self.commands,
             approval_rules: self.approval_rules,
-            agent_states: self.agent_states,
             workspaces: self.workspaces,
             command_reaper: self.command_reaper,
             attachments: self.attachments,
@@ -1119,18 +1106,39 @@ mod tests {
     /// commits it, and by one writer alone.
     #[test]
     fn what_a_turn_stages_of_a_kind_is_committed_by_one_bound_writer() {
-        use caelumora_store::memory::MemoryStore;
+        use caelumora_api::staging::CommitResult;
+        use caelumora_domain::message::MessageId;
+        use serde::{Deserialize, Serialize};
 
-        let unbound = Extensions::default()
-            .commits::<MemoryChange, dyn MemoryWriter>()
-            .expect_err("no writer bound to commit it");
+        /// What a turn stages of the writer below.
+        #[derive(Serialize, Deserialize)]
+        struct Said;
+        impl StagedChange for Said {
+            const KIND: &'static str = "said";
+        }
+        /// A writer that commits `Said`.
+        #[async_trait::async_trait]
+        trait Saying: Committing<Said> {}
+        struct Says;
+        #[async_trait::async_trait]
+        impl Committing<Said> for Says {
+            async fn commit(&self, _: Vec<Said>, _: MessageId) -> CommitResult<()> {
+                Ok(())
+            }
+        }
+        impl Saying for Says {}
+
+        let mut extensions = Extensions::default();
+        let unbound = extensions.commits::<Said, dyn Saying>().expect_err("no writer bound");
         assert!(format!("{unbound}").starts_with("No writer"), "{unbound}");
-        let states = Arc::new(AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(())));
-        let mut extensions = KernelBuilder::kernel_extensions(&states).unwrap();
-        let again = extensions
-            .commits::<MemoryChange, dyn MemoryWriter>()
-            .expect_err("the kernel's writer commits it already");
-        assert_eq!(format!("{again}"), "What is staged as 'memory' is committed already");
+        extensions
+            .insert::<dyn Saying, _, _>(Face::Writer, |_| async {
+                Some(Arc::new(Says) as Arc<dyn Saying>)
+            })
+            .unwrap();
+        extensions.commits::<Said, dyn Saying>().expect("its writer bound");
+        let again = extensions.commits::<Said, dyn Saying>().expect_err("committed already");
+        assert_eq!(format!("{again}"), "What is staged as 'said' is committed already");
     }
 
     /// Issue 518: what a plugin keeps behind an agent goes when the agent is purged, after the
@@ -1141,22 +1149,22 @@ mod tests {
         use crate::agent::AgentMember;
         use caelumora_domain::actor::ActorId;
         use caelumora_domain::agent::testing::make_personality;
-        use caelumora_domain::agent::{Agent, AgentId, AgentState};
-        use caelumora_domain::confidentiality::Classification;
-        use caelumora_domain::memory::{MemoryChange, MemoryId};
-        use caelumora_domain::message::MessageId;
+        use caelumora_domain::agent::{Agent, AgentChannelState, AgentId};
+        use caelumora_domain::channel::ChannelId;
         use caelumora_domain::store::StoreError;
         use caelumora_domain::user::UserId;
+        use caelumora_domain::work::Work;
         use caelumora_security::SecurityContext;
         use caelumora_store::testing::stored_agent;
         use caelumora_store::StateStore;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Mutex;
 
-        /// Records the agents whose purge reached it, and whether their state was gone by then;
-        /// fails while `failing` is set.
+        /// Records the agents whose purge reached it, and whether their state in `channel` was
+        /// gone by then; fails while `failing` is set.
         struct Kept {
             state_store: Arc<dyn StateStore>,
+            channel: ChannelId,
             removed: Mutex<Vec<(AgentId, bool)>>,
             failing: AtomicBool,
         }
@@ -1166,8 +1174,9 @@ mod tests {
                 if self.failing.load(Ordering::SeqCst) {
                     return Err(StoreError::Backend("not now".to_string()));
                 }
-                let state = self.state_store.get_agent_state(agent.id).await?;
-                self.removed.lock().unwrap().push((agent.id, state.memory.current().is_empty()));
+                let state =
+                    self.state_store.get_agent_channel_state(agent.id, self.channel).await?;
+                self.removed.lock().unwrap().push((agent.id, state.turn.is_none()));
                 Ok(())
             }
         }
@@ -1184,8 +1193,10 @@ mod tests {
         }
 
         let store = Persistence::in_memory();
+        let channel = ChannelId::new();
         let kept = Arc::new(Kept {
             state_store: store.state_store(),
+            channel,
             removed: Mutex::new(Vec::new()),
             failing: AtomicBool::new(true),
         });
@@ -1194,11 +1205,10 @@ mod tests {
         let owner = ActorId::User(UserId::new());
         let personality = make_personality("helper");
         let agent = stored_agent(kernel.entity_stores(), "helper", personality, owner).await;
-        let mut state = AgentState::default();
-        let classification = Classification::CHANNEL_DEFAULT;
-        let remembered = MemoryChange::Add { id: MemoryId(1), text: "kept".into(), classification };
-        state.memory.push(remembered, Default::default(), MessageId::default());
-        kernel.state_store().put_agent_state(agent.id, &mut state).await.unwrap();
+        let mut state = AgentChannelState::default();
+        let work = Work::new(Default::default(), None, Default::default(), Default::default());
+        state.begin_turn(work);
+        kernel.state_store().put_agent_channel_state(agent.id, channel, &mut state).await.unwrap();
         let agents = kernel.agent_manager();
         let system = SecurityContext::system();
         assert!(agents.delete(&system, agent.id).await.unwrap());

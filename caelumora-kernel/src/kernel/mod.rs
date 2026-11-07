@@ -32,7 +32,6 @@ pub use channel::ChannelRuntime;
 
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
-use crate::agent::state::AgentStates;
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
 use crate::channel::Participation;
@@ -93,8 +92,6 @@ pub struct Kernel {
     /// What the system restricts of tool calls everywhere
     /// (`AppConfig::approvals`, issue 13).
     approval_rules: Arc<[ApprovalRule]>,
-    /// One owner of every running agent's `AgentState` (issue 62).
-    agent_states: Arc<AgentStates>,
     /// The one owner of workspaces and their places (issue 253).
     workspaces: Arc<WorkspaceManager>,
     /// What ends the commands nobody may run any longer (issues 254, 344).
@@ -246,11 +243,6 @@ impl Kernel {
     /// What the system restricts of tool calls everywhere (issue 13).
     pub fn approval_rules(&self) -> &Arc<[ApprovalRule]> {
         &self.approval_rules
-    }
-
-    /// The owner of every running agent's `AgentState` (issue 62).
-    pub fn agent_states(&self) -> &Arc<AgentStates> {
-        &self.agent_states
     }
 
     /// The one owner of workspaces and their places (issue 253).

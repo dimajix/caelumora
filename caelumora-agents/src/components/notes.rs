@@ -320,6 +320,7 @@ fn notes_ref(
         session,
         source: KnowledgeSource::Notes { agent, digest: published.digest },
         classification,
+        private: false,
     })
 }
 
@@ -367,6 +368,7 @@ impl PromptProvider for NotesComponent {
                 session: situation.session_id(),
                 source: KnowledgeSource::Notes { agent: situation.agent_id(), digest: own_digest },
                 classification,
+                private: false,
             });
         }
         Ok(Prompt::of_knowledge(text, knowledge))

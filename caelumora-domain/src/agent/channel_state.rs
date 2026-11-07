@@ -1156,6 +1156,7 @@ mod tests {
             session: Default::default(),
             source,
             classification,
+            private: false,
         }
     }
 

@@ -169,8 +169,8 @@ impl AgentManager {
         Ok(agent)
     }
 
-    /// Removes the deleted agent `id` for good on behalf of `context` (issue 164), its state - its
-    /// own and in every channel - and what the plugins keep behind it (`AgentMember`, issue 518)
+    /// Removes the deleted agent `id` for good on behalf of `context` (issue 164), its states in
+    /// every channel and what the plugins keep behind it (`AgentMember`, issue 518)
     /// first, in the order of every purge of what has something behind it (`purge_behind`). Only
     /// what was deleted is purged; the store asks `Purge`. What cannot be removed leaves the agent
     /// deleted, its purge begun, so that the next purge tries again. Announces nothing, as no purge
@@ -208,13 +208,13 @@ impl ScopeMember for AgentManager {
         Some(self.events.as_ref())
     }
 
-    /// Removes the state of `agent`, its own and in every channel, and then what the plugins keep
-    /// behind it (`AgentMember`), once its purge is begun; the first that fails ends it.
+    /// Removes the states of `agent` in every channel, and then what the plugins keep behind it
+    /// (`AgentMember`), once its purge is begun; the first that fails ends it.
     ///
     /// # Errors
     /// Whatever the state store or a plugin reports.
     async fn remove_behind(&self, agent: &Agent) -> StoreResult<()> {
-        self.states.delete_agent_state(agent.id).await?;
+        self.states.delete_agent_channel_states(agent.id).await?;
         for member in &self.agent_members {
             member.remove_behind(agent).await?;
         }

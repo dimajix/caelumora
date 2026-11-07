@@ -2,7 +2,6 @@
 //! (`caelumora_api::runtime::ActorRuntime`, issue 516).
 
 use super::{Kernel, ParticipantRuntime};
-use crate::agent::state::AgentStateHandle;
 use crate::component::BuildContext;
 use crate::controller::{AgentController, PersonalityController};
 use crate::view::{SessionView, Viewer, Views};
@@ -41,9 +40,8 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 /// The `ActorRuntime` of an agent in its channel (issue 516): its participant's runtime, which
-/// builds the context it acts in, with the session's controller of the agent, the instance's of its
-/// personality, and the agent's state - shared with its actors in other channels and sessions
-/// (issue 62). What only an agent asks of the kernel it answers itself; what every participant
+/// builds the context it acts in, with the session's controller of the agent and the instance's of
+/// its personality. What only an agent asks of the kernel it answers itself; what every participant
 /// needs it asks of its participant's runtime.
 #[derive(Debug)]
 pub struct AgentRuntime {
@@ -53,28 +51,18 @@ pub struct AgentRuntime {
     participant: ParticipantRuntime,
     agent: Arc<AgentController>,
     personality: Arc<PersonalityController>,
-    /// The agent's own state, held while the actor runs and not read here: so that every work of
-    /// the agent reaches the one state its actors share, and the numbers of its memory reserved
-    /// stay handed out (`AgentStates::held`, issue 518).
-    _state: Arc<AgentStateHandle>,
 }
 
 impl AgentRuntime {
     /// The runtime of the agent `agent` holds, of the personality `personality` holds, taking
-    /// part in its channel as `participant`, with its own state as the process holds it, shared
-    /// with its actors elsewhere.
-    ///
-    /// # Errors
-    /// If its state cannot be loaded.
-    pub(crate) async fn new(
+    /// part in its channel as `participant`.
+    pub(crate) fn new(
         participant: ParticipantRuntime,
         agent: Arc<AgentController>,
         personality: Arc<PersonalityController>,
-    ) -> Result<Self> {
+    ) -> Self {
         let kernel = Arc::clone(participant.kernel());
-        let attributes = agent.load().security_attributes.clone();
-        let state = kernel.agent_states().get(agent.id(), attributes).await?;
-        Ok(Self { kernel, participant, agent, personality, _state: state })
+        Self { kernel, participant, agent, personality }
     }
 
     /// The context the agent acts in now, for `initiator` (`ParticipantRuntime::acting_for`).
@@ -139,15 +127,13 @@ impl AgentRuntime {
 
 #[cfg(any(test, feature = "test-support"))]
 impl AgentRuntime {
-    /// The runtime of the agent that `participant` is the runtime of, holding `state` - in a test:
-    /// of the agent as its channel resolved it where it takes part (`participant_runtime_in`), else
-    /// of an agent "agent" of a plain personality, of the id of its actor. Its work reaches the
-    /// agent's memory only where `state` is the handle the kernel keeps for the agent
-    /// (`AgentStates::get`); a handle of its own (`AgentStateHandle::detached`) leaves it none.
+    /// The runtime of the agent that `participant` is the runtime of - in a test: of the agent as
+    /// its channel resolved it where it takes part (`participant_runtime_in`), else of an agent
+    /// "agent" of a plain personality, of the id of its actor.
     ///
     /// # Panics
     /// If `participant` is no agent's: the kernel makes the runtime of an agent alone.
-    pub fn in_test(participant: ParticipantRuntime, state: Arc<AgentStateHandle>) -> Self {
+    pub fn in_test(participant: ParticipantRuntime) -> Self {
         use super::ActingKind;
         use crate::channel::ResolvedKind;
         let (agent, personality) = match &participant.acting.0 {
@@ -162,7 +148,7 @@ impl AgentRuntime {
             ActingKind::Itself { .. } | ActingKind::Given(_) => Self::made_up(&participant),
         };
         let kernel = Arc::clone(participant.kernel());
-        Self { kernel, participant, agent, personality, _state: state }
+        Self { kernel, participant, agent, personality }
     }
 
     /// This runtime, of an agent of `personality` - in a test of what a personality decides.
@@ -435,7 +421,7 @@ mod tests {
         let channel = ChannelRuntime::outside_a_session(test_kernel(), session, channel);
         let agent_in_channel = |channel: &ChannelRuntime| {
             let participant = channel.new_participant_runtime(ActorId::Agent(AgentId::new()));
-            AgentRuntime::in_test(participant, AgentStateHandle::detached())
+            AgentRuntime::in_test(participant)
         };
         let its = agent_in_channel(&channel);
         let mut asleep =

@@ -12,6 +12,7 @@ caelumora-agents.workspace = true
 caelumora-logging.workspace = true
 caelumora-skills = { workspace = true, features = ["kernel", "library"] }
 caelumora-artifacts = { workspace = true, features = ["kernel", "library"] }
+caelumora-memory = { workspace = true, features = ["kernel", "library"] }
 caelumora-tool-mcp.workspace = true
 caelumora-a2a.workspace = true
 caelumora-open-terminal.workspace = true

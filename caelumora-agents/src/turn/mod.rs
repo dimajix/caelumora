@@ -9,8 +9,8 @@
 //! into the transcript and the history at once (issue 260) -, and stages
 //! what it changes of a system service - the agent's memory -, which the
 //! kernel commits when it completes (issue 518). What those states hold is
-//! the business of wrappers such as `crate::notes::AgentNotes` and
-//! `crate::memory::AgentMemory`. A turn is begun on the agent's state
+//! the business of wrappers such as `crate::notes::AgentNotes`, and of the
+//! components of the services. A turn is begun on the agent's state
 //! (`AgentChannelState::begin_turn`); a `Turn` is had only while one is
 //! under way (`Turn::of`), and ending it uses it up.
 //!
@@ -51,7 +51,7 @@ use caelumora_domain::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentRef;
-use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::note::NoteChange;
@@ -78,9 +78,9 @@ pub struct Turn<'a> {
     agent_channel_state: &'a mut AgentChannelState,
     /// The runtime of the agent's actor, in whose name the turn acts: what
     /// it asks of its channel and what it navigates (issue 163), and the
-    /// agent's own state, shared by all its actors (issue 62), which the
-    /// turn reads and stages changes of. Its own: the components the turn is
-    /// given to see the turn's methods, never the runtime (issue 128).
+    /// system services bound to its work, which the turn reads and stages
+    /// changes of (issue 518). Its own: the components the turn is given to
+    /// see the turn's methods, never the runtime (issue 128).
     runtime: Arc<dyn ActorRuntime>,
 }
 
@@ -333,12 +333,7 @@ impl<'a> Turn<'a> {
     /// its private notes (issue 51) or its memory (issue 62) - so far: what the model produces from
     /// then on may reveal it (issue 61).
     pub(crate) fn saw_private_knowledge(&self) -> bool {
-        self.current().work.context.frame.knowledge.iter().any(|k| {
-            matches!(
-                k.source,
-                KnowledgeSource::PrivateNotes { .. } | KnowledgeSource::Memory { .. }
-            )
-        })
+        self.current().work.context.frame.knowledge.iter().any(|k| k.private)
     }
 
     /// Records that the turn read `reference` (issue 17): it is recorded with every message the

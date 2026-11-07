@@ -19,7 +19,6 @@ pub mod history;
 pub(crate) mod intern;
 pub mod kept;
 pub mod ledger;
-pub mod memory;
 pub mod mention;
 pub mod message;
 pub mod note;

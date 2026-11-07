@@ -420,3 +420,35 @@ Stored memories are deleted, not migrated: a migration would be code without a l
   turn of the agent reserved passes the check, since who reserved it is not kept. The checks run on
   a snapshot taken before the handle's lock, so that an entry another actor removes meanwhile is
   updated by nothing.
+- **2026-11-07** — Step 3 implemented: `caelumora-memory`, a plugin and a library on the levels of
+  `caelumora-skills` (`api`, `kernel`, `library`). The memory's types left the domain for the crate;
+  an agent's memory is a document of the plugin's kind (`AgentMemory`, kind `memory`), one per agent
+  under the agent's id, owned by the principal of the agent's work - its owner -, as everything made
+  in someone's name is; the `MemoryManager` keeps the numbers and the lock per agent it serves, has
+  a commit judged under the lock on the memory as it reads it there and applies it, and removes the
+  memory with its agent (`AgentMember`, through the kernel's `purge_for_good`, now public); the
+  reader and the writer (`view.rs`) decide what may be recalled and judge every change, the writer
+  handing its judgement to `MemoryManager::apply`; reclassifying asks the plugin's own verb
+  (`RECLASSIFY`, `MemoryAccess`) in the place of `Reclassified::Memory`. The numbers are begun from
+  the memory read in the kernel's name, and raised to what a commit finds stored. `AgentState`,
+  `AgentStates`, `AgentStateHandle`, `get_agent_state` and `put_agent_state` of the three backends,
+  the table `agent_state` and `agent::STATE_CHANGED` are gone; `delete_agent_state` became
+  `delete_agent_channel_states`, as the states in the channels are all that is left of it;
+  `AgentRuntime` holds no state, and `in_test` takes none. `KnowledgeSource::Memory` became `Entity`
+  of the kind `memory`, and `KnowledgeRef::private` says what is private knowledge. Where it differs
+  from the plan above: `MemoryChange` is a type of the crate's own around `Change<MemoryId>`, since
+  the crate may not implement the domain's `StagedChange` for the domain's `Change`;
+  `MemoryWriter::reserve_id` is asynchronous and answers `StoreResult`, the manager reading the
+  memory once to count on from it; there is no `MemoryError`, which nothing needed; the turn's view
+  is `TurnMemory`, the name `AgentMemory` now the document's; the checks the plan gave the manager
+  are the writer's, since the recall rule reads through the work's views, which a manager is never
+  given - the manager runs them under its lock; the manager is the crate's own, offered as no
+  service, which no view needs yet; `agent::STATE_CHANGED` is not announced again, nobody listened
+  to it. What changes in behaviour: the memory is read and written in the agent's name as a document
+  of its owner, each read and write asked of the policy; the knowledge of memory reaches the web UI
+  without the agent's name, which shows it as "Its memory". New for tests: `Turn::take_over` in
+  `caelumora_agents::testing`, and `session::testing::owned` in the kernel. Stored data to delete:
+  the agents' states - `runtime/agent_state` of the JSON store -; every agent channel state with a
+  turn under way; the histories, transcripts and channel states of channels where an agent with
+  `agent_memory` recalled something, whose records name the removed `KnowledgeSource::Memory`; and a
+  Postgres database, whose migration `0002_states.sql` changed.

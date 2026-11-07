@@ -1,42 +1,45 @@
-//! What an agent remembers across its channels and sessions (issue 62), as a turn sees and changes
-//! it.
+//! An agent's memory as a turn sees and changes it (issues 62, 518).
 //!
-//! The memory is the kernel's to keep and to decide about (issue 518): a work reads what it may
-//! recall where it reads from through the `MemoryReader` of its situation, and a turn reserves the
-//! number of a new entry through the `MemoryWriter` it is given. What a turn changes it stages
-//! (`Turn::stage`), and the kernel commits it when the turn completes, checking every change and
-//! deriving where it was made. [`AgentMemory`] is the logic on top: remembering, updating,
+//! The memory is the plugin's to keep and to decide about: a work reads what it may recall where
+//! it reads from through the `MemoryReader` of its situation, and a turn reserves the number of a
+//! new entry through the `MemoryWriter` it is given. What a turn changes it stages
+//! (`Turn::stage`), and the plugin commits it when the turn completes, checking every change and
+//! deriving where it was made. [`TurnMemory`] is the logic on top: remembering, updating,
 //! forgetting and reclassifying, each only of what the turn sees - an entry recalled here, or one
 //! it remembered itself -, so that a tool can answer its model at once. The `agent_memory`
 //! component uses it for its tools.
 
-use crate::tool::{ToolError, ToolResult};
-use crate::turn::Turn;
-use caelumora_api::memory::{MemoryReader, MemoryWriter};
+use crate::extension::{MemoryReader, MemoryWriter};
+use crate::memory::{MemoryChange, MemoryId};
+use caelumora_agents::tool::{ToolError, ToolResult};
+use caelumora_agents::turn::Turn;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::memory::{MemoryChange, MemoryId};
+use caelumora_domain::ledger::Change;
 use std::sync::Arc;
 
 /// An agent's memory as a turn sees it: every function takes the turn.
-pub(crate) struct AgentMemory;
+pub(crate) struct TurnMemory;
 
-impl AgentMemory {
+impl TurnMemory {
     /// Remembers `text`, classified as the turn has seen so far (`Situation::label`, issue 168):
     /// committed when the turn completes. Returns its number.
     ///
-    /// Unlike a note's, the number is reserved at once on the agent's shared state
-    /// (`MemoryWriter::reserve_id`) instead of being derived from the memory and the turn's staged
-    /// changes: several actors of one agent - in other channels and sessions - remember at the same
-    /// time, and would otherwise hand out the same number. Deliberately the one exception to
-    /// "commit, don't write" (issue 19).
+    /// Unlike a note's, the number is reserved at once by the plugin, which keeps the agent's
+    /// numbers (`MemoryWriter::reserve_id`), instead of being derived from the memory and the
+    /// turn's staged changes: several actors of one agent - in other channels and sessions -
+    /// remember at the same time, and would otherwise hand out the same number. Deliberately the
+    /// one exception to "commit, don't write" (issue 19).
     ///
     /// # Errors
-    /// `ExecutionFailed` where the memory cannot be reached - a turn in no session -, or the
-    /// change cannot be kept with the turn.
+    /// `ExecutionFailed` where the memory cannot be reached - a turn in no session -, no number
+    /// can be reserved, or the change cannot be kept with the turn.
     pub(crate) async fn remember(turn: &mut Turn<'_>, text: String) -> ToolResult<MemoryId> {
-        let id = Self::writer(turn).await?.reserve_id();
+        let reserved = Self::writer(turn).await?.reserve_id().await;
+        let id = reserved.map_err(|e| {
+            ToolError::ExecutionFailed(format!("no number could be reserved for the entry: {e}"))
+        })?;
         let classification = turn.situation().label();
-        Self::stage(turn, MemoryChange::Add { id, text, classification })?;
+        Self::stage(turn, Change::Add { id, text, classification })?;
         Ok(id)
     }
 
@@ -56,7 +59,7 @@ impl AgentMemory {
             return Ok(false);
         }
         let classification = turn.situation().label();
-        Self::stage(turn, MemoryChange::Update { id, text, classification })?;
+        Self::stage(turn, Change::Update { id, text, classification })?;
         Ok(true)
     }
 
@@ -69,7 +72,7 @@ impl AgentMemory {
         if !Self::knows(turn, id).await? {
             return Ok(false);
         }
-        Self::stage(turn, MemoryChange::Remove { id })?;
+        Self::stage(turn, Change::Remove { id })?;
         Ok(true)
     }
 
@@ -96,7 +99,7 @@ impl AgentMemory {
                 "reclassifying entry #{id} as {classification}"
             )));
         }
-        Self::stage(turn, MemoryChange::Reclassify { id, classification })
+        Self::stage(turn, Change::Reclassify { id, classification })
     }
 
     /// Whether entry `id` stands as the turn sees it, and is the turn's to change: recalled here
@@ -107,10 +110,10 @@ impl AgentMemory {
         let staged = turn.staged::<MemoryChange>().map_err(|e| {
             ToolError::ExecutionFailed(format!("what the turn remembered cannot be read: {e}"))
         })?;
-        for change in staged {
+        for MemoryChange(change) in staged {
             match change {
-                MemoryChange::Add { id: added, .. } if added == id => known = true,
-                MemoryChange::Remove { id: removed } if removed == id => known = false,
+                Change::Add { id: added, .. } if added == id => known = true,
+                Change::Remove { id: removed } if removed == id => known = false,
                 _ => {}
             }
         }
@@ -125,8 +128,8 @@ impl AgentMemory {
     }
 
     /// Stages `change` on the turn.
-    fn stage(turn: &mut Turn<'_>, change: MemoryChange) -> ToolResult<()> {
-        turn.stage(&change)
+    fn stage(turn: &mut Turn<'_>, change: Change<MemoryId>) -> ToolResult<()> {
+        turn.stage(&MemoryChange(change))
             .map_err(|e| ToolError::ExecutionFailed(format!("the change cannot be kept: {e}")))
     }
 }

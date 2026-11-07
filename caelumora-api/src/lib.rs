@@ -10,7 +10,6 @@ pub mod error;
 pub mod image;
 pub mod library;
 pub mod logging;
-pub mod memory;
 pub mod model;
 pub mod reader;
 pub mod runtime;

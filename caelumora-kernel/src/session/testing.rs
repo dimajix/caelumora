@@ -59,10 +59,17 @@ pub fn owned_kernel(rules: ConfidentialityRules) -> (Arc<Kernel>, Arc<SessionMan
 pub fn owned_kernel_under(
     confidentiality: Arc<dyn ConfidentialityPolicy>,
 ) -> (Arc<Kernel>, Arc<SessionManager>) {
+    owned(TestKernel { confidentiality, ..Default::default() })
+}
+
+/// `kernel` built under the ownership policy, which learns who belongs to a group from its store,
+/// and a manager on it, as `owned_kernel` builds them: for a test that names more of its kernel -
+/// the plugins and the libraries it runs with (issue 518).
+pub fn owned(kernel: TestKernel<'_>) -> (Arc<Kernel>, Arc<SessionManager>) {
     let memberships = Arc::new(StoreMemberships::new());
     let access_policy: Arc<dyn AccessPolicy> =
         Arc::new(OwnershipPolicy::with_memberships(Arc::<StoreMemberships>::clone(&memberships)));
-    let kernel = TestKernel { access_policy, confidentiality, ..Default::default() }.build();
+    let kernel = TestKernel { access_policy, ..kernel }.build();
     memberships.bind(&kernel.entity_stores().groups);
     (Arc::clone(&kernel), Arc::new(SessionManager::new(kernel)))
 }

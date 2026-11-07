@@ -9,7 +9,7 @@ use crate::chains::failed;
 use crate::connection::sql;
 use crate::{histories, transcripts, PostgresStore};
 use async_trait::async_trait;
-use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::store::{Journaled, StoreError, StoreResult};
 use caelumora_domain::user::{UserChannelState, UserId};
@@ -26,9 +26,8 @@ use std::str::FromStr;
 /// in them, by `channel_id`.
 const OF_CHANNELS: &[&str] = &["channel_state", "agent_channel_state", "user_channel_state"];
 
-/// The tables of the states of the agents, and of them in the channels, by
-/// `agent_id`.
-const OF_AGENTS: &[&str] = &["agent_state", "agent_channel_state"];
+/// The tables of the states of the agents in the channels, by `agent_id`.
+const OF_AGENTS: &[&str] = &["agent_channel_state"];
 
 /// The document of `state`, which `name` names where it fails.
 fn document<T: Serialize>(state: &T, name: &str) -> StoreResult<Value> {
@@ -187,35 +186,6 @@ impl StateStore for PostgresStore {
             .collect()
     }
 
-    async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
-        let mut conn = self.connection.acquire().await?;
-        let read: Option<AgentState> = read(
-            &mut conn,
-            "agent_state",
-            &["agent_id"],
-            &[agent_id.to_string()],
-            &of_agent(agent_id),
-        )
-        .await?;
-        Ok(read.unwrap_or_default())
-    }
-
-    async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()> {
-        let name = of_agent(agent_id);
-        let mut conn = self.connection.acquire().await?;
-        write(
-            &mut conn,
-            "agent_state",
-            &["agent_id"],
-            &[agent_id.to_string()],
-            &name,
-            document(state, &name)?,
-        )
-        .await?;
-        state.mark_stored();
-        Ok(())
-    }
-
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let mut conn = self.connection.acquire().await?;
         let read: Option<ChannelState> = read(
@@ -305,8 +275,8 @@ impl StateStore for PostgresStore {
         delete(self, &tables, "channel_id", channel_id.to_string(), &of_channel(channel_id)).await
     }
 
-    /// Its own, in every channel, its transcripts and what was given to it.
-    async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
+    /// In every channel, its transcripts and what was given to it.
+    async fn delete_agent_channel_states(&self, agent_id: AgentId) -> StoreResult<()> {
         let tables = [OF_AGENTS, transcripts::TABLES].concat();
         delete(self, &tables, "agent_id", agent_id.to_string(), &of_agent(agent_id)).await
     }

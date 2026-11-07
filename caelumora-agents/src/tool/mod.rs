@@ -1289,6 +1289,7 @@ mod tests {
             session: turn.situation().session_id(),
             source: KnowledgeSource::History { digest, from: None },
             classification: None,
+            private: false,
         }
     }
 

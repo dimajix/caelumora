@@ -345,9 +345,6 @@ pub enum Reclassified<'a> {
     /// decides by them (issue 312) - the ownership policy decides by
     /// authorship alone.
     Note { author: ActorId, attributes: &'a SecurityAttributes },
-    /// An entry of the memory of the agent `author`, reclassified in the
-    /// channel with these attributes, as a note.
-    Memory { author: ActorId, attributes: &'a SecurityAttributes },
 }
 
 #[cfg(test)]

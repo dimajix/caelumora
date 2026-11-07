@@ -254,6 +254,7 @@ impl PromptProvider for PrivateNotesComponent {
             session: situation.session_id(),
             source: KnowledgeSource::PrivateNotes { agent: situation.agent_id(), digest },
             classification: Classification::join_all(notes.iter().map(|n| &n.classification)),
+            private: true,
         };
         let mut knowledge: Vec<KnowledgeRef> =
             elsewhere.iter().map(|c| private(c.channel, c.digest, &c.notes)).collect();

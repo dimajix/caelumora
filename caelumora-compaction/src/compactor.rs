@@ -259,6 +259,7 @@ mod tests {
             session: world.session.id(),
             source: KnowledgeSource::entity::<Workspace>(id, Some(digest::prompt(GIVEN))),
             classification: Some(Classification::general(Confidentiality::Internal)),
+            private: false,
         }
     }
 
@@ -300,6 +301,7 @@ mod tests {
             session: turn.situation().session_id(),
             source: KnowledgeSource::entity::<Workspace>(WorkspaceId::new(), None),
             classification: Some(Classification::general(Confidentiality::Internal)),
+            private: false,
         }
     }
 

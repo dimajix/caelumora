@@ -1,39 +1,38 @@
-//! The `agent_memory` component (issue 62, step 3): an agent remembers what
-//! it should know across its channels and sessions - kept by the kernel for
-//! the agent, not in one channel.
+//! The `agent_memory` component (issues 62, 518): an agent remembers what it should know across
+//! its channels and sessions - kept by the plugin for the agent, not in one channel.
 //!
 //! It translates the tools `remember`, `update_memory` and `forget` and renders the prompt part;
-//! the logic is `crate::memory::AgentMemory`. Changes are staged on the turn and committed by the
-//! kernel to the agent's memory as it is when the turn completes (`Turn::commit`, issue 518), so
-//! that actors of the same agent in other channels and sessions neither lose nor overwrite them.
-//! The prompt part shows the entries that may be recalled in the current channel, which the kernel
-//! hands the work through its `MemoryReader` (issues 131, 518). Under the ownership policy that is
-//! the flow rule of issue 133 - the entry's channel's classification must flow into this one's -
-//! within the session, and beyond it only where the entry's session permits it, then and now
-//! (issue 134). Only those can be updated or forgotten here. Its tools are
-//! `ToolVisibility::HIDDEN`: like private notes, memory is the agent's own, seen by its owner in
-//! the context panel only. Its entries are numbered differently from notes, on purpose: see
-//! `AgentMemory::remember`.
+//! the logic is `turn::TurnMemory`. Changes are staged on the turn and committed by the plugin to
+//! the agent's memory as it is when the turn completes, so that actors of the same agent in other
+//! channels and sessions neither lose nor overwrite them. The prompt part shows the entries that
+//! may be recalled in the current channel, which the plugin hands the work through its
+//! `MemoryReader` (issue 131). Under the ownership policy that is the flow rule of issue 133 - the
+//! entry's channel's classification must flow into this one's - within the session, and beyond it
+//! only where the entry's session permits it, then and now (issue 134). Only those can be updated
+//! or forgotten here. Its tools are `ToolVisibility::HIDDEN`: like private notes, memory is the
+//! agent's own, seen by its owner in the context panel only. Its entries are numbered differently
+//! from notes, on purpose: see `TurnMemory::remember`.
 
-use crate::components::notes::NOTE_PRESENTATION;
-use crate::memory::AgentMemory;
-use crate::prompt::NAMESPACE;
-use crate::prompt::{
+mod turn;
+
+use crate::extension::{MemoryReader, MemoryWriter};
+use crate::memory::{AgentMemory, AgentMemoryId, Memory, MemoryId};
+use crate::NAMESPACE;
+use async_trait::async_trait;
+use caelumora_agents::components::notes::NOTE_PRESENTATION;
+use caelumora_agents::prompt::{
     texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
-use crate::situation::Situation;
-use crate::tool::{
+use caelumora_agents::situation::Situation;
+use caelumora_agents::tool::{
     classification_argument, described, id_argument, reclassify_parameters, text_argument,
     tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
-use crate::turn::Turn;
-use async_trait::async_trait;
+use caelumora_agents::turn::Turn;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_api::memory::{MemoryReader, MemoryWriter};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_domain::memory::{Memory, MemoryId};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
@@ -41,6 +40,7 @@ use serde_json::Value;
 use std::fmt;
 use std::fmt::Debug;
 use std::sync::Arc;
+use turn::TurnMemory;
 
 pub const AGENT_MEMORY_KIND: &str = "agent_memory";
 
@@ -50,10 +50,10 @@ pub const FORGET_TOOL_NAME: &str = "forget";
 pub const RECLASSIFY_MEMORY_TOOL_NAME: &str = "reclassify_memory";
 
 /// The text of its prompt part in the prompt catalogue.
-const TEXT: &str = "agents.agent_memory";
+const TEXT: &str = "memory.agent_memory";
 
-/// What may be recalled and how an entry is reclassified, the kernel decides, asked in the context
-/// of the work it serves - the agent's, with its owner's rights (issues 131, 255, 516).
+/// What may be recalled and how an entry is reclassified, the plugin decides, asked in the context
+/// of the work it serves - the agent's, with its owner's rights (issues 131, 255, 516, 518).
 pub struct AgentMemoryComponent {
     /// The texts of its prompt part (issue 57).
     prompts: PromptTexts,
@@ -182,7 +182,7 @@ impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
     async fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentMemory::remember(turn, text_argument(params)?).await?;
+        let id = TurnMemory::remember(turn, text_argument(params)?).await?;
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
     }
 
@@ -191,7 +191,7 @@ impl AgentMemoryComponent {
     async fn execute_update(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let text = text_argument(params)?;
-        if AgentMemory::update(turn, id, text).await? {
+        if TurnMemory::update(turn, id, text).await? {
             Ok(serde_json::json!({ "status": "updated", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -203,7 +203,7 @@ impl AgentMemoryComponent {
     async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let classification = classification_argument(params)?;
-        AgentMemory::reclassify(turn, id, classification.clone()).await?;
+        TurnMemory::reclassify(turn, id, classification.clone()).await?;
         Ok(
             serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }),
         )
@@ -212,7 +212,7 @@ impl AgentMemoryComponent {
     /// `forget(id)`: forgets an entry that may be recalled here.
     async fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
-        if AgentMemory::forget(turn, id).await? {
+        if TurnMemory::forget(turn, id).await? {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -235,9 +235,9 @@ impl PromptProvider for AgentMemoryComponent {
             return Ok(Prompt::default());
         }
         // Once for every channel the entries come from, so that knowledge
-        // from another session can be told (issue 134).
-        let source =
-            KnowledgeSource::Memory { agent: situation.agent_id(), digest: memory.digest() };
+        // from another session can be told (issue 134); the agent's own, so private.
+        let id = AgentMemoryId::of(situation.agent_id());
+        let source = KnowledgeSource::entity::<AgentMemory>(id, memory.digest());
         let mut knowledge: Vec<KnowledgeRef> = Vec::new();
         for entry in recalled {
             if !knowledge.iter().any(|k| k.channel == entry.origin.channel) {
@@ -250,6 +250,7 @@ impl PromptProvider for AgentMemoryComponent {
                     session: entry.origin.session.id,
                     source: source.clone(),
                     classification: Classification::join_all(from_there),
+                    private: true,
                 });
             }
         }
@@ -288,10 +289,16 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 }
 
 #[cfg(test)]
+#[cfg(feature = "kernel")]
 mod tests {
     use super::*;
-    use crate::testing;
-    use crate::tool::ToolError;
+    use crate::library::MemoryLibrary;
+    use crate::memory::{AgentMemory, MemoryChange};
+    use crate::plugin::MemoryPlugin;
+    use crate::PROMPTS;
+    use caelumora_agents::library::AgentsLibrary;
+    use caelumora_agents::testing::prompts_with;
+    use caelumora_agents::tool::ToolError;
     use caelumora_api::runtime::ActorRuntime;
     use caelumora_api::staging::CommitError;
     use caelumora_domain::actor::{ActorId, EventContext};
@@ -299,33 +306,32 @@ mod tests {
     use caelumora_domain::channel::testing::{bare_channel, main_channel};
     use caelumora_domain::channel::{ChannelId, Participant};
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
-    use caelumora_domain::confidentiality::{Compartments, Place, Reading};
-    use caelumora_domain::memory::MemoryChange;
+    use caelumora_domain::confidentiality::{Compartment, Compartments, Place, Reading};
+    use caelumora_domain::ledger::Change;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_domain::role::{RoleId, Roles};
-    use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::{bare_session, make_session};
     use caelumora_domain::session::{Session, SessionId};
     use caelumora_domain::turn::{StagedChange, StagedChanges};
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
     use caelumora_domain::work::Work;
-    use caelumora_kernel::agent::state::AgentStateHandle;
     use caelumora_kernel::kernel::{AgentRuntime, Kernel, ParticipantRuntime};
     use caelumora_kernel::session::testing::{
-        detached_participant_in, owned_kernel_under, participant_runtime_in, spec,
+        detached_participant_in, owned, participant_runtime_in, spec,
     };
     use caelumora_kernel::session::{ChannelSpec, SessionLoop, SessionManager};
-    use caelumora_kernel::testing::Discard;
+    use caelumora_kernel::testing::TestKernel;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
-    use caelumora_security::SecurityContext;
+    use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::testing::record_users;
-    use caelumora_store::EntityStores;
+    use caelumora_store::{EntityStore, EntityStores, Persistence};
     use std::collections::HashMap;
     use std::ops::Deref;
     use std::slice;
-    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Mutex;
 
     /// A channel of the tests: where it is - its session and itself - and
     /// how it is classified.
@@ -336,14 +342,14 @@ mod tests {
         EventContext::new(at.0 .0, at.0 .1, ActorId::None, String::new())
     }
 
-    /// The component of an agent, asking `access_policy`, and the agent's owner:
-    /// whom its turns act for (issue 255).
-    struct Memory {
+    /// The component of an agent, and the agent's owner: whom its turns act for, who owns its
+    /// memory (issue 255).
+    struct Remembering {
         component: AgentMemoryComponent,
         owner: ActorId,
     }
 
-    impl Memory {
+    impl Remembering {
         /// Begins a turn of `agent` in `state`, in channel `at`, as its actor
         /// begins one.
         fn begin(&self, state: &mut AgentChannelState, at: &At) {
@@ -364,7 +370,7 @@ mod tests {
         }
     }
 
-    impl Deref for Memory {
+    impl Deref for Remembering {
         type Target = AgentMemoryComponent;
         fn deref(&self) -> &AgentMemoryComponent {
             &self.component
@@ -373,11 +379,11 @@ mod tests {
 
     /// The component of an agent owned by `owner`; what it may recall and reclassify its turn's
     /// runtime decides, by the policies the sessions of the test run under (issue 516).
-    fn component(owner: ActorId) -> Memory {
-        Memory {
+    fn component(owner: ActorId) -> Remembering {
+        Remembering {
             component: AgentMemoryComponent::new(
                 PromptPosition::BeforeTurnInput,
-                testing::prompts(),
+                prompts_with(NAMESPACE, PROMPTS),
             )
             .unwrap(),
             owner,
@@ -391,6 +397,8 @@ mod tests {
     struct Sessions {
         kernel: Arc<Kernel>,
         stores: EntityStores,
+        /// The agents' memories, read as the kernel's system.
+        memories: Arc<dyn EntityStore<AgentMemory>>,
         manager: Arc<SessionManager>,
         loops: HashMap<SessionId, Arc<SessionLoop>>,
         /// How many were made, for their names.
@@ -398,8 +406,9 @@ mod tests {
     }
 
     impl Sessions {
-        /// The sessions of a kernel under the ownership policy, which learns who belongs to a group
-        /// from its store, with `rules` as the confidentiality policy (`owned_kernel`).
+        /// The sessions of a kernel with the memory's plugin and library under the ownership
+        /// policy, which learns who belongs to a group from its store, with `rules` as the
+        /// confidentiality policy (`owned`).
         fn under(rules: ConfidentialityRules) -> Self {
             Self::policed(Arc::new(rules))
         }
@@ -407,17 +416,26 @@ mod tests {
         /// As `under`, with `confidentiality` as the confidentiality policy: what a turn's
         /// runtime decides what is recalled by (issue 516).
         fn policed(confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
-            let (kernel, manager) = owned_kernel_under(confidentiality);
+            let store = Persistence::in_memory();
+            let memories = store.entity_store::<AgentMemory>(&Policies::permitting_all()).unwrap();
+            let (kernel, manager) = owned(TestKernel {
+                store,
+                confidentiality,
+                plugins: vec![&MemoryPlugin],
+                libraries: vec![&AgentsLibrary, &MemoryLibrary],
+                ..Default::default()
+            });
             let stores = kernel.entity_stores().clone();
-            Self { kernel, stores, manager, loops: HashMap::new(), made: 0 }
+            Self { kernel, stores, memories, manager, loops: HashMap::new(), made: 0 }
         }
 
-        /// The state of `agent` as the kernel keeps it for the agent's actors: what the memory of
-        /// its turns is reached through while the test holds it, as an actor holds it while it
-        /// runs (`AgentStates::held`, issue 518).
-        async fn handle(&self, agent: AgentId) -> Arc<AgentStateHandle> {
-            let attributes = SecurityAttributes::owned_by(ActorId::User(UserId::new()));
-            self.kernel.agent_states().get(agent, attributes).await.unwrap()
+        /// What `agent` remembers now, as it is stored.
+        async fn remembered(&self, agent: AgentId) -> Vec<Memory> {
+            let system = SecurityContext::system();
+            match self.memories.get(&system, AgentMemoryId::of(agent)).await {
+                Ok(memory) => memory.chain.current(),
+                Err(_) => Vec::new(),
+            }
         }
 
         /// A user named `name`, stored (`record_users`): to own sessions and
@@ -442,13 +460,6 @@ mod tests {
             let running = self.manager.create(&as_user(owner), session, channels).await.unwrap();
             self.loops.insert(running.id(), Arc::clone(&running));
             running.id()
-        }
-
-        /// Takes `user` into session `id`, by its owner: into every channel
-        /// made after.
-        async fn take_in(&self, id: SessionId, user: UserId) {
-            let session = self.running(id);
-            session.add_participant(&owner_of(session), ActorId::User(user), None).await.unwrap();
         }
 
         /// Creates a channel of session `id` classified as `classification`,
@@ -513,9 +524,8 @@ mod tests {
     /// Remembers `text` in a turn in channel `at` that was told something
     /// classified as the channel.
     async fn remember(
-        memory: &Memory,
+        memory: &Remembering,
         sessions: &Sessions,
-        handle: &Arc<AgentStateHandle>,
         agent: AgentId,
         at: At,
         text: &str,
@@ -524,10 +534,7 @@ mod tests {
         memory.begin(&mut state, &at);
         let mut turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(sessions, &at, agent),
-                Arc::clone(handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(sessions, &at, agent))),
         )
         .expect("a turn was begun");
         turn.see(&at.1);
@@ -535,25 +542,16 @@ mod tests {
             .execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), None, &mut turn)
             .await
             .unwrap();
-        turn.commit(false, &Discard).await;
+        turn.take_over().await;
     }
 
     /// The prompt part of another actor of `agent`, in a turn in channel `at`.
-    async fn recall(
-        memory: &Memory,
-        sessions: &Sessions,
-        handle: &Arc<AgentStateHandle>,
-        agent: AgentId,
-        at: At,
-    ) -> Prompt {
+    async fn recall(memory: &Remembering, sessions: &Sessions, agent: AgentId, at: At) -> Prompt {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
         let turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(sessions, &at, agent),
-                Arc::clone(handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(sessions, &at, agent))),
         )
         .expect("a turn was begun");
         memory.get_prompt(&turn.situation()).await.unwrap()
@@ -563,7 +561,6 @@ mod tests {
     async fn what_is_remembered_is_recalled_wherever_its_origin_may_be_read() {
         let agent = AgentId::new();
         let mut sessions = Sessions::under(Default::default());
-        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -585,10 +582,7 @@ mod tests {
             memory.begin(&mut state, &team);
             let mut turn = Turn::of(
                 &mut state,
-                Arc::new(AgentRuntime::in_test(
-                    memory.runtime_in(&sessions, &team, agent),
-                    Arc::clone(&handle),
-                )),
+                Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &team, agent))),
             )
             .expect("a turn was begun");
             turn.see(&team.1);
@@ -602,8 +596,8 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(result.value["id"], 1);
-            assert!(handle.current().memory.current().is_empty(), "not before the turn completes");
-            turn.commit(false, &Discard).await;
+            assert!(sessions.remembered(agent).await.is_empty(), "not before the turn completes");
+            turn.take_over().await;
         }
 
         // ... which another actor of the agent recalls in a channel that may
@@ -611,7 +605,6 @@ mod tests {
         let same_session = recall(
             &memory,
             &sessions,
-            &handle,
             agent,
             sessions
                 .create_channel(session, Classification::general(Confidentiality::Confidential))
@@ -621,11 +614,11 @@ mod tests {
         assert!(same_session.text.contains("#1: Kaya likes tea."), "{}", same_session.text);
         assert_eq!(same_session.knowledge.len(), 1, "recorded as knowledge read");
         assert!(
-            recall(&memory, &sessions, &handle, agent, public).await.text.is_empty(),
+            recall(&memory, &sessions, agent, public).await.text.is_empty(),
             "a public channel may not read an internal one"
         );
         assert!(
-            recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await.text.is_empty(),
+            recall(&memory, &sessions, agent, elsewhere.clone()).await.text.is_empty(),
             "another session, private"
         );
 
@@ -634,10 +627,7 @@ mod tests {
         memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(&sessions, &elsewhere, agent),
-                Arc::clone(&handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &elsewhere, agent))),
         )
         .expect("a turn was begun");
         assert!(memory
@@ -647,25 +637,21 @@ mod tests {
         memory.begin(&mut state, &team);
         let mut turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(&sessions, &team, agent),
-                Arc::clone(&handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &team, agent))),
         )
         .expect("a turn was begun");
         memory
             .execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn)
             .await
             .unwrap();
-        turn.commit(false, &Discard).await;
-        assert!(handle.current().memory.current().is_empty());
+        turn.take_over().await;
+        assert!(sessions.remembered(agent).await.is_empty());
     }
 
     #[tokio::test]
     async fn an_entry_is_updated_only_where_it_is_recalled_and_stands_where_it_was_updated() {
         let agent = AgentId::new();
         let mut sessions = Sessions::under(Default::default());
-        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -679,16 +665,13 @@ mod tests {
         let elsewhere = sessions
             .create_channel(other_session, Classification::general(Confidentiality::Internal))
             .await;
-        remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
+        remember(&memory, &sessions, agent, team.clone(), "Kaya likes tea.").await;
 
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &elsewhere);
         let mut turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(&sessions, &elsewhere, agent),
-                Arc::clone(&handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &elsewhere, agent))),
         )
         .expect("a turn was begun");
         let there = memory
@@ -708,10 +691,7 @@ mod tests {
         memory.begin(&mut state, &confidential);
         let mut turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(&sessions, &confidential, agent),
-                Arc::clone(&handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &confidential, agent))),
         )
         .expect("a turn was begun");
         turn.see(&confidential.1);
@@ -725,8 +705,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.value, serde_json::json!({ "status": "updated", "id": 1 }));
-        turn.commit(false, &Discard).await;
-        let remembered = handle.current().memory.current();
+        turn.take_over().await;
+        let remembered = sessions.remembered(agent).await;
         assert_eq!(
             (remembered[0].id, remembered[0].text.as_str(), remembered[0].origin.channel),
             (MemoryId(1), "Kaya likes coffee.", confidential.0 .1),
@@ -735,18 +715,17 @@ mod tests {
         assert_eq!(remembered[0].classification, confidential.1);
 
         // ... is recalled where that may be known, and no longer where only the old text might.
-        assert!(recall(&memory, &sessions, &handle, agent, confidential)
+        assert!(recall(&memory, &sessions, agent, confidential)
             .await
             .text
             .contains("#1: Kaya likes coffee."));
-        assert!(recall(&memory, &sessions, &handle, agent, team).await.text.is_empty());
+        assert!(recall(&memory, &sessions, agent, team).await.text.is_empty());
     }
 
     #[tokio::test]
     async fn an_entry_remembered_and_forgotten_in_one_turn_is_gone_once_it_completes() {
         let agent = AgentId::new();
         let mut sessions = Sessions::under(Default::default());
-        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -758,10 +737,7 @@ mod tests {
         memory.begin(&mut state, &team);
         let mut turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(&sessions, &team, agent),
-                Arc::clone(&handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &team, agent))),
         )
         .expect("a turn was begun");
         memory
@@ -791,18 +767,16 @@ mod tests {
             matches!(forgotten, Err(ToolError::InvalidParameter(_))),
             "a forgotten entry is not reclassified"
         );
-        turn.commit(false, &Discard).await;
-        assert!(handle.current().memory.current().is_empty());
+        turn.take_over().await;
+        assert!(sessions.remembered(agent).await.is_empty());
     }
 
-    /// Issue 518: the memory is reached through the work's session, as the kernel binds it; a
-    /// turn that reaches none neither recalls nor remembers, though the kernel keeps the agent's
-    /// state.
+    /// Issue 518: the memory is reached through the work's session, as the plugin binds it; a
+    /// turn that reaches none neither recalls nor remembers.
     #[tokio::test]
     async fn a_turn_in_no_session_neither_recalls_nor_remembers() {
         let agent = AgentId::new();
         let sessions = Sessions::under(Default::default());
-        let handle = sessions.handle(agent).await;
         let memory = component(ActorId::User(UserId::new()));
         let session = bare_session(SessionId::new());
         let channel = bare_channel(session.id);
@@ -811,7 +785,7 @@ mod tests {
         let runtime = detached_participant_in(kernel, session, channel, ActorId::Agent(agent));
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
-        let mut turn = Turn::of(&mut state, Arc::new(AgentRuntime::in_test(runtime, handle)))
+        let mut turn = Turn::of(&mut state, Arc::new(AgentRuntime::in_test(runtime)))
             .expect("a turn was begun");
         let refused = memory
             .execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), None, &mut turn)
@@ -823,12 +797,16 @@ mod tests {
         );
     }
 
-    /// Lets channels read each other only in the name of the owner it is given once it is
-    /// known - and asks nothing else: what an agent remembered is its own, recalled whoever may
-    /// read its channel now (issue 264).
+    /// Lets channels read each other until it is told to refuse, and records in whose name it is
+    /// asked, by the caller and the principal - and asks nothing else: what an agent remembered is
+    /// its own, recalled whoever may read its channel now (issue 264).
     #[derive(Debug, Default)]
-    struct OnlyFor(Arc<OnceLock<ActorId>>, Compartments);
-    impl ConfidentialityPolicy for OnlyFor {
+    struct Switched {
+        refusing: AtomicBool,
+        asked: Mutex<Vec<(ActorId, ActorId)>>,
+        compartments: Compartments,
+    }
+    impl ConfidentialityPolicy for Switched {
         fn may_publish(&self, _: &SecurityContext, _: &Classification, _: &Classification) -> bool {
             true
         }
@@ -839,9 +817,10 @@ mod tests {
             _: &SessionPrivacy,
             _: &Place,
         ) -> Reading {
-            match Some(&context.principal_id) == self.0.get() {
-                true => Reading::Whole,
-                false => Reading::Nothing,
+            self.asked.lock().unwrap().push((context.caller_id, context.principal_id));
+            match self.refusing.load(Ordering::SeqCst) {
+                true => Reading::Nothing,
+                false => Reading::Whole,
             }
         }
         fn cleared(
@@ -854,7 +833,7 @@ mod tests {
             true
         }
         fn compartments(&self) -> &Compartments {
-            &self.1
+            &self.compartments
         }
         fn roles(&self) -> Option<&Roles> {
             None
@@ -864,16 +843,11 @@ mod tests {
     #[tokio::test]
     async fn the_policy_decides_what_is_recalled_asked_in_the_agents_name() {
         let agent = AgentId::new();
-        let only_for = Arc::new(OnceLock::new());
-        let mut sessions =
-            Sessions::policed(Arc::new(OnlyFor(Arc::clone(&only_for), Default::default())));
-        let handle = sessions.handle(agent).await;
-        let (owner, stranger) = (sessions.user("owner").await, sessions.user("stranger").await);
+        let policy = Arc::new(Switched::default());
+        let mut sessions = Sessions::policed(Arc::<Switched>::clone(&policy));
+        let owner = sessions.user("owner").await;
         let session = sessions.create(owner, PrivacyConfig::Private).await;
-        // In the session: whom the policy refuses may read its channels.
-        sessions.take_in(session, stranger).await;
-        let (owner, stranger) = (ActorId::User(owner), ActorId::User(stranger));
-        only_for.set(owner).unwrap();
+        let memory = component(ActorId::User(owner));
         // Public, so that the built-in rule would let every channel read it.
         let origin = sessions
             .create_channel(session, Classification::general(Confidentiality::Public))
@@ -881,24 +855,25 @@ mod tests {
         let reader = sessions
             .create_channel(session, Classification::general(Confidentiality::Internal))
             .await;
-        remember(&component(owner), &sessions, &handle, agent, origin.clone(), "Kaya likes tea.")
-            .await;
+        remember(&memory, &sessions, agent, origin.clone(), "Kaya likes tea.").await;
 
-        let asked_by_owner =
-            recall(&component(owner), &sessions, &handle, agent, reader.clone()).await;
-        assert!(asked_by_owner.text.contains("Kaya likes tea."), "{}", asked_by_owner.text);
-        let asked_by_stranger =
-            recall(&component(stranger), &sessions, &handle, agent, reader).await;
-        assert!(
-            asked_by_stranger.text.is_empty(),
-            "the policy refuses, whatever the levels say: {}",
-            asked_by_stranger.text
-        );
-        let in_its_own_channel =
-            recall(&component(stranger), &sessions, &handle, agent, origin).await;
+        let permitted = recall(&memory, &sessions, agent, reader.clone()).await;
+        assert!(permitted.text.contains("Kaya likes tea."), "{}", permitted.text);
+        policy.refusing.store(true, Ordering::SeqCst);
+        let refused = recall(&memory, &sessions, agent, reader).await;
+        assert!(refused.text.is_empty(), "the policy refuses, whatever the levels say");
+        let in_its_own_channel = recall(&memory, &sessions, agent, origin).await;
         assert!(
             in_its_own_channel.text.contains("Kaya likes tea."),
             "a channel always reads itself"
+        );
+        let asked = policy.asked.lock().unwrap();
+        assert!(
+            !asked.is_empty()
+                && asked
+                    .iter()
+                    .all(|asked| *asked == (ActorId::Agent(agent), ActorId::User(owner))),
+            "in the agent's name, with its owner's rights: {asked:?}"
         );
     }
 
@@ -906,7 +881,6 @@ mod tests {
     async fn what_a_turn_remembers_is_classified_as_what_it_has_seen() {
         let agent = AgentId::new();
         let mut sessions = Sessions::under(Default::default());
-        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -924,10 +898,7 @@ mod tests {
             memory.begin(&mut state, &confidential);
             let mut turn = Turn::of(
                 &mut state,
-                Arc::new(AgentRuntime::in_test(
-                    memory.runtime_in(&sessions, &confidential, agent),
-                    Arc::clone(&handle),
-                )),
+                Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &confidential, agent))),
             )
             .expect("a turn was begun");
             turn.see(&Classification::general(Confidentiality::Internal));
@@ -945,9 +916,9 @@ mod tests {
                 Some(Classification::general(Confidentiality::Internal)),
                 "its answer as the turn"
             );
-            turn.commit(false, &Discard).await;
+            turn.take_over().await;
         }
-        let remembered = handle.current().memory.current();
+        let remembered = sessions.remembered(agent).await;
         assert_eq!(
             remembered[0].classification,
             Classification::general(Confidentiality::Internal)
@@ -957,7 +928,6 @@ mod tests {
         assert!(recall(
             &memory,
             &sessions,
-            &handle,
             agent,
             sessions
                 .create_channel(session, Classification::general(Confidentiality::Internal))
@@ -966,11 +936,11 @@ mod tests {
         .await
         .text
         .contains("Kaya likes tea."));
-        assert!(recall(&memory, &sessions, &handle, agent, public).await.text.is_empty());
+        assert!(recall(&memory, &sessions, agent, public).await.text.is_empty());
 
         // What is recalled is recorded with its classification, and is
         // part of what the turn has seen.
-        let prompt = recall(&memory, &sessions, &handle, agent, confidential).await;
+        let prompt = recall(&memory, &sessions, agent, confidential).await;
         assert_eq!(
             prompt.knowledge[0].classification,
             Some(Classification::general(Confidentiality::Internal))
@@ -984,7 +954,6 @@ mod tests {
 
     #[tokio::test]
     async fn an_entry_released_to_another_compartment_is_recalled_there() {
-        use caelumora_domain::confidentiality::Compartment;
         let agent = AgentId::new();
         let compartments = Compartments::new([
             (Compartment::new("hr"), vec![]),
@@ -993,7 +962,6 @@ mod tests {
         .unwrap();
         let rules = ConfidentialityRules::new(compartments);
         let mut sessions = Sessions::under(rules.clone());
-        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -1002,9 +970,9 @@ mod tests {
         };
         let hr = sessions.create_channel(session, in_compartment("hr")).await;
         let finance = sessions.create_channel(session, in_compartment("finance")).await;
-        remember(&memory, &sessions, &handle, agent, hr.clone(), "The budget is tight.").await;
+        remember(&memory, &sessions, agent, hr.clone(), "The budget is tight.").await;
         assert!(
-            recall(&memory, &sessions, &handle, agent, finance.clone()).await.text.is_empty(),
+            recall(&memory, &sessions, agent, finance.clone()).await.text.is_empty(),
             "HR's, not finance's"
         );
 
@@ -1012,10 +980,7 @@ mod tests {
         memory.begin(&mut state, &hr);
         let mut turn = Turn::of(
             &mut state,
-            Arc::new(AgentRuntime::in_test(
-                memory.runtime_in(&sessions, &hr, agent),
-                Arc::clone(&handle),
-            )),
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &hr, agent))),
         )
         .expect("a turn was begun");
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
@@ -1034,15 +999,12 @@ mod tests {
             .execute(RECLASSIFY_MEMORY_TOOL_NAME, &released, None, &mut turn)
             .await
             .expect("the agent releases what it remembers");
-        turn.commit(false, &Discard).await;
+        turn.take_over().await;
 
-        let there = recall(&memory, &sessions, &handle, agent, finance).await;
+        let there = recall(&memory, &sessions, agent, finance).await;
         assert!(there.text.contains("The budget is tight."), "released to finance: {}", there.text);
         assert!(
-            recall(&memory, &sessions, &handle, agent, hr)
-                .await
-                .text
-                .contains("The budget is tight."),
+            recall(&memory, &sessions, agent, hr).await.text.contains("The budget is tight."),
             "and still HR's"
         );
     }
@@ -1051,7 +1013,6 @@ mod tests {
     async fn an_entry_is_recalled_in_another_session_where_its_session_agreed_then_and_now() {
         let agent = AgentId::new();
         let mut sessions = Sessions::under(Default::default());
-        let handle = sessions.handle(agent).await;
         let (alice, bob) = (sessions.user("alice").await, sessions.user("bob").await);
         let memory = component(ActorId::User(alice));
         let hers = sessions.create(alice, PrivacyConfig::SameOwner).await;
@@ -1061,8 +1022,8 @@ mod tests {
         // Remembered in a session of hers that lets her other sessions read it ...
         let origin =
             sessions.create_channel(hers, Classification::general(Confidentiality::Internal)).await;
-        remember(&memory, &sessions, &handle, agent, origin.clone(), "Kaya likes tea.").await;
-        let remembered = handle.current().memory.current();
+        remember(&memory, &sessions, agent, origin.clone(), "Kaya likes tea.").await;
+        let remembered = sessions.remembered(agent).await;
         assert_eq!(
             remembered[0].origin.session.policy,
             PrivacyConfig::SameOwner,
@@ -1073,7 +1034,7 @@ mod tests {
         let elsewhere = sessions
             .create_channel(other, Classification::general(Confidentiality::Internal))
             .await;
-        let recalled = recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await;
+        let recalled = recall(&memory, &sessions, agent, elsewhere.clone()).await;
         assert!(recalled.text.contains("Kaya likes tea."), "{}", recalled.text);
         assert_eq!(recalled.knowledge.len(), 1);
         assert_eq!(
@@ -1084,12 +1045,12 @@ mod tests {
 
         sessions.set_privacy(hers, PrivacyConfig::Private).await;
         assert!(
-            recall(&memory, &sessions, &handle, agent, elsewhere.clone()).await.text.is_empty(),
+            recall(&memory, &sessions, agent, elsewhere.clone()).await.text.is_empty(),
             "no longer, once the session is private"
         );
         sessions.delete(hers).await;
         assert!(
-            recall(&memory, &sessions, &handle, agent, elsewhere.clone())
+            recall(&memory, &sessions, agent, elsewhere.clone())
                 .await
                 .text
                 .contains("Kaya likes tea."),
@@ -1099,7 +1060,6 @@ mod tests {
         let in_bobs = recall(
             &memory,
             &sessions,
-            &handle,
             agent,
             sessions.create_channel(bobs, Classification::general(Confidentiality::Internal)).await,
         )
@@ -1112,7 +1072,6 @@ mod tests {
         remember(
             &memory,
             &sessions,
-            &handle,
             agent,
             sessions.create_channel(hers, Classification::general(Confidentiality::Internal)).await,
             "Kaya is moving.",
@@ -1122,7 +1081,6 @@ mod tests {
         let recalled = recall(
             &memory,
             &sessions,
-            &handle,
             agent,
             sessions
                 .create_channel(other, Classification::general(Confidentiality::Internal))
@@ -1136,15 +1094,14 @@ mod tests {
         );
     }
 
-    /// Issue 518: the kernel commits only what is the work's to change, whatever a turn staged -
+    /// Issue 518: the plugin commits only what is the work's to change, whatever a turn staged -
     /// an entry recalled where the work reads, or a new one of a number it reserved and never
     /// gave, classified within the work -, all or none, and derives where a change was made from
     /// the work's place.
     #[tokio::test]
-    async fn the_kernel_commits_only_what_is_the_works_to_change() {
+    async fn the_plugin_commits_only_what_is_the_works_to_change() {
         let agent = AgentId::new();
         let mut sessions = Sessions::under(Default::default());
-        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -1153,10 +1110,9 @@ mod tests {
         let public = sessions
             .create_channel(session, Classification::general(Confidentiality::Public))
             .await;
-        remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
+        remember(&memory, &sessions, agent, team.clone(), "Kaya likes tea.").await;
         let commit = |at: &At, kind: &'static str, changes: &[MemoryChange]| {
-            let runtime =
-                AgentRuntime::in_test(memory.runtime_in(&sessions, at, agent), Arc::clone(&handle));
+            let runtime = AgentRuntime::in_test(memory.runtime_in(&sessions, at, agent));
             let mut staged = StagedChanges::default();
             for change in changes {
                 staged.push(change).unwrap();
@@ -1168,15 +1124,23 @@ mod tests {
                 runtime.commit_staged(initiator, classification, &staged, kind, after).await
             }
         };
+        let reserve = || async {
+            let runtime: Arc<dyn ActorRuntime> =
+                Arc::new(AgentRuntime::in_test(memory.runtime_in(&sessions, &team, agent)));
+            let writer = runtime.writer::<dyn MemoryWriter>(ActorId::User(owner), team.1.clone());
+            writer.await.expect("its writer").reserve_id().await.unwrap()
+        };
         let invalid = |result| matches!(result, Err(CommitError::Invalid(_)));
-        let new = |id, classification| MemoryChange::Add { id, text: "new".into(), classification };
+        let new = |id, classification| {
+            MemoryChange(Change::Add { id, text: "new".into(), classification })
+        };
 
-        let forget = MemoryChange::Remove { id: MemoryId(1) };
-        let update = MemoryChange::Update {
+        let forget = MemoryChange(Change::Remove { id: MemoryId(1) });
+        let update = MemoryChange(Change::Update {
             id: MemoryId(1),
             text: "Kaya likes coffee.".into(),
             classification: Classification::PUBLIC,
-        };
+        });
         assert!(
             invalid(commit(&public, MemoryChange::KIND, &[update]).await),
             "not recalled there"
@@ -1186,29 +1150,31 @@ mod tests {
         assert!(invalid(commit(&team, MemoryChange::KIND, &[made_up]).await), "never reserved");
         let given = new(MemoryId(1), internal.clone());
         assert!(invalid(commit(&team, MemoryChange::KIND, &[given]).await), "given already");
-        let twice = new(handle.reserve_memory_id(), internal.clone());
+        let twice = new(reserve().await, internal.clone());
         let both = [twice.clone(), twice];
         assert!(invalid(commit(&team, MemoryChange::KIND, &both).await), "one number, one entry");
-        let above =
-            new(handle.reserve_memory_id(), Classification::general(Confidentiality::Confidential));
+        let above = new(reserve().await, Classification::general(Confidentiality::Confidential));
         assert!(invalid(commit(&team, MemoryChange::KIND, &[above]).await), "not above the work");
         let unknown = commit(&team, "nothing", &[]).await;
         assert!(matches!(unknown, Err(CommitError::NotOffered(_))), "no writer commits it");
-        assert_eq!(handle.current().memory.current().len(), 1, "nothing of it committed");
+        assert_eq!(sessions.remembered(agent).await.len(), 1, "nothing of it committed");
 
-        let here = new(handle.reserve_memory_id(), Classification::PUBLIC);
+        let here = new(reserve().await, Classification::PUBLIC);
         commit(&public, MemoryChange::KIND, &[here]).await.expect("its own to remember");
-        let remembered = handle.current().memory.current();
+        let remembered = sessions.remembered(agent).await;
         assert_eq!(remembered[1].origin.channel, public.0 .1, "made where the work reads from");
         commit(&team, MemoryChange::KIND, &[forget]).await.expect("recalled where it is forgotten");
-        assert_eq!(handle.current().memory.current().len(), 1);
+        assert_eq!(sessions.remembered(agent).await.len(), 1);
     }
 
     #[test]
     fn every_entry_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = AgentMemoryComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
-            .unwrap()
-            .tools();
+        let tools = AgentMemoryComponent::new(
+            PromptPosition::BeforeTurnInput,
+            prompts_with(NAMESPACE, PROMPTS),
+        )
+        .unwrap()
+        .tools();
         assert!(
             tools
                 .iter()

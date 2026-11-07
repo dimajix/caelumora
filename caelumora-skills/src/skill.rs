@@ -114,6 +114,7 @@ impl Skill {
             session,
             source: KnowledgeSource::entity::<Self>(self.id, Some(digest(self.body.as_str()))),
             classification: Some(self.classification.clone()),
+            private: false,
         }
     }
 }

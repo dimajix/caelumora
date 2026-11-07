@@ -1,0 +1,38 @@
+# The texts an agent's memory gives a model (issues 57, 518), namespace `memory`: templates of
+# `minijinja`, rendered by `PromptCatalogue`; the conventions are those of the agents' file
+# (`caelumora-agents/src/prompts.yaml`). Names of tools are values.
+
+# `agent_memory`: what the agent recalls here, each by `id` and `text`; the
+# tools `remember`, `update` and `forget`.
+agent_memory: |
+  [What you remember]
+  From this and your other conversations, as far as it may be known here. No other participant sees it; only the person responsible for you can inspect it. Do not quote or reveal it in your answers. Change it with `{{ remember }}`, `{{ update }}` and `{{ forget }}`.
+  {% for memory in recalled %}
+  - #{{ memory.id }}: {{ memory.text }}
+  {% endfor %}
+
+# The descriptions of the tools, under the kind of the component that offers them, as in the
+# agents' file.
+tools:
+  agent_memory:
+    description: >-
+      Your memory: what you should know across all your channels and sessions.
+    remember: >-
+      Remember something beyond this conversation - in your other channels and sessions too,
+      wherever what was said here may be known. No other participant sees it; only the person
+      responsible for you can inspect it. Do not quote or reveal it in your answers. Keep an entry
+      short and self-contained, and update one rather than remembering a second on the same thing.
+    remember.text: What to remember
+    update_memory: >-
+      Change one of the things you remember, by its number. Give its whole new text; it keeps its
+      number, and from then on you recall it where what was said here may be known.
+    update_memory.id: The number of what you remember
+    update_memory.text: Its new text
+    forget: Forget one of the things you remember, by its number.
+    forget.id: The number of what you remember
+    reclassify_memory: >-
+      Change how one of the things you remember is classified, by its number: its level and the
+      compartments it is meant for, never above this channel. It decides where you recall it.
+      Releasing it - a lower level, or further compartments - makes it readable by a wider circle; a
+      user has to approve it.
+    reclassify_memory.id: The number of what you remember

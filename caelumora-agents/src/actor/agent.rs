@@ -1395,6 +1395,7 @@ mod tests {
                     session: turn.situation().session_id(),
                     source: KnowledgeSource::PrivateNotes { agent, digest: None },
                     classification: None,
+                    private: true,
                 });
             }
             let mut message = answer(calls);

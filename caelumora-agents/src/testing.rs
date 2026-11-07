@@ -33,14 +33,14 @@ use caelumora_domain::tool::{Tool, ToolCall, ToolVisibility};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::work::Work;
-use caelumora_kernel::agent::state::AgentStateHandle;
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
 use caelumora_kernel::session::testing::detached_participant_in;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::TestKernel;
 use caelumora_kernel::testing::{
-    participant_runtime_in, test_registry as runtime_registry, with_unasked_language_model, World,
+    participant_runtime_in, test_registry as runtime_registry, with_unasked_language_model,
+    Discard, World,
 };
 use caelumora_kernel::workspace::testing::WithWorkspace;
 use caelumora_store::Persistence;
@@ -188,10 +188,9 @@ pub fn detached_participant(agent: AgentId) -> ParticipantRuntime {
     )
 }
 
-/// The runtime of the agent `runtime` is made for, with a state of its own
-/// (`AgentStateHandle::detached`), as `AgentRuntime::in_test` makes it.
+/// The runtime of the agent `runtime` is made for, as `AgentRuntime::in_test` makes it.
 pub fn agent_runtime(runtime: ParticipantRuntime) -> Arc<dyn ActorRuntime> {
-    Arc::new(AgentRuntime::in_test(runtime, AgentStateHandle::detached()))
+    Arc::new(AgentRuntime::in_test(runtime))
 }
 
 /// The prompt catalogue with the kernel's texts and the agents', as the kernel and `AgentsLibrary`
@@ -406,6 +405,12 @@ impl Turn<'_> {
     /// telling the channel: a transcript for a component to work on.
     pub fn record_said(&mut self, message: Message) -> Message {
         self.push_message(message)
+    }
+
+    /// Takes the turn over as its actor does once it completes (`Turn::commit`), its last events
+    /// sent nowhere: what has the kernel commit what a test staged on it (issue 518).
+    pub async fn take_over(self) {
+        self.commit(false, &Discard).await;
     }
 }
 
