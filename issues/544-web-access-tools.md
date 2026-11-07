@@ -150,3 +150,12 @@ host, the server's own REST API.
 
 - **2026-11-07** — Opened at the maintainer's request: tools for internet access, fetch and web
   search.
+- **2026-11-07** — Decided with the maintainer: the first search provider is Tavily. It can be
+  used at no cost (1,000 credits a month, a basic search one credit), returns results with a
+  snippet unless the page text is asked for - so search and fetch stay apart, as above -, and its
+  key is a bearer token, which `RemoteAuthConfig` already knows. Weighed against it: Brave (own
+  index, low latency, but a credit card even for its monthly credit and its key in a header of its
+  own, which `remote` does not know yet), SearXNG (no key, but the public engines behind it block
+  it - the maintainer's own instance mostly answers with no results), Exa (opaque billing of
+  content). Brave and SearXNG may follow as further providers; the acquisition of Tavily by Nebius,
+  announced in February 2026, is the open risk.
