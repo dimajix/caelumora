@@ -1,0 +1,12 @@
+skills:
+- id: 8bdb7961-a455-4063-8be6-98a2f16b46f5
+  name: quiz-round
+  description: How to run a round of a quiz with the people in the channel
+  classification:
+    level: internal
+  body: |-
+    1. Announce the topic and how many questions the round has - five unless asked otherwise.
+    2. Ask one question at a time, and wait for every answer before you go on.
+    3. Say who was right, with the correct answer and one sentence on why.
+    4. Keep the score in a note, and give it after every question.
+    5. At the end, name the winner and offer another round.

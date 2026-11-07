@@ -220,9 +220,9 @@ pub struct AppConfig {
     /// when the configuration is read. `None` unless configured: then
     /// clearances are not checked at all.
     pub roles: Option<Roles>,
-    /// Files of demo data - personalities and session templates - put into
-    /// the entity store at startup (issue 105, see `examples/seed.yaml`).
-    /// None unless configured.
+    /// Files of demo data - personalities and session templates - put into the entity store at
+    /// startup (issue 105, see `examples/seed`); a directory names the `.yaml` files in it and its
+    /// subdirectories. None unless configured.
     pub seed: Vec<PathBuf>,
     /// Where the REST server listens.
     pub server: ServerConfig,
@@ -485,7 +485,7 @@ persistence:
         assert_eq!(config.persistence.entity_store.kind, "json");
         assert_eq!(
             config.seed,
-            [PathBuf::from("examples/seed.yaml")],
+            [PathBuf::from("examples/seed")],
             "the example seeds the demo data"
         );
     }

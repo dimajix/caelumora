@@ -1,0 +1,31 @@
+session_templates:
+- id: 772a28e1-bb1d-4671-ab6c-e8e0b62136f5
+  name: mentions-session
+  description: Two assistants that answer only when @-mentioned
+  participants:
+  - User:
+      name: user
+  - Agent:
+      name: Jonathan
+      scope: UserScope
+      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+  - Agent:
+      name: Sassy
+      scope: SessionScope
+      personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
+  channels:
+  - name: main
+    components:
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 20
+    - id: responders
+      kind: mentions_only_policy
+    internal_actors:
+    - Approver:
+        strategy: Any
+    participants:
+    - user
+    - Jonathan
+    - Sassy

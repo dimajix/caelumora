@@ -1,0 +1,44 @@
+# Who is in the channel, which language it speaks, what it is about, what
+# time it is, - when only the responder policy chose the agent - that it
+# may stay silent, and - where another agent could be asked - when to write
+# an @handle and when a name. Who is there, the language and the briefing
+# change rarely, so they are given into the transcript where they change
+# (issue 537): a change of one costs the model's prompt cache from where it
+# stood, not from the system prompt on. The time holds for one turn alone,
+# and when to mention is to be read last, so they stand at the end of every
+# call, where the cache loses little but them. That it may stay silent goes
+# before the turn's input, where it was tried (work/quiet_agents). Every
+# personality lists it last: the parts at the end are joined in the order of
+# the configuration, and when to mention comes after the notes.
+component_bundles:
+- id: 3b1f7e52-6a0c-4d8e-9f21-5c7a2b9d4e10
+  name: channel-context
+  components:
+  - id: channel-participants
+    kind: channel_participants
+    params:
+      position: given
+    fail_policy: FailClosed
+  - id: channel-language
+    kind: channel_language
+    params:
+      position: given
+    fail_policy: FailClosed
+  - id: channel-briefing
+    kind: channel_briefing
+    params:
+      position: given
+    fail_policy: FailClosed
+  - id: current-time
+    kind: current_time
+    params:
+      position: end
+    fail_policy: FailClosed
+  - id: request-reason
+    kind: request_reason
+    fail_policy: FailClosed
+  - id: channel-mentions
+    kind: channel_mentions
+    params:
+      position: end
+    fail_policy: FailClosed

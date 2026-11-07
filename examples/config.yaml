@@ -27,9 +27,11 @@ persistence:
 
 # Demo data put into the entity store at startup: personalities and session
 # templates (issue 105). Only what the store does not have yet, by id, so
-# restarting changes nothing. Paths are relative to the working directory.
+# restarting changes nothing. Paths are relative to the working directory; a
+# directory names every .yaml file in it and its subdirectories
+# (examples/seed/README.md).
 seed:
-  - examples/seed.yaml
+  - examples/seed
 
 # Where secrets come from, tried in order. Default: local/secrets.json, then
 # the environment.
@@ -205,8 +207,8 @@ users:
 #      message_times: true
 #      prompt_texts: the default texts
 # A personality may build on one of these by its id, and name only the
-# parameters that differ (`kind: default`, issue 445): Sassy in
-# examples/seed.yaml builds on `model`.
+# parameters that differ (`kind: default`, issue 445): Sassy
+# (examples/seed/personalities/sassy-assistant.yaml) builds on `model`.
 component_defaults:
   - id: model
     kind: language_model
@@ -222,7 +224,7 @@ component_defaults:
 # (caelumora-agents/src/prompts.yaml, say), whose entries it replaces one by
 # one. `default` overrides the texts for every model. Without this section
 # the texts compiled in are used. Sassy's model is given `gemma4`
-# (examples/seed.yaml).
+# (examples/seed/personalities/sassy-assistant.yaml).
 prompts:
 #  default: local/prompts/default
   gemma4: examples/prompts/gemma4

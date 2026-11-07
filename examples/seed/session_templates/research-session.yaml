@@ -1,0 +1,33 @@
+# Questions looked up on the web (issue 544), in a public channel: only there is the researcher
+# given its tools, which may send nothing that is not public - what is said here goes to Tavily as
+# a query, and to the pages it fetches as their URLs.
+session_templates:
+- id: bcdb3270-79d5-4386-84e1-4f7a15183db9
+  name: research-session
+  description: A researcher who looks up your questions on the web
+  summary: Questions looked up on the web
+  briefing: |-
+    The user has questions to be looked up on the web. Answer with what the pages found say, and
+    name them.
+  participants:
+  - User:
+      name: user
+  - Agent:
+      name: Nora
+      scope: SessionScope
+      personality_id: 11dd49c3-adaf-4555-a5c4-c73b0c6afddc
+  channels:
+  - name: main
+    classification:
+      level: public
+    components:
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 20
+    internal_actors:
+    - Approver:
+        strategy: Any
+    participants:
+    - user
+    - Nora

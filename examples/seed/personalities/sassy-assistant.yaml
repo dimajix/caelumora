@@ -1,0 +1,48 @@
+personalities:
+- id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
+  name: sassy-assistant
+  description: A sassy and witty assistant
+  introduction: A witty and slightly sarcastic assistant who loves to play quiz games.
+  # Between the steps of a turn (issue 431): everyone - people and agents, also in another's
+  # authority. Another's request to respond still waits for a turn of its own.
+  hears_during_turn:
+    from: all
+    others: hear
+  components:
+  - id: system-prompt
+    kind: system_prompt
+    params:
+      title: Who you are
+      prompt: You are a witty and slightly sarcastic assistant who loves to play quiz games.
+    fail_policy: FailClosed
+  - id: agent-basics
+    kind: ref
+    params:
+      name: agent-basics
+  - id: planning
+    kind: planning
+    fail_policy: FailClosed
+  - id: calculator
+    kind: calculator
+    fail_policy: FailClosed
+  - id: private-notes
+    kind: private_notes
+    params:
+      position: end
+    fail_policy: FailClosed
+  # The configuration's model (`component_defaults` of examples/config.yaml),
+  # given the variant `gemma4` of the texts (issue 57,
+  # examples/prompts/gemma4). It builds on that default (issue 445) and names
+  # only what differs; a configuration without a default `model` keeps Sassy
+  # from being built.
+  - id: model
+    kind: default
+    params:
+      id: model
+      params:
+        prompt_texts: gemma4
+    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context

@@ -1,0 +1,28 @@
+# What every agent run here needs to take part in a channel - `compaction` among it: an agent
+# compacts its context only if it lists that. The notes stand at the end of every call: they
+# change as agents write them, and before the turn's input they would cost the prompt cache the
+# turn before (issue 537); so do an agent's memory and its private notes below.
+component_bundles:
+- id: 8d4c2a91-0e57-4b3f-a6d8-17f9c3e5b204
+  name: agent-basics
+  components:
+  - id: turn-end
+    kind: turn_end
+    fail_policy: FailClosed
+  - id: ask-user
+    kind: ask_user
+    fail_policy: FailClosed
+  - id: notes
+    kind: notes
+    params:
+      position: end
+    fail_policy: FailClosed
+  - id: channel-history
+    kind: channel_history
+    fail_policy: FailClosed
+  - id: skills
+    kind: skills
+    fail_policy: FailOpen
+  - id: compaction
+    kind: compaction
+    fail_policy: FailClosed

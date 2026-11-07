@@ -1,0 +1,65 @@
+# A team whose members answer by what is said (issue 403): a decision model
+# chooses which of them should respond to a message that mentions none - the
+# most fitting one, and a second if it fits almost as well. `nimble:9b`
+# chose best in a quick comparison of the decision models of the local
+# Ollama: as reliably as a 27B model, at about a third of a second once it
+# is loaded. Loading it took over a minute, far beyond the endpoint's
+# timeout of 5 s, so it is kept loaded for an hour after each decision. The
+# server is local, so what is said may go to it up to the highest level;
+# what is classified with a compartment is not sent, and nobody is asked, as
+# when the model cannot be reached (the moderator's `on_undecided: none`),
+# and the users are told so. A template may write
+# the policy itself - its params are the operator's -, a channel created on
+# request only names a bundle that holds one.
+session_templates:
+- id: b6f36657-cb30-4fac-8873-c216b46bbf2c
+  name: team-session
+  description: A coder, a reviewer and a planner; a decision model chooses who answers
+  summary: Software work with a small team
+  briefing: |-
+    The user works on software with a small team: a coder, a reviewer and a planner. Each answers
+    what concerns them.
+  participants:
+  - User:
+      name: user
+  - Agent:
+      name: Coder
+      scope: SessionScope
+      personality_id: ee3b010f-b0fc-462b-98b7-25b1342021fb
+  - Agent:
+      name: Reviewer
+      scope: SessionScope
+      personality_id: c0bb5f0c-d731-4cf6-bef0-aabe69ea44d5
+  - Agent:
+      name: Planner
+      scope: SessionScope
+      personality_id: 92576955-d5fb-4bad-9b46-e856b92f49db
+  channels:
+  - name: main
+    components:
+    # A message to alice is addressed to her and asks no agent; a decision
+    # model that does not choose in time asks nobody either (issue 437),
+    # and the users are told so (issue 441).
+    - id: moderator
+      kind: policy_moderator
+      params:
+        max_agent_hops: 3
+        mentions_replace_policy: anyone
+        on_undecided: none
+    - id: responders
+      kind: decision_policy
+      params:
+        endpoint:
+          url: "http://127.0.0.1:11434"
+        model: "nimble:9b"
+        keep_alive: 1h
+        max_responders: 2
+        destination: { level: strictly_confidential }
+    internal_actors:
+    - Approver:
+        strategy: Any
+    participants:
+    - user
+    - Coder
+    - Reviewer
+    - Planner

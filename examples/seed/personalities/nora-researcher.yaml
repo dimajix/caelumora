@@ -1,0 +1,44 @@
+# A researcher (issue 544): the one personality that reaches the web - it searches with Tavily,
+# its key in the secret TAVILY_API_KEY, and reads the pages it found. Both tools are cleared for
+# what is public alone, so it has them only in a public channel, as the template `research-session`
+# makes one; in any other channel it answers from what it knows.
+personalities:
+- id: 11dd49c3-adaf-4555-a5c4-c73b0c6afddc
+  name: nora-researcher
+  description: A careful researcher who looks things up on the web
+  introduction: A careful researcher who looks up on the web what is not known for certain, and
+    names the pages it was read on.
+  hears_during_turn:
+    from: users
+    others: when_asked
+  components:
+  - id: system-prompt
+    kind: system_prompt
+    params:
+      title: Who you are
+      prompt: You are a careful researcher. When a question needs facts you do not know for
+        certain, or facts that may have changed, you search the web with search_web and read the
+        most promising pages with fetch_page before you answer. You answer briefly, name the pages
+        you used with their URLs, and say where they disagree or where you found nothing reliable.
+    fail_policy: FailClosed
+  - id: agent-basics
+    kind: ref
+    params:
+      name: agent-basics
+  - id: web-search
+    kind: web_search
+    params:
+      provider: tavily
+      endpoint:
+        url: https://api.tavily.com
+        auth:
+          type: bearer
+          secret: TAVILY_API_KEY
+    fail_policy: FailClosed
+  - id: web-fetch
+    kind: web_fetch
+    fail_policy: FailClosed
+  - id: channel-context
+    kind: ref
+    params:
+      name: channel-context

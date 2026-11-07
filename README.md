@@ -75,7 +75,7 @@ The TUI starts a session from the template `sassy-session`; `--template <name>`
 picks another. It talks in the template's first channel, as the user `--user <name>` names - `user`
 unless given -, whom the configured user providers know under that name, with their roles. The
 templates and personalities come from the demo data that `examples/config.yaml` seeds
-(`examples/seed.yaml`) - without a configuration there are none. The TUI writes its log to `local/tui.log`.
+(`examples/seed`) - without a configuration there are none. The TUI writes its log to `local/tui.log`.
 
 ### Running the Program
 

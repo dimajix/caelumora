@@ -280,7 +280,7 @@ mod tests {
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::component::BuildContext;
     use caelumora_kernel::kernel::Kernel;
-    use caelumora_kernel::seed::Seed;
+    use caelumora_kernel::seed::{self, Seed};
     use caelumora_kernel::terminal::TerminalProvider;
     use caelumora_model::plugin::{IMAGE, LANGUAGE, MODEL};
     use caelumora_model_ollama::client::OLLAMA_BACKEND;
@@ -290,14 +290,46 @@ mod tests {
     use caelumora_skills::skill::Skill;
     use caelumora_store::Persistence;
     use caelumora_tool_mcp::component::MCP_SERVER_KIND;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::collections::BTreeMap;
     use std::path::Path;
     use tower::ServiceExt;
 
     /// The file of the examples `name`.
     fn example(name: &str) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples").join(name)
+        root().join("examples").join(name)
+    }
+
+    /// Where the program runs, the root of the sources: what the configuration's paths are
+    /// relative to.
+    fn root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    /// What the example configuration seeds.
+    fn seed_paths() -> Vec<PathBuf> {
+        let config = AppConfig::load(example("config.yaml")).unwrap();
+        config.seed.iter().map(|path| root().join(path)).collect()
+    }
+
+    /// The documents of every file the example configuration seeds, as one seed: each section's
+    /// documents in the order of the files.
+    fn example_seed() -> Seed {
+        let mut seed = Seed::default();
+        for file in seed::files(&seed_paths()).unwrap() {
+            let read = Seed::read(&file).unwrap_or_else(|e| panic!("{e:#}"));
+            seed.component_bundles.extend(read.component_bundles);
+            seed.personalities.extend(read.personalities);
+            seed.session_templates.extend(read.session_templates);
+            for (name, section) in read.plugins {
+                let Value::Array(documents) = section else {
+                    panic!("the section '{name}' of {} is no list", file.display())
+                };
+                let merged = seed.plugins.entry(name).or_insert_with(|| Value::Array(Vec::new()));
+                merged.as_array_mut().unwrap().extend(documents);
+            }
+        }
+        seed
     }
 
     /// The kernel of the program, with its plugins and libraries, over `store`, with the policy of
@@ -307,7 +339,7 @@ mod tests {
     /// 512, 525) - read from where the program runs, the root of the sources.
     fn kernel(store: &Persistence) -> Kernel {
         let config = AppConfig::load(example("config.yaml")).unwrap();
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let root = root();
         let prompts =
             config.prompts.iter().map(|(variant, dir)| (variant.clone(), root.join(dir))).collect();
         let mut models = config.plugins[MODEL].clone();
@@ -414,14 +446,14 @@ mod tests {
 
     #[tokio::test]
     async fn the_example_seed_is_complete_and_seeding_twice_changes_nothing() {
-        let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
+        let seed = example_seed();
         assert!(!seed.personalities.is_empty() && !seed.session_templates.is_empty());
         let store = Persistence::in_memory();
         let kernel = kernel(&store);
         let stores = kernel.entity_stores();
         let system = SecurityContext::system();
 
-        kernel.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&seed_paths()).await.unwrap();
         // Every personality a template names is part of the seed.
         for template in &seed.session_templates {
             for participant in &template.participants {
@@ -438,7 +470,7 @@ mod tests {
             stores.personalities.get(&system, seed.personalities[0].personality.id).await.unwrap();
         changed.description = Some(Description::new("changed").unwrap());
         stores.personalities.update(&system, &mut changed).await.unwrap();
-        kernel.seed(&[example("seed.yaml")]).await.expect("seeding again is no conflict");
+        kernel.seed(&seed_paths()).await.expect("seeding again is no conflict");
         assert_eq!(
             stores
                 .personalities
@@ -509,13 +541,13 @@ mod tests {
     /// (issue 457).
     #[tokio::test]
     async fn a_seeded_document_that_was_deleted_stays_so_and_seeding_again_succeeds() {
-        let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
+        let seed = example_seed();
         let store = Persistence::in_memory();
         let kernel = kernel(&store);
         let stores = kernel.entity_stores();
         let skills = store.entity_store::<Skill>(&Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
-        kernel.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&seed_paths()).await.unwrap();
         let bundle = seed.component_bundles[0].id;
         let personality = seed.personalities[0].personality.id;
         let template = seed.session_templates[0].id;
@@ -537,7 +569,7 @@ mod tests {
             .unwrap());
         assert!(skills.delete(&system, skill, &Removal::now(system.caller_id)).await.unwrap());
 
-        kernel.seed(&[example("seed.yaml")]).await.expect("a taken id is no failure");
+        kernel.seed(&seed_paths()).await.expect("a taken id is no failure");
         assert!(
             stores.component_bundles.get(&system, bundle).await.is_err()
                 && stores.component_bundles.get_deleted(&system, bundle).await.is_ok(),
@@ -560,7 +592,7 @@ mod tests {
         );
 
         assert!(stores.personalities.purge(&system, personality).await.unwrap());
-        kernel.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&seed_paths()).await.unwrap();
         assert!(
             stores.personalities.get(&system, personality).await.is_ok(),
             "purged, it is seeded again"
@@ -572,10 +604,10 @@ mod tests {
     /// are there, and none of them is written twice (issue 270).
     #[tokio::test]
     async fn every_personality_of_the_example_seed_can_be_built() {
-        let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
+        let seed = example_seed();
         let store = Persistence::in_memory();
         let kernel = kernel(&store);
-        kernel.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&seed_paths()).await.unwrap();
         // The services a kernel gives them (issue 296).
         let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
         for personality in seed.personalities.iter().map(|seeded| &seeded.personality) {
@@ -599,10 +631,10 @@ mod tests {
     /// slot, `decision_policy` among them (issue 403).
     #[tokio::test]
     async fn every_channel_of_the_example_seed_can_be_built() {
-        let seed = Seed::read(&example("seed.yaml")).expect("examples/seed.yaml is a seed");
+        let seed = example_seed();
         let store = Persistence::in_memory();
         let kernel = kernel(&store);
-        kernel.seed(&[example("seed.yaml")]).await.unwrap();
+        kernel.seed(&seed_paths()).await.unwrap();
         let context = BuildContext::new(SecurityContext::system(), kernel.services().clone());
         for (template, channel) in seed
             .session_templates
