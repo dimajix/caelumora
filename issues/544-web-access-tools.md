@@ -192,3 +192,6 @@ host, the server's own REST API.
   default `requires_approval` of the three kinds that ask nobody unless configured became one
   function, `ApprovalMode::never`. With it, the issue is done; what a fetch through the proxy may
   reach is issue 545.
+- **2026-11-07** — The example seed gets a personality that uses both tools, `nora-researcher`,
+  searching with Tavily (its key in the secret `TAVILY_API_KEY`), and the template
+  `research-session`, whose channel is public: only there are the tools offered.
