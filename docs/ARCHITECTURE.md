@@ -121,8 +121,9 @@ drawn in [CRATES.md](CRATES.md):
     its component kind `image_generation`, whose tool generates an image with one of the image
     models its agent is given (issue 525). See [TOOLS.md](TOOLS.md#images).
 *   **`caelumora-tool-web`** - the tools that reach the web, a library that brings nothing but its
-    component kind `web_fetch`, whose tool fetches a page by its URL and gives it as text (issue
-    544). See [TOOLS.md](TOOLS.md#pages-of-the-web).
+    component kinds `web_fetch`, whose tool fetches a page by its URL and gives it as text, and
+    `web_search`, whose tool searches the web with a provider (issue 544). See
+    [TOOLS.md](TOOLS.md#pages-of-the-web) and [TOOLS.md](TOOLS.md#searching-the-web).
 *   **`caelumora-tool-attachment`** - the tools on the attachments an agent heard, a library that
     brings nothing but its component kind `attachments`, whose tools reach them by the numbers its
     transcript gave them (issue 533). See [TOOLS.md](TOOLS.md#attachments).

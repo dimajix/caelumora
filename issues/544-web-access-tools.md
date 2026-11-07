@@ -176,3 +176,12 @@ host, the server's own REST API.
   but fetches no page from it; a derived rule matches the host in any case. Left as they are: a
   host written in Unicode, whose derived rule asks again; pages a browser would read in another
   charset by a `meta` element.
+- **2026-11-07** — Step 2 done: the kind `web_search` with its tool `search_web`, searching with
+  Tavily (`provider: tavily`, its key a bearer token in the endpoint's `auth`, refused at build
+  without one), at most 20 pages of title, URL and snippet, public; its destination public unless
+  configured. Its client goes through the proxy of the environment and needs none of the checks
+  of `web_fetch`: it reaches the endpoint an operator configured, nothing a model writes. The
+  provider is an `enum` the search matches on; a trait for providers comes with a second one. The
+  result holds what the web gave alone, not the query, which is the agent's and classified as its
+  channel - a destination above public offers the tool where a query may carry more; an empty
+  query, and one the provider refuses with 400, is the model's to correct.

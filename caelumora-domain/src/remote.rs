@@ -1,7 +1,7 @@
 //! Where a remote system is reached and how one authenticates there - the `endpoint` that
-//! `mcp_server`, `a2a_agent` and `decision_policy` are given in their `params` and a model of
-//! Ollama or a storage of workspaces in its configuration (issues 179, 188, 251, 520) - and how it
-//! is shown in messages: without what may carry a credential.
+//! `mcp_server`, `a2a_agent`, `decision_policy` and `web_search` are given in their `params` and a
+//! model of Ollama or a storage of workspaces in its configuration (issues 179, 188, 251, 520,
+//! 544) - and how it is shown in messages: without what may carry a credential.
 //!
 //! What is read as an endpoint has a URL a request can be sent to: one that is no `http` or
 //! `https` URL is refused as it is read (issue 515), before anything is built of it and before a

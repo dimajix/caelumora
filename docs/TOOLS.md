@@ -308,6 +308,41 @@ URL, with the tool `fetch_page`:
     `http` or `https` and on any port, not about the one page.
 *   **Parameters.** `requires_approval` and `description`.
 
+## Searching the web
+
+A `web_search` component (issue 544, library `caelumora-tool-web`) searches the web with a
+provider, with the tool `search_web`:
+
+```yaml
+- id: web-search
+  kind: web_search
+  params:
+    provider: tavily
+    endpoint:
+      url: https://api.tavily.com
+      auth: { type: bearer, secret: TAVILY_API_KEY }
+```
+
+*   **A provider.** There is no protocol for searching the web; every provider has an API of its
+    own. `provider` names whose the endpoint speaks - `tavily`, the one Caelumora knows so far -,
+    and the endpoint's `auth` its key, which every provider wants: a component without is not
+    built. The key is resolved through the secret chain in the name of whoever asks the agent (see
+    [SECURITY.md](SECURITY.md)). A search goes through the proxy the environment names.
+*   **What it gives.** For a `query`, at most `max_results` pages - 5 unless given, 20 at most -,
+    each with its title, its URL and a snippet of at most 1,000 characters; no answer of the
+    provider's own, nor the content of the pages, which the agent reads with `fetch_page` where it
+    has it. The query is not repeated in the result. An empty query is refused before anything is
+    asked, as one the provider refuses as written is the model's to correct; anything else the
+    provider refused or failed with is the call's failure, naming the endpoint without credentials
+    and what the provider says, bounded.
+*   **Confidentiality.** The queries go to the provider, and stay there and with the engines it
+    asks in turn: the tool set's destination is `destination`, `public` unless configured - an
+    operator who may vouch for a provider clears it higher. What is found is classified `public`,
+    as the web it was found on.
+*   **Parameters.** `provider` and `endpoint` (both required; timeout 15 s), `requires_approval`
+    (`false` unless given: a search only reads, and its query goes only where `destination` lets
+    it), `destination` and `description`.
+
 ## Built-in tools
 
 The tools that come with Caelumora are listed with the components that offer them, their parameters

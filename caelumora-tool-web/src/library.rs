@@ -1,5 +1,5 @@
 //! How the tools that reach the web are joined to the kernel (issue 544): their texts and the
-//! component kind `web_fetch`.
+//! component kinds `web_fetch` and `web_search`.
 
 use crate::{component, NAMESPACE, PROMPTS};
 use anyhow::Result;

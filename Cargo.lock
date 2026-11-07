@@ -941,6 +941,7 @@ dependencies = [
  "caelumora-api",
  "caelumora-domain",
  "caelumora-kernel",
+ "caelumora-security",
  "encoding_rs",
  "htmd",
  "regex",

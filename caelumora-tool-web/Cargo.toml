@@ -23,6 +23,7 @@ url.workspace = true
 [dev-dependencies]
 caelumora-agents = { workspace = true, features = ["test-support"] }
 caelumora-kernel = { workspace = true, features = ["test-support"] }
+caelumora-security.workspace = true
 axum.workspace = true
 tokio = { workspace = true, features = ["full"] }
 

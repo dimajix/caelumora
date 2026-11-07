@@ -216,7 +216,8 @@ mod tests {
         assert!(matches!(invalid, Err(ToolError::InvalidParameter(_))), "{invalid:?}");
         let inside = fetched(&component, json!({ "url": "http://10.0.0.1/" })).await;
         assert!(
-            matches!(&inside, Err(ToolError::InvalidParameter(m)) if m.contains("inside the network")),
+            matches!(&inside, Err(ToolError::InvalidParameter(m))
+                if m.contains("inside the network")),
             "{inside:?}"
         );
         let unreachable = fetched(&component, json!({ "url": "http://127.0.0.1:1/" })).await;

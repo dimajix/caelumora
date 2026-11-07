@@ -11,13 +11,14 @@
 
 use super::address::is_public;
 use super::text::{self, Page};
+use crate::USER_AGENT;
 use caelumora_api::error::describe_request_error;
 use caelumora_domain::remote::redact_endpoint;
 use encoding_rs::{Encoding, UTF_8};
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::header::CONTENT_TYPE;
 use reqwest::redirect::{Action, Attempt, Policy};
-use reqwest::{Client as HttpClient, ClientBuilder, Url};
+use reqwest::{Client as HttpClient, ClientBuilder, Error as ReqwestError, Url};
 use std::collections::HashSet;
 use std::env;
 use std::error::Error;
@@ -39,9 +40,6 @@ const MAX_BODY_BYTES: usize = 5 * 1024 * 1024;
 /// The variables a proxy is named by, as `reqwest` reads them.
 const PROXY_VARIABLES: [&str; 6] =
     ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"];
-
-/// Who fetches, as the servers are told.
-const USER_AGENT: &str = concat!("Caelumora/", env!("CARGO_PKG_VERSION"));
 
 /// Why a page was not fetched. A URL is named without credentials, query and fragment.
 #[derive(Debug, thiserror::Error)]
@@ -78,7 +76,7 @@ pub(super) enum Refusal {
 impl FetchError {
     /// What failed in a request for `url`: a refusal of the rules where the resolver or a redirect
     /// gave one, else the chain of its causes, without the URL `reqwest` writes into it.
-    fn of_request(url: &Url, error: reqwest::Error) -> Self {
+    fn of_request(url: &Url, error: ReqwestError) -> Self {
         let mut cause: Option<&(dyn Error + 'static)> = Some(&error);
         while let Some(current) = cause {
             if let Some(refusal) = current.downcast_ref::<Refusal>() {
@@ -347,7 +345,8 @@ mod tests {
         assert!(error.contains(&url) && !error.contains("secret"), "{error}");
         let image = client.fetch(&format!("http://localhost:{port}/image")).await;
         assert!(
-            matches!(&image, Err(FetchError::Unreadable { media_type, .. }) if media_type == "image/png"),
+            matches!(&image, Err(FetchError::Unreadable { media_type, .. })
+                if media_type == "image/png"),
             "{image:?}"
         );
         let untyped = client.fetch(&format!("http://localhost:{port}/untyped")).await;
@@ -362,7 +361,8 @@ mod tests {
         let public = Client::direct(is_public, &[]);
         let by_name = public.fetch(&format!("http://localhost:{port}/page")).await;
         assert!(
-            matches!(&by_name, Err(FetchError::Refused(Refusal::InsideNetwork(host))) if host == "localhost"),
+            matches!(&by_name, Err(FetchError::Refused(Refusal::InsideNetwork(host)))
+                if host == "localhost"),
             "{by_name:?}"
         );
         let by_address = public.fetch(&format!("http://127.0.0.1:{port}/page")).await;
