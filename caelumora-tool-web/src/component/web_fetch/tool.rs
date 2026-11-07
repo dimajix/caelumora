@@ -26,6 +26,11 @@ use std::collections::BTreeMap;
 /// The one tool of the component.
 const FETCH_PAGE: &str = "fetch_page";
 
+/// A page fetched: its `url`, and of its result the `url` it was found at and its `title`, the
+/// `content` as text with the lines it covers - `start_line`, `end_line`, `total_lines` - and where
+/// to read on (`next`).
+const WEB_PAGE_PRESENTATION: ToolPresentation = ToolPresentation::new("web_page");
+
 /// How many bytes of a page `fetch_page` gives at once, as `read_file` gives 64 KiB unless
 /// configured.
 const MAX_PAGE_BYTES: usize = 64 * 1024;
@@ -63,7 +68,7 @@ pub(super) fn fetch_page(
         requires_approval,
         visibility: ToolVisibility::SHOWN,
         classification: None,
-        presentation: ToolPresentation::default(),
+        presentation: WEB_PAGE_PRESENTATION,
     };
     described(prompts, NAMESPACE, WEB_FETCH_KIND, tool, ())
 }
@@ -197,6 +202,7 @@ mod tests {
         let port = server().await;
         let url = format!("http://localhost:{port}/page");
         let component = component();
+        assert_eq!(component.tools()[0].presentation, WEB_PAGE_PRESENTATION, "shown as a page");
         let whole = fetched(&component, json!({ "url": url })).await.unwrap();
         assert_eq!(whole.classification, Some(Classification::PUBLIC));
         assert_eq!(whole.value["url"], json!(url));

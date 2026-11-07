@@ -21,6 +21,10 @@ use serde_json::{json, Value};
 /// The one tool of the component.
 const SEARCH_WEB: &str = "search_web";
 
+/// The web searched: its `query`, and the `results` of its result - each `title`, `url` and
+/// `snippet`.
+const WEB_RESULTS_PRESENTATION: ToolPresentation = ToolPresentation::new("web_results");
+
 /// How many pages a search finds unless the call says otherwise.
 const DEFAULT_RESULTS: usize = 5;
 
@@ -54,7 +58,7 @@ pub(super) fn search_web(
         requires_approval,
         visibility: ToolVisibility::SHOWN,
         classification: None,
-        presentation: ToolPresentation::default(),
+        presentation: WEB_RESULTS_PRESENTATION,
     };
     let values = json!({ "default_results": DEFAULT_RESULTS, "max_results": MAX_RESULTS });
     described(prompts, NAMESPACE, WEB_SEARCH_KIND, tool, values)
@@ -260,7 +264,9 @@ mod tests {
     #[tokio::test]
     async fn a_search_asks_tavily_with_the_key_for_results_alone_and_gives_the_pages_it_found() {
         let (endpoint, asked) = tavily().await;
-        let found = component(endpoint).search(&*secrets(), "tokio", 2).await.unwrap();
+        let component = component(endpoint);
+        assert_eq!(component.tools()[0].presentation, WEB_RESULTS_PRESENTATION, "shown as found");
+        let found = component.search(&*secrets(), "tokio", 2).await.unwrap();
         assert_eq!(
             found,
             [

@@ -260,7 +260,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [512](512-comfyui-image-tool.md) | done | No tool can generate an image, and no tool can hand its model media at all: `ToolOutput` has no media and the channel refuses a tool result that carries some. |
 | [527](527-deny-on-first-decides-as-all.md) | done | `ApprovalStrategy::DenyOnFirst` and `ApprovalStrategy::All` decide every request alike - approved once all who may approve have approved, denied by the first who denies -, so that a configuration offers two names for one rule. |
 | [535](535-tool-media-attached-kept-and-shown-twice.md) | done | An image a tool generates is kept as what its result gave, and once the agent shows it to the channel by `attach` it is kept again as a copy and shown twice in the chat - at the card of the call and at the answer -, so it is unclear whether what a tool gives is rightly seen rather than said. |
-| [544](544-web-access-tools.md) | in progress | An agent can neither fetch a web page by its URL nor search the web; what it knows of the world is what its model was trained on and what its workspace, its MCP servers or a person give it. |
+| [544](544-web-access-tools.md) | done | An agent can neither fetch a web page by its URL nor search the web; what it knows of the world is what its model was trained on and what its workspace, its MCP servers or a person give it. |
 
 ## User interaction
 

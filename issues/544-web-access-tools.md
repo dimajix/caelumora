@@ -1,6 +1,6 @@
 # 544 — Agents cannot reach the web
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -185,3 +185,10 @@ host, the server's own REST API.
   result holds what the web gave alone, not the query, which is the agent's and classified as its
   channel - a destination above public offers the tool where a query may carry more; an empty
   query, and one the provider refuses with 400, is the model's to correct.
+- **2026-11-07** — Step 3 done: the presentations `web_page` - the page's title, linked to where
+  it was found, the lines given and their text - and `web_results` - the query and each page found,
+  its title linked to its URL, with its snippet - in the web UI; a link opens only an `http` or
+  `https` URL, in a tab of its own, without telling the page where it came from. Before it, the
+  default `requires_approval` of the three kinds that ask nobody unless configured became one
+  function, `ApprovalMode::never`. With it, the issue is done; what a fetch through the proxy may
+  reach is issue 545.
