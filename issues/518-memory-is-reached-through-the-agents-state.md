@@ -1,6 +1,6 @@
 # 518 — An agent's memory is reached through its state, not as a system service
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Context and knowledge
@@ -111,7 +111,7 @@ completes (*plan A* of the two weighed below).
   (`StagedChanges`), and the kernel hands each kind to the writer bound to commit it. Notes and
   private notes keep their fields of `TurnState`: they change the agent's state in its channel,
   which the agent side holds and stores itself, not a system service - a deliberate difference,
-  to be revisited once a second service stages (below, *Open questions*).
+  to be revisited once a second service stages (below, *Decisions on the open questions*).
 
 ### Where it lives
 
@@ -313,9 +313,10 @@ model at once - the kernel checks again as it commits. The prompt part records i
 
 ### The steps
 
-1. **What lies behind an agent.** `AgentMember` and `KernelBuilder::agent_member`; the kernel's
-   own state behind an agent removed through it, as `AgentManager::remove_behind` does today. No
-   behaviour changes. Files: `caelumora-kernel/src/{agent/manager,kernel/builder,scoped}.rs`.
+1. **What lies behind an agent.** `AgentMember` and `KernelBuilder::agent_member`, removed by
+   `AgentManager::remove_behind` after the kernel's own state of the agent, which the manager
+   removes itself (see History). No behaviour changes. Files:
+   `caelumora-kernel/src/{agent/mod,agent/manager,kernel/builder}.rs`.
 2. **The generic staging.** `StagedChange`, `Committing`, `CommitError`,
    `ActorRuntime::commit_staged`, `StagedChanges` in `TurnState`, `Turn::stage` and `staged`,
    `KernelBuilder::commits`. The memory uses it first, still from `caelumora-agents`, through a
@@ -339,23 +340,28 @@ model at once - the kernel checks again as it commits. The prompt part records i
 Stored data to delete: every agent's state - its memory with it, unless it is migrated on purpose -
 and every channel state with a turn under way.
 
-### Open questions
+### Decisions on the open questions
 
-1. **One document per agent** holding the chain, recommended, or a document per entry already, the
-   direction of issue 166.
-2. **The rights of the document:** attributes of its own, copied from the agent - which go stale
-   when the agent's owner changes -, or `Within = Agent`, judged by the agent's attributes.
-   Recommended: the second, to be checked against the `CheckedStore` in step 3; it decides what
-   context `MemoryManager::of_agent` reads in.
-3. **Two ways to stage:** the notes in their fields, the services in `StagedChanges`. Accepted for
-   now; the notes may follow once a second service stages.
-4. **Private knowledge.** `Turn::record_knowledge` tells by `KnowledgeSource::Memory` that the turn
-   has seen private knowledge (`turn/mod.rs`, the `PrivateNotes | Memory` arm); with `Entity`, it
-   cannot. Either `KnowledgeRef` carries `private`, set by whoever records the reading - so that
-   the rule no longer hangs on variants the turn has to know, recommended -, or `Turn` gets
-   `record_private_knowledge`.
-5. **`AgentMember`** as a trait of its own, recommended, or `ScopeMember::remove_behind`
-   generalised into a `Behind<E>` for scopes and agents alike: decided in step 1.
+Taken with the maintainer on 2026-11-07, as recommended:
+
+1. **One document per agent**, holding the chain as `AgentState` holds it today. Splitting it into
+   documents by topic stays with issue 166.
+2. **The rights of the document are its own.** `Within` has no bearing on rights: the
+   `CheckedStore` judges every kind by its own `security_attributes()` (`caelumora-store`,
+   `access.rs`). The document is `owned_by` the agent's owner, without an access list, and keyed
+   by the agent's id, lying in no entity (`Within = NoEntity`). An agent's work reads it in its
+   context, whose owner is the agent's (`SecurityContext::of_agent`), and passes the ownership
+   policy. Nothing in the kernel changes an agent's owner today, so the copy cannot go stale yet.
+3. **Two ways to stage**, accepted: the notes in their fields of `TurnState`, the system services
+   in `StagedChanges`. The notes may follow once a second service stages.
+4. **Private knowledge is a field.** `KnowledgeRef` carries `private`, set by whoever records the
+   reading - the private notes and the memory -, and `Turn::saw_private_knowledge` asks it; its
+   one user is whether the reasoning is shown to the owners alone (`actor/agent.rs`). The rule no
+   longer hangs on variants the turn has to know.
+5. **`AgentMember` is a trait of its own**: `ScopeMember` asks for a store and events, which what
+   lies behind an agent does not need.
+
+Stored memories are deleted, not migrated: a migration would be code without a lasting user.
 
 ## Done when
 
@@ -377,3 +383,12 @@ and every channel state with a turn under way.
 - **2026-11-04** — Planned with the maintainer: a plugin in a crate of its own, its security the
   kernel's, the turn staging and the kernel committing, the staging generic (*The plan*). Found
   on the way: the origin of a change is told by the agent side, not derived. Not begun.
+- **2026-11-07** — The open questions decided as recommended (*Decisions on the open questions*).
+  Step 1 implemented: `AgentMember` and `KernelBuilder::agent_member`; the `AgentManager` is made
+  once the plugins registered, and removes what they keep behind an agent after the agent's state,
+  as it purges it alone or with its scope. Unlike the step's first wording, the kernel's own state
+  is not removed through an `AgentMember` of the kernel's: the manager removes it itself, as the
+  `WorkspaceManager` removes its place - an owner removes what is its own, a member is what others
+  add -, a member of the kernel's would only wrap one call, and `delete_agent_state` removes the
+  agent's states in its channels too, which stay with the kernel after step 3. So `agent_member`
+  has no caller in the program until step 3 brings the memory's plugin.

@@ -27,7 +27,8 @@ its libraries after (see [What a library is](#what-a-library-is)):
 2.  The policies, the stores and the secrets are made, then the kernel's services, managers and
     component kinds (`KernelBuilder::new`), with the backends the configuration names; then each
     plugin registers the rest of what it brings (`register`). Once the libraries registered too,
-    `build` makes the kernel.
+    `build` makes the kernel, and with it what goes with what the plugins registered: the
+    `AgentManager` with what they keep behind an agent, and the members of a scope.
 
 A plugin brings what is the kernel's - a backend, a kind of entity with its manager, views and
 routes, a component of a channel such as the `ResponderPolicy` of `caelumora-decision` - and is
@@ -82,6 +83,9 @@ it registers, a plugin
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
     before it writes (`require`) and once it has written (`keep_made`, `restore`), so that
     nothing is left in the scope of a holder deleted meanwhile (issue 458);
+*   makes what it keeps behind an agent go with it (`agent_member`, an `AgentMember`): removed
+    when the agent is purged, after the kernel's own state of it - by the `AgentManager`,
+    whether the agent is purged alone or with its scope;
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, under `plugins`, and
     of the seed files (`seed_section`, a `SeedSection`), at their top level - the seed holds what
     the plugins keep, and no library claims a section of it, so that it has nothing to keep apart;
@@ -236,9 +240,9 @@ rather than reached around (issue 325).
 
 ## Errors: a plugin answers the kernel in the kernel's types
 
-Where the kernel calls a plugin - a facet of its component, a `ScopeMember` - the plugin answers
-with an error type of the kernel, never with one of its own inside an `anyhow` (issue 336). The
-kernel decides what a person is told of an error by the types it knows -
+Where the kernel calls a plugin - a facet of its component, a `ScopeMember`, an `AgentMember` - the
+plugin answers with an error type of the kernel, never with one of its own inside an `anyhow` (issue
+336). The kernel decides what a person is told of an error by the types it knows -
 `caelumora_kernel::error::user_message` for the user of a command and the TUI, and
 `From<anyhow::Error> for ApiError` for the REST API -, and a plugin's types are not among them:
 inside an `anyhow`, whatever a plugin's error says is shown as a failure that points to the log. The
@@ -264,7 +268,7 @@ answers - deciding there what may be shown, what is a refusal and what is a fail
     view's and the store's errors, judged as those are;
 *   a `ScopeMember` answers `StoreResult` for what lies behind an entity (`remove_behind`) - a
     workspace's place, an artifact's content -, which is its storage too: a failure to remove it is
-    a `StoreError::Backend`;
+    a `StoreError::Backend`; an `AgentMember` answers so for what it keeps behind an agent;
 *   a responder policy answers `moderator::Undecided` when it could not choose, in words for the
     log alone, without anything that was said.
 

@@ -1,12 +1,13 @@
 //! `KernelBuilder`: what makes the `Kernel` of a process - its own services and managers first,
-//! then what each plugin registers (issue 323).
+//! then what each plugin registers (issue 323), then what goes with both: the `AgentManager` with
+//! what the plugins keep behind an agent, and the members of a scope.
 
 use super::extension::Extensions;
 use super::Kernel;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
 use crate::agent::state::AgentStates;
-use crate::agent::AgentManager;
+use crate::agent::{AgentManager, AgentMember};
 use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
 use crate::channel::{ChannelLoop, Participation};
@@ -55,9 +56,11 @@ use std::sync::Arc;
 /// What builds the `Kernel` (issue 323): the kernel's services and managers, made first - their
 /// backends by `Backends`, the kernel's and the plugins' (issue 324) -, what the plugins register
 /// with it (`Plugin::register`) - their component kinds, the stores of their kinds, the services
-/// they provide, the members of a scope, their sections of the configuration and of the seed -, and
-/// what the libraries register through a `LibraryBuilder` (`Library::register`, issue 516). `build`
-/// makes the kernel of it.
+/// they provide, the members of a scope, what they keep behind an agent, their sections of the
+/// configuration and of the seed -, and what the libraries register through a `LibraryBuilder`
+/// (`Library::register`, issue 516). `build` makes the kernel of it, with what goes with what the
+/// plugins registered: the `AgentManager` and the members of a scope, the kernel's before the
+/// plugins'.
 pub struct KernelBuilder {
     persistence: Persistence,
     entity_stores: EntityStores,
@@ -84,7 +87,10 @@ pub struct KernelBuilder {
     backend_services: Services,
     attachments: Arc<AttachmentManager>,
     groups: Arc<GroupManager>,
-    agents: Arc<AgentManager>,
+    /// What the plugins keep behind an agent (issue 518), which its manager - made with the kernel,
+    /// once they registered - removes as it purges an agent.
+    agent_members: Vec<Arc<dyn AgentMember>>,
+    /// The plugins' members of a scope, gone through after the kernel's.
     scope_members: Vec<Arc<dyn ScopedKind>>,
     scope_holders: Arc<ScopeHolders>,
     services: Services,
@@ -275,20 +281,6 @@ impl KernelBuilder {
             Arc::clone(&event_bus),
             Arc::clone(&access_policy),
         ));
-        let agents = Arc::new(AgentManager::new(
-            &entity_stores,
-            Arc::clone(&scope_holders),
-            Arc::clone(&state_store),
-            Arc::clone(&event_bus),
-            Arc::clone(&access_policy),
-        ));
-        let scope_members: Vec<Arc<dyn ScopedKind>> = vec![
-            Arc::new(Unowned(Arc::clone(&entity_stores.personalities))),
-            Arc::new(Unowned(Arc::clone(&entity_stores.session_templates))),
-            Arc::new(Unowned(Arc::clone(&entity_stores.component_bundles))),
-            Arc::<AgentManager>::clone(&agents),
-            Arc::<WorkspaceManager>::clone(&workspaces),
-        ];
         let services = Services::empty()
             .with(Arc::clone(&access_policy))
             .with(Arc::clone(&confidentiality))
@@ -322,8 +314,8 @@ impl KernelBuilder {
             backend_services,
             attachments,
             groups,
-            agents,
-            scope_members,
+            agent_members: Vec::new(),
+            scope_members: Vec::new(),
             scope_holders,
             services,
             services_of_libraries: Vec::new(),
@@ -594,6 +586,12 @@ impl KernelBuilder {
         self.scope_members.push(member);
     }
 
+    /// Makes what `member` keeps behind an agent go with it (issue 518): removed when the agent is
+    /// purged, after the kernel's own state of it.
+    pub fn agent_member<M: AgentMember + 'static>(&mut self, member: Arc<M>) {
+        self.agent_members.push(member);
+    }
+
     /// Claims the section `name` of the plugins in the configuration (`plugins`) and reads it as
     /// `C`; left out, it is `C::default()`.
     ///
@@ -676,7 +674,23 @@ impl KernelBuilder {
         }
         let prompts = Arc::new(mem::take(&mut self.prompts));
         self.provide(Arc::clone(&prompts))?;
-        let scoped = Arc::new(ScopedEntities::new(self.scope_members));
+        let agents = Arc::new(AgentManager::new(
+            &self.entity_stores,
+            Arc::clone(&self.scope_holders),
+            self.persistence.state_store(),
+            self.agent_members,
+            Arc::clone(&self.event_bus),
+            Arc::clone(self.policies.access_policy()),
+        ));
+        let kernel_members: [Arc<dyn ScopedKind>; 5] = [
+            Arc::new(Unowned(Arc::clone(&self.entity_stores.personalities))),
+            Arc::new(Unowned(Arc::clone(&self.entity_stores.session_templates))),
+            Arc::new(Unowned(Arc::clone(&self.entity_stores.component_bundles))),
+            Arc::<AgentManager>::clone(&agents),
+            Arc::<WorkspaceManager>::clone(&self.workspaces),
+        ];
+        let scope_members = kernel_members.into_iter().chain(self.scope_members).collect();
+        let scoped = Arc::new(ScopedEntities::new(scope_members));
         let participation = Arc::new(Participation::new(
             Arc::clone(&self.entity_stores.agents),
             Arc::clone(&self.controller_manager),
@@ -702,7 +716,7 @@ impl KernelBuilder {
             command_reaper: self.command_reaper,
             attachments: self.attachments,
             groups: self.groups,
-            agents: self.agents,
+            agents,
             actors: Arc::new(ActorManager::new()),
             scoped,
             services: self.services,
@@ -1079,5 +1093,87 @@ mod tests {
             .map(|_| ())
             .expect_err("no such text");
         assert!(format!("{refused:#}").contains("'kernel.given_up_cause.gone'"), "{refused:#}");
+    }
+
+    /// Issue 518: what a plugin keeps behind an agent goes when the agent is purged, after the
+    /// kernel's own state of it; where it cannot be removed, the agent stays deleted, and the next
+    /// purge tries again.
+    #[tokio::test]
+    async fn what_a_plugin_keeps_behind_an_agent_goes_when_the_agent_is_purged() {
+        use crate::agent::AgentMember;
+        use caelumora_domain::actor::ActorId;
+        use caelumora_domain::agent::testing::make_personality;
+        use caelumora_domain::agent::{Agent, AgentId, AgentState};
+        use caelumora_domain::confidentiality::Classification;
+        use caelumora_domain::memory::{MemoryChange, MemoryId};
+        use caelumora_domain::message::MessageId;
+        use caelumora_domain::store::StoreError;
+        use caelumora_domain::user::UserId;
+        use caelumora_security::SecurityContext;
+        use caelumora_store::testing::stored_agent;
+        use caelumora_store::StateStore;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Mutex;
+
+        /// Records the agents whose purge reached it, and whether their state was gone by then;
+        /// fails while `failing` is set.
+        struct Kept {
+            state_store: Arc<dyn StateStore>,
+            removed: Mutex<Vec<(AgentId, bool)>>,
+            failing: AtomicBool,
+        }
+        #[async_trait::async_trait]
+        impl AgentMember for Kept {
+            async fn remove_behind(&self, agent: &Agent) -> StoreResult<()> {
+                if self.failing.load(Ordering::SeqCst) {
+                    return Err(StoreError::Backend("not now".to_string()));
+                }
+                let state = self.state_store.get_agent_state(agent.id).await?;
+                self.removed.lock().unwrap().push((agent.id, state.memory.current().is_empty()));
+                Ok(())
+            }
+        }
+        /// Keeps `Kept` behind every agent.
+        struct Keeps(Arc<Kept>);
+        impl Plugin for Keeps {
+            fn name(&self) -> &'static str {
+                "keeps"
+            }
+            fn register(&self, kernel: &mut KernelBuilder) -> Result<()> {
+                kernel.agent_member(Arc::clone(&self.0));
+                Ok(())
+            }
+        }
+
+        let store = Persistence::in_memory();
+        let kept = Arc::new(Kept {
+            state_store: store.state_store(),
+            removed: Mutex::new(Vec::new()),
+            failing: AtomicBool::new(true),
+        });
+        let plugin = Keeps(Arc::clone(&kept));
+        let kernel = TestKernel { store, plugins: vec![&plugin], ..Default::default() }.build();
+        let owner = ActorId::User(UserId::new());
+        let personality = make_personality("helper");
+        let agent = stored_agent(kernel.entity_stores(), "helper", personality, owner).await;
+        let mut state = AgentState::default();
+        let classification = Classification::CHANNEL_DEFAULT;
+        let remembered = MemoryChange::Add { id: MemoryId(1), text: "kept".into(), classification };
+        state.memory.push(remembered, Default::default(), MessageId::default());
+        kernel.state_store().put_agent_state(agent.id, &mut state).await.unwrap();
+        let agents = kernel.agent_manager();
+        let system = SecurityContext::system();
+        assert!(agents.delete(&system, agent.id).await.unwrap());
+
+        agents.purge(&system, agent.id).await.expect_err("what it keeps cannot be removed");
+        assert!(kept.removed.lock().unwrap().is_empty(), "nothing removed");
+        assert!(
+            kernel.entity_stores().agents.get_deleted(&system, agent.id).await.is_ok(),
+            "the agent stays deleted"
+        );
+
+        kept.failing.store(false, Ordering::SeqCst);
+        assert!(agents.purge(&system, agent.id).await.expect("purged the second time"));
+        assert_eq!(*kept.removed.lock().unwrap(), [(agent.id, true)], "after the agent's state");
     }
 }
