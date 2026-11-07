@@ -41,6 +41,7 @@ use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_tool_attachment::library::AttachmentToolLibrary;
 use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
+use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use clap::Parser;
 use std::future;
@@ -215,7 +216,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
 }
 
 /// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 516, 518, 525,
-/// 533) - first the essential one, the agents' (issue 370).
+/// 533, 544) - first the essential one, the agents' (issue 370).
 fn libraries() -> Vec<Box<dyn Library>> {
     vec![
         Box::new(AgentsLibrary),
@@ -225,6 +226,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(WorkspaceToolLibrary),
         Box::new(ImageToolLibrary),
         Box::new(AttachmentToolLibrary),
+        Box::new(WebToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
         Box::new(MemoryLibrary),

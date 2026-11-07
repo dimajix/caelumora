@@ -38,6 +38,7 @@ flowchart TD
         tool_attachment["caelumora-tool-attachment"]
         tool_image["caelumora-tool-image"]
         tool_mcp["caelumora-tool-mcp"]
+        tool_web["caelumora-tool-web"]
         tool_workspace["caelumora-tool-workspace"]
     end
 
@@ -65,7 +66,7 @@ flowchart TD
     plugins --> kernel
     model_comfyui & model_ollama --> model
     decision & kernel & open_terminal & rest_server & store & store_json & store_postgres --> security
-    a2a & compaction & tool_attachment & tool_image & tool_mcp & tool_workspace --> agents
+    a2a & compaction & tool_attachment & tool_image & tool_mcp & tool_web & tool_workspace --> agents
     libraries --> api
     tool_workspace --> compaction
     libraries --> domain
@@ -132,8 +133,8 @@ their subject (issue 531): a backend of a service by the service - `caelumora-mo
 `caelumora-model-comfyui` of the models, `caelumora-store-json` and `caelumora-store-postgres` of
 the stores -, and a library that brings an agent tools on a subject that is another's by `tool` -
 `caelumora-tool-image` on the image models, `caelumora-tool-workspace` on the kernel's workspace,
-`caelumora-tool-attachment` on the attachments of a channel, `caelumora-tool-mcp` on MCP servers. A
-plugin that brings a service of its own with its manager is
+`caelumora-tool-attachment` on the attachments of a channel, `caelumora-tool-mcp` on MCP servers,
+`caelumora-tool-web` on the web. A plugin that brings a service of its own with its manager is
 named after its subject, though it brings tools as well, which are a part of it:
 `caelumora-skills`, `caelumora-artifacts`. The name of a crate's plugin or library, and the
 namespace of its texts, is the crate's name without `caelumora-`, with `_` for `-` (`tool_image`);

@@ -1,6 +1,6 @@
 # 544 — Agents cannot reach the web
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -159,3 +159,20 @@ host, the server's own REST API.
   it - the maintainer's own instance mostly answers with no results), Exa (opaque billing of
   content). Brave and SearXNG may follow as further providers; the acquisition of Tavily by Nebius,
   announced in February 2026, is the open risk.
+- **2026-11-07** — Planned with the maintainer: a library `caelumora-tool-web` with two component
+  kinds, `web_fetch` (tool `fetch_page`) and `web_search` (tool `search_web`), neither asking for
+  approval unless configured; `web_search` names its `provider` from the start, `"tavily"` its one
+  value. A fetch goes through the proxy the environment names, since the server has to use it;
+  where it connects itself - an address in the URL, a host `NO_PROXY` excepts, a redirect - it
+  refuses loopback, private and link-local addresses, while through the proxy the proxy decides
+  (issue [545](545-web-fetch-through-the-proxy-reaches-anything.md)). A long page is given a page
+  at a time, as `read_file` gives a file (`start_line`, `line_count`), not by an `offset`. Steps:
+  1. the library and `web_fetch`; 2. `web_search` with Tavily; 3. the presentations of both in
+  the web UI.
+- **2026-11-07** — Step 1 done: the library `caelumora-tool-web` with the kind `web_fetch` and its
+  tool `fetch_page`, in `component/web_fetch` - a child of `component` per kind, as COMPONENTS.md
+  now says for a crate with several. A page is decoded by the charset its type names; a URL that
+  names a proxy's host is not followed, so that the resolver connects to a proxy wherever it lies
+  but fetches no page from it; a derived rule matches the host in any case. Left as they are: a
+  host written in Unicode, whose derived rule asks again; pages a browser would read in another
+  charset by a `meta` element.

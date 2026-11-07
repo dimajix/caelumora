@@ -271,6 +271,43 @@ tool names no backend; where and how a model generates is its backend's - ComfyU
     `description`. The result is classified as the turn's label: it follows from the arguments
     alone.
 
+## Pages of the web
+
+A `web_fetch` component (issue 544, library `caelumora-tool-web`) fetches pages of the web by their
+URL, with the tool `fetch_page`:
+
+```yaml
+- id: web-fetch
+  kind: web_fetch
+```
+
+*   **What it gives.** A page of HTML as Markdown, without what only a browser needs - scripts,
+    styles, frames, the controls of forms - or what stands around the content - navigation, a
+    site's footer, sidebars (`aside`) -; plain text and JSON as they are, decoded by the charset
+    their type names, as UTF-8 where it names none. A page of another type - a PDF, an image - or
+    of none is refused, naming the type, as is one larger than 5 MiB. The text is given a page at a
+    time, as `read_file` gives a file (`start_line`, `line_count`, 64 KiB at once), with the URL
+    the page was found at, after redirects, and its title. Every call fetches the page again;
+    nothing is cached. What failed names the URL without credentials, query and fragment.
+*   **What it reaches.** `http` and `https` alone, at most five redirects. A fetch goes through the
+    proxy the environment names (`HTTPS_PROXY`, `NO_PROXY`), as the server reaches the internet.
+    Where it connects itself - to an address written in the URL, to a host the proxy is not asked
+    for, at every redirect - it refuses an address inside the network: the host itself, private,
+    shared and link-local networks, and what is reserved. A name is judged by every address it
+    resolves to, as it is resolved for the connection, so that what was judged is what is reached.
+    The connection to a proxy is made wherever it lies, but no page is fetched from a proxy's host.
+    Through the proxy, the proxy decides what is reached (issue
+    [545](../issues/545-web-fetch-through-the-proxy-reaches-anything.md)).
+*   **Confidentiality.** What a URL carries goes to anyone: the tool set's destination is `public`,
+    not configurable, so the tool is offered in public channels alone. A page is classified
+    `public`, as anything anyone can fetch. What it says is written by anyone - the tool's
+    description tells the model to follow no instructions in it; what bounds such text is what the
+    agent may do afterwards, not the fetch.
+*   **Approval.** `requires_approval` (`false` unless given: a fetch only reads, and its URL may
+    carry only what is public). A rule derived from a call is about the pages of its host, by
+    `http` or `https` and on any port, not about the one page.
+*   **Parameters.** `requires_approval` and `description`.
+
 ## Built-in tools
 
 The tools that come with Caelumora are listed with the components that offer them, their parameters

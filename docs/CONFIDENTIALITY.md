@@ -367,10 +367,11 @@ As for an external agent, the remote side is judged at the door, not per call: n
 channel is classified above it.
 
 An `mcp_server` is cleared for what its `destination` says, `public` unless configured: the server's
-word is trusted only where an operator gave it. A set without a destination keeps its arguments in
-the system, or is bounded otherwise - `workspace`'s storage by its own ceiling, the workspace by
-the flow rule at every call. A turn keeps the tools it began with; a channel raised during it
-re-judges them at the next turn.
+word is trusted only where an operator gave it. A `web_fetch` is cleared for `public` alone, and
+cannot be configured otherwise: what a URL carries goes to whoever runs the host it names, which is
+anyone. A set without a destination keeps its arguments in the system, or is bounded otherwise -
+`workspace`'s storage by its own ceiling, the workspace by the flow rule at every call. A turn keeps
+the tools it began with; a channel raised during it re-judges them at the next turn.
 
 ### Reasoning
 

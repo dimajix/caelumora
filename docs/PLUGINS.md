@@ -71,8 +71,8 @@ it registers, a plugin
     of its own, from a file it compiles in - `decision` from its `src/prompts.yaml`, as a library
     adds its own (`LibraryBuilder::add_prompts`): the agents' `agents`, from
     `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `tool_workspace`, `artifacts`,
-    `memory`, `tool_image` and `tool_attachment` from a `src/prompts.yaml` of their own -; its
-    component kinds that write for a model use the catalogue as a service (see
+    `memory`, `tool_image`, `tool_attachment` and `tool_web` from a `src/prompts.yaml` of their
+    own -; its component kinds that write for a model use the catalogue as a service (see
     [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that names another plugin's tool
     writes its name as text: it does not know it as a value;
 *   is handed the kernel's storages of content (`content_storages`, issue 282) for what it keeps
@@ -125,9 +125,9 @@ the agent side: what runs an agent - `caelumora-agents`, the essential one, whic
 of agent and the built-in components (issue 370) - or brings components for an agent's facets -
 `caelumora-tool-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-tool-workspace` (issue
 428), `caelumora-compaction` (issue 464), `caelumora-tool-image` (issue 525),
-`caelumora-tool-attachment` (issue 533), and the library sides of `caelumora-skills`,
-`caelumora-artifacts` and `caelumora-memory` (`SkillsLibrary`, `ArtifactsLibrary`,
-`MemoryLibrary`). It is linked into the program as a
+`caelumora-tool-attachment` (issue 533), `caelumora-tool-web` (issue 544), and the library sides
+of `caelumora-skills`, `caelumora-artifacts` and `caelumora-memory` (`SkillsLibrary`,
+`ArtifactsLibrary`, `MemoryLibrary`). It is linked into the program as a
 plugin is, but trusted for nothing, and links the kernel's API
 (`caelumora-api`), the domain and other libraries, never the kernel, `caelumora-security` or
 `caelumora-store`: they are dev-dependencies of its tests alone, which build the kernel's world -

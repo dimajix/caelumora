@@ -1,0 +1,30 @@
+[package]
+name = "caelumora-tool-web"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+caelumora-domain.workspace = true
+caelumora-api.workspace = true
+caelumora-agents.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+encoding_rs.workspace = true
+htmd.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+url.workspace = true
+
+[dev-dependencies]
+caelumora-agents = { workspace = true, features = ["test-support"] }
+caelumora-kernel = { workspace = true, features = ["test-support"] }
+axum.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+[lints]
+workspace = true
