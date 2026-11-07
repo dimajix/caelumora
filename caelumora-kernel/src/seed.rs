@@ -1,9 +1,7 @@
-//! Demo data a binary puts into its stores at startup (issue 105): the
-//! files `AppConfig::seed` names, each holding component bundles,
-//! personalities and session templates as the stores keep them
-//! (`examples/seed.yaml`), and the sections of the plugins - the skills
-//! among them (issue 323).
-//! One definition for the REST server and the TUI alike
+//! Demo data a binary puts into its stores at startup (issue 105): the files `AppConfig::seed`
+//! names - a directory naming the files in it -, each holding component bundles, personalities and
+//! session templates as the stores keep them (`examples/seed`), and the sections of the plugins,
+//! the skills among them (issue 323). One definition for the REST server and the TUI alike
 //! (`Kernel::seed`).
 
 use anyhow::{bail, Context, Result};
@@ -162,23 +160,61 @@ pub async fn create_unless_taken<T: Stored>(
     store.create(&SecurityContext::system(), value).await.created().map(|created| created.is_some())
 }
 
-/// Reads and applies the seed files `paths`, in order, to `stores` and
-/// through the plugins' `sections`, the roles they name resolved by
-/// `confidentiality`.
+/// Reads and applies the seed files `paths` name (`files`), in order, to `stores` and through the
+/// plugins' `sections`, the roles they name resolved by `confidentiality`.
 ///
 /// # Errors
-/// As `Seed::read` and `Seed::apply`.
+/// As `files`, `Seed::read` and `Seed::apply`.
 pub async fn load(
     stores: &EntityStores,
     confidentiality: &dyn ConfidentialityPolicy,
     sections: &BTreeMap<String, Arc<dyn SeedSection>>,
     paths: &[PathBuf],
 ) -> Result<()> {
-    for path in paths {
-        Seed::read(path)?
+    for path in files(paths)? {
+        Seed::read(&path)?
             .apply(stores, confidentiality, sections)
             .await
             .with_context(|| format!("Cannot seed the stores from {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// The seed files `paths` name, in their order: a file as it is, a directory as the `.yaml` files
+/// in it and in its subdirectories, ordered by their paths - what else lies there, a README say, is
+/// no seed. Unlike a variant of the prompts, whose files are named after their namespaces, a seed
+/// directory is searched in depth: its documents are sorted into directories of their own, one per
+/// section. A link to a directory is not followed, so that one to a directory above it cannot make
+/// the search endless.
+///
+/// # Errors
+/// If a directory cannot be read.
+pub fn files(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for path in paths {
+        if path.is_dir() {
+            let mut found = Vec::new();
+            collect_yaml(path, &mut found)?;
+            found.sort();
+            files.extend(found);
+        } else {
+            files.push(path.clone());
+        }
+    }
+    Ok(files)
+}
+
+/// Adds the `.yaml` files in the directory `dir` and its subdirectories to `found`.
+fn collect_yaml(dir: &Path, found: &mut Vec<PathBuf>) -> Result<()> {
+    let unreadable = || format!("Cannot read the seed directory {}", dir.display());
+    for entry in fs::read_dir(dir).with_context(unreadable)? {
+        let entry = entry.with_context(unreadable)?;
+        let path = entry.path();
+        if entry.file_type().with_context(unreadable)?.is_dir() {
+            collect_yaml(&path, found)?;
+        } else if path.extension().is_some_and(|extension| extension == "yaml") {
+            found.push(path);
+        }
     }
     Ok(())
 }
@@ -191,6 +227,8 @@ mod tests {
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::Policies;
     use caelumora_store::Persistence;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
     use std::sync::Mutex;
 
     /// The policy of the example configuration, which knows the roles the
@@ -263,5 +301,39 @@ mod tests {
             .map(|page| page.items)
             .unwrap();
         assert!(stored.is_empty(), "nothing stored");
+    }
+
+    /// A directory names the `.yaml` files in it and its subdirectories, by their paths; a file is
+    /// named as it is, in its place among them.
+    #[test]
+    fn a_directory_names_the_yaml_files_in_it_ordered_by_their_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let seed = dir.path().join("seed");
+        fs::create_dir_all(seed.join("personalities")).unwrap();
+        for file in ["templates.yaml", "personalities/b.yaml", "personalities/a.yaml", "README.md"]
+        {
+            fs::write(seed.join(file), "").unwrap();
+        }
+        let single = dir.path().join("more.yaml");
+        assert_eq!(
+            files(&[single.clone(), seed.clone()]).unwrap(),
+            [
+                single,
+                seed.join("personalities/a.yaml"),
+                seed.join("personalities/b.yaml"),
+                seed.join("templates.yaml"),
+            ]
+        );
+        assert!(files(&[]).unwrap().is_empty());
+    }
+
+    /// A link to a directory is not followed: one to a directory above it would search without end.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_directory_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("a.yaml"), "").unwrap();
+        symlink(dir.path(), dir.path().join("up")).unwrap();
+        assert_eq!(files(&[dir.path().to_path_buf()]).unwrap(), [dir.path().join("a.yaml")]);
     }
 }

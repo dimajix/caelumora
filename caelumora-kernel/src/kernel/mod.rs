@@ -120,8 +120,8 @@ pub struct Kernel {
 }
 
 impl Kernel {
-    /// Puts what the seed files `paths` hold into the stores (issue 105): the kernel's sections and
-    /// those the plugins claimed.
+    /// Puts what the seed files `paths` name hold into the stores (issue 105, `seed::files`): the
+    /// kernel's sections and those the plugins claimed.
     ///
     /// # Errors
     /// As `seed::load`.

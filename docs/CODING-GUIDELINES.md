@@ -31,7 +31,8 @@ against this list, rule by rule, before it is reported (the self-review of
     [Types](#types).
 *   Errors in a turn end the turn, not the agent: don't let a turn-time error escape
     `AgentActor::run` ([Errors in a turn](#errors-in-a-turn-end-the-turn-not-the-agent)).
-*   Error messages name what failed and never contain secret values or file paths
+*   Error messages name what failed and never contain secret values or file paths - but those of
+    reading the configuration at startup, which name the file
     ([Messages name what failed](#messages-name-what-failed)).
 *   Log through `tracing`, never through `log` or `println!`; message content only at `trace!`,
     credentials never ([Logging](#logging); clippy checks `println!`).
@@ -429,7 +430,11 @@ Errors carry what failed, and only what may be shown goes to users.
     `caelumora_api::error::describe_chain`; for a failed request without the URL `reqwest` writes
     into it, `describe_request_error`). `ModelError` names the endpoint, the model and the backend's
     own explanation (`Connection`, `Rejected`, `Backend`, `InvalidResponse`).
-*   Messages never contain secret values or file paths, because they may be shown to users.
+*   Messages never contain secret values or file paths, because they may be shown to users. The
+    one exception are the errors of reading the configuration at startup - the configuration file,
+    the seed files (`caelumora_kernel::seed`), the files of the prompt variants and workflows -:
+    only the operator who starts the program sees them, and of several files the one that failed
+    is not found without its path. Secret values stay out of them as well.
 
 ### What users see
 
