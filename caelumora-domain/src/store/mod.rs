@@ -275,8 +275,8 @@ pub trait Stored: Secured + Clone + Serialize + DeserializeOwned + Send + Sync +
         Ok(())
     }
 
-    /// How it is classified - a channel, a workspace, a skill, an artifact
-    /// -, `None` for a kind that is not. Whoever reaches it through the store
+    /// How it is classified - a channel, a workspace, a skill, an artifact -,
+    /// `None` for a kind that is not. Whoever reaches it through the store
     /// must be cleared for it (issue 322).
     fn classification(&self) -> Option<&Classification> {
         None

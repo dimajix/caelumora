@@ -1490,8 +1490,8 @@ async fn an_artifact_of_a_shared_project_outlives_the_session_it_was_published_i
     assert_eq!(in_project(&alice).await.len(), 1, "found through the project still");
 }
 
-/// Issue 467: an artifact is published into a project its publisher reads - asked in their name
-/// -, and under a name in a project's scope alone, which the caller vouches for.
+/// Issue 467: an artifact is published into a project its publisher reads - asked in their name -,
+/// and under a name in a project's scope alone, which the caller vouches for.
 #[tokio::test]
 async fn publishing_into_a_project_needs_reading_it() {
     let world = world().await;

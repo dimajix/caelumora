@@ -110,10 +110,10 @@ name for crate, plugin type, plugin name and section (`caelumora-store-json`, `J
 
 ### Tests
 
-None new: the rename is checked by the build, the tests as they are, clippy, and the checks of the
-pre-commit hook - `library-deps.sh` (whose check of the API names the domain), `crate-graph.sh
---check`, the builds of the crates on both levels. `grep` for the old names finds none outside the
-issues, `work/` and the record in CRATES.md.
+None new: the rename is checked by the build, the tests as they are, clippy, and the checks of
+the pre-commit hook - `library-deps.sh` (whose check of the API names the domain),
+`crate-graph.sh --check`, the builds of the crates on both levels. `grep` for the old names finds
+none outside the issues, `work/` and the record in CRATES.md.
 
 ## Done when
 

@@ -1,6 +1,6 @@
 //! What an agent's model is given (issue 47): the facets that build it - a
-//! `ContextProvider` assembles it, `PromptProvider`s contribute prompt parts
-//! -, what their components share, and the built-in components that provide
+//! `ContextProvider` assembles it, `PromptProvider`s contribute prompt parts -,
+//! what their components share, and the built-in components that provide
 //! them alone, one file per component kind. An agent has exactly one
 //! `ContextProvider` and any number of `PromptProvider`s (issue 98). A
 //! component that offers a prompt part along with another facet - tools,

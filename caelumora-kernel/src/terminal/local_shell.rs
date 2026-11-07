@@ -1,5 +1,5 @@
-//! The shell of the `local` provider (issue 251): commands run with `bash
-//! -c` in the workspace's directory on Caelumora's host, as its user - so it
+//! The shell of the `local` provider (issue 251): commands run with `bash -c`
+//! in the workspace's directory on Caelumora's host, as its user - so it
 //! is opt-in (`shell` of the storage) and meant for development and tests.
 //!
 //! - Each command runs in a process group of its own, and killing it kills

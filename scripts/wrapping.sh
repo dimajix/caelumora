@@ -17,10 +17,11 @@
 # counted, not bytes. A line is not too long where it may not be wrapped: a heading, a table row, a
 # line in a code block, a field line such as `**Summary:**`, and a line that has no space to break
 # at within its first 100 characters outside a link - a link is not broken, not even in its text. A
-# line that begins with `- ` goes on with the sentence of the line before where that line belongs to
-# the same comment, its prose begins where the dash stands - after the list marker, if it is a list
-# item -, is no heading or table row, and does not end in `.`, `:`, `?`, `!` or `**`; otherwise the
-# dash begins a list item. Every line found is printed as `file:line: 112 characters` or `file:line:
+# line that begins with a dash - `- `, or `-,` and `--all` as much, but for a line of dashes alone -
+# goes on with the sentence of the line before where that line belongs to the same comment, its
+# prose begins where the dash stands - after the list marker, if it is a list item -, is no heading
+# or table row, and does not end in `.`, `:`, `?`, `!` or `**`; otherwise the dash begins a list
+# item. Every line found is printed as `file:line: 112 characters` or `file:line:
 # begins with a dash`, and the script fails if there is one.
 set -eu
 
@@ -109,7 +110,7 @@ FNR == 1 { fence = 0; prior = ""; prior_comment = ""; rust = FILENAME ~ /\.rs$/;
     sub(/^[ \t]+/, "", text)
     lead = length(line) - length(text)
     indent = lead - mark
-    dash = text ~ /^- /
+    dash = text ~ /^-/ && text !~ /^-+$/
     if (match(text, /^([*+-]|[0-9]+\.)[ \t]+/)) {
         lead += RLENGTH
         text = substr(text, RLENGTH + 1)

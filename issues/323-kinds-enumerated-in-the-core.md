@@ -449,10 +449,11 @@ made. The design:
 
 ## Implementation plan
 
-After *restructure, then extend*: steps 1 to 8 open the core without a plugin, each a change of
-its own on its own branch without a behaviour change, reviewable alone; step 9 moves skills out,
-which shows whether the seams hold. Every step runs the tests and `cargo clippy --workspace
---all-targets`, updates the documents it names, and says which stored data has to be deleted.
+After *restructure, then extend*: steps 1 to 8 open the core without a plugin, each a
+change of its own on its own branch without a behaviour change, reviewable alone; step 9
+moves skills out, which shows whether the seams hold. Every step runs the tests and `cargo
+clippy --workspace --all-targets`, updates the documents it names, and says which stored
+data has to be deleted.
 
 ### Step 1 - `ActionType` by resource and verb (cuts 1-3, in part)
 
@@ -736,8 +737,8 @@ Step 3f: session templates on their own store. They have no manager: `ScopedEnti
 store, made from `&EntityStores` as the managers are, the `SessionManager`, the seed, the REST
 route of templates and the terminal frontend take it from `EntityStores`.
 
-Step 3g: user profiles on their own store. The `UserController` keeps it - the only store it used
--, the member view of a user and the preferred language of a new session or channel read it, and
+Step 3g: user profiles on their own store. The `UserController` keeps it - the only store it used -,
+the member view of a user and the preferred language of a new session or channel read it, and
 the REST route of the profile takes it from `EntityStores`.
 
 Step 3h: personalities on their own store. They have no manager either: `ScopedEntities` keeps the
