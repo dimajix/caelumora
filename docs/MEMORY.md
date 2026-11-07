@@ -134,7 +134,8 @@ skills.
 *   **Taken over on the current state.** A turn's changes are checked and applied by the plugin's
     manager to the memory as it is stored when the turn is taken over, under a lock per agent, so
     that actors of the same agent in other channels and sessions neither lose nor overwrite each
-    other's changes. Where a change was made - the channel, and the privacy its session has then -
+    other's changes; changed meanwhile by another process, the memory is read and checked again.
+    Where a change was made - the channel, and the privacy its session has then -
     the plugin derives from the place of the work, never from what the agent side tells.
 *   **Numbers.** Unlike a note's, the number of a new entry is reserved at once by the plugin, which
     counts on from the memory as stored, since turns in several channels may remember at the same

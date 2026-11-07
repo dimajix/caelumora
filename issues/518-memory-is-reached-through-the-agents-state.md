@@ -462,3 +462,10 @@ Stored memories are deleted, not migrated: a migration would be code without a l
   state is judged), PERMISSION-CHECKS.md (`ReclassifyMemory`, the memory's reading and commit),
   CHANNELS.md, AGENT-TURN.md and COMPONENTS.md; the graph of CRATES.md was written in step 3. Every
   point of *Done when* holds: done.
+- **2026-11-07** — After the step 4 review, as the maintainer decided: a commit to an agent's memory
+  that another process outdated is read again, judged again and written once more
+  (`MemoryManager::apply`), as every writer of a document does; a memory stored but unreadable in
+  the work's context is a conflict rather than made again. Whether the memory announces its changes
+  stays to be decided. `scripts/wrapping.sh` finds every line of prose that begins with a dash -
+  `-,` and `--all` as much as `- ` -, the lines it then found rewrapped, in three resolved issues
+  too, their text unchanged.

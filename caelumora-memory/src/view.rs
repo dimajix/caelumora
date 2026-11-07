@@ -125,7 +125,8 @@ impl Committing<MemoryChange> for MemoryUse {
     /// is the work's to make: a new entry of a number reserved and never given, nor added before in
     /// `changes`; an entry changed that may be recalled here or was added before in `changes`; each
     /// classified within the work, and reclassified as the policy lets it. Judged under the agent's
-    /// lock, on the memory as `MemoryManager::apply` reads it there.
+    /// lock, on the memory as `MemoryManager::apply` reads it there - again, where another process
+    /// changed it meanwhile.
     ///
     /// Who reserved a number is not kept: a number another turn of the agent reserved and has not
     /// committed yet passes as one of this turn's.
@@ -134,9 +135,12 @@ impl Committing<MemoryChange> for MemoryUse {
         let origin =
             MemoryOrigin { channel: self.here.channel, session: self.here.session.clone() };
         self.manager
-            .apply(context, self.agent, origin, after, async |memory: &AgentMemory| {
-                self.check(memory, &changes).await?;
-                Ok(changes)
+            .apply(context, self.agent, origin, after, |memory| {
+                let changes = changes.clone();
+                async move {
+                    self.check(&memory, &changes).await?;
+                    Ok(changes)
+                }
             })
             .await
     }
