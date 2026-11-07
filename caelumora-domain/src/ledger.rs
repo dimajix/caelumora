@@ -134,6 +134,13 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
         items
     }
 
+    /// Whether `id` was ever given to an entry, on any branch - one removed
+    /// since included: a number that is not given again.
+    pub fn has_given(&self, id: K::Id) -> bool {
+        let id: u32 = id.into();
+        self.all_entries().any(|e| added(&e.entry.change) == Some(id))
+    }
+
     /// The number the next entry gets: one more than any entry ever added,
     /// on any branch.
     pub fn next_id(&self) -> K::Id {

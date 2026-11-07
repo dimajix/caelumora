@@ -1,245 +1,132 @@
-//! What an agent remembers across its channels and sessions (issue 62),
-//! read and changed within a turn.
+//! What an agent remembers across its channels and sessions (issue 62), as a turn sees and changes
+//! it.
 //!
-//! The memory is part of the agent's `AgentState`; `Turn` offers only
-//! plain access to it - a snapshot, staging `MemoryChange`s that
-//! `commit` applies when the turn completes. [`AgentMemory`] is the
-//! logic on top: which entries may
-//! be recalled in the turn's channel - as the policy decides, asked in the
-//! agent's name (issue 131) - remembering, updating, forgetting and
-//! reclassifying. The
-//! `agent_memory` component uses it for its tools and prompt part; anything
-//! else that works with an agent's memory in a turn uses it too. What it
-//! needs of the session - its privacy, and that of the sessions entries
-//! come from - it reads through the turn's reader of its session
-//! (`Situation::session`, issues 163, 516).
+//! The memory is the kernel's to keep and to decide about (issue 518): a work reads what it may
+//! recall where it reads from through the `MemoryReader` of its situation, and a turn reserves the
+//! number of a new entry through the `MemoryWriter` it is given. What a turn changes it stages
+//! (`Turn::stage`), and the kernel commits it when the turn completes, checking every change and
+//! deriving where it was made. [`AgentMemory`] is the logic on top: remembering, updating,
+//! forgetting and reclassifying, each only of what the turn sees - an entry recalled here, or one
+//! it remembered itself -, so that a tool can answer its model at once. The `agent_memory`
+//! component uses it for its tools.
 
-use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
-use caelumora_api::reader::SessionReader;
-use caelumora_api::runtime::OwnRecord;
-use caelumora_domain::confidentiality::{Classification, Place};
-use caelumora_domain::digest::Digest;
-use caelumora_domain::ledger::Staged;
-use caelumora_domain::memory::{Memories, Memory, MemoryChange, MemoryId, MemoryOrigin};
-use caelumora_domain::privacy::SessionPrivacy;
-use caelumora_domain::session::SessionId;
-use tracing::warn;
+use caelumora_api::memory::{MemoryReader, MemoryWriter};
+use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::memory::{MemoryChange, MemoryId};
+use std::sync::Arc;
 
 /// An agent's memory as a turn sees it: every function takes the turn.
 pub(crate) struct AgentMemory;
 
 impl AgentMemory {
-    /// What may be recalled in `turn`'s channel: entries written in a channel it may read, as the
-    /// memory is now - without the turn's own changes. Whether it may is asked of the kernel in the
-    /// work's context - the agent's, with its owner's rights (`Situation::may_copy_information`,
-    /// issues 131, 255, 516), once per channel, classification and session the entries come with;
-    /// the turn's channel is judged by the classification the turn began with.
+    /// Remembers `text`, classified as the turn has seen so far (`Situation::label`, issue 168):
+    /// committed when the turn completes. Returns its number.
     ///
-    /// An entry of another session (issue 134) is recalled only where both
-    /// the privacy its session had when it was written and the one it has
-    /// now permit it - looked up through the turn's views. Of a session
-    /// that is gone, the one it had decides; one that cannot be looked up
-    /// recalls nothing. A turn in no session recalls nothing.
-    pub(crate) async fn recalled(situation: &Situation<'_>) -> Vec<Memory> {
-        let Some(own) = Self::own_session(situation).await else { return Vec::new() };
-        let Some(here) = own.place().cloned() else { return Vec::new() };
-        let memory = situation.agent_state().memory.current();
-        let mut sessions: Vec<(SessionId, Option<SessionPrivacy>)> = Vec::new();
-        let mut decided: Vec<(MemoryOrigin, Classification, bool)> = Vec::new();
-        let mut recalled = Vec::new();
-        for entry in memory {
-            let known = decided
-                .iter()
-                .find(|(origin, c, _)| *origin == entry.origin && *c == entry.classification)
-                .map(|(.., readable)| *readable);
-            let readable = match known {
-                Some(readable) => readable,
-                None => {
-                    let readable =
-                        Self::may_recall(&entry, &here, own.as_ref(), &mut sessions, situation)
-                            .await;
-                    decided.push((entry.origin.clone(), entry.classification.clone(), readable));
-                    readable
-                }
-            };
-            if readable {
-                recalled.push(entry);
-            }
-        }
-        recalled
-    }
-
-    /// Whether `entry` may be recalled in the channel `here` (see
-    /// [`recalled`](Self::recalled)). `sessions` holds the privacy of the
-    /// other sessions looked up so far - `None` for one that is gone.
-    async fn may_recall(
-        entry: &Memory,
-        here: &Place,
-        session: &dyn SessionReader,
-        sessions: &mut Vec<(SessionId, Option<SessionPrivacy>)>,
-        situation: &Situation<'_>,
-    ) -> bool {
-        let origin = &entry.origin;
-        // Where it was written, with its session as privacy sees it then or now.
-        let source = |session: SessionPrivacy| Place {
-            channel: origin.channel,
-            classification: entry.classification.clone(),
-            session,
-        };
-        if origin.session.id == here.session.id {
-            return situation.may_copy_information(&source(here.session.clone()), here);
-        }
-        if !situation.may_copy_information(&source(origin.session.clone()), here) {
-            return false;
-        }
-        let id = origin.session.id;
-        let current = match sessions.iter().find(|(known, _)| *known == id) {
-            Some((_, current)) => current.clone(),
-            None => match session.privacy_of(id).await {
-                Ok(current) => {
-                    sessions.push((id, current.clone()));
-                    current
-                }
-                Err(e) => {
-                    warn!("Looking up session {} to recall from failed: {}", id, e);
-                    return false;
-                }
-            },
-        };
-        match current {
-            Some(current) => situation.may_copy_information(&source(current), here),
-            None => true,
-        }
-    }
-
-    /// The digest of the memory as it is now: the state of knowledge a turn
-    /// that recalls from it records.
-    pub(crate) fn digest(situation: &Situation) -> Option<Digest> {
-        situation.agent_state().memory.digest()
-    }
-
-    /// Remembers `text`, as written in the turn's channel, with the privacy its session has now
-    /// (issue 134) and classified as the turn has seen so far (`Situation::label`, issue 168):
-    /// taken over when the turn completes. Returns its number.
-    ///
-    /// Unlike a note's, the number is reserved on the agent's shared state
-    /// (`Turn::reserve_memory_id`) instead of being derived from the memory and the turn's staged
+    /// Unlike a note's, the number is reserved at once on the agent's shared state
+    /// (`MemoryWriter::reserve_id`) instead of being derived from the memory and the turn's staged
     /// changes: several actors of one agent - in other channels and sessions - remember at the same
     /// time, and would otherwise hand out the same number. Deliberately the one exception to
     /// "commit, don't write" (issue 19).
-    pub(crate) async fn remember(turn: &mut Turn<'_>, text: String) -> MemoryId {
-        let classification = turn.situation().label();
-        let id = turn.reserve_memory_id();
-        let origin = Self::origin(turn).await;
-        turn.stage_memory(MemoryChange::Add { id, text, classification }, origin);
-        id
-    }
-
-    /// The memory as it stands with the changes of the current turn in it
-    /// (issue 156) - every entry, recallable here or not.
-    pub(crate) fn effective(turn: &Turn) -> Staged<Memories> {
-        let staged = turn.staged_memory().iter().map(|(change, origin)| (change, origin.clone()));
-        turn.situation().agent_state().memory.with_staged(staged)
-    }
-
-    /// Entry `id` as it stands with the turn's changes, if it does and is
-    /// the agent's to change here: remembered earlier in this turn, or one
-    /// that may be recalled here - asked of the policy for this entry alone,
-    /// as in [`recalled`](Self::recalled).
-    pub(crate) async fn find(turn: &Turn<'_>, id: MemoryId) -> Option<Memory> {
-        let entry = Self::effective(turn).get(id)?.clone();
-        let Some(stored) =
-            turn.situation().agent_state().memory.current().into_iter().find(|m| m.id == id)
-        else {
-            return Some(entry);
-        };
-        let situation = turn.situation();
-        let own = Self::own_session(&situation).await?;
-        let here = own.place()?.clone();
-        Self::may_recall(&stored, &here, own.as_ref(), &mut Vec::new(), &situation)
-            .await
-            .then_some(entry)
-    }
-
-    /// Updates entry `id` - one the turn may change (see
-    /// [`find`](Self::find)) - to say `text` when the turn completes (issue
-    /// 302): classified as the turn has seen so far and written in its
-    /// channel, as an entry it remembers is, and recalled from then on where
-    /// one remembered here would be. Returns whether there was one.
-    pub(crate) async fn update(turn: &mut Turn<'_>, id: MemoryId, text: String) -> bool {
-        if Self::find(turn, id).await.is_none() {
-            return false;
-        }
-        let classification = turn.situation().label();
-        let origin = Self::origin(turn).await;
-        turn.stage_memory(MemoryChange::Update { id, text, classification }, origin);
-        true
-    }
-
-    /// Forgets entry `id` - one the turn may change (see
-    /// [`find`](Self::find)) - when the turn completes. Returns whether
-    /// there was one.
-    pub(crate) async fn forget(turn: &mut Turn<'_>, id: MemoryId) -> bool {
-        if Self::find(turn, id).await.is_none() {
-            return false;
-        }
-        let origin = Self::origin(turn).await;
-        turn.stage_memory(MemoryChange::Remove { id }, origin);
-        true
-    }
-
-    /// Reclassifies entry `id` as `classification` (issue 133) - one the turn may change (see
-    /// [`find`](Self::find)) - if the kernel lets the agent (`Turn::may_reclassify`, issue 516):
-    /// never above the turn's channel. Taken over when the turn completes; from then on the entry
-    /// is recalled where its new classification may be read.
     ///
     /// # Errors
-    /// `InvalidParameter` if there is no such entry here, `PermissionDenied`
-    /// if the policy refuses.
+    /// `ExecutionFailed` where the memory cannot be reached - a turn in no session -, or the
+    /// change cannot be kept with the turn.
+    pub(crate) async fn remember(turn: &mut Turn<'_>, text: String) -> ToolResult<MemoryId> {
+        let id = Self::writer(turn).await?.reserve_id();
+        let classification = turn.situation().label();
+        Self::stage(turn, MemoryChange::Add { id, text, classification })?;
+        Ok(id)
+    }
+
+    /// Updates entry `id` - one the turn sees (`knows`) - to say `text` when the turn completes
+    /// (issue 302): classified as the turn has seen so far and written in its channel, as an entry
+    /// it remembers is, and recalled from then on where one remembered here would be. Returns
+    /// whether there was one.
+    ///
+    /// # Errors
+    /// As `remember`.
+    pub(crate) async fn update(
+        turn: &mut Turn<'_>,
+        id: MemoryId,
+        text: String,
+    ) -> ToolResult<bool> {
+        if !Self::knows(turn, id).await? {
+            return Ok(false);
+        }
+        let classification = turn.situation().label();
+        Self::stage(turn, MemoryChange::Update { id, text, classification })?;
+        Ok(true)
+    }
+
+    /// Forgets entry `id` - one the turn sees (`knows`) - when the turn completes. Returns whether
+    /// there was one.
+    ///
+    /// # Errors
+    /// As `remember`.
+    pub(crate) async fn forget(turn: &mut Turn<'_>, id: MemoryId) -> ToolResult<bool> {
+        if !Self::knows(turn, id).await? {
+            return Ok(false);
+        }
+        Self::stage(turn, MemoryChange::Remove { id })?;
+        Ok(true)
+    }
+
+    /// Reclassifies entry `id` as `classification` (issue 133) - one the turn sees (`knows`) - if
+    /// the kernel lets the agent (`MemoryWriter::may_reclassify`): never above the turn's channel.
+    /// Committed when the turn completes; from then on the entry is recalled where its new
+    /// classification may be read.
+    ///
+    /// # Errors
+    /// `InvalidParameter` if there is no such entry here, `PermissionDenied` if the policy refuses,
+    /// or as `remember`.
     pub(crate) async fn reclassify(
         turn: &mut Turn<'_>,
         id: MemoryId,
         classification: Classification,
     ) -> ToolResult<()> {
-        if Self::find(turn, id).await.is_none() {
+        if !Self::knows(turn, id).await? {
             return Err(ToolError::InvalidParameter(format!(
                 "there is no entry #{id} you remember here"
             )));
         }
-        if !turn.may_reclassify(OwnRecord::Memory, &classification).await {
+        if !Self::writer(turn).await?.may_reclassify(&classification).await {
             return Err(ToolError::PermissionDenied(format!(
                 "reclassifying entry #{id} as {classification}"
             )));
         }
-        let origin = Self::origin(turn).await;
-        turn.stage_memory(MemoryChange::Reclassify { id, classification }, origin);
-        Ok(())
+        Self::stage(turn, MemoryChange::Reclassify { id, classification })
     }
 
-    /// Where a change made in `turn` is made: its channel, and the privacy
-    /// its session has now (issue 134) - private, for a turn in no session.
-    async fn origin(turn: &Turn<'_>) -> MemoryOrigin {
-        let own = Self::own_session(&turn.situation()).await;
-        let session = own.as_deref().and_then(SessionReader::place).map_or_else(
-            || SessionPrivacy { id: turn.situation().session_id(), ..SessionPrivacy::default() },
-            |place| place.session.clone(),
-        );
-        MemoryOrigin { channel: turn.situation().channel_id(), session }
+    /// Whether entry `id` stands as the turn sees it, and is the turn's to change: recalled here
+    /// (`MemoryReader::recalled`), or remembered in the turn - and not forgotten in it since.
+    async fn knows(turn: &Turn<'_>, id: MemoryId) -> ToolResult<bool> {
+        let reader = turn.situation().reader::<dyn MemoryReader>().await;
+        let mut known = reader.is_some_and(|memory| memory.recalled().iter().any(|m| m.id == id));
+        let staged = turn.staged::<MemoryChange>().map_err(|e| {
+            ToolError::ExecutionFailed(format!("what the turn remembered cannot be read: {e}"))
+        })?;
+        for change in staged {
+            match change {
+                MemoryChange::Add { id: added, .. } if added == id => known = true,
+                MemoryChange::Remove { id: removed } if removed == id => known = false,
+                _ => {}
+            }
+        }
+        Ok(known)
     }
 
-    /// The agent's session as `situation` reads it (`Situation::session`),
-    /// through which what it remembers is recalled and placed; `None` if it
-    /// reaches none, or reading it failed - which is logged, since the turn
-    /// goes on as one in no session.
-    async fn own_session(situation: &Situation<'_>) -> Option<Box<dyn SessionReader>> {
-        situation.session().await.unwrap_or_else(|e| {
-            warn!(
-                "Agent {}: its session could not be read for its memory: {e}",
-                situation.agent_id()
-            );
-            None
-        })
+    /// The writer of the agent's memory bound to the turn's work.
+    async fn writer(turn: &Turn<'_>) -> ToolResult<Arc<dyn MemoryWriter>> {
+        turn.writer::<dyn MemoryWriter>()
+            .await
+            .ok_or_else(|| ToolError::ExecutionFailed("your memory cannot be reached here".into()))
+    }
+
+    /// Stages `change` on the turn.
+    fn stage(turn: &mut Turn<'_>, change: MemoryChange) -> ToolResult<()> {
+        turn.stage(&change)
+            .map_err(|e| ToolError::ExecutionFailed(format!("the change cannot be kept: {e}")))
     }
 }

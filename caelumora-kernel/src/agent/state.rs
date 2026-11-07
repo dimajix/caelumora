@@ -96,16 +96,22 @@ impl AgentStateHandle {
         MemoryId(self.next_memory_id.fetch_add(1, Ordering::SeqCst))
     }
 
-    /// Applies `changes` to the memory, each made at its origin in a turn
-    /// that ended with message `after`, to the state as it is, stores it,
-    /// makes it the current state, and announces it as the agent's
+    /// Whether `id` was handed out for a memory entry (`reserve_memory_id`).
+    pub(crate) fn is_reserved(&self, id: MemoryId) -> bool {
+        id.0 < self.next_memory_id.load(Ordering::SeqCst)
+    }
+
+    /// Applies `changes` to the memory, made at `origin` in a turn that
+    /// ended with message `after`, to the state as it is, stores it, makes
+    /// it the current state, and announces it as the agent's
     /// `agent::STATE_CHANGED`. Nothing is changed if storing fails.
     ///
     /// # Errors
     /// Whatever the `StateStore` reports.
     pub async fn apply(
         &self,
-        changes: Vec<(MemoryChange, MemoryOrigin)>,
+        changes: Vec<MemoryChange>,
+        origin: MemoryOrigin,
         after: MessageId,
     ) -> StoreResult<()> {
         if changes.is_empty() {
@@ -114,8 +120,8 @@ impl AgentStateHandle {
         let _writing = self.write.lock().await;
         let mut state = (*self.current.load_full()).clone();
         let count = changes.len();
-        for (change, origin) in changes {
-            state.memory.push(change, origin, after);
+        for change in changes {
+            state.memory.push(change, origin.clone(), after);
         }
         self.state_store.put_agent_state(self.agent_id, &mut state).await?;
         self.current.store(Arc::new(state));
@@ -140,6 +146,12 @@ pub struct AgentStates {
 impl AgentStates {
     pub fn new(state_store: Arc<dyn StateStore>, events: Arc<dyn EventPublisher>) -> Self {
         Self { handles: Mutex::new(HashMap::new()), state_store, events }
+    }
+
+    /// The handle of `agent_id` an actor of the agent holds, if one runs: what a work of the agent
+    /// reaches its memory through (`crate::agent::memory`, issue 518).
+    pub(crate) async fn held(&self, agent_id: AgentId) -> Option<Arc<AgentStateHandle>> {
+        self.handles.lock().await.get(&agent_id).and_then(Weak::upgrade)
     }
 
     /// The handle of `agent_id`: the one its other actors hold, or loaded
@@ -192,15 +204,12 @@ mod tests {
         SecurityAttributes::owned_by(ActorId::User(UserId::new()))
     }
 
-    fn remember(id: MemoryId, text: &str) -> (MemoryChange, MemoryOrigin) {
-        (
-            MemoryChange::Add {
-                id,
-                text: text.to_string(),
-                classification: Classification::CHANNEL_DEFAULT,
-            },
-            MemoryOrigin::default(),
-        )
+    fn remember(id: MemoryId, text: &str) -> MemoryChange {
+        MemoryChange::Add {
+            id,
+            text: text.to_string(),
+            classification: Classification::CHANNEL_DEFAULT,
+        }
     }
 
     #[tokio::test]
@@ -216,8 +225,14 @@ mod tests {
         let before = in_main.current();
         let (a, b) = (in_main.reserve_memory_id(), in_research.reserve_memory_id());
         assert_ne!(a, b, "numbers are handed out once");
-        in_main.apply(vec![remember(a, "from main")], MessageId::new()).await.unwrap();
-        in_research.apply(vec![remember(b, "from research")], MessageId::new()).await.unwrap();
+        in_main
+            .apply(vec![remember(a, "from main")], MemoryOrigin::default(), MessageId::new())
+            .await
+            .unwrap();
+        in_research
+            .apply(vec![remember(b, "from research")], MemoryOrigin::default(), MessageId::new())
+            .await
+            .unwrap();
 
         let texts: Vec<_> =
             in_main.current().memory.current().into_iter().map(|m| m.text).collect();
@@ -234,7 +249,10 @@ mod tests {
         let agent = AgentId::new();
         let handle = states.get(agent, hers()).await.unwrap();
         let id = handle.reserve_memory_id();
-        handle.apply(vec![remember(id, "kept")], MessageId::new()).await.unwrap();
+        handle
+            .apply(vec![remember(id, "kept")], MemoryOrigin::default(), MessageId::new())
+            .await
+            .unwrap();
         drop(handle);
 
         let again = states.get(agent, hers()).await.unwrap();
@@ -272,10 +290,13 @@ mod tests {
         let agent = AgentId::new();
         let handle = states.get(agent, hers()).await.unwrap();
 
-        handle.apply(Vec::new(), MessageId::new()).await.unwrap();
+        handle.apply(Vec::new(), MemoryOrigin::default(), MessageId::new()).await.unwrap();
         assert!(announced.0.lock().unwrap().is_empty(), "nothing changed, nothing announced");
         let id = handle.reserve_memory_id();
-        handle.apply(vec![remember(id, "secret")], MessageId::new()).await.unwrap();
+        handle
+            .apply(vec![remember(id, "secret")], MemoryOrigin::default(), MessageId::new())
+            .await
+            .unwrap();
         let events = announced.0.lock().unwrap();
         assert!(
             matches!(events.as_slice(), [event] if matches!(event.about::<Agent>(), Some((a, EntityChange::Custom { name: agent::STATE_CHANGED, .. })) if a == agent)),

@@ -9,6 +9,7 @@ use super::Turn;
 use crate::tool::TurnEnd;
 use crate::turn::tool_calls::ToolCalls;
 use caelumora_api::actor::Answering;
+use caelumora_api::error::describe_chain;
 use caelumora_api::transport::EventSender;
 use caelumora_domain::message::Message;
 use caelumora_domain::tool::ToolCallState;
@@ -43,9 +44,10 @@ impl Turn<'_> {
     /// - records its end, `TurnFinished`;
     /// - applies the changes staged to its state in this channel, anchored at
     ///   the last message of its transcript;
-    /// - applies the changes staged to its own state to that state as it is
-    ///   now. The answer is already out, so a state that cannot be stored
-    ///   costs the turn's memory, not the turn: it is logged.
+    /// - hands what it staged for system services - the agent's memory - to
+    ///   the kernel to commit, kind by kind, in the turn's name (issue 518).
+    ///   The answer is already out, so what cannot be committed costs the
+    ///   turn's changes of that kind, not the turn: it is logged.
     ///
     /// A step whose calls do not all have their result yet - only a
     /// `cancelled` turn is taken over so - are abandoned first
@@ -61,20 +63,29 @@ impl Turn<'_> {
         let abandoned_calls =
             self.abandon_tool_calls(TurnEnd::Committed { cancelled }, output).await;
         let answering = self.answering();
+        let initiator = self.situation().initiator();
+        let classification = self.situation().classification();
         let turn = self.agent_channel_state.turn.take().unwrap_or_default();
         let turn_id = turn.work.turn_id;
         // Every part is used up exactly once; what it said is its answer
         // (issue 417), whatever a compaction left of it in the transcript
         // (issue 284).
-        let TurnState { memory, notes, private_notes, answer: final_messages, .. } = turn;
+        let TurnState { staged, notes, private_notes, answer: final_messages, .. } = turn;
         let channel_state_changed =
             self.agent_channel_state.finish_turn(turn_id, notes, private_notes);
         let after = self.agent_channel_state.last_message.unwrap_or_default();
-        if let Err(e) = self.runtime.apply_agent_state(memory, after).await {
-            warn!(
-                "Agent {}: the changes of its turn to its own state are lost: {:#}",
-                self.agent_id, e
-            );
+        for kind in staged.kinds() {
+            let committed = self
+                .runtime
+                .commit_staged(initiator, classification.clone(), &staged, kind, after)
+                .await;
+            if let Err(e) = committed {
+                warn!(
+                    "Agent {}: what its turn staged as '{kind}' is lost: {}",
+                    self.agent_id,
+                    describe_chain(&e)
+                );
+            }
         }
         CommittedTurn { final_messages, channel_state_changed, answering, abandoned_calls }
     }

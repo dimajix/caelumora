@@ -174,9 +174,10 @@ deciding right after whom to ask, leaves the sleeping out; the run loop is notif
 ## The `Turn`
 
 The agent's state in its channel is its `AgentChannelState` - history, transcript, notes, the texts
-of its prompt parts; its state across channels is its `AgentState`. A `Turn` is the handle to both
-while a turn is under way, and only then: between turns the actor works on the state itself, and
-taking a turn over or giving it up uses the handle up.
+of its prompt parts; its memory across channels the kernel keeps, a system service the turn reaches
+through its reader and its writer (see [MEMORY.md](MEMORY.md#agent-memory)). A `Turn` is the handle
+to the state in its channel while a turn is under way, and only then: between turns the actor works
+on the state itself, and taking a turn over or giving it up uses the handle up.
 
 What a turn does to the state - beginning, saying something, finishing, giving up - is a rule of the
 state, kept with it in the domain (`AgentChannelState::begin_turn`, `offer_tools`, `said`,
@@ -234,9 +235,10 @@ situation's to hand out (`Situation::reader`, the skills' `SkillReader`), what i
 asking `GetSession` as `session` does, `None` where the work reaches no session or may not read it,
 and asked for where it is used. All are reached through the actor's `ActorRuntime`, which the
 situation and the turn hold and which their components never see: they are given their methods
-(issue 370). The agent's own state is read through it as well (`Situation::agent_state`, a
-snapshot), and changed by the turn alone (`Turn::reserve_memory_id`, and what the turn staged as it
-is committed).
+(issue 370). What a turn changes of a system service - the agent's memory - it stages by the kind of
+the change (`Turn::stage`, a `StagedChange`), kept with its working state, and the kernel hands it
+to the writer bound to commit that kind when the turn completes (`ActorRuntime::commit_staged`,
+issue 518).
 
 ### Beginning and ending a turn
 
@@ -245,7 +247,8 @@ is committed).
     judged alike even if the channel's level changes meanwhile.
 *   **Taking a turn over** (`Turn::commit`) records its end, `TurnFinished`, after its messages -
     which are in the transcript and history since they were said - applies the changes it staged
-    and clears the working state.
+    to its notes, has the kernel commit what it staged for system services, kind by kind - what
+    cannot be committed is logged and lost, not the turn -, and clears the working state.
 *   **Giving a turn up** (`Turn::give_up`) - failed, left, asked for again, at the limit of model
     calls - unsays nothing: its messages stay where they were said, and its end follows,
     `TurnGivenUp` with the reason. Nothing it staged is applied. What its tools did stays done;

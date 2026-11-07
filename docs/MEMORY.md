@@ -25,7 +25,8 @@ All three kinds of memory work alike:
     An entry revoked in the turn that wrote it is revoked like any other: both changes are taken
     over, and its number is used up.
 *   **The logic is a wrapper around the turn.** `Turn` knows nothing of notes or memory;
-    `AgentNotes` and `AgentMemory` hold the logic, and the components use them.
+    `AgentNotes` and `AgentMemory` hold the logic, and the components use them. What may be
+    recalled of the memory, and which of a turn's changes are applied, the kernel decides.
 *   **Every read is recorded** as knowledge (see [Recording what was
     read](#recording-what-was-read)).
 *   **Written without approval.** What an entry says may rest on a claim the model did not verify -
@@ -97,28 +98,36 @@ per personality.
     channel, and the privacy of that channel's session then.
 *   **Tools.** `remember(text)`, `update_memory(id, text)` and `forget(id)`, all hidden: like
     private notes, memory is the agent's own, seen by its owner in the context panel only.
+*   **Reached through the kernel.** The memory is a system service of the kernel's (issue 518): a
+    work reads what it may recall through the `MemoryReader` of its situation, and a turn reserves
+    numbers through the `MemoryWriter` it is given and stages its changes, which the kernel commits.
+    Both are bound to the work's session as it reads it; a turn that reaches none neither recalls
+    nor remembers.
 *   **Where it is recalled.** Every entry carries the label of the turn that wrote it
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)) and is recalled only where that
-    may be read. The component asks the kernel (`Situation::may_copy_information`, issue 516) in the
-    context of the turn it is called in - the agent's, with its owner's rights - once per channel
-    the entries come from. Under the ownership policy an entry is recalled where its classification
-    flows into the current channel's - within the session, and beyond it only where the entry's
-    session permits it. In another session an entry is recalled only where both the privacy its
-    session had when it was written and the privacy that session has now permit it, so that what was
-    said under a private policy stays private and a session made private again takes back what it
-    let go. The current privacy is looked up in the kernel's name, not along an edge the agent could
-    follow; of a session that is gone, the one kept decides, and one that cannot be looked up
-    recalls nothing.
+    may be read. The kernel decides it as it makes the reader, in the context of the work - the
+    agent's, with its owner's rights - once per channel the entries come from. Under the ownership
+    policy an entry is recalled where its classification flows into the current channel's - within
+    the session, and beyond it only where the entry's session permits it. In another session an
+    entry is recalled only where both the privacy its session had when it was written and the
+    privacy that session has now permit it, so that what was said under a private policy stays
+    private and a session made private again takes back what it let go. The current privacy is
+    looked up in the kernel's name, not along an edge the agent could follow; of a session that is
+    gone, the one kept decides, and one that cannot be looked up recalls nothing.
 *   **Changed where recalled.** Only entries recalled in a channel, or remembered in the turn, can
     be updated, forgotten or reclassified there (`reclassify_memory`, see
     [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)); the policy is asked about that one
-    entry.
+    entry. The component checks it so that its tool can answer the model; the kernel checks every
+    change again as it commits it, all or none: an entry changed is one recalled there or added in
+    the same turn, a new entry one of a number reserved, each classified within the work.
 *   **Prompt part.** A part before the turn's input unless its `position` says otherwise lists what
     may be recalled in the channel, as the memory is now.
-*   **Taken over on the current state.** A staged change is applied to the agent's state as it is
-    when the turn is taken over, under the state handle's lock, stored and announced
-    (`agent::STATE_CHANGED`). Actors of the same agent in other channels and sessions thus neither
-    lose nor overwrite each other's changes (see [STORAGE.md](STORAGE.md)).
+*   **Taken over on the current state.** A staged change is committed by the kernel to the agent's
+    state as it is when the turn is taken over, under the state handle's lock, stored and announced
+    (`agent::STATE_CHANGED`). Where it was made - the channel, and the privacy its session has
+    then -, the kernel derives from the place of the work, never from what the agent side tells.
+    Actors of the same agent in other channels and sessions thus neither lose nor overwrite each
+    other's changes (see [STORAGE.md](STORAGE.md)).
 *   **Numbers.** Unlike a note's, the number of a new entry is reserved at once on the agent's
     shared state, since turns in several channels may remember at the same time. This is
     deliberately the one exception to "commit, don't write".

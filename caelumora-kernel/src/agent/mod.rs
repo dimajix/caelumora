@@ -4,13 +4,17 @@
 //! - `manager`: the one owner of agents' lifecycle - deleting, restoring
 //!   and purging them;
 //! - `state`: the one owner of an agent's `AgentState` per process;
+//! - `memory`: how the kernel serves an agent's memory to its work - what
+//!   may be recalled where it reads, and the changes it commits;
 //! - `AgentMember`: what a plugin keeps behind an agent, which the manager
 //!   removes as it purges the agent.
 
 mod manager;
+mod memory;
 pub mod state;
 
 pub use manager::AgentManager;
+pub(crate) use memory::{MemoryUse, RecalledMemory};
 
 use async_trait::async_trait;
 use caelumora_domain::agent::{Agent, AgentId};

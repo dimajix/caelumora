@@ -1,16 +1,16 @@
 //! The `agent_memory` component (issue 62, step 3): an agent remembers what
-//! it should know across its channels and sessions - kept in its
-//! `AgentState`, not in one channel.
+//! it should know across its channels and sessions - kept by the kernel for
+//! the agent, not in one channel.
 //!
 //! It translates the tools `remember`, `update_memory` and `forget` and renders the prompt part;
-//! the logic is `crate::memory::AgentMemory`. Changes are applied to the agent's state as it is
-//! when the turn completes (`Turn::commit`), so that actors of the same agent in other channels and
-//! sessions neither lose nor overwrite them. The prompt part shows the entries that may be recalled
-//! in the current channel: those written in a channel it may read, as the kernel decides when the
-//! component asks in the agent's name (`Situation::may_copy_information`, issues 131, 516). Under
-//! the ownership policy that is the flow rule of issue 133 - the entry's channel's classification
-//! must flow into this one's - within the session, and beyond it only where the entry's session
-//! permits it, then and now (issue 134). Only those can be updated or forgotten here. Its tools are
+//! the logic is `crate::memory::AgentMemory`. Changes are staged on the turn and committed by the
+//! kernel to the agent's memory as it is when the turn completes (`Turn::commit`, issue 518), so
+//! that actors of the same agent in other channels and sessions neither lose nor overwrite them.
+//! The prompt part shows the entries that may be recalled in the current channel, which the kernel
+//! hands the work through its `MemoryReader` (issues 131, 518). Under the ownership policy that is
+//! the flow rule of issue 133 - the entry's channel's classification must flow into this one's -
+//! within the session, and beyond it only where the entry's session permits it, then and now
+//! (issue 134). Only those can be updated or forgotten here. Its tools are
 //! `ToolVisibility::HIDDEN`: like private notes, memory is the agent's own, seen by its owner in
 //! the context panel only. Its entries are numbered differently from notes, on purpose: see
 //! `AgentMemory::remember`.
@@ -30,6 +30,7 @@ use crate::tool::{
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use caelumora_api::memory::{MemoryReader, MemoryWriter};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::memory::{Memory, MemoryId};
@@ -181,7 +182,7 @@ impl AgentMemoryComponent {
     /// `remember(text)`: remembers `text`, taken over when the turn
     /// completes.
     async fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentMemory::remember(turn, text_argument(params)?).await;
+        let id = AgentMemory::remember(turn, text_argument(params)?).await?;
         Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
     }
 
@@ -190,7 +191,7 @@ impl AgentMemoryComponent {
     async fn execute_update(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
         let text = text_argument(params)?;
-        if AgentMemory::update(turn, id, text).await {
+        if AgentMemory::update(turn, id, text).await? {
             Ok(serde_json::json!({ "status": "updated", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -211,7 +212,7 @@ impl AgentMemoryComponent {
     /// `forget(id)`: forgets an entry that may be recalled here.
     async fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
         let id: MemoryId = id_argument(params)?;
-        if AgentMemory::forget(turn, id).await {
+        if AgentMemory::forget(turn, id).await? {
             Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
         } else {
             Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
@@ -226,32 +227,33 @@ impl PromptProvider for AgentMemoryComponent {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        let recalled = AgentMemory::recalled(situation).await;
+        let Some(memory) = situation.reader::<dyn MemoryReader>().await else {
+            return Ok(Prompt::default());
+        };
+        let recalled = memory.recalled();
         if recalled.is_empty() {
             return Ok(Prompt::default());
         }
         // Once for every channel the entries come from, so that knowledge
         // from another session can be told (issue 134).
-        let source = KnowledgeSource::Memory {
-            agent: situation.agent_id(),
-            digest: AgentMemory::digest(situation),
-        };
+        let source =
+            KnowledgeSource::Memory { agent: situation.agent_id(), digest: memory.digest() };
         let mut knowledge: Vec<KnowledgeRef> = Vec::new();
-        for memory in &recalled {
-            if !knowledge.iter().any(|k| k.channel == memory.origin.channel) {
+        for entry in recalled {
+            if !knowledge.iter().any(|k| k.channel == entry.origin.channel) {
                 let from_there = recalled
                     .iter()
-                    .filter(|m| m.origin.channel == memory.origin.channel)
+                    .filter(|m| m.origin.channel == entry.origin.channel)
                     .map(|m| &m.classification);
                 knowledge.push(KnowledgeRef {
-                    channel: memory.origin.channel,
-                    session: memory.origin.session.id,
+                    channel: entry.origin.channel,
+                    session: entry.origin.session.id,
                     source: source.clone(),
                     classification: Classification::join_all(from_there),
                 });
             }
         }
-        Ok(Prompt::of_knowledge(render(&self.prompts, &recalled)?, knowledge))
+        Ok(Prompt::of_knowledge(render(&self.prompts, recalled)?, knowledge))
     }
 }
 
@@ -267,6 +269,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         writing_for_the_model(
             ComponentKind::new(AGENT_MEMORY_KIND)
                 .params::<PositionParams>()
+                .reads::<dyn MemoryReader>()
+                .writes::<dyn MemoryWriter>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>(),
         ),
@@ -287,34 +291,40 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::testing;
-    use crate::testing::detached_participant;
     use crate::tool::ToolError;
+    use caelumora_api::runtime::ActorRuntime;
+    use caelumora_api::staging::CommitError;
     use caelumora_domain::actor::{ActorId, EventContext};
     use caelumora_domain::agent::{AgentChannelState, AgentId};
-    use caelumora_domain::channel::testing::main_channel;
+    use caelumora_domain::channel::testing::{bare_channel, main_channel};
     use caelumora_domain::channel::{ChannelId, Participant};
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::confidentiality::{Compartments, Place, Reading};
+    use caelumora_domain::memory::MemoryChange;
+    use caelumora_domain::message::MessageId;
     use caelumora_domain::privacy::{PrivacyConfig, SessionPrivacy};
     use caelumora_domain::role::{RoleId, Roles};
     use caelumora_domain::security::SecurityAttributes;
-    use caelumora_domain::session::testing::make_session;
+    use caelumora_domain::session::testing::{bare_session, make_session};
     use caelumora_domain::session::{Session, SessionId};
+    use caelumora_domain::turn::{StagedChange, StagedChanges};
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
     use caelumora_domain::work::Work;
-    use caelumora_kernel::agent::state::{AgentStateHandle, AgentStates};
-    use caelumora_kernel::kernel::{AgentRuntime, ParticipantRuntime};
-    use caelumora_kernel::session::testing::{owned_kernel_under, participant_runtime_in, spec};
+    use caelumora_kernel::agent::state::AgentStateHandle;
+    use caelumora_kernel::kernel::{AgentRuntime, Kernel, ParticipantRuntime};
+    use caelumora_kernel::session::testing::{
+        detached_participant_in, owned_kernel_under, participant_runtime_in, spec,
+    };
     use caelumora_kernel::session::{ChannelSpec, SessionLoop, SessionManager};
     use caelumora_kernel::testing::Discard;
     use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityRules};
     use caelumora_security::SecurityContext;
-    use caelumora_store::memory::MemoryStore;
     use caelumora_store::testing::record_users;
-    use caelumora_store::{EntityStores, StateStore};
+    use caelumora_store::EntityStores;
     use std::collections::HashMap;
     use std::ops::Deref;
+    use std::slice;
     use std::sync::OnceLock;
 
     /// A channel of the tests: where it is - its session and itself - and
@@ -374,19 +384,12 @@ mod tests {
         }
     }
 
-    async fn handle(agent: AgentId) -> Arc<AgentStateHandle> {
-        let store: Arc<dyn StateStore> = Arc::new(MemoryStore::new());
-        AgentStates::new(store, Arc::new(()))
-            .get(agent, SecurityAttributes::owned_by(ActorId::User(UserId::new())))
-            .await
-            .unwrap()
-    }
-
     /// The sessions of a test, as a turn reaches them: made as the kernel makes a session
     /// (`SessionManager::create`, issue 486) and running, with every channel a turn works in,
     /// through which it reaches its session and reads its privacy from its loop. Each is changed,
     /// deleted and restored by its owner.
     struct Sessions {
+        kernel: Arc<Kernel>,
         stores: EntityStores,
         manager: Arc<SessionManager>,
         loops: HashMap<SessionId, Arc<SessionLoop>>,
@@ -406,7 +409,15 @@ mod tests {
         fn policed(confidentiality: Arc<dyn ConfidentialityPolicy>) -> Self {
             let (kernel, manager) = owned_kernel_under(confidentiality);
             let stores = kernel.entity_stores().clone();
-            Self { stores, manager, loops: HashMap::new(), made: 0 }
+            Self { kernel, stores, manager, loops: HashMap::new(), made: 0 }
+        }
+
+        /// The state of `agent` as the kernel keeps it for the agent's actors: what the memory of
+        /// its turns is reached through while the test holds it, as an actor holds it while it
+        /// runs (`AgentStates::held`, issue 518).
+        async fn handle(&self, agent: AgentId) -> Arc<AgentStateHandle> {
+            let attributes = SecurityAttributes::owned_by(ActorId::User(UserId::new()));
+            self.kernel.agent_states().get(agent, attributes).await.unwrap()
         }
 
         /// A user named `name`, stored (`record_users`): to own sessions and
@@ -551,8 +562,8 @@ mod tests {
     #[tokio::test]
     async fn what_is_remembered_is_recalled_wherever_its_origin_may_be_read() {
         let agent = AgentId::new();
-        let handle = handle(agent).await;
         let mut sessions = Sessions::under(Default::default());
+        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -591,10 +602,7 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(result.value["id"], 1);
-            assert!(
-                turn.situation().agent_state().memory.current().is_empty(),
-                "not before the turn completes"
-            );
+            assert!(handle.current().memory.current().is_empty(), "not before the turn completes");
             turn.commit(false, &Discard).await;
         }
 
@@ -656,8 +664,8 @@ mod tests {
     #[tokio::test]
     async fn an_entry_is_updated_only_where_it_is_recalled_and_stands_where_it_was_updated() {
         let agent = AgentId::new();
-        let handle = handle(agent).await;
         let mut sessions = Sessions::under(Default::default());
+        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -737,8 +745,8 @@ mod tests {
     #[tokio::test]
     async fn an_entry_remembered_and_forgotten_in_one_turn_is_gone_once_it_completes() {
         let agent = AgentId::new();
-        let handle = handle(agent).await;
         let mut sessions = Sessions::under(Default::default());
+        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -787,40 +795,31 @@ mod tests {
         assert!(handle.current().memory.current().is_empty());
     }
 
+    /// Issue 518: the memory is reached through the work's session, as the kernel binds it; a
+    /// turn that reaches none neither recalls nor remembers, though the kernel keeps the agent's
+    /// state.
     #[tokio::test]
-    async fn a_turn_in_no_session_recalls_nothing_and_remembers_as_private() {
+    async fn a_turn_in_no_session_neither_recalls_nor_remembers() {
         let agent = AgentId::new();
-        let handle = handle(agent).await;
-        let runtime = detached_participant(agent);
+        let sessions = Sessions::under(Default::default());
+        let handle = sessions.handle(agent).await;
         let memory = component(ActorId::User(UserId::new()));
-        let at = (
-            (SessionId::new(), ChannelId::new()),
-            Classification::general(Confidentiality::Internal),
-        );
+        let session = bare_session(SessionId::new());
+        let channel = bare_channel(session.id);
+        let at = ((session.id, channel.id), Classification::general(Confidentiality::Internal));
+        let kernel = Arc::clone(&sessions.kernel);
+        let runtime = detached_participant_in(kernel, session, channel, ActorId::Agent(agent));
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
-        let mut turn = Turn::of(
-            &mut state,
-            Arc::new(AgentRuntime::in_test(runtime.clone(), Arc::clone(&handle))),
-        )
-        .expect("a turn was begun");
-        memory
+        let mut turn = Turn::of(&mut state, Arc::new(AgentRuntime::in_test(runtime, handle)))
+            .expect("a turn was begun");
+        let refused = memory
             .execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), None, &mut turn)
-            .await
-            .unwrap();
-        turn.commit(false, &Discard).await;
-        assert_eq!(
-            handle.current().memory.current()[0].origin.session,
-            SessionPrivacy { id: at.0 .0, ..SessionPrivacy::default() },
-            "its session, private: nobody agreed to anything"
-        );
-        memory.begin(&mut state, &at);
-        let turn =
-            Turn::of(&mut state, Arc::new(AgentRuntime::in_test(runtime, Arc::clone(&handle))))
-                .expect("a turn was begun");
+            .await;
+        assert!(matches!(refused, Err(ToolError::ExecutionFailed(_))), "nothing to remember in");
         assert!(
             memory.get_prompt(&turn.situation()).await.unwrap().text.is_empty(),
-            "no session to recall in"
+            "nor to recall from"
         );
     }
 
@@ -865,10 +864,10 @@ mod tests {
     #[tokio::test]
     async fn the_policy_decides_what_is_recalled_asked_in_the_agents_name() {
         let agent = AgentId::new();
-        let handle = handle(agent).await;
         let only_for = Arc::new(OnceLock::new());
         let mut sessions =
             Sessions::policed(Arc::new(OnlyFor(Arc::clone(&only_for), Default::default())));
+        let handle = sessions.handle(agent).await;
         let (owner, stranger) = (sessions.user("owner").await, sessions.user("stranger").await);
         let session = sessions.create(owner, PrivacyConfig::Private).await;
         // In the session: whom the policy refuses may read its channels.
@@ -906,8 +905,8 @@ mod tests {
     #[tokio::test]
     async fn what_a_turn_remembers_is_classified_as_what_it_has_seen() {
         let agent = AgentId::new();
-        let handle = handle(agent).await;
         let mut sessions = Sessions::under(Default::default());
+        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -987,7 +986,6 @@ mod tests {
     async fn an_entry_released_to_another_compartment_is_recalled_there() {
         use caelumora_domain::confidentiality::Compartment;
         let agent = AgentId::new();
-        let handle = handle(agent).await;
         let compartments = Compartments::new([
             (Compartment::new("hr"), vec![]),
             (Compartment::new("finance"), vec![]),
@@ -995,6 +993,7 @@ mod tests {
         .unwrap();
         let rules = ConfidentialityRules::new(compartments);
         let mut sessions = Sessions::under(rules.clone());
+        let handle = sessions.handle(agent).await;
         let owner = sessions.user("owner").await;
         let memory = component(ActorId::User(owner));
         let session = sessions.create(owner, PrivacyConfig::Private).await;
@@ -1051,8 +1050,8 @@ mod tests {
     #[tokio::test]
     async fn an_entry_is_recalled_in_another_session_where_its_session_agreed_then_and_now() {
         let agent = AgentId::new();
-        let handle = handle(agent).await;
         let mut sessions = Sessions::under(Default::default());
+        let handle = sessions.handle(agent).await;
         let (alice, bob) = (sessions.user("alice").await, sessions.user("bob").await);
         let memory = component(ActorId::User(alice));
         let hers = sessions.create(alice, PrivacyConfig::SameOwner).await;
@@ -1135,6 +1134,74 @@ mod tests {
             "{}",
             recalled.text
         );
+    }
+
+    /// Issue 518: the kernel commits only what is the work's to change, whatever a turn staged -
+    /// an entry recalled where the work reads, or a new one of a number it reserved and never
+    /// gave, classified within the work -, all or none, and derives where a change was made from
+    /// the work's place.
+    #[tokio::test]
+    async fn the_kernel_commits_only_what_is_the_works_to_change() {
+        let agent = AgentId::new();
+        let mut sessions = Sessions::under(Default::default());
+        let handle = sessions.handle(agent).await;
+        let owner = sessions.user("owner").await;
+        let memory = component(ActorId::User(owner));
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        let internal = Classification::general(Confidentiality::Internal);
+        let team = sessions.create_channel(session, internal.clone()).await;
+        let public = sessions
+            .create_channel(session, Classification::general(Confidentiality::Public))
+            .await;
+        remember(&memory, &sessions, &handle, agent, team.clone(), "Kaya likes tea.").await;
+        let commit = |at: &At, kind: &'static str, changes: &[MemoryChange]| {
+            let runtime =
+                AgentRuntime::in_test(memory.runtime_in(&sessions, at, agent), Arc::clone(&handle));
+            let mut staged = StagedChanges::default();
+            for change in changes {
+                staged.push(change).unwrap();
+            }
+            let classification = at.1.clone();
+            async move {
+                let initiator = ActorId::User(owner);
+                let after = MessageId::new();
+                runtime.commit_staged(initiator, classification, &staged, kind, after).await
+            }
+        };
+        let invalid = |result| matches!(result, Err(CommitError::Invalid(_)));
+        let new = |id, classification| MemoryChange::Add { id, text: "new".into(), classification };
+
+        let forget = MemoryChange::Remove { id: MemoryId(1) };
+        let update = MemoryChange::Update {
+            id: MemoryId(1),
+            text: "Kaya likes coffee.".into(),
+            classification: Classification::PUBLIC,
+        };
+        assert!(
+            invalid(commit(&public, MemoryChange::KIND, &[update]).await),
+            "not recalled there"
+        );
+        assert!(invalid(commit(&public, MemoryChange::KIND, slice::from_ref(&forget)).await));
+        let made_up = new(MemoryId(9), internal.clone());
+        assert!(invalid(commit(&team, MemoryChange::KIND, &[made_up]).await), "never reserved");
+        let given = new(MemoryId(1), internal.clone());
+        assert!(invalid(commit(&team, MemoryChange::KIND, &[given]).await), "given already");
+        let twice = new(handle.reserve_memory_id(), internal.clone());
+        let both = [twice.clone(), twice];
+        assert!(invalid(commit(&team, MemoryChange::KIND, &both).await), "one number, one entry");
+        let above =
+            new(handle.reserve_memory_id(), Classification::general(Confidentiality::Confidential));
+        assert!(invalid(commit(&team, MemoryChange::KIND, &[above]).await), "not above the work");
+        let unknown = commit(&team, "nothing", &[]).await;
+        assert!(matches!(unknown, Err(CommitError::NotOffered(_))), "no writer commits it");
+        assert_eq!(handle.current().memory.current().len(), 1, "nothing of it committed");
+
+        let here = new(handle.reserve_memory_id(), Classification::PUBLIC);
+        commit(&public, MemoryChange::KIND, &[here]).await.expect("its own to remember");
+        let remembered = handle.current().memory.current();
+        assert_eq!(remembered[1].origin.channel, public.0 .1, "made where the work reads from");
+        commit(&team, MemoryChange::KIND, &[forget]).await.expect("recalled where it is forgotten");
+        assert_eq!(handle.current().memory.current().len(), 1);
     }
 
     #[test]

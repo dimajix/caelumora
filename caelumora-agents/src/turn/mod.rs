@@ -6,9 +6,10 @@
 //! working state, `AgentChannelState::turn` (issue 85) - the context and
 //! prompt parts the model is given and where they came from, pending tool
 //! calls and the plan, the changes not yet taken over; what it says goes
-//! into the transcript and the history at once (issue 260) - and on
-//! the agent's own state (issues 62, 65). What those states hold is the
-//! business of wrappers such as `crate::notes::AgentNotes` and
+//! into the transcript and the history at once (issue 260) -, and stages
+//! what it changes of a system service - the agent's memory -, which the
+//! kernel commits when it completes (issue 518). What those states hold is
+//! the business of wrappers such as `crate::notes::AgentNotes` and
 //! `crate::memory::AgentMemory`. A turn is begun on the agent's state
 //! (`AgentChannelState::begin_turn`); a `Turn` is had only while one is
 //! under way (`Turn::of`), and ending it uses it up.
@@ -44,7 +45,7 @@ use crate::testing::detached_actor_runtime;
 use anyhow::Result;
 use caelumora_api::actor::Answering;
 use caelumora_api::error::AttachmentResult;
-use caelumora_api::runtime::{ActorRuntime, OwnRecord};
+use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::EventSender;
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_domain::agent::{AgentChannelState, AgentId};
@@ -52,12 +53,11 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::digest::Digest;
-use caelumora_domain::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_domain::message::{Message, MessageRole};
 use caelumora_domain::note::NoteChange;
 use caelumora_domain::prompt_catalogue::PromptError;
 use caelumora_domain::tool::Tool;
-use caelumora_domain::turn::TurnState;
+use caelumora_domain::turn::{StagedChange, TurnState};
 use caelumora_domain::work::TurnId;
 #[cfg(test)]
 use caelumora_domain::work::Work;
@@ -155,19 +155,12 @@ impl<'a> Turn<'a> {
         self.runtime.copy_attachment(self.situation().initiator(), attachment).await
     }
 
-    /// Whether `record` - a note of the agent or an entry of its memory, in its channel - may be
-    /// reclassified, in the turn's name, as `classification`, never above the turn's channel as it
-    /// began (`ActorRuntime::may_reclassify`, issue 516): what the turn stages then.
-    pub async fn may_reclassify(&self, record: OwnRecord, classification: &Classification) -> bool {
+    /// Whether a note of the agent in its channel, public or private, may be reclassified, in the
+    /// turn's name, as `classification`, never above the turn's channel as it began
+    /// (`ActorRuntime::may_reclassify_note`, issue 516): what the turn stages then.
+    pub async fn may_reclassify_note(&self, classification: &Classification) -> bool {
         let (initiator, within) = (self.situation().initiator(), self.situation().classification());
-        self.runtime.may_reclassify(initiator, record, classification, &within).await
-    }
-
-    /// A number for a new entry of the agent's memory, never handed out before
-    /// (`ActorRuntime::reserve_memory_id`): reserved at once, not as the turn completes, since
-    /// the agent's actors in other channels remember at the same time.
-    pub fn reserve_memory_id(&self) -> MemoryId {
-        self.runtime.reserve_memory_id()
+        self.runtime.may_reclassify_note(initiator, classification, &within).await
     }
 
     /// Which turn this is (issue 235).
@@ -203,16 +196,22 @@ impl<'a> Turn<'a> {
         self.current_mut().work.see(classification);
     }
 
-    /// Stages `change` to the agent's memory, made at `origin`, applied when
-    /// the turn completes (`commit`).
-    pub fn stage_memory(&mut self, change: MemoryChange, origin: MemoryOrigin) {
-        self.current_mut().memory.push((change, origin));
+    /// Stages `change` for its system service - an entry of the agent's memory -, which the
+    /// kernel commits when the turn completes (`commit`, issue 518).
+    ///
+    /// # Errors
+    /// If it cannot be kept with the turn.
+    pub fn stage<C: StagedChange>(&mut self, change: &C) -> serde_json::Result<()> {
+        self.current_mut().staged.push(change)
     }
 
-    /// The changes to the agent's memory staged in this turn so far, each
-    /// with where it was made.
-    pub fn staged_memory(&self) -> &[(MemoryChange, MemoryOrigin)] {
-        &self.current().memory
+    /// What the turn has staged as `C` so far, in the order staged: what its own view of the
+    /// service is built from.
+    ///
+    /// # Errors
+    /// If what was kept is no `C`.
+    pub fn staged<C: StagedChange>(&self) -> serde_json::Result<Vec<C>> {
+        self.current().staged.of()
     }
 
     /// The agent's tools as they were when the turn began: what its model

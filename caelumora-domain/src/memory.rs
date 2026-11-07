@@ -16,6 +16,7 @@
 use crate::channel::ChannelId;
 use crate::ledger::{Change, Item, Ledger, LedgerKind};
 use crate::privacy::SessionPrivacy;
+use crate::turn::StagedChange;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -68,6 +69,12 @@ impl LedgerKind for Memories {
 
 /// A change to an agent's memory.
 pub type MemoryChange = Change<MemoryId>;
+
+/// A turn stages what it changes of the agent's memory, without where it is made: the kernel
+/// derives that from the place of the work as it commits it (issue 518).
+impl StagedChange for MemoryChange {
+    const KIND: &'static str = "memory";
+}
 /// Something an agent remembers now.
 pub type Memory = Item<Memories>;
 /// An agent's memory, as a chain of changes.

@@ -98,8 +98,8 @@ impl ToolProvider for PrivateNotesComponent {
 
 impl PrivateNotesComponent {
     /// The component, its texts from `prompts`, its prompt part at `position`; whether a note may
-    /// be reclassified, the kernel decides, asked in the turn's context (`Turn::may_reclassify`,
-    /// issue 516).
+    /// be reclassified, the kernel decides, asked in the turn's context
+    /// (`Turn::may_reclassify_note`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.

@@ -7,7 +7,7 @@ use super::Kernel;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
 use crate::agent::state::AgentStates;
-use crate::agent::{AgentManager, AgentMember};
+use crate::agent::{AgentManager, AgentMember, MemoryUse, RecalledMemory};
 use crate::attachment::AttachmentManager;
 use crate::backend::{Backends, NamedBackends};
 use crate::channel::{ChannelLoop, Participation};
@@ -30,10 +30,12 @@ use anyhow::{bail, Context, Result};
 use caelumora_api::component::Face;
 use caelumora_api::component::{ComponentResult, Services};
 use caelumora_api::library::Library;
+use caelumora_api::memory::{MemoryReader, MemoryWriter};
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::config::{AppConfig, BackendConfig};
+use caelumora_domain::memory::MemoryChange;
 use caelumora_domain::prompt_catalogue::{
     PromptCatalogue, DEFAULT_VARIANT, KERNEL, KERNEL_PROMPTS,
 };
@@ -292,7 +294,7 @@ impl KernelBuilder {
         prompts.add(KERNEL, KERNEL_PROMPTS)?;
         let component_registry =
             ComponentRegistry::built_in(Arc::clone(&entity_stores.component_bundles));
-        let extensions = Self::kernel_extensions()?;
+        let extensions = Self::kernel_extensions(&agent_states)?;
         Ok(Self {
             persistence,
             entity_stores,
@@ -328,9 +330,10 @@ impl KernelBuilder {
         })
     }
 
-    /// The kernel's own extensions (issue 516): the workspace a work may use in its channel, as a
-    /// reader and a writer.
-    fn kernel_extensions() -> Result<Extensions> {
+    /// The kernel's own extensions (issue 516): the workspace a work may use in its channel, and
+    /// the memory of its agent, which an actor of it holds in `agent_states` (issue 518), each as
+    /// a reader and a writer - the memory's committing what a turn staged of it.
+    fn kernel_extensions(agent_states: &Arc<AgentStates>) -> Result<Extensions> {
         let mut extensions = Extensions::default();
         extensions.insert::<dyn WorkspaceReader, _, _>(Face::Reader, |session| async move {
             let usable = UsableWorkspace::of_work(&session).await?;
@@ -339,6 +342,23 @@ impl KernelBuilder {
         extensions.insert::<dyn WorkspaceWriter, _, _>(Face::Writer, |session| async move {
             WorkspaceUse::of_work(&session).map(|used| Arc::new(used) as Arc<dyn WorkspaceWriter>)
         })?;
+        let states = Arc::clone(agent_states);
+        extensions.insert::<dyn MemoryReader, _, _>(Face::Reader, move |session| {
+            let states = Arc::clone(&states);
+            async move {
+                let recalled = RecalledMemory::of_work(&session, &states).await?;
+                Some(Arc::new(recalled) as Arc<dyn MemoryReader>)
+            }
+        })?;
+        let states = Arc::clone(agent_states);
+        extensions.insert::<dyn MemoryWriter, _, _>(Face::Writer, move |session| {
+            let states = Arc::clone(&states);
+            async move {
+                let used = MemoryUse::of_work(session, &states).await?;
+                Some(Arc::new(used) as Arc<dyn MemoryWriter>)
+            }
+        })?;
+        extensions.commits::<MemoryChange, dyn MemoryWriter>()?;
         Ok(extensions)
     }
 
@@ -1093,6 +1113,24 @@ mod tests {
             .map(|_| ())
             .expect_err("no such text");
         assert!(format!("{refused:#}").contains("'kernel.given_up_cause.gone'"), "{refused:#}");
+    }
+
+    /// Issue 518: what a turn stages of a kind is committed by a writer bound as the type that
+    /// commits it, and by one writer alone.
+    #[test]
+    fn what_a_turn_stages_of_a_kind_is_committed_by_one_bound_writer() {
+        use caelumora_store::memory::MemoryStore;
+
+        let unbound = Extensions::default()
+            .commits::<MemoryChange, dyn MemoryWriter>()
+            .expect_err("no writer bound to commit it");
+        assert!(format!("{unbound}").starts_with("No writer"), "{unbound}");
+        let states = Arc::new(AgentStates::new(Arc::new(MemoryStore::new()), Arc::new(())));
+        let mut extensions = KernelBuilder::kernel_extensions(&states).unwrap();
+        let again = extensions
+            .commits::<MemoryChange, dyn MemoryWriter>()
+            .expect_err("the kernel's writer commits it already");
+        assert_eq!(format!("{again}"), "What is staged as 'memory' is committed already");
     }
 
     /// Issue 518: what a plugin keeps behind an agent goes when the agent is purged, after the

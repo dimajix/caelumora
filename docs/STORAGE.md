@@ -617,13 +617,13 @@ document as the transcript is (issue 383):
 
 An agent may run in several channels and sessions at once, each with its own actor. The runtime of
 every one of them (`AgentRuntime`) holds the same `AgentStateHandle`, so that there is one owner of
-the agent's state per process; an actor reads and changes the state through its runtime alone
-(`ActorRuntime::agent_state`, `reserve_memory_id`, `apply_agent_state`, issue 516). A turn does
-not hold the state: it reads a snapshot and stages changes. When it completes, `Turn::commit`
-applies the staged changes to the state as it is at that moment, under the handle's lock, stores it
-and announces `agent::STATE_CHANGED` without content. No actor thus overwrites another's changes,
-and every next turn sees them. Numbers for new memory entries are handed out by the handle at once,
-since turns in several channels may remember at the same time.
+the agent's state per process; a work reaches the state through the memory's reader and writer the
+kernel binds to it, which find the handle an actor of the agent holds (`AgentStates::held`, issue
+518). A turn does not hold the state: it reads a snapshot and stages changes. When it completes, the
+kernel commits the staged changes to the state as it is at that moment, under the handle's lock,
+stores it and announces `agent::STATE_CHANGED` without content. No actor thus overwrites another's
+changes, and every next turn sees them. Numbers for new memory entries are handed out by the handle
+at once, since turns in several channels may remember at the same time.
 
 ### One writer per state
 

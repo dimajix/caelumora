@@ -2119,6 +2119,81 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// What an agent remembers the kernel commits in the agent's name - with its owner's rights,
+/// asked by whoever asked it - where the agent reads from (issue 518): the agent's session reached
+/// as the agent reaches it (`GetSession`), and where the entry was made derived by the kernel.
+#[tokio::test]
+async fn what_an_agent_remembers_is_committed_in_its_owners_name_where_it_reads() {
+    use caelumora_agents::components::agent_memory::AGENT_MEMORY_KIND;
+    use caelumora_domain::message::MessageRole;
+
+    let internal = Classification::general(Confidentiality::Internal);
+    let remember = calling("remember", serde_json::json!({ "text": "bob likes tea" }));
+    let answer = Message {
+        role: MessageRole::Assistant,
+        content: Some("noted".to_string()),
+        ..Message::new(internal)
+    };
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
+        register_scripted(registry, "remembering", vec![remember, answer]);
+    })
+    .await;
+    let mut remembering = Personality {
+        components: ComponentConfig {
+            component_nodes: vec![
+                ComponentDescriptor::new("model", "remembering"),
+                ComponentDescriptor::new("memory", AGENT_MEMORY_KIND),
+            ],
+        },
+        ..world.personality("remembering", None, &[]).await
+    };
+    world
+        .kernel
+        .entity_stores()
+        .personalities
+        .update(&World::system(), &mut remembering)
+        .await
+        .unwrap();
+    let helper = world.agent("helper", world.alice, &remembering).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let states = Arc::clone(world.kernel.state_store());
+
+    let (_, asked) = world
+        .asked(async {
+            main.user_actor(world.bob)
+                .expect("he takes part")
+                .send_message(Some("@helper remember this".to_string()), None, Vec::new())
+                .await
+                .expect("sent");
+            time::timeout(Duration::from_secs(5), async {
+                while states.get_agent_state(helper).await.unwrap().memory.current().is_empty() {
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("remembered once the turn completes");
+        })
+        .await;
+    let remembered = states.get_agent_state(helper).await.unwrap().memory.current();
+    assert_eq!(
+        (remembered[0].text.as_str(), remembered[0].origin.channel),
+        ("bob likes tea", main.id()),
+        "made where the agent reads from"
+    );
+    let helpers: Vec<&String> = asked.iter().filter(|line| line.contains("as helper")).collect();
+    assert!(
+        helpers.iter().all(|line| line.starts_with("alice as helper, asked by bob:")),
+        "with her rights, asked by him: {asked:?}"
+    );
+    assert!(
+        helpers.contains(&&"alice as helper, asked by bob: GetSession(alice's) yes".to_string()),
+        "its session reached as the agent reaches it: {asked:?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// The agent `reader` of `owner`, which reads the channel "side" with
 /// `read_history` once it is asked, in a session alice shares with bob and
 /// he opened: "side" is alice's, and `reader` takes part in it if

@@ -482,8 +482,8 @@ The design repeats a few decisions; new code follows them.
     event bus, projects -; the models the platform offers are a plugin's service beside it, needed
     within an agent alone (issue 520); the workspace, skills, artifacts and memory are system
     services that extend it (issue
-    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - so far the workspace,
-    skills and artifacts as extensions; memory is still reached through the agent's state (issue
+    [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - memory so far as the
+    kernel's own extension, kept in the agent's state, until a plugin brings it (issue
     [518](../issues/518-memory-is-reached-through-the-agents-state.md)). A plugin that brings what
     is the kernel's - a backend, a kind of entity with its manager, views and routes, a component of
     a channel - is trusted as the kernel; what runs an agent or serves its facets is a **library**

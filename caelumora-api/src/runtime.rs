@@ -6,17 +6,17 @@ use crate::component::ComponentContainer;
 use crate::component::ComponentResult;
 use crate::error::AttachmentResult;
 use crate::reader::{ChannelReader, SessionReader, ViewResult};
+use crate::staging::CommitResult;
 use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{Agent, AgentChannelState, AgentState, Personality};
+use caelumora_domain::agent::{Agent, AgentChannelState, Personality};
 use caelumora_domain::approval::ApprovalRuleId;
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::component::ComponentConfig;
-use caelumora_domain::confidentiality::{Classification, Place};
+use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::context::ModelProfile;
-use caelumora_domain::memory::{MemoryChange, MemoryId, MemoryOrigin};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
 use caelumora_domain::question::{QuestionError, Questions};
@@ -24,6 +24,7 @@ use caelumora_domain::secret::Secrets;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResult;
 use caelumora_domain::tool::{ToolCall, ToolMedia};
+use caelumora_domain::turn::StagedChanges;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_domain::value::time_zone::TimeZone;
 use std::fmt::Debug;
@@ -41,16 +42,6 @@ pub enum CallPermit {
     Ask,
     /// Nothing of the kernel stands against it: whether a person is asked is its tool's.
     Open,
-}
-
-/// What an agent keeps of its own in its channel, which it may reclassify
-/// (`ActorRuntime::may_reclassify`, issue 516).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnRecord {
-    /// One of its notes, public or private.
-    Note,
-    /// An entry of its memory, recalled in the channel.
-    Memory,
 }
 
 /// What the actor of an agent runs with, on the agent side (issue 516): the one interface its kind
@@ -108,24 +99,21 @@ pub trait ActorRuntime: Send + Sync + Debug {
     /// If the transcript cannot be read.
     async fn transcript_message(&self, id: MessageId) -> StoreResult<Option<Message>>;
 
-    /// The agent's own state as it is now, shared with its actors in other channels and sessions
-    /// (issue 62): a snapshot, which changes applied afterwards do not change.
-    fn agent_state(&self) -> Arc<AgentState>;
-
-    /// A number for a new entry of the agent's memory, never handed out before: reserved at once,
-    /// since its actors elsewhere remember at the same time.
-    fn reserve_memory_id(&self) -> MemoryId;
-
-    /// Applies `changes` to the agent's memory as it is now, each made at its origin in a turn
-    /// that ended with message `after`, stores it and announces it (issue 62).
+    /// Hands what a turn of the agent's work for `initiator` at `classification`, ended with
+    /// message `after`, staged as `kind` in `staged` to the writer bound to commit that kind
+    /// (issue 518), in the work's name: all of it, or none.
     ///
     /// # Errors
-    /// If it cannot be stored; nothing is changed then.
-    async fn apply_agent_state(
+    /// `NotOffered` if no writer commits `kind` there, `Unreachable` if the work's session cannot
+    /// be reached, `Unreadable` if the changes are not what the writer commits, or what it reports.
+    async fn commit_staged(
         &self,
-        changes: Vec<(MemoryChange, MemoryOrigin)>,
+        initiator: ActorId,
+        classification: Classification,
+        staged: &StagedChanges,
+        kind: &str,
         after: MessageId,
-    ) -> StoreResult<()>;
+    ) -> CommitResult<()>;
 
     /// Puts their content on the attachments of `messages` - of the agent's transcript - that the
     /// model of `profile` is given along (issue 282), and answers how each is classified.
@@ -216,17 +204,12 @@ pub trait ActorRuntime: Send + Sync + Debug {
         into: &Classification,
     ) -> bool;
 
-    /// Whether what lies at `from` may be copied, in the agent's name for `initiator`, to `into`
-    /// (issue 516): what the agent may recall of what it keeps of its own, written elsewhere.
-    fn may_copy_information(&self, initiator: ActorId, from: &Place, into: &Place) -> bool;
-
-    /// Whether `record` - what the agent keeps of its own in its channel - may be reclassified,
-    /// in its name for `initiator`, as `classification`, within what is classified `within`
-    /// (issues 133, 516).
-    async fn may_reclassify(
+    /// Whether a note of the agent in its channel, public or private, may be reclassified, in its
+    /// name for `initiator`, as `classification`, within what is classified `within` (issues 133,
+    /// 516).
+    async fn may_reclassify_note(
         &self,
         initiator: ActorId,
-        record: OwnRecord,
         classification: &Classification,
         within: &Classification,
     ) -> bool;

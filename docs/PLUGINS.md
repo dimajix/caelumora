@@ -168,7 +168,8 @@ costs is then the agent's affair, and its credentials only the secrets the kerne
 ## What a system service offers an agent's work
 
 A service with a manager of its own that extends the kernel - skills and artifacts, which plugins
-bring; the workspace, which the kernel brings itself - is a **system service** (issue
+bring; the workspace and, for now, the agent's memory, which the kernel brings itself - is a
+**system service** (issue
 [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): it runs on the kernel's side,
 its manager decides and keeps, asking the kernel's policies extended by questions of its own
 (`SkillAccess`), never rules of its own, and its views serve the frontends. What an agent's work
@@ -192,6 +193,12 @@ does with its kind it offers as **extensions**, by one pattern:
     the call: the workspace's terminal and shell.
 *   **Asked for where it is used, never kept.** A face acts in the context of the call that asked
     for it - the rights as they are at each call -, so a component asks for it again each time.
+*   **Staged, then committed.** What a turn changes of a service that keeps what a turn changes
+    until it completes - the agent's memory - the turn stages by the kind of the change
+    (`Turn::stage`, a `StagedChange`), kept with its working state; when the turn completes, the
+    kernel hands it, kind by kind, to the writer bound to commit that kind (`Committing`, issue
+    518), made for the work as any writer is, which checks every change and applies all or none.
+    A turn given up commits nothing.
 *   **Declared.** A component kind declares the faces it reads and writes by
     (`ComponentKind::reads`, `writes`); a kernel in which a declared face is bound by no plugin is
     not built. The declaration guards the build alone: a face is handed to whichever component asks
@@ -219,7 +226,7 @@ plugin or a library depends on:
     decides for the kernel - a policy, one of the kernel's managers, a store - is the kernel's, and
     a component of a library does not declare it - the kernel is not built where one does: what it
     needs decided it asks of the kernel, through the `Turn` and the `Situation` it is called with
-    (`may_reclassify`, `may_copy_information`, `copy_attachment`; the executor's `admit_tool_call`,
+    (`may_reclassify_note`, `copy_attachment`; the executor's `admit_tool_call`,
     issue 516), and what it reads it reads through the readers (`Situation::session`,
     `SessionReader`). What it needs of another crate it declares as the trait that crate offers for
     it, or, of a system service, as the extension it reads or writes by: a reader its situation

@@ -13,8 +13,8 @@ pub const STATE_CHANGED: &str = "state_changed";
 /// The state of an agent itself, across its channels and - for agents of
 /// user or global scope - across sessions (issue 62). One owner per agent
 /// and process holds it; turns read a snapshot and stage their changes
-/// (`TurnState::memory`), which are applied to the current state when the
-/// turn completes, so that no turn overwrites another's changes.
+/// (`TurnState::staged`), which the kernel commits to the current state
+/// when the turn completes, so that no turn overwrites another's changes.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentState {
     /// What the agent remembers across its channels and sessions.

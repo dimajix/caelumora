@@ -392,3 +392,31 @@ Stored memories are deleted, not migrated: a migration would be code without a l
   add -, a member of the kernel's would only wrap one call, and `delete_agent_state` removes the
   agent's states in its channels too, which stay with the kernel after step 3. So `agent_member`
   has no caller in the program until step 3 brings the memory's plugin.
+- **2026-11-07** — Step 2 implemented: a turn stages what it changes of a system service in
+  `TurnState::staged` (`StagedChanges`), and the kernel hands it, kind by kind, to the writer bound
+  to commit that kind (`ActorRuntime::commit_staged`, `Committing`). The memory is the kernel's own
+  extension until step 3 (`caelumora-kernel/src/agent/memory.rs`): its reader hands the work only
+  what it may recall, its writer reserves numbers and commits a turn's changes, each checked, all or
+  none, made where the work reads from. `agent_state`, `reserve_memory_id`, `apply_agent_state` and
+  `may_copy_information` left `ActorRuntime`. Where it differs from *The interfaces* above:
+  `StagedChange` lies in the domain beside `StagedChanges`, which names it, not in `caelumora-api`;
+  `StagedChanges::push` and `of` and `Turn::stage` and `staged` can fail, since what is staged is
+  kept as JSON with the turn, and `push` and `stage` borrow the change; `commit_staged` is handed
+  the turn's `StagedChanges` and one kind a call, so that the turn logs each failure with its kind;
+  `CommitError` is `NotOffered`, `Unreachable`, `Unreadable`, `Invalid` with words for the log,
+  `Refused` with the policy's refusal, and `Store`; `KernelBuilder::commits` waits for step 3, its
+  first caller outside the kernel, which registers its own through `Extensions`;
+  `MemoryReader::recalled` is no longer asynchronous, the reader being the snapshot made as it is
+  bound; `OwnRecord` went now, the kernel's writer asking `Reclassified::Memory`, and
+  `ActorRuntime::may_reclassify` became `may_reclassify_note`; the turn's view stays `AgentMemory`,
+  which asks whether the turn sees an entry (`knows`) rather than finding it. New in the kernel:
+  `AgentStates::held`, by which the bindings find the handle an actor of the agent holds, and
+  `AgentStateHandle::is_reserved`; the runtime of an agent holds the handle without reading it
+  (`_state`), and `AgentRuntime::in_test` still takes the handle, its work reaching the memory only
+  where it is the kernel's - making it fetch the handle itself would make it asynchronous for 25
+  callers, for what step 3 removes. What changes in behaviour: a turn that reaches no session can no
+  longer remember; the privacy recorded with a change is its session's at the commit, not at the
+  call; a number given before - removed since, or twice in one turn - is refused. A number another
+  turn of the agent reserved passes the check, since who reserved it is not kept. The checks run on
+  a snapshot taken before the handle's lock, so that an entry another actor removes meanwhile is
+  updated by nothing.
