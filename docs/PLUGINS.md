@@ -27,23 +27,25 @@ its libraries after (see [What a library is](#what-a-library-is)):
 2.  The policies, the stores and the secrets are made, then the kernel's services, managers and
     component kinds (`KernelBuilder::new`), with the backends the configuration names; then each
     plugin registers the rest of what it brings (`register`). Once the libraries registered too,
-    `build` makes the kernel.
+    `build` makes the kernel, and with it what goes with what the plugins registered: the
+    `AgentManager` with what they keep behind an agent, and the members of a scope.
 
 A plugin brings what is the kernel's - a backend, a kind of entity with its manager, views and
 routes, a component of a channel such as the `ResponderPolicy` of `caelumora-decision` - and is
 trusted as the kernel: it is given what the kernel has, the stores, the policies, the secrets, the
 controllers, the system's context. What runs an agent or brings components for an agent's facets is
-no plugin but a library of the agent side, trusted for nothing (see
-[What a library is](#what-a-library-is) and [ARCHITECTURE.md](ARCHITECTURE.md#principles)).
-`caelumora-skills` and `caelumora-artifacts` stand on both levels, cut by Cargo features (issue
+no plugin but a library of the agent side, trusted for nothing (see [What a library
+is](#what-a-library-is) and [ARCHITECTURE.md](ARCHITECTURE.md#principles)). `caelumora-skills`,
+`caelumora-artifacts` and `caelumora-memory` stand on both levels, cut by Cargo features (issue
 [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): what an agent's work does
-with their kind is the crate's part of the API (`api`: the faces and their errors), their manager,
-views and routes are the kernel's - a plugin (`kernel`, `server`: `SkillsPlugin`,
-`ArtifactsPlugin`), which binds the faces -, and their components a library's (`library`:
-`SkillsLibrary`, `ArtifactsLibrary`). Each side builds without the other - the plugin without the
-agents (`kernel` alone), the library without the plugin (`library` alone), the entity and the wire
-types without either -, which the pre-commit hook checks. A program lists both; the library alone
-keeps the kernel from being built, as no plugin binds what its component reaches.
+with their kind is the crate's part of the API (`api`: the faces, and the errors of their own),
+their manager and, where they have them, views and routes are the kernel's - a plugin (`kernel`,
+and `server` for the routes: `SkillsPlugin`, `ArtifactsPlugin`, `MemoryPlugin`), which binds the
+faces -, and their components a library's (`library`: `SkillsLibrary`, `ArtifactsLibrary`,
+`MemoryLibrary`). Each side builds without the other - the plugin without the agents (`kernel`
+alone), the library without the plugin (`library` alone), the entity and the wire types without
+either -, which the pre-commit hook checks. A program lists both; the library alone keeps the
+kernel from being built, as no plugin binds what its component reaches.
 
 A test builds the kernel with `testing::TestKernel`, naming the plugins and the libraries it needs
 (issue 375). A test of the agents' logic names the agents' library; the kernel's own tests name
@@ -62,14 +64,15 @@ it registers, a plugin
     secrets, the controllers - and offers its manager as a service (`provide`), which its views read
     through (`Views::service`) and its routes take when they are built - a service of a type
     offered already, by whomever, is refused, not replaced; what an agent's work does
-    with its kind it binds to the views of that work (`extend_readers`, `extend_writers`, below);
+    with its kind it binds to the views of that work (`extend_readers`, `extend_writers`, below),
+    and pairs a writer with the kind of change a turn stages for it (`commits`, below);
 *   registers its component kinds (`components()`), as `register_all` does for the kernel's;
-*   adds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a
-    namespace of its own, from a file it compiles in - `decision` from its `src/prompts.yaml`, as a
-    library adds its own (`LibraryBuilder::add_prompts`): the agents' `agents`, from
+*   dds the texts it gives models to the prompt catalogue (`prompts()`, issue 57), under a namespace
+    of its own, from a file it compiles in - `decision` from its `src/prompts.yaml`, as a library
+    adds its own (`LibraryBuilder::add_prompts`): the agents' `agents`, from
     `caelumora-agents/src/prompts.yaml`; `skills`, `compaction`, `tool_workspace`, `artifacts`,
-    `tool_image` and `tool_attachment` from a `src/prompts.yaml` of their own -; its component
-    kinds that write for a model use the catalogue as a service (see
+    `memory`, `tool_image` and `tool_attachment` from a `src/prompts.yaml` of their own -; its
+    component kinds that write for a model use the catalogue as a service (see
     [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)). A tool that names another plugin's tool
     writes its name as text: it does not know it as a value;
 *   is handed the kernel's storages of content (`content_storages`, issue 282) for what it keeps
@@ -82,6 +85,9 @@ it registers, a plugin
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked
     before it writes (`require`) and once it has written (`keep_made`, `restore`), so that
     nothing is left in the scope of a holder deleted meanwhile (issue 458);
+*   makes what it keeps behind an agent go with it (`agent_member`, an `AgentMember`): removed
+    when the agent is purged, after the kernel's own state of it - by the `AgentManager`,
+    whether the agent is purged alone or with its scope;
 *   claims its section of the configuration (`config::<C>(name)`), read as `C`, under `plugins`, and
     of the seed files (`seed_section`, a `SeedSection`), at their top level - the seed holds what
     the plugins keep, and no library claims a section of it, so that it has nothing to keep apart;
@@ -119,8 +125,9 @@ the agent side: what runs an agent - `caelumora-agents`, the essential one, whic
 of agent and the built-in components (issue 370) - or brings components for an agent's facets -
 `caelumora-tool-mcp` (issue 325), `caelumora-a2a` (issue 326), `caelumora-tool-workspace` (issue
 428), `caelumora-compaction` (issue 464), `caelumora-tool-image` (issue 525),
-`caelumora-tool-attachment` (issue 533), and the library sides of `caelumora-skills` and
-`caelumora-artifacts` (`SkillsLibrary`, `ArtifactsLibrary`). It is linked into the program as a
+`caelumora-tool-attachment` (issue 533), and the library sides of `caelumora-skills`,
+`caelumora-artifacts` and `caelumora-memory` (`SkillsLibrary`, `ArtifactsLibrary`,
+`MemoryLibrary`). It is linked into the program as a
 plugin is, but trusted for nothing, and links the kernel's API
 (`caelumora-api`), the domain and other libraries, never the kernel, `caelumora-security` or
 `caelumora-store`: they are dev-dependencies of its tests alone, which build the kernel's world -
@@ -163,8 +170,9 @@ costs is then the agent's affair, and its credentials only the secrets the kerne
 
 ## What a system service offers an agent's work
 
-A service with a manager of its own that extends the kernel - skills and artifacts, which plugins
-bring; the workspace, which the kernel brings itself - is a **system service** (issue
+A service with a manager of its own that extends the kernel - skills, artifacts and an agent's
+memory, which plugins bring; the workspace, which the kernel brings itself - is a **system service**
+(issue
 [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)): it runs on the kernel's side,
 its manager decides and keeps, asking the kernel's policies extended by questions of its own
 (`SkillAccess`), never rules of its own, and its views serve the frontends. What an agent's work
@@ -188,6 +196,13 @@ does with its kind it offers as **extensions**, by one pattern:
     the call: the workspace's terminal and shell.
 *   **Asked for where it is used, never kept.** A face acts in the context of the call that asked
     for it - the rights as they are at each call -, so a component asks for it again each time.
+*   **Staged, then committed.** What a turn changes of a service that keeps what a turn changes
+    until it completes - the agent's memory - the turn stages by the kind of the change
+    (`Turn::stage`, a `StagedChange`), kept with its working state; when the turn completes, the
+    kernel hands it, kind by kind, to the writer the plugin paired with that kind
+    (`KernelBuilder::commits`, a writer that is `Committing`), made for the work as any writer is,
+    which checks every change and applies all or none. A kind no writer commits is lost and logged;
+    a turn given up commits nothing.
 *   **Declared.** A component kind declares the faces it reads and writes by
     (`ComponentKind::reads`, `writes`); a kernel in which a declared face is bound by no plugin is
     not built. The declaration guards the build alone: a face is handed to whichever component asks
@@ -215,7 +230,7 @@ plugin or a library depends on:
     decides for the kernel - a policy, one of the kernel's managers, a store - is the kernel's, and
     a component of a library does not declare it - the kernel is not built where one does: what it
     needs decided it asks of the kernel, through the `Turn` and the `Situation` it is called with
-    (`may_reclassify`, `may_copy_information`, `copy_attachment`; the executor's `admit_tool_call`,
+    (`may_reclassify_note`, `copy_attachment`; the executor's `admit_tool_call`,
     issue 516), and what it reads it reads through the readers (`Situation::session`,
     `SessionReader`). What it needs of another crate it declares as the trait that crate offers for
     it, or, of a system service, as the extension it reads or writes by: a reader its situation
@@ -236,9 +251,9 @@ rather than reached around (issue 325).
 
 ## Errors: a plugin answers the kernel in the kernel's types
 
-Where the kernel calls a plugin - a facet of its component, a `ScopeMember` - the plugin answers
-with an error type of the kernel, never with one of its own inside an `anyhow` (issue 336). The
-kernel decides what a person is told of an error by the types it knows -
+Where the kernel calls a plugin - a facet of its component, a `ScopeMember`, an `AgentMember` - the
+plugin answers with an error type of the kernel, never with one of its own inside an `anyhow` (issue
+336). The kernel decides what a person is told of an error by the types it knows -
 `caelumora_kernel::error::user_message` for the user of a command and the TUI, and
 `From<anyhow::Error> for ApiError` for the REST API -, and a plugin's types are not among them:
 inside an `anyhow`, whatever a plugin's error says is shown as a failure that points to the log. The
@@ -264,7 +279,7 @@ answers - deciding there what may be shown, what is a refusal and what is a fail
     view's and the store's errors, judged as those are;
 *   a `ScopeMember` answers `StoreResult` for what lies behind an entity (`remove_behind`) - a
     workspace's place, an artifact's content -, which is its storage too: a failure to remove it is
-    a `StoreError::Backend`;
+    a `StoreError::Backend`; an `AgentMember` answers so for what it keeps behind an agent;
 *   a responder policy answers `moderator::Undecided` when it could not choose, in words for the
     log alone, without anything that was said.
 

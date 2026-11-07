@@ -45,9 +45,9 @@ them in the order they were registered; what is done with them is the same for e
 member says only what its kind adds. What has a manager of its own - agents, workspaces, skills,
 artifacts - is a member by it, announced as it announces its own deletions - an artifact to whoever
 reads it, as when it is deleted alone (issues 319, 316) -, and what lies behind an entity - an
-agent's state, a workspace's place, an artifact's content - is removed before the entity is purged.
-Personalities, session templates and component bundles, which have none, are members by their store
-(`Unowned`), which marks them and announces nothing.
+agent's states in its channels and its memory, a workspace's place, an artifact's content - is
+removed before the entity is purged. Personalities, session templates and component bundles, which
+have none, are members by their store (`Unowned`), which marks them and announces nothing.
 
 The groups of the participants of a session and of its channels lie in its scope as well, but are
 not among what lies there: they belong to the session or channel itself, and its participants reach
@@ -925,17 +925,18 @@ an agent, all in the kernel (`pub(crate)`, see
 
 The actor of an agent is on the agent side, and is given less (issue 516): its kind's factory
 (`AgentKinds::register`) is handed an `Arc<dyn ActorRuntime>` alone, which the kernel's
-`AgentRuntime` serves. It holds the agent's participant runtime, the controllers of the agent and of
-its personality and the agent's own state, and answers what only an agent asks itself: who the agent
+`AgentRuntime` serves. It holds the agent's participant runtime and the controllers of the agent and
+of its personality, and answers what only an agent asks itself: who the agent
 and its personality are as they are now (`agent`, `personality`), the ids of its session and its
-channel and the channel's classification; its state in the channel, its transcript and its own state
-(`agent_state`, `reserve_memory_id`, `apply_agent_state`); the attachments of its messages; its
-session and its channel to read, as readers at the classification of a piece of work (`session`,
-`channel`), from which the session's other channels are read as the confidentiality rules allow (see
-[MEMORY.md](MEMORY.md#reading-other-channels)); what the kernel decides of its work; the extensions
-bound to it; and its components (`build_components`). No controller, no registry and no store leaves
-it. Whether a command of an agent is hidden by a command of its session the kernel decides as it
-builds the actor: an agent whose command has the name of one of the session's is refused (issue 37).
+channel and the channel's classification; its state in the channel and its transcript; what a turn
+staged for a system service, handed to the writer that commits it (`commit_staged`, issue 518); the
+attachments of its messages; its session and its channel to read, as readers at the classification
+of a piece of work (`session`, `channel`), from which the session's other channels are read as the
+confidentiality rules allow (see [MEMORY.md](MEMORY.md#reading-other-channels)); what the kernel
+decides of its work; the extensions bound to it; and its components (`build_components`). No
+controller, no registry and no store leaves it. Whether a command of an agent is hidden by a command
+of its session the kernel decides as it builds the actor: an agent whose command has the name of one
+of the session's is refused (issue 37).
 
 The full `ChannelLoop` and `SessionLoop` are `pub(crate)`, so components from other crates cannot
 reach them. Components are not given their actor's runtime either, only what their

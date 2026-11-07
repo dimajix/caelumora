@@ -106,8 +106,8 @@ impl ToolProvider for NotesComponent {
 
 impl NotesComponent {
     /// The component, its texts from `prompts`, its prompt part at `position`; whether a note may
-    /// be reclassified, the kernel decides, asked in the turn's context (`Turn::may_reclassify`,
-    /// issue 516).
+    /// be reclassified, the kernel decides, asked in the turn's context
+    /// (`Turn::may_reclassify_note`, issue 516).
     ///
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
@@ -320,6 +320,7 @@ fn notes_ref(
         session,
         source: KnowledgeSource::Notes { agent, digest: published.digest },
         classification,
+        private: false,
     })
 }
 
@@ -367,6 +368,7 @@ impl PromptProvider for NotesComponent {
                 session: situation.session_id(),
                 source: KnowledgeSource::Notes { agent: situation.agent_id(), digest: own_digest },
                 classification,
+                private: false,
             });
         }
         Ok(Prompt::of_knowledge(text, knowledge))

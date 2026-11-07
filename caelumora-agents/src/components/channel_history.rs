@@ -148,6 +148,7 @@ impl ToolProvider for ChannelHistoryComponent {
             session: channel.session().id(),
             source,
             classification: classification.clone(),
+            private: false,
         };
 
         let time_zone = turn.situation().time_zone();

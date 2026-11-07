@@ -18,6 +18,7 @@ flowchart TD
     subgraph both["Plugin and library"]
         skills["caelumora-skills"]
         artifacts["caelumora-artifacts"]
+        memory["caelumora-memory"]
     end
 
     subgraph plugins["Plugins"]
@@ -55,8 +56,8 @@ flowchart TD
     skills -. "library" .-> compaction
     both --> domain
     both -. "kernel" .-> kernel
-    both --> rest_api
-    both -. "server" .-> rest_server
+    artifacts & rest_server & skills --> rest_api
+    artifacts & skills -. "server" .-> rest_server
     both -. "kernel" .-> security
     both -. "kernel" .-> store
     plugins --> api
@@ -74,7 +75,6 @@ flowchart TD
     kernel & rest_server --> api
     kernel & rest_server & store_json & store_postgres --> store
     rest_server --> kernel
-    rest_server --> rest_api
 ```
 <!-- crate-graph.sh: end -->
 
@@ -89,7 +89,7 @@ those it takes with other features than their default ones.
 | Program | Depends on |
 |---|---|
 | `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-security` and `caelumora-store` |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server`, `caelumora-security` and `caelumora-store`; `caelumora-artifacts` and `caelumora-skills` with `kernel` and `library` alone |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server`, `caelumora-security` and `caelumora-store`; `caelumora-artifacts`, `caelumora-memory` and `caelumora-skills` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
 Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` was named

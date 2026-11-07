@@ -89,7 +89,7 @@ impl AgentKinds {
             .into());
         };
         let session_commands = Arc::clone(runtime.command_executor());
-        let agent_runtime = AgentRuntime::new(runtime, agent, personality).await?;
+        let agent_runtime = AgentRuntime::new(runtime, agent, personality);
         let actor = (registration.factory)(Arc::new(agent_runtime)).await?;
         if let Some(command) = actor.commands().into_iter().find(|c| session_commands.has(&c.name))
         {

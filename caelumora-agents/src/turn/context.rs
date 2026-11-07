@@ -459,6 +459,7 @@ mod tests {
             session: Default::default(),
             source: KnowledgeSource::History { digest: None, from: None },
             classification: None,
+            private: false,
         };
         let (before, after) = {
             let mut turn = Turn::begun(agent, &mut state);

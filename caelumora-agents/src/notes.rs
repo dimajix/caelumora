@@ -13,7 +13,6 @@
 use crate::situation::Situation;
 use crate::tool::{ToolError, ToolResult};
 use crate::turn::Turn;
-use caelumora_api::runtime::OwnRecord;
 use caelumora_domain::agent::AgentChannelState;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::digest::Digest;
@@ -115,7 +114,7 @@ impl AgentNotes {
 
     /// Reclassifies note `id` as `classification` (issue 133) - one of the current notes, or one
     /// noted earlier in this turn, and not revoked - if the kernel lets the agent
-    /// (`Turn::may_reclassify`, issue 516): never above the channel. Taken over when the turn
+    /// (`Turn::may_reclassify_note`, issue 516): never above the channel. Taken over when the turn
     /// completes.
     ///
     /// # Errors
@@ -132,7 +131,7 @@ impl AgentNotes {
                 "you have no note #{id}; only your own current notes can be reclassified"
             )));
         }
-        if !turn.may_reclassify(OwnRecord::Note, &classification).await {
+        if !turn.may_reclassify_note(&classification).await {
             return Err(ToolError::PermissionDenied(format!(
                 "reclassifying note #{id} as {classification}"
             )));

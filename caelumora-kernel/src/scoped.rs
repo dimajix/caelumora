@@ -530,10 +530,7 @@ fn restored_unless_refused<D: Stored, T>(
 ///
 /// # Errors
 /// Whatever else the store reports.
-pub(crate) async fn purge_for_good<T: Stored>(
-    store: &dyn EntityStore<T>,
-    id: T::Id,
-) -> StoreResult<bool> {
+pub async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T::Id) -> StoreResult<bool> {
     let system = SecurityContext::system();
     if store.delete(&system, id.clone(), &Removal::now(ActorId::System)).await.optional()?.is_none()
     {

@@ -4,14 +4,15 @@
 //! state when it begins, says something and ends are rules of the state
 //! (`AgentChannelState::begin_turn`, `said`, `finish_turn`, `give_up_turn`).
 //! What it says is not kept here: it goes into the agent's transcript and
-//! history as it is said (issue 260).
+//! history as it is said (issue 260). What it stages for a system service it
+//! keeps by the kind of the change (`StagedChanges`, issue 518), committed by
+//! the kernel when the turn completes.
 
 use crate::actor::{ActorId, ActorState};
 use crate::approval::ApprovalRequest;
 use crate::confidentiality::Classification;
 use crate::content::ContentRef;
 use crate::context::KnowledgeRef;
-use crate::memory::{MemoryChange, MemoryOrigin};
 use crate::message::Message;
 use crate::note::NoteChange;
 use crate::plan::PlanState;
@@ -20,7 +21,10 @@ use crate::question::QuestionRequest;
 use crate::tool::{ToolCallState, ToolCallStatus};
 use crate::transcript::TranscriptEntry;
 use crate::work::Work;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// What came to a turn while the calls of its step ran, put aside to be
 /// written after the step's tool message (`TurnState::after_step`).
@@ -122,10 +126,10 @@ pub struct TurnState {
     /// were before work was one type.
     #[serde(flatten)]
     pub work: Work,
-    /// Changes to the agent's memory, each with where it was made, applied
-    /// to the agent's `AgentState` as it is when the turn completes (issue
-    /// 62).
-    pub memory: Vec<(MemoryChange, MemoryOrigin)>,
+    /// What the turn staged for system services - the agent's memory -, committed by the kernel
+    /// when the turn completes (issue 518).
+    #[serde(default, skip_serializing_if = "StagedChanges::is_empty")]
+    pub staged: StagedChanges,
     /// Changes to the agent's notes in this channel, applied when the turn
     /// completes (issue 65).
     pub notes: Vec<NoteChange>,
@@ -184,6 +188,49 @@ pub struct CommandRequest {
     pub issuer: ActorId,
 }
 
+/// A change a turn stages for a system service (issue 518), committed when the turn completes: kept
+/// with the turn by the name of its kind, so that a turn resumed after a restart still has it.
+pub trait StagedChange: Serialize + DeserializeOwned + Send + Sync + 'static {
+    /// The name its changes are kept and committed under, the same in every build.
+    const KIND: &'static str;
+}
+
+/// What a turn staged for system services (`StagedChange`), by kind, each in the order staged.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StagedChanges(BTreeMap<String, Vec<Value>>);
+
+impl StagedChanges {
+    /// Stages `change` after what was staged of its kind before.
+    ///
+    /// # Errors
+    /// If it cannot be written as JSON.
+    pub fn push<C: StagedChange>(&mut self, change: &C) -> serde_json::Result<()> {
+        let value = serde_json::to_value(change)?;
+        self.0.entry(C::KIND.to_string()).or_default().push(value);
+        Ok(())
+    }
+
+    /// What was staged of the kind `C`, in the order staged.
+    ///
+    /// # Errors
+    /// If one of them is no `C`.
+    pub fn of<C: StagedChange>(&self) -> serde_json::Result<Vec<C>> {
+        let staged = self.0.get(C::KIND).map(Vec::as_slice).unwrap_or_default();
+        staged.iter().map(|value| serde_json::from_value(value.clone())).collect()
+    }
+
+    /// The names of the kinds of which something was staged.
+    pub fn kinds(&self) -> impl Iterator<Item = &str> {
+        self.0.keys().map(String::as_str)
+    }
+
+    /// Whether nothing was staged.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
 impl TurnState {
     /// The approval requests of the calls of the current step that still
     /// wait for a decision, as the turn asks for them - the same ids every
@@ -234,5 +281,38 @@ impl TurnState {
                 _ => None,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Said(u32);
+    impl StagedChange for Said {
+        const KIND: &'static str = "said";
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    struct Done(String);
+    impl StagedChange for Done {
+        const KIND: &'static str = "done";
+    }
+
+    #[test]
+    fn what_is_staged_is_kept_by_its_kind_in_the_order_staged() {
+        let mut staged = StagedChanges::default();
+        assert!(staged.is_empty());
+        staged.push(&Said(2)).unwrap();
+        staged.push(&Done("it".to_string())).unwrap();
+        staged.push(&Said(1)).unwrap();
+        assert_eq!(staged.of::<Said>().unwrap(), [Said(2), Said(1)]);
+        assert_eq!(staged.of::<Done>().unwrap(), [Done("it".to_string())]);
+
+        let stored: StagedChanges =
+            serde_json::from_value(serde_json::to_value(&staged).unwrap()).unwrap();
+        assert_eq!(stored, staged, "kept with the turn as it was staged");
+        assert_eq!(stored.kinds().collect::<Vec<_>>(), ["done", "said"]);
     }
 }

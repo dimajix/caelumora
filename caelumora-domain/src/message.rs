@@ -715,6 +715,7 @@ pub(crate) mod tests {
             session: SessionId::new(),
             source: KnowledgeSource::History { digest: None, from: None },
             classification: None,
+            private: false,
         };
         let shown = ToolCallResult { knowledge: vec![read], ..result("1", ToolVisibility::SHOWN) };
         let message = Message {

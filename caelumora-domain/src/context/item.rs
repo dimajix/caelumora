@@ -13,6 +13,7 @@ use crate::session::SessionId;
 use crate::store::{EntityKind, Stored};
 use crate::value::time_zone::TimeZone;
 use serde::{Deserialize, Serialize};
+use std::ops::Not;
 use uuid::Uuid;
 
 /// A prompt part an agent's model was given besides the conversation - the
@@ -117,6 +118,10 @@ pub struct KnowledgeRef {
     pub source: KnowledgeSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub classification: Option<Classification>,
+    /// Whether it is the agent's private knowledge - its private notes (issue 51), its memory
+    /// (issues 62, 518) -, which makes what the turn produces from then on private (issue 61).
+    #[serde(default, skip_serializing_if = "Not::not")]
+    pub private: bool,
 }
 
 /// What a [`KnowledgeRef`] read.
@@ -136,17 +141,15 @@ pub enum KnowledgeSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         from: Option<Position>,
     },
-    /// An agent's memory (issue 62), read by that agent; the digest of its
-    /// memory chain. Recorded once for every channel the entries recalled
-    /// were written in, so that knowledge from another session can be told
-    /// (issue 134).
-    Memory { agent: AgentId, digest: Option<Digest> },
     /// An entity of whatever kind (issue 323), as its kind records what was read of it: the
     /// files of a workspace (issue 251), read through the channel it is used in, a file or
     /// directory by its path as `place` (issue 538) - the workspace's top directory an empty one -,
     /// with the digest of a file's content as it was read - `None` for a listing or a search -; a
     /// skill (issue 22), loaded into the turn whole, without a place, with the digest of its body
-    /// as it was loaded (the skills plugin's `skill::digest`).
+    /// as it was loaded (the skills plugin's `skill::digest`); an agent's memory (issues 62, 518),
+    /// read by that agent, with the digest of its chain, recorded once for every channel the
+    /// entries recalled were written in, so that knowledge from another session can be told (issue
+    /// 134).
     Entity {
         kind: EntityKind,
         id: Uuid,

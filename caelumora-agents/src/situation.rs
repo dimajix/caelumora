@@ -1,7 +1,7 @@
 //! The situation of a piece of work of an agent, to read (issues 204,
 //! 399): where it stands and what it sees from there - who works, for whom
-//! and bound by what, what it has seen so far, the agent's states,
-//! and its session to navigate. A piece of work is a turn of an agent run
+//! and bound by what, what it has seen so far, the agent's state in its
+//! channel, and its session to navigate. A piece of work is a turn of an agent run
 //! here or an external agent's exchange with its remote agent - both a
 //! `Work` in the domain; a [`Situation`] is what both kinds have. What only a
 //! turn has - staged changes, tool calls, the plan, what it says and does in
@@ -15,9 +15,9 @@
 use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_domain::actor::{ActorId, RequestReason};
-use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::confidentiality::{Classification, Place};
+use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{ContextResolver, ModelProfile};
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::secret::Secrets;
@@ -34,8 +34,8 @@ pub struct Situation<'a> {
     agent_id: AgentId,
     work: &'a Work,
     agent_channel_state: &'a AgentChannelState,
-    /// The runtime of the agent's actor: what it asks of its channel, what
-    /// it navigates, and the agent's own state.
+    /// The runtime of the agent's actor: what it asks of its channel and
+    /// what it navigates.
     runtime: &'a dyn ActorRuntime,
 }
 
@@ -185,22 +185,9 @@ impl<'a> Situation<'a> {
             .unwrap_or_default()
     }
 
-    /// The agent's own state as it is now (issue 62), shared by all its actors
-    /// (`ActorRuntime::agent_state`): a snapshot, which changes applied after do not change.
-    pub fn agent_state(&self) -> Arc<AgentState> {
-        self.runtime.agent_state()
-    }
-
     /// The secrets that may be read in the work's name (`ActorRuntime::secrets`, issue 516): what
     /// a component that talks to a remote system resolves its credentials by.
     pub fn secrets(&self) -> Arc<dyn Secrets> {
         self.runtime.secrets(self.initiator())
-    }
-
-    /// Whether what lies at `from` may be copied, in the work's name, to `into`
-    /// (`ActorRuntime::may_copy_information`, issue 516): what the agent may recall of what it
-    /// keeps of its own.
-    pub fn may_copy_information(&self, from: &Place, into: &Place) -> bool {
-        self.runtime.may_copy_information(self.initiator(), from, into)
     }
 }

@@ -19,7 +19,6 @@ pub mod components;
 pub mod error;
 pub mod external;
 pub mod library;
-pub(crate) mod memory;
 pub mod message;
 pub(crate) mod notes;
 pub mod prompt;

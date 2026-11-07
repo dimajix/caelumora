@@ -3,11 +3,6 @@
 -- order the nodes were added (`seq`), with their heads in a table of their
 -- own. Ids and digests are kept as text, as they are written (`Display`).
 
-CREATE TABLE agent_state (
-    agent_id text PRIMARY KEY,
-    body jsonb NOT NULL
-);
-
 CREATE TABLE channel_state (
     channel_id text PRIMARY KEY,
     body jsonb NOT NULL

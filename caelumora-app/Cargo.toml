@@ -19,6 +19,7 @@ caelumora-logging.workspace = true
 caelumora-rest-server.workspace = true
 caelumora-skills = { workspace = true, default-features = true }
 caelumora-artifacts = { workspace = true, default-features = true }
+caelumora-memory = { workspace = true, default-features = true }
 caelumora-tool-mcp.workspace = true
 caelumora-a2a.workspace = true
 caelumora-open-terminal.workspace = true

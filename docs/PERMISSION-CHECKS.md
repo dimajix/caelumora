@@ -44,15 +44,15 @@ stored entity is decided by the verb, never by the kind (issue
 | `ShowAgentCommand`, `ExecuteAgentCommand` | `owners_only`: `answers_for`; else the principal reads the channel | 3, built from 1 |
 | `ShowCommand`, `ExecuteCommand` | `owners_only`: the principal owns the channel; else reads it | 3, built from 1 |
 | `Create` of every kind | the new entity's owner is the principal | 1 |
-| `Update`, `Delete`, `ReadDeleted`, `Restore` of every kind; a kind's own verb requiring `Owner`; `ReadAgentContext`, `ReadAgentComponents`, `StopSession` | the principal owns it | 1 |
-| `Reclassify` | a channel its owner; a message the channel's owner or its author (the caller); a note or memory entry its author. Whether the new classification may be given there is the flow's | 1 or 3 |
+| `Update`, `Delete`, `ReadDeleted`, `Restore` of every kind; a kind's own verb requiring `Owner` - `ReclassifyMemory` of the memory plugin -; `ReadAgentContext`, `ReadAgentComponents`, `StopSession` | the principal owns it | 1 |
+| `Reclassify` | a channel its owner; a message the channel's owner or its author (the caller); a note its author. Whether the new classification may be given there is the flow's | 1 or 3 |
 | `ModifyMessage`, `RevokeMessage` | the author is the caller | 3: authorship, not ownership |
 | `Purge` of every kind | nobody but the system (issue 125) | 3 |
 | `List` of every kind | always; the storage narrows the list by the admission of `Get` - of `ReadDeleted` for what was deleted -, the store filters each item it hands out with that verb | 1 per item |
 | `CallTool`, `ReadSecret` | always: hooks for another `AccessPolicy`; a call is decided by the tools offered and the rules of its place, a secret has no owner yet (issue [310](../issues/310-secrets-have-no-owner.md)) | 3, decided elsewhere |
 
 Most variants are decided by the principal; `ModifyMessage`, `RevokeMessage` and `Reclassify` of a
-message, note or memory entry by the caller - an agent is judged as itself for what it said.
+message or note by the caller - an agent is judged as itself for what it said.
 `Enforcement::require` logs a refusal with the principal either way, and hands the operation's
 error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is not the
 `AccessPolicy`'s at all (issue 304, reversing 138).
@@ -192,9 +192,10 @@ An agent's views are built per piece of work, with the agent's place, and handed
 | A channel by name or id (`SessionReader::channel`, `channel_named`; `read_history`, `read_notes`) | `channel_reading`: `GetChannel` (T,1), `copyable_information` of the channel into the place (T,2) - as a whole or entry by entry; entry by entry what it answers (`Reading`) judges each message or note by its classification, a page of the history as a filter in the store (issue 421) | reach | `ChannelNotFound`, `NoChannelNamed` alike |
 | All channels (`channels`, `all_channels`) | as above per channel | reach | left out |
 | Its own private notes of other channels (`own_private_notes`) | no `GetChannel` - its own knowledge -; per note `may_copy_from` (T,2) | reach | left out |
-| Its memory (`AgentMemory::recalled`, `find`, `update`, `forget`) | per entry `may_copy_information` of its origin, by the origin's privacy then and now, asked of the kernel (`Situation::may_copy_information`, issue 516) | R4: the agent's own knowledge, as its private notes | left out |
-| Reclassify a note (`AgentNotes::reclassify`) | the note is there; asked of the kernel (`Turn::may_reclassify`, issue 516): `Reclassify` of the note with its channel's attributes (T,3), `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
-| Reclassify a memory entry (`AgentMemory::reclassify`) | the entry recalled; asked of the kernel as a note is: `Reclassify` with the channel's attributes (T,3), `require_publish` (T,2) | R4 | as above |
+| Its memory (`MemoryReader::recalled`, the memory plugin, issue 518) | its session reached as the agent reaches it, `GetSession` (T,1); store `GetMemory` of the memory's document (T,1); no `GetChannel` - its own knowledge -; `may_copy_information` of the entries' origin into the work's place (T,2), once per origin and classification, by the origin's privacy then and - for another session, looked up in S - now, decided by the plugin as it makes the reader | R4: the agent's own knowledge, as its private notes | left out |
+| Commit what a turn changed of its memory (`ActorRuntime::commit_staged`, `MemoryWriter`, issue 518) | the work's session reached as the agent reaches it, `GetSession` (T,1); under the agent's lock, store `GetMemory` (T,1); per change: an entry changed recalled at the work's place (T,2) or added before in the same turn, a new one of a number reserved and never given; `may_publish` of its classification into the work's (T,2); a reclassification as below; all or none; store `CreateMemory` or `UpdateMemory` (T,1) | R4 | `CommitError::Unreachable`, `Invalid`, `Refused`, `Store`, logged |
+| Reclassify a note (`AgentNotes::reclassify`) | the note is there; asked of the kernel (`Turn::may_reclassify_note`, issue 516): `Reclassify` of the note with its channel's attributes (T,3), `require_publish` of the new classification (T,2) | R4 | `InvalidParameter`, `PermissionDenied` |
+| Reclassify a memory entry (`TurnMemory::reclassify`) | the entry recalled; asked of the plugin (`MemoryWriter::may_reclassify`), and again as it is committed: `ReclassifyMemory` of the memory's document, its owner's (T,1), `may_publish` within the work's classification (T,2) | R4 | as above |
 
 ### Skills
 
@@ -309,10 +310,11 @@ An agent's views are built per piece of work, with the agent's place, and handed
   withholding, not a pre-check of the channel's, which asks again as anything enters it (rule 3).
   Likewise a tool's result is asked into the agent's context before the channel asks it into
   itself: two destinations.
-- **Memory.** An agent recalls its memory by the flow of each entry's origin itself - its own
-  knowledge, reached through itself as its private notes of other channels are. Memory and notes are
-  named in the kernel, each with its own enforcement; a generic one for every component's state was
-  rejected (issue [65](../issues/65-generic-component-state.md)).
+- *Memory.** What an agent may recall of its memory, its plugin decides by the flow of each entry's
+  origin - its own knowledge, reached without asking for the channel it came from, as its private
+  notes of other channels are. Notes are named in the kernel and memory in its plugin, each with its
+  own enforcement; a generic one for every component's state was rejected (issue
+  [65](../issues/65-generic-component-state.md)).
 - **The reach is one function for offering and acting.** `channel_reading` and
   `WorkspaceController::usable_in` are built from `may_*` and answer with an option: the views turn
   `None` into "not there", an operation into "not found". It is neither enforcing nor offering, but

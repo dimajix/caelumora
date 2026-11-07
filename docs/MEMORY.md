@@ -25,7 +25,8 @@ All three kinds of memory work alike:
     An entry revoked in the turn that wrote it is revoked like any other: both changes are taken
     over, and its number is used up.
 *   **The logic is a wrapper around the turn.** `Turn` knows nothing of notes or memory;
-    `AgentNotes` and `AgentMemory` hold the logic, and the components use them.
+    `AgentNotes` and the memory's `TurnMemory` hold the logic, and the components use them. What
+    may be recalled of the memory, and which of a turn's changes are applied, its plugin decides.
 *   **Every read is recorded** as knowledge (see [Recording what was
     read](#recording-what-was-read)).
 *   **Written without approval.** What an entry says may rest on a claim the model did not verify -
@@ -90,38 +91,57 @@ public notes.
 
 The `agent_memory` component lets an agent remember what it should know across its channels and,
 for agents of user or global scope, across sessions. It is an alternative to private notes, chosen
-per personality.
+per personality. The memory is a system service of its own, brought by `caelumora-memory` - a plugin
+that keeps and decides, and a library with the component -, which a program lists as it lists the
+skills.
 
-*   **Where it lives.** The memory is a chain in the agent's own `AgentState`, not in one channel,
-    and does not branch with a channel's history. Every change records where it was made: the
-    channel, and the privacy of that channel's session then.
+*   **Where it lives.** The memory of an agent is one document of the plugin's kind (`memory`), kept
+    under the agent's id and owned by its owner; it holds the chain, which does not branch with a
+    channel's history. Every change records where it was made: the channel, and the privacy of that
+    channel's session then. It is read and written in the agent's name, each read and write asked
+    of the policy as for any document, and removed when the agent is purged.
 *   **Tools.** `remember(text)`, `update_memory(id, text)` and `forget(id)`, all hidden: like
     private notes, memory is the agent's own, seen by its owner in the context panel only.
-*   **Where it is recalled.** Every entry carries the label of the turn that wrote it
+*   **Reached as a system service.** A work reads what it may recall through the `MemoryReader` of
+    its situation, and a turn reserves numbers through the `MemoryWriter` it is given and stages its
+    changes, which the plugin commits when the turn completes (see
+    [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Both are bound to the
+    work's session as it reads it; a turn that reaches none neither recalls nor remembers.
+*   *Where it is recalled.** Every entry carries the label of the turn that wrote it
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)) and is recalled only where that
-    may be read. The component asks the kernel (`Situation::may_copy_information`, issue 516) in the
-    context of the turn it is called in - the agent's, with its owner's rights - once per channel
-    the entries come from. Under the ownership policy an entry is recalled where its classification
-    flows into the current channel's - within the session, and beyond it only where the entry's
-    session permits it. In another session an entry is recalled only where both the privacy its
-    session had when it was written and the privacy that session has now permit it, so that what was
-    said under a private policy stays private and a session made private again takes back what it
-    let go. The current privacy is looked up in the kernel's name, not along an edge the agent could
-    follow; of a session that is gone, the one kept decides, and one that cannot be looked up
-    recalls nothing.
+    may be read. The plugin decides it as it makes the reader, in the context of the work - the
+    agent's, with its owner's rights - once per channel the entries come from; the agent side is
+    handed only what it may recall (issue
+    [518](../issues/518-memory-is-reached-through-the-agents-state.md)): a library that left a
+    question out would recall what it may not. Under the ownership policy an entry is recalled where
+    its classification flows into the current channel's - within the session, and beyond it only
+    where the entry's session permits it. In another session an entry is recalled only where both
+    the privacy its session had when it was written and the privacy that session has now permit it,
+    so that what was said under a private policy stays private and a session made private again
+    takes back what it let go. The current privacy is looked up in the kernel's name, not along an
+    edge the agent could follow; of a session that is gone, the one kept decides, and one that
+    cannot be looked up recalls nothing.
 *   **Changed where recalled.** Only entries recalled in a channel, or remembered in the turn, can
     be updated, forgotten or reclassified there (`reclassify_memory`, see
-    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)); the policy is asked about that one
-    entry.
+    [CONFIDENTIALITY.md](CONFIDENTIALITY.md#reclassification)). The component checks it so that its
+    tool can answer the model; the plugin checks every change again as it commits it, all or none:
+    an entry changed is one recalled there or added in the same turn, a new entry one of a number
+    reserved and never given, each classified within the work, a reclassification as the policy
+    lets the memory's owner.
 *   **Prompt part.** A part before the turn's input unless its `position` says otherwise lists what
-    may be recalled in the channel, as the memory is now.
-*   **Taken over on the current state.** A staged change is applied to the agent's state as it is
-    when the turn is taken over, under the state handle's lock, stored and announced
-    (`agent::STATE_CHANGED`). Actors of the same agent in other channels and sessions thus neither
-    lose nor overwrite each other's changes (see [STORAGE.md](STORAGE.md)).
-*   **Numbers.** Unlike a note's, the number of a new entry is reserved at once on the agent's
-    shared state, since turns in several channels may remember at the same time. This is
-    deliberately the one exception to "commit, don't write".
+    may be recalled in the channel, as the memory is now. What it recalls is recorded as the agent's
+    private knowledge.
+*   **Taken over on the current state.** A turn's changes are checked and applied by the plugin's
+    manager to the memory as it is stored when the turn is taken over, under a lock per agent, so
+    that actors of the same agent in other channels and sessions neither lose nor overwrite each
+    other's changes; changed meanwhile by another process, the memory is read and checked again.
+    What is stored is announced, without what changed, to whoever may read the memory - its
+    owner -, made as `Created`, changed as `Updated`.
+    Where a change was made - the channel, and the privacy its session has then -
+    the plugin derives from the place of the work, never from what the agent side tells.
+*   **Numbers.** Unlike a note's, the number of a new entry is reserved at once by the plugin, which
+    counts on from the memory as stored, since turns in several channels may remember at the same
+    time. This is deliberately the one exception to "commit, don't write".
 
 ## Reading other channels
 
@@ -158,9 +178,9 @@ channels.
 Every read is recorded as a `KnowledgeRef` - and what a tool wrote, which the agent knows as it
 wrote it: the channel and its session, so that knowledge from another session can be told, and what
 was read there (`KnowledgeSource`) with its digest - an agent's notes or the agent's own private
-notes in the channel, the channel's history up to where and from where, the agent's memory once per
-channel its recalled entries were written in, an entity - a skill loaded into the turn as a whole, a
-file or directory of the session's workspace by its place within it, its path.
+notes in the channel, the channel's history up to where and from where, an entity - a skill loaded
+into the turn as a whole, a file or directory of the session's workspace by its place within it,
+its path, the agent's memory once per channel its recalled entries were written in.
 
 A read is recorded with the turn (`Turn::record_knowledge`) and goes into the `ContextRef` of every
 message produced after it. A `PromptProvider` returns the knowledge its part contains with the part,
@@ -171,8 +191,8 @@ as the agent last knew it (`AgentChannelState::last_known`), and a compaction gi
 agent knew whole in the part it replaces (see [AGENT-TURN.md](AGENT-TURN.md#compaction)). What was
 read is shown with the context of a message (see
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)). A turn that read private notes or memory
-has seen private knowledge, which makes its reasoning private (see
-[CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
+has seen private knowledge, which whoever records the reading marks so (`KnowledgeRef::private`),
+and which makes its reasoning private (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md)).
 
 ## Terms
 
@@ -185,7 +205,7 @@ branch of the conversation it came from.
 | **Transcript** | The sequence of messages an agent's context is built from: its own messages in full, with tool calls and internal steps, and what others said as it received them; may be compacted. Not the history, which is the channel's public record. | agent in channel | session | yes |
 | **Prompt part** | Text given besides the conversation - the system prompt, notes - transient, recorded by digest, or given into the transcript where it changed, and then a message of it (see [AGENT-TURN.md](AGENT-TURN.md#prompt-parts)). | turn, or agent in channel as the transcript | transient, or as the transcript | -, or as the transcript |
 | **Context** | What one call of the model is given: prompt parts, the transcript and the tools offered - "context" in the usual LLM sense; reconstructable through `ContextRef` ("what the agent saw"). | one call | transient | - |
-| **Turn state** | The working state of a turn: plan, pending tool calls, the changes staged to the agent's states. | agent in channel | turn | discarded |
+| **Turn state** | The working state of a turn: plan, pending tool calls, the changes staged to the agent's state in the channel and for its memory. | agent in channel | turn | discarded |
 | **Notes** | Entries in an agent's public note chain of one channel, published there, with provenance; only the author writes and revokes. | agent in channel | session | yes |
 | **Session memory** | The union of the active public note chains of all agents in all channels of a session - a view, not a store. | session | session | per channel |
 | **Agent memory** | An alternative to private notes, chosen per personality: what an agent remembers across its channels and sessions, each entry recalled only where its label may be read. | agent | beyond the session | no |

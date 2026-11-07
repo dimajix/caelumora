@@ -64,9 +64,9 @@ pub struct KnowledgeRefResponse {
     /// Whether the channel was deleted (issue 164) - told only to whoever
     /// could read it were it there; for anyone else, it never was.
     pub channel_deleted: bool,
-    /// `"notes"`, `"private_notes"`, `"memory"`, `"history"`, or for an
-    /// entity its kind (issue 323) - `"workspace"`, whose files were read,
-    /// `"skill"`, loaded (issue 22).
+    /// `"notes"`, `"private_notes"`, `"history"`, or for an entity its kind
+    /// (issue 323) - `"workspace"`, whose files were read, `"skill"`, loaded
+    /// (issue 22), `"memory"`, the agent's own, recalled (issue 518).
     pub source: &'static str,
     /// The entity read, for a kind.
     #[serde(skip_serializing_if = "Option::is_none")]

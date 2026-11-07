@@ -7,7 +7,7 @@ use crate::transcript::{load_named_by_turn, transcript_of, TranscriptStore};
 use crate::{PersistenceBackend, Presence, StateStore};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::chain::{Node, Position};
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::context::FrameRef;
@@ -41,7 +41,6 @@ use uuid::Uuid;
 pub struct MemoryStore {
     /// The storage of every kind asked for, by its name.
     documents: RwLock<HashMap<EntityKind, Arc<MemoryDocuments>>>,
-    agent_states: RwLock<HashMap<AgentId, AgentState>>,
     agent_channel_states: RwLock<HashMap<(AgentId, ChannelId), AgentChannelState>>,
     channel_states: RwLock<HashMap<ChannelId, ChannelState>>,
     user_channel_states: RwLock<HashMap<(UserId, ChannelId), UserChannelState>>,
@@ -421,17 +420,6 @@ impl StateStore for MemoryStore {
         Ok(channels.into_iter().collect())
     }
 
-    async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
-        Ok(read_lock(&self.agent_states, |v| v.get(&agent_id).cloned()).unwrap_or_default())
-    }
-
-    async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()> {
-        // Marked first: the copy kept is the state as stored, with nothing pending.
-        state.mark_stored();
-        write_lock(&self.agent_states, |v| v.insert(agent_id, state.clone()));
-        Ok(())
-    }
-
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let mut state =
             read_lock(&self.channel_states, |v| v.get(&channel_id).cloned()).ok_or_else(|| {
@@ -484,8 +472,7 @@ impl StateStore for MemoryStore {
         Ok(())
     }
 
-    async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
-        write_lock(&self.agent_states, |v| v.remove(&agent_id));
+    async fn delete_agent_channel_states(&self, agent_id: AgentId) -> StoreResult<()> {
         write_lock(&self.agent_channel_states, |v| v.retain(|(aid, _), _| *aid != agent_id));
         write_lock(&self.transcripts, |v| v.retain(|(aid, _), _| *aid != agent_id));
         write_lock(&self.given, |v| v.retain(|(aid, _), _| *aid != agent_id));

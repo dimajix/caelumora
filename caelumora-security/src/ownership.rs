@@ -40,7 +40,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 ///   the `ConfidentialityPolicy` decides it beside it (issue 304, reversing
 ///   issue 138).
 /// - A channel may be reclassified by its owner, a message by the channel's
-///   owner or its author, a note or memory entry by its author.
+///   owner or its author, a note by its author; an entry of an agent's
+///   memory by the memory's owner, as the memory plugin asks it (issue 518).
 /// - A tool call of an agent is approved by the agent's owner and whom its
 ///   access list lets read it (issue 14).
 /// - Searching and listing are allowed; their results are narrowed to what
@@ -223,9 +224,7 @@ impl AccessPolicy for OwnershipPolicy {
                 Reclassified::Message { author, attributes } => {
                     author == context.caller_id || self.owns(attributes, context).await
                 }
-                Reclassified::Note { author, .. } | Reclassified::Memory { author, .. } => {
-                    author == context.caller_id
-                }
+                Reclassified::Note { author, .. } => author == context.caller_id,
             },
             // A message is its author's to change: who said it, not whom
             // they acted for.
@@ -606,13 +605,9 @@ mod tests {
         assert!(!may(stranger, message).await, "nobody else");
 
         let agent = ActorId::Agent(AgentId::new());
-        for own in [
-            Reclassified::Note { author: agent, attributes: &attributes },
-            Reclassified::Memory { author: agent, attributes: &attributes },
-        ] {
-            assert!(may(agent, own).await, "an agent what it wrote");
-            assert!(!may(owner, own).await, "not even the channel's owner another's");
-        }
+        let note = Reclassified::Note { author: agent, attributes: &attributes };
+        assert!(may(agent, note).await, "an agent what it wrote");
+        assert!(!may(owner, note).await, "not even the channel's owner another's");
     }
 
     #[tokio::test]

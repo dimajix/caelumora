@@ -156,12 +156,13 @@ configured compartments.
     stands now. So a turn begun afterwards is labelled by the message as it stands: a message
     released no longer raises the label of what the agents write next. A turn under way keeps what
     it has seen.
-*   **A note or a memory entry** is reclassified by its agent, through a tool that asks for approval
+*   *A note or a memory entry** is reclassified by its agent, through a tool that asks for approval
     (`reclassify_note`, `reclassify_private_note`, `reclassify_memory`), as a change of its chain
-    taken over with the turn. The ownership policy allows it to the author - the agent calling -,
-    the flow never above the turn's channel; a memory entry only where it may be recalled, and it is
-    recalled where its new classification may be read. Agents do not reclassify channels or
-    messages: people do.
+    taken over with the turn. The ownership policy allows a note to its author, the agent calling,
+    and a memory entry to the memory's owner, for whom the agent acts; the flow never above the
+    turn's channel; a memory entry only where it may be recalled, checked again by the memory plugin
+    as it commits the change, and it is recalled where its new classification may be read. Agents do
+    not reclassify channels or messages: people do.
 
 Who reclassified what is not recorded: that is an audit log
 ([140](../issues/140-audit-log.md)). The chains keep the change and its place in what happened, not
@@ -521,6 +522,7 @@ the binary, such as Open Policy Agent, would state both.
 *   **Knowledge beyond the session.** A retrieval of notes
     ([59](../issues/59-retrieval-of-notes.md)) will have to carry and respect the classification of
     where it came from; a search index must not become a way around the flow rule.
-*   **One enforcement for component state.** Every component that reads across channels asks
-    `may_copy_information` itself; when notes become generic component state
-    ([65](../issues/65-generic-component-state.md)), the kernel is to apply the rules.
+*   **One enforcement for component state.** What is read across channels is judged where it is
+    kept - notes and histories by the kernel's views, an agent's memory by its plugin;
+    when notes become generic component state ([65](../issues/65-generic-component-state.md)), the
+    kernel is to apply the rules to it alike.

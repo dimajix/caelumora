@@ -5,7 +5,6 @@
 //! (`crate::tool`, `crate::prompt`, `crate::message`), or in the API where a library or the kernel
 //! provides them (`caelumora_api::command`, `caelumora_api::model`).
 
-pub mod agent_memory;
 pub mod channel_history;
 pub mod notes;
 pub mod planning;
@@ -15,7 +14,6 @@ use caelumora_api::component::LibraryComponents;
 
 /// Registers the component kinds of this directory with `registry`.
 pub fn register_all(registry: &mut LibraryComponents<'_>) {
-    agent_memory::register(registry);
     channel_history::register(registry);
     planning::register(registry);
     notes::register(registry);

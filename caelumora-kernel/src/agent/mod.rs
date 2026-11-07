@@ -3,21 +3,16 @@
 //!
 //! - `manager`: the one owner of agents' lifecycle - deleting, restoring
 //!   and purging them;
-//! - `state`: the one owner of an agent's `AgentState` per process;
-//! - `work`: what both kinds of agent have of a piece of work - a turn, or
-//!   an external agent's exchange with its remote agent;
-//! - `turn`: the turn of an agent run here, the handle its actor and its
-//!   components work through;
-//! - `notes` and `memory`: the logic on top of the agent's notes and memory,
-//!   read and changed within a turn.
+//! - `AgentMember`: what a plugin keeps behind an agent, which the manager
+//!   removes as it purges the agent.
 
 mod manager;
-pub mod state;
 
 pub use manager::AgentManager;
 
-use caelumora_domain::agent::AgentId;
-use caelumora_domain::store::StoreError;
+use async_trait::async_trait;
+use caelumora_domain::agent::{Agent, AgentId};
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::value::ValueError;
 
@@ -42,6 +37,20 @@ pub enum AgentError {
 }
 
 pub type AgentResult<T> = Result<T, AgentError>;
+
+/// What a plugin keeps behind an agent (`KernelBuilder::agent_member`, issue 518): removed when
+/// the agent is purged, after the kernel's own state of it, as `ScopeMember::remove_behind` removes
+/// what lies behind an entity of a scope.
+#[async_trait]
+pub trait AgentMember: Send + Sync {
+    /// Removes what is kept behind `agent`, whose purge is begun: `AgentManager` gives it the agent
+    /// between `EntityStore::begin_purge` and `EntityStore::purge`, so that if it fails, the agent
+    /// stays deleted and is purged when it is purged again. Nothing to remove is not an error.
+    ///
+    /// # Errors
+    /// Whatever its store reports; as `StoreError::Backend` a failure of what else it keeps.
+    async fn remove_behind(&self, agent: &Agent) -> StoreResult<()>;
+}
 
 /// `error` of the store about agent `id`: not found is one case with not
 /// readable.

@@ -451,6 +451,7 @@ dependencies = [
  "caelumora-domain",
  "caelumora-kernel",
  "caelumora-logging",
+ "caelumora-memory",
  "caelumora-model",
  "caelumora-model-comfyui",
  "caelumora-model-ollama",
@@ -611,6 +612,25 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "caelumora-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "caelumora-agents",
+ "caelumora-api",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-security",
+ "caelumora-store",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -945,6 +965,7 @@ dependencies = [
  "caelumora-domain",
  "caelumora-kernel",
  "caelumora-logging",
+ "caelumora-memory",
  "caelumora-model",
  "caelumora-model-comfyui",
  "caelumora-model-ollama",

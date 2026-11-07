@@ -305,6 +305,7 @@ mod tests {
             &stores,
             Arc::new(ScopeHolders::new(&stores)),
             store.state_store(),
+            Vec::new(),
             events,
             Arc::clone(policies.access_policy()),
         );

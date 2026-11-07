@@ -63,8 +63,8 @@ fn hand_over_nothing<'a>(
 #[derive(Debug)]
 pub(super) struct AgentBody {
     /// What it asks the kernel through (issue 516): who the agent and its personality are as they
-    /// are now - how it is introduced, who sees its reasoning (issue 406) -, its own state, shared
-    /// with its actors in other channels and sessions (issue 62), and what it asks of its channel.
+    /// are now - how it is introduced, who sees its reasoning (issue 406) -, its state in its
+    /// channel, and what it asks of its channel and of the system services bound to its work.
     /// Its components stay as they were built from its personality.
     pub(super) runtime: Arc<dyn ActorRuntime>,
     /// What filters what reaches it (issue 196).
@@ -367,7 +367,6 @@ mod testing {
     use crate::prompt::external_context::ExternalContextProvider;
     use crate::testing::{detached_actor_runtime, detached_participant};
     use caelumora_domain::agent::Personality;
-    use caelumora_kernel::agent::state::AgentStateHandle;
     use caelumora_kernel::kernel::AgentRuntime;
 
     impl AgentBody {
@@ -401,8 +400,7 @@ mod testing {
                 ..Personality::clone(&self.runtime.personality())
             };
             let runtime = detached_participant(self.agent_id());
-            let runtime = AgentRuntime::in_test(runtime, AgentStateHandle::detached())
-                .with_personality(personality);
+            let runtime = AgentRuntime::in_test(runtime).with_personality(personality);
             Self { runtime: Arc::new(runtime), ..self }
         }
     }

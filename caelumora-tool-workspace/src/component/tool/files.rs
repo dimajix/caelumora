@@ -520,6 +520,7 @@ pub(in crate::component) fn known(
         session: turn.situation().session_id(),
         source: KnowledgeSource::within::<Workspace>(id, at.to_string(), digest),
         classification: Some(classification.clone()),
+        private: false,
     }
 }
 

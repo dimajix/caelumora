@@ -23,6 +23,8 @@ use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::SessionManager;
 use caelumora_logging::{init, LogTarget};
+use caelumora_memory::library::MemoryLibrary;
+use caelumora_memory::plugin::MemoryPlugin;
 use caelumora_model::plugin::ModelPlugin;
 use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
@@ -197,10 +199,11 @@ fn rest_plugins() -> Vec<Box<dyn RestPlugin>> {
     vec![Box::new(SkillsPlugin), Box::new(ArtifactsPlugin)]
 }
 
-/// The plugins of the program that bring no routes (issues 03, 327, 403, 446, 525), which only its
-/// kernel is built with.
+/// The plugins of the program that bring no routes (issues 03, 327, 403, 446, 518, 525), which only
+/// its kernel is built with.
 fn plugins() -> Vec<Box<dyn Plugin>> {
     vec![
+        Box::new(MemoryPlugin),
         Box::new(OpenTerminalPlugin),
         Box::new(ModelPlugin),
         Box::new(OllamaModelPlugin),
@@ -211,7 +214,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
     ]
 }
 
-/// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 516, 525,
+/// The libraries of the program, of the agent side (issues 325, 326, 329, 428, 464, 516, 518, 525,
 /// 533) - first the essential one, the agents' (issue 370).
 fn libraries() -> Vec<Box<dyn Library>> {
     vec![
@@ -224,6 +227,7 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(AttachmentToolLibrary),
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
+        Box::new(MemoryLibrary),
     ]
 }
 

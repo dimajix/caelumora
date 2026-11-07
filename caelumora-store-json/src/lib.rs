@@ -8,7 +8,7 @@ pub mod plugin;
 mod transcripts;
 
 use async_trait::async_trait;
-use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::channel::{ChannelId, ChannelState};
 use caelumora_domain::query::{ordered_after, FieldPath, Filter};
 use caelumora_domain::store::{EntityKind, Journaled, Revision, StoreError, StoreResult};
@@ -108,7 +108,6 @@ impl JsonFileStore {
 
     fn ensure_layout(&self) -> StoreResult<()> {
         for dir in [
-            self.agent_states_dir(),
             self.agent_channel_states_dir(),
             self.channel_states_dir(),
             self.user_channel_states_dir(),
@@ -117,10 +116,6 @@ impl JsonFileStore {
             std_fs::create_dir_all(dir).map_err(to_backend_error)?;
         }
         Ok(())
-    }
-
-    fn agent_states_dir(&self) -> PathBuf {
-        self.root.join("runtime").join("agent_state")
     }
 
     fn agent_channel_states_dir(&self) -> PathBuf {
@@ -163,10 +158,6 @@ impl JsonFileStore {
 
     fn under_way_path(&self, agent_id: AgentId, channel_id: ChannelId) -> PathBuf {
         self.under_way_dir().join(format!("{channel_id}.{agent_id}"))
-    }
-
-    fn agent_state_path(&self, id: AgentId) -> PathBuf {
-        self.agent_states_dir().join(format!("{id}.json"))
     }
 
     fn channel_state_path(&self, id: ChannelId) -> PathBuf {
@@ -695,16 +686,6 @@ impl StateStore for JsonFileStore {
         Ok(channels.into_iter().collect())
     }
 
-    async fn get_agent_state(&self, agent_id: AgentId) -> StoreResult<AgentState> {
-        let path = self.agent_state_path(agent_id);
-        debug!("Reading agent state from {}", path.display());
-        Ok(load_state(&path).await?.unwrap_or_default())
-    }
-
-    async fn put_agent_state(&self, agent_id: AgentId, state: &mut AgentState) -> StoreResult<()> {
-        self.store_state(&self.agent_state_path(agent_id), state).await
-    }
-
     async fn get_channel_state(&self, channel_id: ChannelId) -> StoreResult<ChannelState> {
         let path = self.channel_state_path(channel_id);
         debug!("Reading channel state from {}", path.display());
@@ -757,10 +738,7 @@ impl StateStore for JsonFileStore {
         self.leave_under_way(|channel, _| channel == channel_id).await
     }
 
-    async fn delete_agent_state(&self, agent_id: AgentId) -> StoreResult<()> {
-        let path = self.agent_state_path(agent_id);
-        delete_if_exists(&path).await?;
-        delete_if_exists(&journal_path(&path)).await?;
+    async fn delete_agent_channel_states(&self, agent_id: AgentId) -> StoreResult<()> {
         let mut channels = match fs::read_dir(self.agent_channel_states_dir()).await {
             Ok(channels) => channels,
             Err(err) if err.kind() == ErrorKind::NotFound => return Ok(()),

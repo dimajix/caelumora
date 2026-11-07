@@ -805,9 +805,6 @@ async fn knowledge_response(
             ("private_notes", Some(ActorId::Agent(agent)), digest, None)
         }
         KnowledgeSource::History { digest, from } => ("history", None, digest, from),
-        KnowledgeSource::Memory { agent, digest } => {
-            ("memory", Some(ActorId::Agent(agent)), digest, None)
-        }
         KnowledgeSource::Entity { kind, digest, .. } => (kind.name(), None, digest, None),
     };
     let entity_id = match knowledge.source {

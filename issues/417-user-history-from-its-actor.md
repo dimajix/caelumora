@@ -536,8 +536,8 @@ Each step is reviewable on its own; 1-2 change no behaviour.
     anchored at it. The transcript cannot tell: its active branch begins anew with every call of
     an external agent and every compaction, so an agent joining again was given what it had
     heard before.
-- 2026-10-17: Step 5 done. As a participant's actor starts - added, joining, or an agent restored
-  -, the channel records `HistoryShared { participant, from, by }` right before its
+- 2026-10-17: Step 5 done. As a participant's actor starts - added, joining, or an agent restored -,
+  the channel records `HistoryShared { participant, from, by }` right before its
   `ParticipantJoined`, sent in the name of who granted it and delivered to the newcomer alone
   (`Envelope::concerns`, `HistoryEntry::concerns`); no actor may send it (`is_announcement`). The
   channel's document keeps the position (`HistoryLimit { participant, from: u64 }`,

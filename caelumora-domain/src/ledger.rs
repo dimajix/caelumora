@@ -1,7 +1,7 @@
 //! A ledger: entries of text that are added, updated, removed and
 //! reclassified, kept as a chain of those changes (issue 92). An agent's notes
-//! (`crate::note`, issue 17) and its memory (`crate::memory`, issue 62) are
-//! ledgers; they work alike and differ only in what they are called and in
+//! (`crate::note`, issue 17) and its memory (the memory plugin's, issues 62,
+//! 518) are ledgers; they work alike and differ only in what they are called and in
 //! where a change is recorded to have been made - which a [`LedgerKind`]
 //! says.
 //!
@@ -132,6 +132,13 @@ impl<K: LedgerKind> Chain<LedgerEntry<K>> {
             fold(&mut items, &entry.change, &entry.origin, entry.after, entry.written_at);
         }
         items
+    }
+
+    /// Whether `id` was ever given to an entry, on any branch - one removed
+    /// since included: a number that is not given again.
+    pub fn has_given(&self, id: K::Id) -> bool {
+        let id: u32 = id.into();
+        self.all_entries().any(|e| added(&e.entry.change) == Some(id))
     }
 
     /// The number the next entry gets: one more than any entry ever added,

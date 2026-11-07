@@ -1,6 +1,6 @@
 //! What an agent's model is given (issue 47): the facets that build it - a
-//! `ContextProvider` assembles it, `PromptProvider`s contribute prompt parts
-//! -, what their components share, and the built-in components that provide
+//! `ContextProvider` assembles it, `PromptProvider`s contribute prompt parts -,
+//! what their components share, and the built-in components that provide
 //! them alone, one file per component kind. An agent has exactly one
 //! `ContextProvider` and any number of `PromptProvider`s (issue 98). A
 //! component that offers a prompt part along with another facet - tools,
@@ -73,7 +73,7 @@ pub enum PromptPosition {
 /// with: where its part goes, its kind's default if left out.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct PositionParams {
+pub struct PositionParams {
     #[serde(default)]
     position: Option<PromptPosition>,
 }
@@ -86,10 +86,7 @@ impl PositionParams {
     ///
     /// # Errors
     /// `ComponentError::InvalidConfig` if they are not its parameters.
-    pub(crate) fn position_of(
-        params: &Value,
-        default: PromptPosition,
-    ) -> ComponentResult<PromptPosition> {
+    pub fn position_of(params: &Value, default: PromptPosition) -> ComponentResult<PromptPosition> {
         let Self { position } = Self::read(params)?;
         Ok(position.unwrap_or(default))
     }
@@ -290,7 +287,6 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::components::agent_memory::AGENT_MEMORY_KIND;
     use crate::components::notes::NOTES_KIND;
     use crate::components::planning::PLANNING_KIND;
     use crate::components::private_notes::PRIVATE_NOTES_KIND;
@@ -391,7 +387,6 @@ mod tests {
             (PLANNING_KIND, Start),
             (NOTES_KIND, BeforeTurnInput),
             (PRIVATE_NOTES_KIND, BeforeTurnInput),
-            (AGENT_MEMORY_KIND, BeforeTurnInput),
         ];
         for (kind, default) in kinds {
             assert_eq!(position(kind, Value::Null).await.unwrap(), default, "{kind}: its default");

@@ -9,7 +9,7 @@ use crate::filter::Condition;
 use crate::plugin::PostgresStorePlugin;
 use caelumora_api::component::Services;
 use caelumora_domain::actor::{ActorId, ActorState, EventContext};
-use caelumora_domain::agent::{AgentChannelState, AgentId, AgentState};
+use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::approval::ApproverId;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ChannelId, ChannelState};
@@ -848,10 +848,13 @@ async fn a_kernel_keeps_its_entities_and_its_states_in_postgres() {
     let kept: i64 =
         sqlx::query_scalar("SELECT count(*) FROM entity_group").fetch_one(pool).await.unwrap();
     assert_eq!(kept, 1, "in its table");
-    let agent = AgentId::new();
-    kernel.state_store().put_agent_state(agent, &mut AgentState::default()).await.unwrap();
-    let states: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM agent_state").fetch_one(pool).await.unwrap();
+    let (agent, channel) = (AgentId::new(), ChannelId::new());
+    let mut state = AgentChannelState::default();
+    kernel.state_store().put_agent_channel_state(agent, channel, &mut state).await.unwrap();
+    let states: i64 = sqlx::query_scalar("SELECT count(*) FROM agent_channel_state")
+        .fetch_one(pool)
+        .await
+        .unwrap();
     assert_eq!(states, 1, "the states in theirs");
     database.drop().await;
 }

@@ -111,8 +111,8 @@ against this list, rule by rule, before it is reported (the self-review of
     changes. Neither is checked by hand or with another tool: other tools count bytes or know no
     exceptions, and clippy's `doc_lazy_continuation` finds a dash in a doc comment only where a line
     follows it in the same paragraph.
-*   **Code is laid out by rustfmt** (issue 487), with the settings of `rustfmt.toml`: `cargo fmt
-    --all` before a commit; the pre-commit hook refuses Rust code that `cargo fmt --all --check`
+*   **Code is laid out by rustfmt** (issue 487), with the settings of `rustfmt.toml`: `cargo
+    fmt --all` before a commit; the pre-commit hook refuses Rust code that `cargo fmt --all --check`
     does not pass. Code is not laid out by hand. rustfmt keeps code within 100 characters, as
     comments are wrapped, but breaks no string literal: a line with one may be longer. It leaves
     two things as they are written, and their layout is the author's: comments, and the inside of

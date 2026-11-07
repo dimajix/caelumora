@@ -133,7 +133,8 @@ function knowledgeLabel(knowledge: KnowledgeRef, sessionId: string): string {
     case 'private_notes':
       return `Private notes of ${agent} in ${channel}`;
     case 'memory':
-      return `Memory of ${agent}, from ${channel}`;
+      // The agent's own memory (issue 518): the context shown is the agent's.
+      return `Its memory, from ${channel}`;
     case 'workspace': {
       // The digest is a file's content as read; none for a listing or a search. The place is the
       // path read (issue 538), the workspace's top directory an empty one.

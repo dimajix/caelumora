@@ -13,6 +13,7 @@ pub mod logging;
 pub mod model;
 pub mod reader;
 pub mod runtime;
+pub mod staging;
 pub mod terminal;
 pub mod transport;
 pub mod workspace;
