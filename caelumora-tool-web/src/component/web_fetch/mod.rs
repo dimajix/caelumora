@@ -28,7 +28,7 @@ struct WebFetchParams {
     /// Whether calls require approval. Left out, they do not: a fetch only reads, what leaves is
     /// its URL, which goes only where everything is public, and what it reaches is bounded by the
     /// rules of the client.
-    #[serde(default = "approved_by_none")]
+    #[serde(default = "ApprovalMode::never")]
     requires_approval: ApprovalMode,
     /// What the tool is for, as its tool set tells it; left out, the catalogue's text.
     #[serde(default)]
@@ -36,10 +36,6 @@ struct WebFetchParams {
 }
 
 impl Params for WebFetchParams {}
-
-fn approved_by_none() -> ApprovalMode {
-    ApprovalMode::Never
-}
 
 /// A component of the kind `web_fetch`: the tool `fetch_page`, which fetches a page of the web by
 /// its URL.

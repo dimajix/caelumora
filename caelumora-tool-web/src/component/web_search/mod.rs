@@ -45,7 +45,7 @@ struct WebSearchParams {
     endpoint: RemoteEndpoint,
     /// Whether calls require approval. Left out, they do not: a search only reads, and what leaves
     /// is its query, which `destination` bounds.
-    #[serde(default = "approved_by_none")]
+    #[serde(default = "ApprovalMode::never")]
     requires_approval: ApprovalMode,
     /// What the provider is cleared for: where the queries go - and stay, in its logs, and in the
     /// engines it asks in turn. Left out, public.
@@ -57,10 +57,6 @@ struct WebSearchParams {
 }
 
 impl Params for WebSearchParams {}
-
-fn approved_by_none() -> ApprovalMode {
-    ApprovalMode::Never
-}
 
 /// A page a search found: its title, its URL and what the provider gives of its content.
 #[derive(Debug, PartialEq, Eq, Serialize)]
