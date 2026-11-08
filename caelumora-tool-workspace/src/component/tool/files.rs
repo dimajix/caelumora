@@ -24,7 +24,9 @@
 use super::tool;
 use crate::component::{WorkspaceComponent, WorkspaceParams};
 use bytes::Bytes;
-use caelumora_agents::tool::{arguments, page_of, ToolError, ToolOutput, ToolResult};
+use caelumora_agents::tool::{
+    arguments, page_of, page_parameters, TextPosition, ToolError, ToolOutput, ToolResult,
+};
 use caelumora_agents::turn::Turn;
 use caelumora_api::terminal::{
     ByteStream, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
@@ -44,8 +46,8 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 /// A file read (issue 251): its `path`, and the `content` of its result
-/// as text, with the lines it covers - `start_line`, `end_line`,
-/// `total_lines` - and where to read on (`next`).
+/// as text, with the lines it covers - `start_line`, `start_offset`,
+/// `end_line`, `total_lines` - and where to read on (`next`).
 const FILE_READ_PRESENTATION: ToolPresentation = ToolPresentation::new("file_read");
 
 /// A file written: its `path` and its `content` as text, and how many
@@ -134,6 +136,8 @@ struct Read {
     #[serde(default)]
     start_line: Option<usize>,
     #[serde(default)]
+    start_offset: Option<usize>,
+    #[serde(default)]
     line_count: Option<usize>,
 }
 
@@ -218,11 +222,7 @@ pub(super) fn tools(
         tool(
             READ_FILE,
             ToolParameters::object(
-                [
-                    ("path", string()),
-                    ("start_line", ToolParameters::number()),
-                    ("line_count", ToolParameters::number()),
-                ],
+                [("path", string())].into_iter().chain(page_parameters()),
                 ["path"],
             ),
             asks(READ_FILE),
@@ -547,13 +547,13 @@ pub(super) async fn read(
             Ok(read(value, &at, None))
         }
         READ_FILE => {
-            let Read { path: at, start_line, line_count } = arguments(params)?;
+            let Read { path: at, start_line, start_offset, line_count } = arguments(params)?;
             let at = path(&at)?;
             let (text, digest) = text(terminal, &at).await?;
             let mut result = page_of(
                 &text,
                 &format!("'{at}'"),
-                start_line,
+                TextPosition::asked(start_line, start_offset),
                 line_count,
                 component.params.max_output_bytes,
             )?
@@ -975,12 +975,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_line_longer_than_a_result_is_given_in_parts_of_it_under_its_own_number() {
+        let world = session_with_workspace().await;
+        let mut state = AgentChannelState::default();
+        let mut turn = workspace_turn(&world, &mut state);
+        let tool = component(json!({ "max_output_bytes": 10 }));
+        fs::write(world.dir().join("long.txt"), "first\n123456789012345\n").unwrap();
+
+        let args = json!({ "path": "long.txt", "start_line": 2 });
+        let cut = tool.execute(READ_FILE, &args, None, &mut turn).await.unwrap().value;
+        assert_eq!(cut["content"], "1234567890");
+        assert_eq!((cut["start_line"].as_u64(), cut["end_line"].as_u64()), (Some(2), Some(2)));
+        let next = cut["next"].as_str().unwrap();
+        assert!(next.contains("start_line 2") && next.contains("start_offset 10"), "{cut}");
+        let args = json!({ "path": "long.txt", "start_line": 2, "start_offset": 10 });
+        let rest = tool.execute(READ_FILE, &args, None, &mut turn).await.unwrap().value;
+        assert_eq!(rest["content"], "12345\n");
+        assert_eq!(rest["start_offset"], 10);
+        assert!(rest.get("next").is_none(), "{rest}");
+    }
+
+    #[tokio::test]
     async fn a_file_longer_than_a_result_is_given_in_parts_and_one_that_is_no_text_not_at_all() {
         let world = session_with_workspace().await;
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
         let tool = component(json!({ "max_output_bytes": 10 }));
-        fs::write(world.dir().join("long.txt"), "line one\nline two\nline three\n").unwrap();
+        fs::write(world.dir().join("long.txt"), "line one\nline two\nline 3\n").unwrap();
         fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
 
         let first = tool
@@ -998,7 +1019,7 @@ mod tests {
             .await
             .unwrap()
             .value;
-        assert_eq!(last["content"], "line three\n");
+        assert_eq!(last["content"], "line 3\n");
         assert!(last.get("next").is_none());
         let beyond = tool
             .execute(READ_FILE, &json!({ "path": "long.txt", "start_line": 9 }), None, &mut turn)

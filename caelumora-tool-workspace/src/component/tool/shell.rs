@@ -84,10 +84,7 @@ fn result(params: &WorkspaceParams, prompts: &PromptTexts, state: CommandState) 
     let mut output = state.output;
     let mut truncated = state.truncated;
     if output.len() > params.max_output_bytes {
-        let mut cut = output.len() - params.max_output_bytes;
-        while !output.is_char_boundary(cut) {
-            cut += 1;
-        }
+        let cut = output.ceil_char_boundary(output.len() - params.max_output_bytes);
         output.drain(..cut);
         truncated = true;
     }

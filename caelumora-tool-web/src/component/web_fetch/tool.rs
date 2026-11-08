@@ -8,8 +8,8 @@ use super::{WebFetchComponent, WEB_FETCH_KIND};
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::tool::{
-    arguments, described, page_of, proposed_matcher, ToolError, ToolOutput, ToolProvider,
-    ToolResult,
+    arguments, described, page_of, page_parameters, proposed_matcher, TextPosition, ToolError,
+    ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
@@ -27,8 +27,8 @@ use std::collections::BTreeMap;
 const FETCH_PAGE: &str = "fetch_page";
 
 /// A page fetched: its `url`, and of its result the `url` it was found at and its `title`, the
-/// `content` as text with the lines it covers - `start_line`, `end_line`, `total_lines` - and where
-/// to read on (`next`).
+/// `content` as text with the lines it covers - `start_line`, `start_offset`, `end_line`,
+/// `total_lines` - and where to read on (`next`).
 const WEB_PAGE_PRESENTATION: ToolPresentation = ToolPresentation::new("web_page");
 
 /// How many bytes of a page `fetch_page` gives at once, as `read_file` gives 64 KiB unless
@@ -42,6 +42,8 @@ struct Fetch {
     url: String,
     #[serde(default)]
     start_line: Option<usize>,
+    #[serde(default)]
+    start_offset: Option<usize>,
     #[serde(default)]
     line_count: Option<usize>,
 }
@@ -58,11 +60,7 @@ pub(super) fn fetch_page(
         name: FETCH_PAGE.to_string(),
         description: String::new(),
         parameters: ToolParameters::object(
-            [
-                ("url", ToolParameters::string()),
-                ("start_line", ToolParameters::number()),
-                ("line_count", ToolParameters::number()),
-            ],
+            [("url", ToolParameters::string())].into_iter().chain(page_parameters()),
             ["url"],
         ),
         requires_approval,
@@ -129,11 +127,12 @@ impl ToolProvider for WebFetchComponent {
         if name != FETCH_PAGE {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
-        let Fetch { url, start_line, line_count } = arguments(params)?;
+        let Fetch { url, start_line, start_offset, line_count } = arguments(params)?;
         let page = self.client.fetch(&url).await?;
         let shown = format!("'{}'", redact_endpoint(page.url.as_str()));
-        let mut value = page_of(&page.text, &shown, start_line, line_count, MAX_PAGE_BYTES)?
-            .value(&self.prompts);
+        let start = TextPosition::asked(start_line, start_offset);
+        let mut value =
+            page_of(&page.text, &shown, start, line_count, MAX_PAGE_BYTES)?.value(&self.prompts);
         value["url"] = json!(page.url.as_str());
         if let Some(title) = page.title {
             value["title"] = json!(title);
@@ -186,11 +185,14 @@ mod tests {
         component.execute(FETCH_PAGE, &params, None, &mut turn).await
     }
 
-    /// A server of the test on the host itself, with a page of three paragraphs; its port.
+    /// A server of the test on the host itself, with a page of three paragraphs and a text of one
+    /// line longer than a part; its port.
     async fn server() -> u16 {
         let page = "<title>Three</title><p>one</p><p>two</p><p>three</p>";
+        let long = "x".repeat(MAX_PAGE_BYTES + 1);
         let router = Router::new()
-            .route("/page", get(move || async move { ([("content-type", "text/html")], page) }));
+            .route("/page", get(move || async move { ([("content-type", "text/html")], page) }))
+            .route("/long", get(move || async move { ([("content-type", "text/plain")], long) }));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -213,6 +215,21 @@ mod tests {
         let part = part.unwrap();
         assert_eq!(part.value["content"], json!("two\n"));
         assert_eq!(part.value["total_lines"], json!(5), "says how much there is: {}", part.value);
+    }
+
+    #[tokio::test]
+    async fn a_line_longer_than_a_part_is_given_in_parts_of_it() {
+        let port = server().await;
+        let url = format!("http://localhost:{port}/long");
+        let component = component();
+        let first = fetched(&component, json!({ "url": url })).await.unwrap().value;
+        assert_eq!(first["content"].as_str().map(str::len), Some(MAX_PAGE_BYTES));
+        assert!(first["next"].as_str().unwrap().contains("start_offset 65536"), "{first}");
+        let rest = json!({ "url": url, "start_line": 1, "start_offset": MAX_PAGE_BYTES });
+        let last = fetched(&component, rest).await.unwrap().value;
+        assert_eq!(last["content"], json!("x"));
+        assert_eq!(last["start_offset"], json!(MAX_PAGE_BYTES));
+        assert!(last.get("next").is_none(), "{last}");
     }
 
     #[tokio::test]
