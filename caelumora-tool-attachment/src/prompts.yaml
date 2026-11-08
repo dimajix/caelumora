@@ -18,6 +18,7 @@ tools:
       file. Only plain text can be read; copy anything else into the workspace to work on it there.
     read_attachment.ref: The attachment's ref, as its note names it, such as a3
     read_attachment.start_line: The first line to read, from 1; the first unless given
+    read_attachment.start_offset: How many bytes of the first line to skip, as a result said to go on; none unless given
     read_attachment.line_count: How many lines to read; to the end unless given
     copy_attachment: >-
       Copy an attachment of this conversation into the workspace, to work on it there with the

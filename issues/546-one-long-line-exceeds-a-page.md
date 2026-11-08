@@ -1,6 +1,6 @@
 # 546 — A single long line goes past what a page of a text holds
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Tools and approvals
@@ -80,3 +80,10 @@ still given through `page_of`.
 
 - **2026-11-08** — Opened at the maintainer's request, found while checking how `fetch_page` treats
   large results. Found by reading the code; not reproduced against a running server.
+- **2026-11-08** — Decided with the maintainer and done: the first option, the line cut and
+  addressed within it. `page_of` starts from a `TextPosition` - a line and how many bytes of it lie
+  before -, and cuts a line that does not fit on a page by itself between characters, the page's
+  `next` lying inside it; `read_file`, `read_attachment` and `fetch_page` take `start_offset` beside
+  `start_line`, by the parameters they share (`page_parameters`), and a result says where to read
+  on (`read_on_within`). A character is given whatever the bound says, so that reading on gets
+  somewhere: only a bound below four bytes can be passed that way.

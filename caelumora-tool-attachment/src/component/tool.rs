@@ -12,8 +12,8 @@ use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    arguments, described, page_of, tool_text, workspace_reader, workspace_writer, ToolError,
-    ToolOutput, ToolProvider, ToolResult,
+    arguments, described, page_of, page_parameters, tool_text, workspace_reader, workspace_writer,
+    TextPosition, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_api::error::ContentError;
@@ -56,6 +56,8 @@ struct Read {
     #[serde(default)]
     start_line: Option<usize>,
     #[serde(default)]
+    start_offset: Option<usize>,
+    #[serde(default)]
     line_count: Option<usize>,
 }
 
@@ -73,7 +75,7 @@ struct CopyTo {
 /// # Errors
 /// `PromptError` if one of their texts cannot be had.
 pub(super) fn tools(prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
-    let reference = || ("ref".to_string(), ToolParameters::string());
+    let reference = || ("ref", ToolParameters::string());
     let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
         described(
             prompts,
@@ -95,23 +97,13 @@ pub(super) fn tools(prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
         tool(VIEW_ATTACHMENT, ToolParameters::object([reference()], ["ref"]), false)?,
         tool(
             READ_ATTACHMENT,
-            ToolParameters::object(
-                [
-                    reference(),
-                    ("start_line".to_string(), ToolParameters::number()),
-                    ("line_count".to_string(), ToolParameters::number()),
-                ],
-                ["ref"],
-            ),
+            ToolParameters::object([reference()].into_iter().chain(page_parameters()), ["ref"]),
             false,
         )?,
         // It writes into the workspace: always asked, as a write there is.
         tool(
             COPY_ATTACHMENT,
-            ToolParameters::object(
-                [reference(), ("path".to_string(), ToolParameters::string())],
-                ["ref"],
-            ),
+            ToolParameters::object([reference(), ("path", ToolParameters::string())], ["ref"]),
             true,
         )?,
         // What it attaches is shown by the answer that carries it; the call would only say so
@@ -237,7 +229,7 @@ impl ToolProvider for AttachmentsComponent {
                 })
             }
             READ_ATTACHMENT => {
-                let Read { reference, start_line, line_count } = arguments(params)?;
+                let Read { reference, start_line, start_offset, line_count } = arguments(params)?;
                 let (attachment, content) = attachment_content(turn, &reference).await?;
                 if !attachment.is_text() {
                     return Err(ToolError::InvalidParameter(format!("'{reference}' is no text but {}; copy it into the workspace to work on it there", attachment.media_type)));
@@ -250,7 +242,7 @@ impl ToolProvider for AttachmentsComponent {
                 let mut value = page_of(
                     &String::from_utf8_lossy(&bytes),
                     &format!("'{reference}'"),
-                    start_line,
+                    TextPosition::asked(start_line, start_offset),
                     line_count,
                     MAX_PAGE_BYTES,
                 )?
@@ -366,17 +358,19 @@ mod tests {
         (session, helper, docs)
     }
 
-    /// Alice says a message carrying a text and an image in the first channel of `session`: the
+    /// Alice says a message carrying `text` and an image in the first channel of `session`: the
     /// message as its history holds it.
-    async fn said_with_attachments(world: &World, session: &SessionLoop) -> Message {
+    async fn said_with_attachments(
+        world: &World,
+        session: &SessionLoop,
+        text: &'static [u8],
+    ) -> Message {
         let main = &session.channels()[0];
         let channel = main.channel();
         let hers = World::as_user(world.alice);
         let attachments = world.kernel.attachment_manager();
-        let notes = attachments
-            .create(&hers, &channel, "notes.txt", None, bytes(b"line one\nline two\n"))
-            .await
-            .unwrap();
+        let notes =
+            attachments.create(&hers, &channel, "notes.txt", None, bytes(text)).await.unwrap();
         let chart =
             attachments.create(&hers, &channel, "chart.png", None, bytes(PNG)).await.unwrap();
         main.user_actor(world.alice)
@@ -414,6 +408,29 @@ mod tests {
         AttachmentsComponent::new(prompts()).unwrap()
     }
 
+    /// A text of one line, longer than a page.
+    static LONG_LINE: [u8; MAX_PAGE_BYTES + 1] = [b'x'; MAX_PAGE_BYTES + 1];
+
+    #[tokio::test]
+    async fn a_line_longer_than_a_page_is_read_in_parts_of_it() {
+        let world = testing::world().await;
+        let (session, helper, _) = session_with_helper(&world).await;
+        let tool = tool();
+        let mut state = AgentChannelState::default();
+        let said = said_with_attachments(&world, &session, &LONG_LINE).await;
+        state.perceive(vec![Message { role: MessageRole::User, ..said }]);
+        let mut turn = testing::turn(&session, helper, world.alice, &mut state);
+
+        let args = json!({ "ref": "a1" });
+        let first = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap().value;
+        assert_eq!(first["content"].as_str().map(str::len), Some(MAX_PAGE_BYTES));
+        assert!(first["next"].as_str().unwrap().contains("start_offset 65536"), "{first}");
+        let args = json!({ "ref": "a1", "start_offset": MAX_PAGE_BYTES });
+        let last = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap().value;
+        assert_eq!(last["content"], "x");
+        assert!(last.get("next").is_none(), "{last}");
+    }
+
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_attachment_heard_is_reached_by_its_number_as_its_message_stands() {
@@ -428,7 +445,7 @@ mod tests {
             "nothing attached, nothing offered - and nothing unavailable"
         );
         state.turn = None;
-        let said = said_with_attachments(&world, &session).await;
+        let said = said_with_attachments(&world, &session, b"line one\nline two\n").await;
         state.perceive(vec![Message { role: MessageRole::User, ..said.clone() }]);
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         let offered: Vec<String> =
@@ -567,7 +584,7 @@ mod tests {
     async fn an_agent_reaches_what_it_heard_attached_as_its_owner_reads_the_channel() {
         let world = testing::world().await;
         let (session, helper, _) = session_with_helper(&world).await;
-        let said = said_with_attachments(&world, &session).await;
+        let said = said_with_attachments(&world, &session, b"line one\nline two\n").await;
         let mut state = AgentChannelState::default();
         state.perceive(vec![Message { role: MessageRole::User, ..said }]);
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);

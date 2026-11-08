@@ -12,7 +12,7 @@ mod providers;
 pub mod sleep;
 pub mod turn_end;
 
-pub use page::{page_of, TextPage};
+pub use page::{page_of, page_parameters, TextPage, TextPosition};
 
 use crate::prompt::NAMESPACE;
 use crate::situation::Situation;

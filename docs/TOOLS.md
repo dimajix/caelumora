@@ -286,9 +286,9 @@ URL, with the tool `fetch_page`:
     site's footer, sidebars (`aside`) -; plain text and JSON as they are, decoded by the charset
     their type names, as UTF-8 where it names none. A page of another type - a PDF, an image - or
     of none is refused, naming the type, as is one larger than 5 MiB. The text is given a page at a
-    time, as `read_file` gives a file (`start_line`, `line_count`, 64 KiB at once), with the URL
-    the page was found at, after redirects, and its title. Every call fetches the page again;
-    nothing is cached. What failed names the URL without credentials, query and fragment.
+    time, as `read_file` gives a file (`start_line`, `start_offset`, `line_count`, 64 KiB at once),
+    with the URL the page was found at, after redirects, and its title. Every call fetches the page
+    again; nothing is cached. What failed names the URL without credentials, query and fragment.
 *   **What it reaches.** `http` and `https` alone, at most five redirects. A fetch goes through the
     proxy the environment names (`HTTPS_PROXY`, `NO_PROXY`), as the server reaches the internet.
     Where it connects itself - to an address written in the URL, to a host the proxy is not asked
@@ -386,8 +386,11 @@ the tools. `caelumora-app` and `caelumora-tui` list the library.
 those that only read over the `TerminalReader` the workspace's reader hands out, those that change
 over the `Terminal` of its writer (issue 516). A path is relative to the workspace's top; one that
 leaves the workspace is the model's to correct, as is a file that is not there or not text. Reading
-is bounded, and says where to read on. A replacement must find its text exactly once, unless every
-occurrence is to be replaced. Nothing is moved over, which would be a deletion, and the workspace's
+is bounded, and says where to read on: a text is given a page at a time, in whole lines (`page_of`).
+A line too long for a page by itself is cut between characters and read on inside it, by
+`start_offset`, so that a page never holds more than its bytes and a line keeps its number, which
+`grep_files` names. A replacement must find its text exactly once, unless every occurrence is to be
+replaced. Nothing is moved over, which would be a deletion, and the workspace's
 top is neither moved nor moved over. What was read is knowledge, by its path, a file's content with
 its digest (see [MEMORY.md](MEMORY.md#recording-what-was-read)); so is what `write_file` and
 `replace_in_file` wrote, by its path and the digest of what they wrote - what the agent knows of the

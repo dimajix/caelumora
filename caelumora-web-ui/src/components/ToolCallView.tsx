@@ -284,12 +284,14 @@ const FailedResult: React.FC<{result?: ToolResult}> = ({result}) =>
 
 /**
  * The lines a page of a text covers (`TextPage` of the agents, issue 282) - all of them, or which
- * of how many -, as the fields of its result name them; `null` where they name none.
+ * of how many, also where a line is given only in part -, as the fields of its result name them;
+ * `null` where they name none.
  */
 function pageLines(page: Record<string, unknown> | null): string | null {
   const [start, end, total] = [numberOf(page, 'start_line'), numberOf(page, 'end_line'), numberOf(page, 'total_lines')];
   if (start === null || end === null || total === null) return null;
-  return start <= 1 && end >= total ? counted(total, 'line', 'lines') : `lines ${start}-${end} of ${total}`;
+  const all = start <= 1 && end >= total && numberOf(page, 'start_offset') === null && textOf(page, 'next') === null;
+  return all ? counted(total, 'line', 'lines') : `lines ${start}-${end} of ${total}`;
 }
 
 /**

@@ -304,8 +304,10 @@ tools:
 # message that cannot be had leaves the status alone; a result without its
 # mark is withheld.
 results:
-  # A text given a page at a time (`TextPage`), read on from `line`.
+  # A text given a page at a time (`TextPage`), read on from `line`, or from `offset` bytes into it
+  # where a line was too long for a page.
   read_on: "Not all of it fits into one result: read on with start_line {{ line }}."
+  read_on_within: "Not all of it fits into one result: read on with start_line {{ line }} and start_offset {{ offset }}."
   owners: Only you see this result - the channel does not. Do not quote or reveal it in your answers.
   denied: The user declined this tool call. Do not repeat it; continue without it or ask the user how to proceed.
   timed_out: No one approved this tool call in time; it was not executed. You may ask the user whether to try again.

@@ -74,6 +74,7 @@ tools:
       give at once says where to go on.
     read_file.path: The file, relative to the workspace's top
     read_file.start_line: The first line to give, counted from 1; 1 unless given
+    read_file.start_offset: How many bytes of the first line to skip, as a result said to go on; none unless given
     read_file.line_count: How many lines to give; all to the end unless given
     grep_files: >-
       Search the text files of the session's workspace for a regular expression: each matching line
