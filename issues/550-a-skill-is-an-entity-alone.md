@@ -208,21 +208,340 @@ What holds for all of them:
   instruction in front of every later turn of the owner's agents. The approver is shown the
   metadata with the skill, and the tool's text says what a trigger is for.
 
+## Decision
+
+Decided with the maintainer on 2026-11-08:
+
+1.  **Files come from two places:** a seed, where a file becomes a `Skill` once (A above), and a
+    workspace, where the file stays the skill (B). No directory of the server (C), no import or
+    export by REST or the web UI.
+2.  **Automatic loading starts as a hint:** a skill that fits is named to the model, which decides
+    (option 3). Nothing is given without the model or a participant asking for it.
+3.  **A decision model judges what fits**, not a text match. A literal phrase is what the catalogue
+    already serves; what a hint is for is the paraphrase and the other language. `triggers` are what
+    opts a skill in, and part of what the model is told of it. Without a decision model there are no
+    hints, and the catalogue, which names the triggers, stays.
+4.  **It is measured first**, because the measurement in LLM-MODELS.md is of choosing among agents.
+5.  **Decision models become the third kind of the models the platform offers**, beside language
+    and image models, because the library of `skills` may not link `caelumora-decision`, which
+    links the kernel. `decision_policy` is moved onto it too, so that there is one way to ask one.
+
+## The plan
+
+Proposed for the maintainer's review. Each step is reviewed and committed on its own, on the branch
+`issue-550-skills-from-files`. The patterns followed: `image_model` and `ImageModelClient` for a
+kind of model (issue 525), `image_generation` for a component that needs one, `decision_policy` for
+how a decision model is asked, `instruction_files` for what is looked up in a workspace (issue 279),
+`SeedSection` for what a plugin seeds, and the `Text<Rule>` values for limits.
+
+### Step 1: the measurement
+
+`work/decision_models/probe.py`, extended: which of about a dozen skills, by name, description and
+triggers, fit messages in English and German, literal and paraphrased, with messages no skill fits
+among them, and with the triggers left out for comparison. For the models LLM-MODELS.md lists. It
+says whether a question per skill (`noul`) or one over all (`choice`) works better, which threshold
+to take, and what the triggers add. Assumed below: `noul`, since several skills can fit. Results go
+to `work/decision_models/RESULTS.md` and LLM-MODELS.md. If no model tells fitting from not fitting,
+the plan goes back to the maintainer before step 6.
+
+### Step 2: decision models as a kind of model (refactoring)
+
+```rust
+// caelumora_api::decision - moved from caelumora_decision::client
+pub enum Question { Choice { .. }, Noul { .. } }
+pub enum Answer { Choice { .. }, Noul { .. } }
+pub const MAX_OPTIONS: usize = 26;
+pub const MAX_QUESTIONS: usize = 64;
+
+/// The facet through which one decision model the platform offers is asked, built for whoever
+/// asks it alone.
+#[async_trait]
+pub trait DecisionModelClient: Send + Sync + Debug {
+    /// The model's name, as the configuration gives it.
+    fn name(&self) -> &str;
+    /// Whether what is classified `classification` may be sent to the model.
+    fn may_receive(&self, initiator: ActorId, classification: &Classification) -> bool;
+    /// The answers to `questions` about `state`, which is classified `classification`, by the
+    /// name of each. `ModelError::Unfit`, nothing sent, for what it may not receive.
+    async fn decide(
+        &self,
+        initiator: ActorId,
+        classification: &Classification,
+        state: &str,
+        questions: &BTreeMap<String, Question>,
+    ) -> ModelResult<HashMap<String, Answer>>;
+}
+
+// caelumora_model
+/// A decision model the platform offers: one entry of `plugins.model.decision`.
+#[async_trait]
+pub trait DecisionModelProvider: Send + Sync + Debug {
+    /// What its server is cleared for.
+    fn destination(&self) -> &Classification;
+    /// The answers to `questions` about `state`, its credential resolved for `asking`.
+    async fn decide(
+        &self,
+        asking: &SecurityContext,
+        state: &str,
+        questions: &BTreeMap<String, Question>,
+    ) -> ModelResult<HashMap<String, Answer>>;
+}
+
+impl ModelManager {
+    /// The client of the decision model `name` - the one there is where `None` -, for whoever
+    /// `acting` acts for alone.
+    pub fn decision_client_for(
+        &self,
+        acting: Acting,
+        name: Option<&str>,
+    ) -> ComponentResult<Arc<dyn DecisionModelClient>>;
+}
+```
+
+- **The plugin `caelumora-model`** gets the section `plugins.model.decision`, by name, and the kind
+  `decision_model` (`name`), which provides the `DecisionModelClient`, as `image_model` does.
+  `ModelManager` becomes public for the one method above, and holds the `ConfidentialityPolicy`.
+- **`caelumora-decision`** brings the backend `systemone` (`endpoint`, `model`, `keep_alive`,
+  `destination`), and depends on `caelumora-model`, as `caelumora-model-ollama` does.
+  `DecisionClient` becomes that backend, and `DecisionError` goes: a call answers `ModelError`.
+- **`decision_policy`** names its model by `name` and builds its client as `image_model` does (a
+  channel is built in an `Acting` given once). `endpoint`, `model`, `keep_alive` and `destination`
+  leave its parameters; `threshold`, `max_responders` and how senders are marked stay.
+- **`destination` moves to the model**, so that it is said once and by the operator, for every
+  user of the model. So nothing in the policy's parameters says where anything goes any more, and
+  `operator_only` is taken off it, its reason gone.
+- **Two named differences.** The provider is handed who asks, where a language model's is not: a
+  hosted decision server takes a credential, which `caelumora-model-ollama` refuses since nothing
+  tells it who asks. And the policy now asks in the context of the channel's owner, not of the event
+  routed; `may_publish` does not depend on the context, so only which credential is resolved
+  changes, and that for the better: not the sender's.
+
+Files: `caelumora-api/src/decision.rs`,
+`caelumora-model/src/{lib,manager,plugin,decision_model}.rs`,
+`caelumora-decision/src/{client,policy,plugin}.rs` and its `Cargo.toml`,
+`examples/seed/session_templates/team-session.yaml`, `examples/config.yaml`. Tests: as those of
+`image_model` for the kind; those of the policy against the fake server stay; a client refuses what
+may not reach its destination; the policy's refusal, now through the client. Documents: CHANNELS.md,
+COMPONENTS.md, CONFIGURATION.md, LLM-MODELS.md, ARCHITECTURE.md, CRATES.md. Stored data: templates
+and channels with a `decision_policy` of the old parameters have to be deleted.
+
+### Step 3: metadata, and a skill as a file
+
+```rust
+// caelumora_skills::skill
+/// What a skill says of itself beside its text: all a header adds to a name and a description.
+pub struct SkillMetadata {
+    /// Phrases that say it applies; without any it is never hinted at.
+    pub triggers: Vec<SkillTrigger>,
+    /// The tools it needs, by name. Grants nothing: it says what is missing.
+    pub tools: Vec<Name>,
+    /// Whether following it changes something. Told, never relaxes anything.
+    pub mutating: bool,
+    /// What its author calls this state of it; no history (issue 305).
+    pub version: Option<SkillVersion>,
+}
+pub type SkillTrigger = Text<SkillTriggerRule>; // one line, 120 characters
+pub type SkillVersion = Text<SkillVersionRule>; // one line, 40 characters
+
+// caelumora_skills::document (feature `api`)
+/// A skill as a Markdown file holds it, its header and its text: what a seed and a workspace hold.
+pub struct SkillDocument {
+    pub name: Name,
+    pub description: Description,
+    pub metadata: SkillMetadata,
+    /// As its header says; only a seed takes it.
+    pub classification: Option<Classification>,
+    pub body: SkillBody,
+    /// The keys of its header that mean nothing here, for whoever reads it to say so.
+    pub ignored: Vec<String>,
+}
+
+impl SkillDocument {
+    /// The name of a skill lying at `path` of a directory of skills, `<name>.md` or
+    /// `<name>/SKILL.md`; `None` for anything else that lies there.
+    pub fn name_at(path: &str) -> Option<&str>;
+    /// The skill `markdown` holds, `named` unless its header names it. The line breaks of its
+    /// description are folded; a key not known is read past.
+    pub fn parse(markdown: &str, named: &str) -> Result<Self, SkillDocumentError>;
+}
+
+// Changed
+impl SkillManager { pub async fn annotate(&self, ctx, id, metadata) -> SkillResult<Skill>; }
+trait SkillWriter { async fn annotate(&self, id: SkillId, metadata: SkillMetadata)
+    -> SkillResult<Skill>; }
+```
+
+`Skill` and `SkillSnapshot` get a `metadata`, which `Skill::new`, `SkillManager::create` and
+`SkillWriter::create` take; `SkillUpdateEvent::MetadataChanged`. REST: `PUT /skills/{id}/metadata`
+as one route per thing changed, `metadata` in `CreateSkillRequest` and `SkillResponse`. At most 16
+triggers and 32 tools. `create_skill` and `update_skill` take `triggers`, `tools` and `mutating`,
+and the approver is shown them. The header is read by `caelumora_domain::config::parse_yaml`, which
+quotes nothing of the file in its errors. The catalogue's line names the triggers, whether the skill
+changes things, and the tools it needs that the turn does not offer (`Situation::tool_sets`; a tool
+of an MCP server by the part after `__`). The web UI's `SkillPage` shows and edits the metadata.
+
+Tests: `parse` with the example of this issue, without a header, with foreign keys, with too long a
+description; the manager and the routes for `annotate`; `update_skill` asks as for the text; the
+catalogue. Documents: SKILLS.md (the header, and *No versions* reworded), REST-SERVER.md, WEB-UI.md,
+COMPONENTS.md. Stored data: none; `metadata` takes its default.
+
+### Step 4: Markdown files in a seed
+
+```rust
+// caelumora_kernel::seed
+/// A file of the directory of a section, other than the seed files: its path below that directory
+/// and what it holds.
+pub struct SeedFile { pub path: PathBuf, pub content: String }
+
+trait SeedSection {
+    async fn seed(&self, section: Value) -> Result<()>;
+    /// Puts what `files`, the Markdown files below the section's directory, hold into the plugin's
+    /// stores, as `seed` does; a section that takes none leaves them alone.
+    async fn seed_files(&self, files: Vec<SeedFile>) -> Result<()> { Ok(()) }
+}
+
+// caelumora_skills::skill
+impl SkillId { /// The id of the skill a seed's file names `name`, the same at every start.
+    pub fn of_seed_file(name: &Name) -> Self; }
+```
+
+A seed directory's subdirectory that a plugin's section claims is that section's directory; a
+README beside them is in none, as today. The kernel reads the files and knows no skill.
+`SeededSkills::seed_files` keeps those of `SkillDocument::name_at`, parses them and makes a skill of
+the system in the global scope, classified as the header says or `CHANNEL_DEFAULT`, by
+`create_unless_taken`; a file that cannot be parsed is an error at startup, naming the file, and an
+ignored key a `warn!`. The id comes from the name (`Uuid::new_v5`), since a file has none, and
+without an id a skill deleted on purpose would come back. So renaming a skill in its file makes a
+new one, and a changed file does not arrive, as with every seed document. `quiz-round` becomes the
+example's Markdown file, with triggers.
+
+Tests: `seed.rs` for what goes to which section, and that a README is none; the plugin for a skill
+from a file, seeding twice, one deleted staying deleted. Documents: CONFIGURATION.md, SKILLS.md,
+`examples/seed/README.md`. Stored data: the skill `quiz-round` of a seeded store has another id now
+and has to be deleted.
+
+### Step 5: skills in a workspace
+
+```rust
+// caelumora_skills::component::usable (pub(crate))
+/// A skill the work may load where it is, from wherever it comes.
+struct UsableSkill { document: SkillDocument, classification: Classification, origin: SkillOrigin }
+
+enum SkillOrigin {
+    Stored(SkillId),
+    /// A file of the channel's workspace, with the digest of what was read.
+    Workspace { workspace: WorkspaceId, path: WorkspacePath, digest: Digest },
+}
+
+/// The directories of a workspace skills are looked for in, as `AGENTS.md` and `CLAUDE.md` are.
+const WORKSPACE_SKILL_DIRECTORIES: [&str; 2] = [".agents/skills", ".claude/skills"];
+const MAX_WORKSPACE_SKILLS: usize = 32;
+
+/// The skills the work may load where it is: those of the `SkillReader`, then those of the
+/// workspace of a name that is not taken.
+async fn usable_skills(situation: &Situation<'_>) -> SkillResult<Vec<UsableSkill>>;
+```
+
+- **Everything of the component goes through it**: the catalogue, `list_skills`, `load_skill`,
+  `/skill` and `/skills`. `SkillReader` stays as it is and answers for the store alone: the
+  files are read through the `WorkspaceReader`, in the work's name, as the workspace's own prompt
+  part does, and the kernel has checked that the channel may use the workspace.
+- **A skill of the store wins over a file of its name**, so that a repository cannot displace what
+  a user set up. A file is classified as its workspace, and its header's classification is not read.
+- **A file read fails alone:** a storage out of reach, a file that cannot be parsed or is too long
+  leave that skill out with a `warn!` and do not cost the turn (issue 279).
+- **What was read** is `KnowledgeSource::within::<Workspace>(id, path, digest)` with the digest of
+  the whole file, as `read_file` records it. So `workspace` gives it again after a compaction, and
+  `write_file` knows it was read. `update_skill` refuses one: it is changed as a file.
+- **The catalogue names them in a list of their own**, saying they were written by whoever wrote the
+  workspace's files, since that text now stands in the prompt; `AGENTS.md` only ever had its name
+  there.
+- **Reading a text file whole** is in `caelumora-tool-workspace` (`files.rs`, private); it moves to
+  `caelumora_api::terminal` before this second use.
+- **The directories are a constant**, not a parameter as `instruction_files` is: `skill_hints` needs
+  them too, and nobody needs to set them yet.
+
+What it costs: the directories are listed and the files read at the start of every turn, at most 32.
+Nothing is cached until a measurement on a remote storage asks for it (`FileEntry::modified` would
+serve as the key).
+
+Tests: found in both forms and both directories; a store's skill wins; a file refused or out of
+reach is left out; `load_skill` and `/skill` give it, known by place and digest, and once only; a
+channel that may not use the workspace sees none, in the security suite; given again after a
+compaction. Documents: SKILLS.md, WORKSPACE.md, COMPONENTS.md, CONFIDENTIALITY.md if the wording
+there is touched. Stored data: none.
+
+### Step 6: the hint
+
+A new kind, since a component has one prompt part and this one moves with every turn:
+
+```rust
+// caelumora_skills::component::hints; kind `skill_hints`
+struct SkillHintsParams {
+    /// Where the hint goes: `end` unless configured.
+    position: Option<PromptPosition>,
+    /// How probable it must be that a skill fits: 0.5 unless step 1 says otherwise.
+    threshold: f64,
+    /// `2` unless configured.
+    max_hints: usize,
+}
+
+// caelumora_domain::agent::channel_state
+impl AgentChannelState {
+    /// What others said since the agent last spoke: what a turn answers.
+    pub fn heard_since_it_spoke(&self) -> Vec<&Message>;
+    /// Whether what `source` names stands given in the transcript (what `given` asks, issue 541).
+    pub fn stands_given(&self, source: &KnowledgeSource) -> bool;
+}
+```
+
+`PromptProvider`, built with `.needs::<dyn DecisionModelClient>()`, refused without one, as
+`image_generation` is. `get_prompt`, once at the start of a turn:
+
+1.  The usable skills that have triggers, whose tools the turn offers, that do not stand given, and
+    that may reach the model (`may_receive`).
+2.  The state: `heard_since_it_spoke`, its last 1,024 tokens, classified as it is joined. If it may
+    not reach the model, or there is nothing heard, no hint. Whoever said it, person or agent;
+    tool results are not heard.
+3.  One `noul` per skill, its name, description and triggers (`prompts.yaml`). Beyond 64, or beyond
+    the model's 8,192 tokens, no hint and a `warn!`, as `decision_policy` answers too many.
+4.  Those at or above `threshold`, the most probable first, at most `max_hints`, named in a part
+    classified as they are joined, which says that they may fit and how to load one.
+
+Whatever fails - no answer in time, a model still loading, an answer not understood - gives no
+hint, with a `warn!` that holds nothing said, and never costs the turn. The part is empty otherwise.
+Which agents get it is their personality's, by the component; the example's `Coder` gets it.
+
+Tests: with a scripted `DecisionModelClient`, what is asked, the threshold and limit, the filters of
+1, what fails; in the security suite, that nothing goes to a model it may not reach and only what
+`load_skill` would load is named. Documents: SKILLS.md (and its *Not decided yet*), COMPONENTS.md,
+LLM-MODELS.md, AGENT-TURN.md if a part is listed there.
+
+### Not part of this issue
+
+Giving a skill without the model asking, a text match, an import or export, a changed seed file
+updating a skill, asking in several calls beyond what one call holds, preloading by a personality.
+
 ## Done when
 
-To be made precise once the options above are decided. At least:
-
-- A Markdown file with a header can be read into a skill, in one place, and foreign fields do not
-  stop it; a seed and a user can bring one in.
-- The agreed metadata is stored, can be changed by whoever may change the skill, and is shown.
-- `tools` grants nothing, and `mutating: false` relaxes nothing, and a test holds both.
-- A skill whose triggers fit the input reaches the turn by the agreed way, only if `load_skill`
-  would have loaded it, and not a second time; a test in the security suite holds it.
-- SKILLS.md describes it, its *Not decided yet* and *No versions* as they then stand; COMPONENTS.md,
-  CONFIGURATION.md, REST-SERVER.md, WEB-UI.md and `examples/seed/README.md` where they are touched.
+- A decision model is a model the platform offers, and `decision_policy` asks one as such.
+- A Markdown file with a header is read into a skill in one place, and foreign fields do not stop
+  it; a seed brings it in once, and in a workspace it can be loaded as it stands.
+- The metadata is stored, changed by whoever may change the skill, and shown.
+- `tools` grants nothing, `mutating: false` relaxes nothing, and a file's header sets no
+  classification in a workspace; a test holds each.
+- Where a decision model is configured, a skill whose triggers fit what was said is named to the
+  model, only if `load_skill` would load it, and not while it stands given; a test in the security
+  suite holds it. Without one, or when it fails, the turn goes on without a hint.
+- How well it chooses is measured and in LLM-MODELS.md.
+- The documents named in the steps describe it.
 
 ## History
 
 - 2026-11-08: Opened at the maintainer's request: skills from traditional Markdown files as well,
   metadata in a file's header, used to load a skill automatically. Options and recommendations
   written against `0f542c31`; nothing decided yet.
+- 2026-11-08: Decided with the maintainer (*Decision*): files from a seed and from a workspace, a
+  hint to the model as the start of automatic loading, and a decision model to judge what fits,
+  measured first and reached as a kind of model of its own. *The plan* written against `2e5b1de6`,
+  for the maintainer's review.
