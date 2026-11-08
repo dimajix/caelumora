@@ -1,6 +1,11 @@
 # Questions looked up on the web (issue 544), in a public channel: only there is the researcher
 # given its tools, which may send nothing that is not public - what is said here goes to Tavily as
-# a query, and to the pages it fetches as their URLs.
+# a query, and to the pages it fetches as their URLs. Its workspace is public as well, since a
+# channel uses only a workspace it flows both ways with, and lies in `isolated`, a storage with a
+# shell and a container per workspace: what the researcher runs after reading the web reaches no
+# other workspace. A session is made only if that storage can make the workspace: enable `isolated`
+# in the configuration (commented in examples/config.yaml, since the server does not start with it
+# where no Docker daemon can be addressed).
 session_templates:
 - id: bcdb3270-79d5-4386-84e1-4f7a15183db9
   name: research-session
@@ -9,6 +14,13 @@ session_templates:
   briefing: |-
     The user has questions to be looked up on the web. Answer with what the pages found say, and
     name them.
+  workspace:
+    name: research
+    scope: SessionScope
+    storage: isolated
+    classification:
+      level: public
+    description: Files downloaded while looking things up on the web
   participants:
   - User:
       name: user
