@@ -263,6 +263,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [544](544-web-access-tools.md) | done | An agent can neither fetch a web page by its URL nor search the web; what it knows of the world is what its model was trained on and what its workspace, its MCP servers or a person give it. |
 | [545](545-web-fetch-through-the-proxy-reaches-anything.md) | open | `web_fetch` refuses addresses inside the network only where it connects itself; a fetch through the proxy the environment names reaches whatever the proxy reaches, internal hosts and the cloud's metadata service among them. |
 | [546](546-one-long-line-exceeds-a-page.md) | open | A page of a text holds at least one whole line whatever its length, so a text with one long line - a minified JSON a fetch gave, a generated file - reaches the model whole, past the bound of 64 KiB, up to 5 MiB through `fetch_page`. |
+| [547](547-long-page-kept-whole-as-media.md) | open | A page of the web too long for one result is fetched anew for every part the agent reads, may change between the parts, and can be neither searched nor handed on, because a tool can keep nothing but an image beside its result. |
 
 ## User interaction
 
