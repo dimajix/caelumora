@@ -564,9 +564,13 @@ of the agent's transcript.
     compaction. A number is never given again: an attachment a modification keeps keeps its number
     (`AgentChannelState::modify`), and one the transcript does not take is given none. Without a
     number - the decision policy reads the channel's history - the note has no `ref`.
-*   **Given along** is an image, to a model that sees (`ModelProfile::images`,
-    `ModelProfile::gives_along`): in the message it is attached to, or with the result of the tool
-    that gave or showed it (see [TOOLS.md](TOOLS.md#media-a-tool-gives-its-model),
+*   **Given along** is an image, to a model that sees (`ModelProfile::max_images`,
+    `ModelProfile::gives_along`), of the newest `max_images` of its context (issue 465), which the
+    resolver marks once before anything is worded (`ContextResolver`, `ContentRef::left_out`), so
+    that the note, the estimate, the label and what is loaded agree; the others are noted alone,
+    a result that showed one too, and `view_attachment` makes one the newest again. It is given
+    in the message it is attached to, or with the result of the tool that gave or showed it (see
+    [TOOLS.md](TOOLS.md#media-a-tool-gives-its-model),
     [attachments](TOOLS.md#attachments)), with its content, for every call. Before each call the
     turn has the content put on what is given along (`Turn::full_context`, `conversation_until`,
     through `ActorRuntime::load_attachments`), from a cache of the process

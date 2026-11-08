@@ -250,7 +250,7 @@ mod tests {
         let image = kept("chart.png", png, &confidential);
         let notes = kept("notes.txt", b"notes", &Classification::PUBLIC);
 
-        let given = |images: bool, attachments: Vec<ContentRef>| {
+        let given = |max_images: u32, attachments: Vec<ContentRef>| {
             let runtime = detached_participant_in(
                 Arc::clone(&kernel),
                 session.clone(),
@@ -265,7 +265,7 @@ mod tests {
                     attachments,
                     ..Message::new(Classification::PUBLIC)
                 }]);
-                let profile = ModelProfile { images, ..ModelProfile::default() };
+                let profile = ModelProfile { max_images, ..ModelProfile::default() };
                 state.begin_turn(
                     Work::new(Default::default(), None, channel_classification, Default::default())
                         .given_as(profile),
@@ -283,18 +283,22 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        let (seeing, label) = given(true, vec![image.clone(), notes.clone()]).await;
+        let (seeing, label) = given(4, vec![image.clone(), notes.clone()]).await;
         assert_eq!(
             contents(&seeing.unwrap()),
             [Some(png.to_vec()), None],
             "the image alone, with its content"
         );
         assert_eq!(label, confidential, "seen as it is given");
-        let (blind, label) = given(false, vec![image.clone()]).await;
+        let newer = kept("newer.png", png, &Classification::PUBLIC);
+        let (bound, label) = given(1, vec![image.clone(), newer]).await;
+        assert_eq!(contents(&bound.unwrap()), [None, Some(png.to_vec())], "the newest alone");
+        assert_eq!(label, Classification::PUBLIC, "what is left out is not seen (issue 465)");
+        let (blind, label) = given(0, vec![image.clone()]).await;
         assert_eq!(contents(&blind.unwrap()), [None], "nothing to a model that does not see");
         assert_eq!(label, Classification::PUBLIC, "and not seen, though heard");
         let changed = ContentRef { digest: digest::content(b"another"), ..image.clone() };
-        let (failed, _) = given(true, vec![changed]).await;
+        let (failed, _) = given(4, vec![changed]).await;
         assert!(failed.is_err(), "not what its message says: the call fails");
     }
 

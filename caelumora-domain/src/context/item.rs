@@ -327,7 +327,7 @@ mod tests {
         let item = |profile| {
             ContextItem::Conversation { message: attached.clone() }.estimated_tokens(&profile)
         };
-        let seeing = ModelProfile { images: true, ..ModelProfile::default() };
+        let seeing = ModelProfile { max_images: 4, ..ModelProfile::default() };
         assert_eq!(item(seeing) - item(ModelProfile::default()), IMAGE_TOKENS);
     }
 }

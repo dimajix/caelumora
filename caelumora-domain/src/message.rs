@@ -291,7 +291,7 @@ impl Message {
     }
 
     /// The same, to change: the copy a transcript numbers, or a model is given with content.
-    pub fn carried_mut(&mut self) -> impl Iterator<Item = &mut ContentRef> {
+    pub fn carried_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut ContentRef> {
         self.attachments.iter_mut().chain(
             self.tool_results
                 .iter_mut()

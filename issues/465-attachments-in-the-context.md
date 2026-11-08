@@ -1,6 +1,6 @@
 # 465 — Nothing bounds how much of its attachments a model is given along
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -44,12 +44,59 @@ well.
 - **Compaction.** Whether a compaction leaves out what was given along and replaces it by its note
   is 16's; the bound here decides what is given along in the first place.
 
+## Decision
+
+Decided with the maintainer: a bound by number, per model. It needs no context size, its cost can
+be told in advance, and a small model is simply given a smaller number. A text stays noted alone,
+as it is: nothing of it is given along that a bound would have to cover.
+
+```rust
+// ModelProfile, in place of `images: bool`
+/// How many images the model is given along at most, the newest of its context; 0: it sees none.
+/// Read as 0 where a context recorded before has none.
+#[serde(default)]
+pub max_images: u32,
+
+impl ModelProfile {
+    /// Whether the model sees images at all.
+    pub fn sees_images(&self) -> bool;
+    /// Marks the images of `messages`, oldest first, beyond the newest `max_images` as left out.
+    pub(super) fn leave_out_images<'m>(
+        &self,
+        messages: impl DoubleEndedIterator<Item = &'m mut Message>,
+    );
+}
+
+// ContentRef, as `number` and `content` on the copy alone, never stored
+/// Whether the model is told of it alone, beyond the images it is given along.
+#[serde(skip)]
+pub left_out: bool,
+
+// LanguageModelParams (component `language_model`)
+/// How many images the model is given along at most, if it sees any.
+#[serde(default = "default_max_images")]
+max_images: u32,
+```
+
+- `ContextResolver::given_path` marks once, before anything is worded, on what `resolve`,
+  `conversation_until` and the estimate of tokens all read. `gives_along` asks `!left_out` too, so
+  that the note, the estimate, the label and what is loaded cannot disagree.
+- What counts is what the model would be given: a message of a turn given up for a lowered channel,
+  reduced to the tools it called, carries none. Within a message the last image counts first.
+- `view_attachment` shows an image as the newest, so that one left out comes back.
+- A result of `view_attachment` whose image was left out is noted as not shown: its value still
+  says `shown`, and a model told of an image it is not given makes one up.
+- 4 by default, some 3,000 tokens; a small context is given a smaller number.
+
+The price: once a new image pushes an old one out, the old one's note changes far ahead in the
+context, as a compaction changes it, which may invalidate a model's prompt cache from there on.
+
 ## Done when
 
-- What of the attachments in a context is given along and what is only noted follows a bound that
-  is documented, and configured where it is configurable.
-- Images and text are both covered, and a model is never given more along than the bound allows.
-- AGENT-TURN.md and CONFIGURATION.md describe it.
+- A model is given along at most `max_images` images, the newest of its context, and is told of the
+  others alone, in its note, its estimate, its label and what is loaded.
+- `language_model` configures it, with a default.
+- AGENT-TURN.md, CONFIGURATION.md, COMPONENTS.md and LLM-MODELS.md describe it.
 
 ## History
 
@@ -62,3 +109,10 @@ well.
   whole apart and gives the model a preview with a reference to fetch the rest
   (`<persisted-output>`). A large result could be an attachment of the tool result, given along
   or fetched by the same bound - to be decided with it.
+- **2026-11-08** — Split with the maintainer: what a tool gives back is issue
+  [552](552-a-tool-result-has-no-bound.md), this issue keeps what of its attachments a model is
+  given along. Checked against the code: a text is never given along (`ModelProfile::gives_along`),
+  so only images are left to bound, and the context size is known after an agent's first call where
+  its backend reports it.
+- **2026-11-08** — Decided with the maintainer as above: a number per model, 4 by default.
+- **2026-11-08** — Implemented as decided.

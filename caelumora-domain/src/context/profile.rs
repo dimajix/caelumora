@@ -85,12 +85,11 @@ pub struct ModelProfile {
     /// (`work/message_times/RESULTS.md`, finding 2). Nothing where senders
     /// are not marked.
     pub message_times: bool,
-    /// Whether the model is given images (issue 282): an attachment that is
-    /// one is given along with its message, else the model is told of it
-    /// alone. Read as `false` where a context recorded before has none: it
-    /// was given none.
+    /// How many images the model is given along at most (issues 282, 465), the newest of its
+    /// context, each with its message; of the others it is told alone. 0: it sees none. Read as 0
+    /// where a context recorded before has none.
     #[serde(default)]
-    pub images: bool,
+    pub max_images: u32,
 }
 
 /// Whether a model or remote agent is given the times of messages unless its
@@ -148,10 +147,33 @@ impl ModelProfile {
         Ok(message)
     }
 
-    /// Whether the model is given `attachment` along with its message rather
-    /// than told of it alone (issue 282): an image, to a model that sees.
+    /// Whether the model sees images at all.
+    pub fn sees_images(&self) -> bool {
+        self.max_images > 0
+    }
+
+    /// Whether the model is given `attachment` along with its message rather than told of it alone
+    /// (issues 282, 465): an image, to a model that sees, not left out (`leave_out_images`).
     pub fn gives_along(&self, attachment: &ContentRef) -> bool {
-        self.images && attachment.is_image()
+        self.sees_images() && attachment.is_image() && !attachment.left_out
+    }
+
+    /// Marks the images of `messages`, oldest first, beyond the newest `max_images` as left out
+    /// (issue 465), on the copies a model is given, the last image of a message counting first.
+    /// Asked once of a whole context before anything is worded, so that what `gives_along` answers
+    /// of an image depends on nothing but the image.
+    pub(super) fn leave_out_images<'m>(
+        &self,
+        messages: impl DoubleEndedIterator<Item = &'m mut Message>,
+    ) {
+        let kept = usize::try_from(self.max_images).unwrap_or(usize::MAX);
+        let images = messages
+            .rev()
+            .flat_map(|message| message.carried_mut().rev())
+            .filter(|content| content.is_image());
+        for image in images.skip(kept) {
+            image.left_out = true;
+        }
     }
 
     /// How what the model is given of `message` is classified: the message, its tool results, and
@@ -174,13 +196,15 @@ impl ModelProfile {
 
     /// `message` with its attachments noted after its text (`noted`), whoever said it, and what
     /// each of its tool results gave the model after the result's text (issue 512), so that the
-    /// model can name it.
+    /// model can name it - and what a result showed that was left out since (issue 465): its value
+    /// still says it was shown, and a model told of an image it is not given makes one up.
     fn with_notes(&self, mut message: Message) -> Message {
         if let Some(note) = self.noted(&message.attachments) {
             message.content = Some(with_note(message.content.take().unwrap_or_default(), note));
         }
         for result in &mut message.tool_results {
-            if let Some(note) = self.noted(&result.media) {
+            let left_out = result.shown.iter().filter(|shown| shown.left_out);
+            if let Some(note) = self.noted(result.media.iter().chain(left_out)) {
                 result.content = with_note(mem::take(&mut result.content), note);
             }
         }
@@ -219,8 +243,8 @@ impl ModelProfile {
     /// of each what it is, how it names it, and whether it is given it along:
     /// a marker, as the sender's is, in the form of the sender's - an element
     /// with `xml`, else in brackets. `None` without attachments.
-    fn noted(&self, attachments: &[ContentRef]) -> Option<String> {
-        let lines: Vec<String> = attachments.iter().map(|attachment| {
+    fn noted<'c>(&self, attachments: impl IntoIterator<Item = &'c ContentRef>) -> Option<String> {
+        let lines: Vec<String> = attachments.into_iter().map(|attachment| {
             let size = attachment.size_shown();
             let shown = self.gives_along(attachment);
             match self.sender_format {
@@ -453,7 +477,7 @@ mod tests {
 
         let xml = ModelProfile {
             sender_format: SenderFormat::Xml,
-            images: true,
+            max_images: 4,
             ..ModelProfile::default()
         };
         assert_eq!(given(xml, attached.clone()), "<message from=\"@alice\">look\n<attachment ref=\"a3\" name=\"chart &quot;q3&quot;.png\" type=\"image/png\" size=\"2.3 MB\" shown=\"yes\"/>\n<attachment name=\"report.pdf\" type=\"application/pdf\" size=\"512 B\" shown=\"no\"/></message>", "inside the marker, an image given along to a model that sees");
@@ -507,6 +531,28 @@ mod tests {
         silent.tool_results[0].content.clear();
         let given = blind.as_said(silent, agent, false, Default::default());
         assert!(given.tool_results[0].content.starts_with("[attachment a3: "), "the note alone");
+
+        // Issue 465: what a result showed says so by its value, so it is noted once left out.
+        let seeing = ModelProfile { max_images: 4, ..ModelProfile::default() };
+        let showed = |left_out: bool| Message {
+            tool_results: vec![ToolCallResult {
+                media: Vec::new(),
+                shown: vec![ContentRef { left_out, ..image.clone() }],
+                ..drew.tool_results[0].clone()
+            }],
+            ..drew.clone()
+        };
+        let content = |left_out: bool| {
+            seeing.as_said(showed(left_out), agent, false, Default::default()).tool_results[0]
+                .content
+                .clone()
+        };
+        assert_eq!(content(false), "drawn", "shown, nothing to add");
+        assert_eq!(
+            content(true),
+            "drawn\n[attachment a3: chart \"q3\".png, image/png, 2.3 MB, not shown]",
+            "no longer given along"
+        );
     }
 
     #[test]

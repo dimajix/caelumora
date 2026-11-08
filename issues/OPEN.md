@@ -40,7 +40,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 | [545](545-web-fetch-through-the-proxy-reaches-anything.md) | open | medium | feature | `web_fetch` refuses addresses inside the network only where it connects itself; a fetch through the proxy the environment names reaches whatever the proxy reaches, internal hosts and the cloud's metadata service among them. |
-| [547](547-long-page-kept-whole-as-media.md) | in progress | medium | feature | A page of the web too long for one result is fetched anew for every part the agent reads, may change between the parts, and can be neither searched nor handed on, because a tool can keep nothing but an image beside its result. |
 | [552](552-a-tool-result-has-no-bound.md) | open | medium | feature | The result of an MCP tool is put into the model's context whole, whatever its size, is sent again with every call of the turn, and cannot be read on or searched, while `fetch_page` can already keep what is too long for one result beside a preview. |
 
 ## User interaction
@@ -57,7 +56,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [58](58-notes-in-every-prompt.md) | open | high | feature | Every note is put into every prompt in full, which grows without bound, and the writing agent sees its notes a second time as tool calls - revoked ones included. |
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
-| [465](465-attachments-in-the-context.md) | open | medium | feature | What of a message's attachments is put into a model's context and what it has to fetch through a tool is decided by no bound, so a few images or one long text can fill the context and are sent again with every call. |
 | [550](550-a-skill-is-an-entity-alone.md) | open | medium | feature | A skill exists only as a `Skill` entity and cannot come from a Markdown file with a header, as other agent tools keep them, and it says nothing of itself but its name and one line, so nothing but the model's reading of that line can bring it into a turn without being asked. |
 
 ## Maintenance

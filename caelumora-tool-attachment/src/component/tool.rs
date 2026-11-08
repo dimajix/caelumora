@@ -190,7 +190,7 @@ impl ToolProvider for AttachmentsComponent {
     /// images, `copy_attachment` only where a workspace may be written to, as the workspace's tools
     /// offer their writes.
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        let sees = situation.profile().images;
+        let sees = situation.profile().sees_images();
         let writable = match workspace_reader(situation).await {
             Ok(workspace) => workspace.may_write().await,
             Err(_) => false,
@@ -597,7 +597,7 @@ mod tests {
         drop(testing::turn(&session, helper, world.alice, &mut state));
         if let Some(begun) = state.turn.as_mut() {
             begun.work.context.frame.profile =
-                ModelProfile { images: true, ..ModelProfile::default() };
+                ModelProfile { max_images: 4, ..ModelProfile::default() };
         }
         let seeing = Turn::of(
             &mut state,

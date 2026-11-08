@@ -107,7 +107,7 @@ mod tests {
             ..Message::new(internal.clone())
         };
         assert!(
-            causes.set_by_message(&attached, &ModelProfile { images: true, ..profile }),
+            causes.set_by_message(&attached, &ModelProfile { max_images: 4, ..profile }),
             "and an attachment given along (issue 282)"
         );
         assert!(!causes.set_by_message(&attached, &profile), "not one only noted");

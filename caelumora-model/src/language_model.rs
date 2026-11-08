@@ -9,11 +9,12 @@
 //! `anywhere`, issue 49), `sender_format` and `sender_style`, how the model is told who wrote a
 //! message of another participant (`none`, `prefix` - the default - or `xml`; by `handle` - the
 //! default - or `name`, issue 135), `message_times`, whether the marker says when the message was
-//! written, in the session's time zone (`true` - the default - or `false`, issue 424), and
+//! written, in the session's time zone (`true` - the default - or `false`, issue 424),
 //! `prompt_texts`, the variant of the texts its model is given (issue 57; the default unless
-//! configured). Whether the model sees images is the model's, asked as the component is built
-//! (issue 282). An unknown parameter is refused, so that a misspelt one does not silently fall back
-//! to its default.
+//! configured), and `max_images`, how many images it is given along at most, the newest (4 by
+//! default, issue 465). Whether the model sees images is the model's, asked as the component is
+//! built (issue 282): one that does not is given none, whatever `max_images` says. An unknown
+//! parameter is refused, so that a misspelt one does not silently fall back to its default.
 
 use crate::manager::ModelManager;
 use caelumora_api::component::{ComponentFacets, ComponentKind, Params};
@@ -49,6 +50,14 @@ struct LanguageModelParams {
     message_times: bool,
     #[serde(default)]
     prompt_texts: Option<PromptVariant>,
+    /// How many images the model is given along at most, if it sees any (issue 465).
+    #[serde(default = "default_max_images")]
+    max_images: u32,
+}
+
+/// How many images a model that sees is given along unless configured: some 3,000 tokens.
+fn default_max_images() -> u32 {
+    4
 }
 
 impl Params for LanguageModelParams {}
@@ -91,7 +100,7 @@ pub(crate) fn register_all(registry: &mut ComponentRegistry) {
                 sender_style: params.sender_style,
                 message_times: params.message_times,
                 prompt_texts: params.prompt_texts,
-                images: client.sees_images().await,
+                max_images: if client.sees_images().await { params.max_images } else { 0 },
             };
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn LanguageModelClient>(Arc::new(client));
@@ -172,12 +181,19 @@ mod tests {
         assert_eq!(answer_of(&a).await.as_deref(), Some("from a"));
         let profile = a.one::<dyn ModelProfileProvider>().await.unwrap().profile();
         assert_eq!(profile.sender_format, SenderFormat::Xml);
-        assert!(profile.images, "as the model says");
+        assert!(profile.sees_images(), "as the model says");
+        assert_eq!(profile.max_images, 4, "as many as a model that sees is given unless told");
+        let two = model_of(&kernel, json!({ "name": "a", "max_images": 2 })).await.unwrap();
+        let profile_of_two = two.one::<dyn ModelProfileProvider>().await.unwrap().profile();
+        assert_eq!(profile_of_two.max_images, 2, "as the component says (issue 465)");
 
         let b = model_of(&kernel, json!({ "name": "b" })).await.unwrap();
         assert_eq!(answer_of(&b).await.as_deref(), Some("from b"));
         let profile = b.one::<dyn ModelProfileProvider>().await.unwrap().profile();
-        assert!(!profile.images);
+        assert!(!profile.sees_images());
+        let told = model_of(&kernel, json!({ "name": "b", "max_images": 2 })).await.unwrap();
+        let profile_of_told = told.one::<dyn ModelProfileProvider>().await.unwrap().profile();
+        assert_eq!(profile_of_told.max_images, 0, "none to a model that does not see");
         assert_eq!(profile.reasoning_history, ReasoningHistory::CurrentTurn);
         assert_eq!(profile.system_messages, SystemMessages::OnlyAtStart);
         assert_eq!(
