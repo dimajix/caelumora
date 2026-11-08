@@ -262,6 +262,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [535](535-tool-media-attached-kept-and-shown-twice.md) | done | An image a tool generates is kept as what its result gave, and once the agent shows it to the channel by `attach` it is kept again as a copy and shown twice in the chat - at the card of the call and at the answer -, so it is unclear whether what a tool gives is rightly seen rather than said. |
 | [544](544-web-access-tools.md) | done | An agent can neither fetch a web page by its URL nor search the web; what it knows of the world is what its model was trained on and what its workspace, its MCP servers or a person give it. |
 | [545](545-web-fetch-through-the-proxy-reaches-anything.md) | open | `web_fetch` refuses addresses inside the network only where it connects itself; a fetch through the proxy the environment names reaches whatever the proxy reaches, internal hosts and the cloud's metadata service among them. |
+| [546](546-one-long-line-exceeds-a-page.md) | open | A page of a text holds at least one whole line whatever its length, so a text with one long line - a minified JSON a fetch gave, a generated file - reaches the model whole, past the bound of 64 KiB, up to 5 MiB through `fetch_page`. |
 
 ## User interaction
 

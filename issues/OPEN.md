@@ -8,6 +8,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
+| [546](546-one-long-line-exceeds-a-page.md) | open | medium | bug | A page of a text holds at least one whole line whatever its length, so a text with one long line - a minified JSON a fetch gave, a generated file - reaches the model whole, past the bound of 64 KiB, up to 5 MiB through `fetch_page`. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Sessions and channels
