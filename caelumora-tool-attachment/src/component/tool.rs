@@ -185,14 +185,11 @@ impl ToolProvider for AttachmentsComponent {
         self.tools.clone()
     }
 
-    /// Where the agent's transcript numbered attachments - elsewhere none, which is no tool
-    /// unavailable but nothing to reach -; `view_attachment` only to a model that sees images,
-    /// `copy_attachment` only where a workspace may be written to, as the workspace's tools offer
-    /// their writes.
+    /// All of them, also before anything is numbered - a tool may give one in the turn under way,
+    /// whose tools are fixed as it begins -, but `view_attachment` only to a model that sees
+    /// images, `copy_attachment` only where a workspace may be written to, as the workspace's tools
+    /// offer their writes.
     async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
-        if situation.agent_channel_state().attachments.is_empty() {
-            return Ok(Vec::new());
-        }
         let sees = situation.profile().images;
         let writable = match workspace_reader(situation).await {
             Ok(workspace) => workspace.may_write().await,
@@ -319,6 +316,7 @@ mod tests {
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::Grant;
+    use caelumora_domain::tool::ToolMedia;
     use caelumora_domain::workspace::Workspace;
     use caelumora_kernel::session::SessionLoop;
     use caelumora_kernel::testing::{checks, participant_runtime_in, World};
@@ -431,6 +429,37 @@ mod tests {
         assert!(last.get("next").is_none(), "{last}");
     }
 
+    /// Issue 547: what a tool gave is read and copied by its number in the step after the call,
+    /// before the channel has recorded the message of the result.
+    #[tokio::test]
+    async fn what_a_tool_kept_is_read_and_copied_before_its_channel_recorded_it() {
+        let world = testing::world().await;
+        let (session, helper, _) = session_with_helper(&world).await;
+        let main = &session.channels()[0];
+        let runtime = agent_runtime(participant_runtime_in(main, ActorId::Agent(helper)));
+        let classification = main.classification();
+        let page =
+            ToolMedia { name: "page.txt".to_string(), content: Bytes::from_static(b"text\n") };
+        let kept = runtime
+            .create_media(ActorId::User(world.alice), classification.clone(), vec![page])
+            .await
+            .unwrap();
+        let mut state = AgentChannelState::default();
+        let unrecorded =
+            Message { role: MessageRole::User, attachments: kept, ..Message::new(classification) };
+        state.perceive(vec![unrecorded]);
+        let mut turn = testing::turn(&session, helper, world.alice, &mut state);
+        let tool = tool();
+
+        let args = json!({ "ref": "a1" });
+        let read = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap();
+        assert_eq!(read.value["content"], "text\n");
+        let copied = tool.execute(COPY_ATTACHMENT, &args, None, &mut turn).await.unwrap();
+        assert_eq!(copied.value["path"], "attachments/page.txt");
+        drop(turn);
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    }
+
     #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_attachment_heard_is_reached_by_its_number_as_its_message_stands() {
@@ -438,11 +467,17 @@ mod tests {
         let (session, helper, docs) = session_with_helper(&world).await;
         let tool = tool();
         let mut state = AgentChannelState::default();
+        let before: Vec<String> = tool
+            .offered(&testing::turn(&session, helper, world.alice, &mut state).situation())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
         assert_eq!(
-            tool.offered(&testing::turn(&session, helper, world.alice, &mut state).situation())
-                .await,
-            Ok(Vec::new()),
-            "nothing attached, nothing offered - and nothing unavailable"
+            before,
+            [READ_ATTACHMENT, COPY_ATTACHMENT, ATTACH],
+            "before anything is numbered too: a tool may give one in the turn under way"
         );
         state.turn = None;
         let said = said_with_attachments(&world, &session, b"line one\nline two\n").await;

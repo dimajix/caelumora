@@ -170,9 +170,9 @@ impl ToolCallResult {
     }
 }
 
-/// What a tool gives its model to see besides its value (issue 512), before it is kept as the
-/// result's (`ToolCallResult::media`): a file by its name and its bytes. What it is, its bytes
-/// tell, never the name nor the tool.
+/// What a tool gives its model besides its value (issues 512, 547), before it is kept as the
+/// result's (`ToolCallResult::media`): a file by its name and its bytes, an image or a text. What
+/// it is, its bytes tell, never the name nor the tool.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolMedia {
     pub name: String,

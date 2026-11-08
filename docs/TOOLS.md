@@ -182,17 +182,21 @@ image it generated, say: each a name and its bytes. A tool hands over bytes; the
 kept, so that what is checked is checked once for every tool and no tool reaches the storage. They
 are kept only for a result that goes to the model, not one withheld, as the result's
 (`ToolCallResult::media`, through `ActorRuntime::create_media`): in the agent's name, classified as
-the result, in the channel's key space, each an image a model can be given as its bytes say - png,
-jpeg or webp, never what the tool or a name claims -, at most as many as a message may carry
-attachments, and all of them or none. Anything else fails the call, saying why. They wait for no
-message: the result refers to them from the moment they are kept, and its turn keeps the result
-(see [CHANNELS.md](CHANNELS.md#what-a-message-carries)).
+the result, in the channel's key space, each what its bytes say, never what the tool or a name
+claims - an image a model can be given (png, jpeg or webp) or a text -, at most as many as a message
+may carry attachments, and all of them or none. Anything else fails the call, saying why. They wait
+for no message: the result refers to them from the moment they are kept, and its turn keeps the
+result (see [CHANNELS.md](CHANNELS.md#what-a-message-carries)). Until the channel has recorded the
+message of the result, the kernel finds what it kept for the caller by itself
+(`AttachmentManager::kept_media`, `ChannelView::attachment`), so that the next step of the turn can
+read it, however fast it follows.
 
-What a tool gave is seen, not said: the model is given it with the result as it is given an
-attachment, numbered as one and noted after the result's text - its number, name, type and whether
-it is given along -, so that a model that cannot see learns of it and any model can name it; the
-agent shows it to the others by `attach`. The card of the call shows it where the result is shown,
-until a message of the same turn carries it: then the message shows it, and the card names it.
+What a tool gave is seen, not said: the model is given an image with the result as it is given an
+attachment - a text is read with `read_attachment` -, each numbered as one and noted after the
+result's text - its number, name, type and whether it is given along -, so that a model that cannot
+see learns of it and any model can name it; the agent shows it to the others by `attach`. The card
+of the call shows it where the result is shown, until a message of the same turn carries it: then
+the message shows it, and the card names it.
 
 ## MCP servers
 
@@ -289,6 +293,14 @@ URL, with the tool `fetch_page`:
     time, as `read_file` gives a file (`start_line`, `start_offset`, `line_count`, 64 KiB at once),
     with the URL the page was found at, after redirects, and its title. Every call fetches the page
     again; nothing is cached. What failed names the URL without credentials, query and fragment.
+*   **What it keeps.** With `keep_whole_above_bytes`, the text of a page above that size, asked for
+    with none of `start_line`, `start_offset` and `line_count`, is kept whole beside its result, as
+    a text the tool gives its model ([media](#media-a-tool-gives-its-model)), named after the
+    page's host. Its result is then a preview of 4 KiB, whose `next` says that the whole is kept and
+    how it is read: `read_attachment`, or `copy_attachment` to search it in the workspace. So a long
+    page is fetched once and read as it was. Whoever sets it gives the agent `attachments` too.
+    Without it, nothing is kept; a storage of content that is missing fails the call. What does not
+    read as text is given a part at a time.
 *   **What it reaches.** `http` and `https` alone, at most five redirects. A fetch goes through the
     proxy the environment names (`HTTPS_PROXY`, `NO_PROXY`), as the server reaches the internet.
     Where it connects itself - to an address written in the URL, to a host the proxy is not asked
@@ -306,7 +318,8 @@ URL, with the tool `fetch_page`:
 *   **Approval.** `requires_approval` (`false` unless given: a fetch only reads, and its URL may
     carry only what is public). A rule derived from a call is about the pages of its host, by
     `http` or `https` and on any port, not about the one page.
-*   **Parameters.** `requires_approval` and `description`.
+*   **Parameters.** `requires_approval`, `description` and `keep_whole_above_bytes`, at least the
+    4 KiB of a preview.
 
 ## Searching the web
 
@@ -443,7 +456,9 @@ issue 282) reach the attachments the agent heard, by the number its transcript g
 [AGENT-TURN.md](AGENT-TURN.md#attachments)). A number resolves to the message that carries the
 attachment (`AttachmentIndex::named`), read through the view of the agent's channel as it stands
 (`ChannelView::attachment`): one a change removed is not found, and its label is the current one.
-They are offered where the transcript numbered any, `view_attachment` only to a model that sees.
+They are offered from the first turn on, since a tool may give one in the turn under way, whose
+tools are fixed as it begins; `view_attachment` only to a model that sees, `copy_attachment` only
+where a workspace may be written to.
 
 *   `view_attachment` gives the model an image again: its result shows it (`ToolOutput::shown`,
     `ToolCallResult::shown`), and the model is given it along with the result as it is given an

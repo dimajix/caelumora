@@ -2240,6 +2240,71 @@ async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// What a tool gave an agent is found by that agent alone before its channel has recorded the
+/// message of the result (issue 547): as reading the channel asks, by nobody else who takes part.
+#[tokio::test]
+async fn what_a_tool_kept_is_found_by_its_agent_alone_until_its_channel_recorded_it() {
+    use caelumora_agents::testing::agent_runtime;
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::tool::ToolMedia;
+    use caelumora_kernel::testing::participant_runtime_in;
+    let world = agent_testing::world().await;
+    let personality = world.personality("plain", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let other = world.agent("other", world.alice, &personality).await;
+    let session = world.shared_session(&[helper, other], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let runtime_of = |agent| agent_runtime(participant_runtime_in(&main, ActorId::Agent(agent)));
+    let alice = ActorId::User(world.alice);
+    let classification = main.classification();
+    let page = ToolMedia { name: "page.txt".to_string(), content: b"a page\n".to_vec().into() };
+    let kept = runtime_of(helper)
+        .create_media(alice, classification.clone(), vec![page])
+        .await
+        .unwrap()
+        .remove(0);
+    let found_by = |agent| {
+        let (runtime, classification) = (runtime_of(agent), classification.clone());
+        let id = kept.id;
+        async move {
+            let channel = runtime.channel(alice, classification).await.unwrap().unwrap();
+            channel.attachment(MessageId::new(), id).await
+        }
+    };
+
+    let (found, asked) = world.asked(found_by(helper)).await;
+    assert_eq!(found.expect("what the kernel kept for it"), kept);
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice as helper: GetSession(alice's) yes",
+            "alice as helper: GetChannel(alice's) yes"
+        ]),
+        "reaching the channel, nothing of its own"
+    );
+    let other_agent = found_by(other).await;
+    assert!(
+        matches!(other_agent, Err(ViewError::MessageNotFound { .. })),
+        "not for another agent of the channel: {other_agent:?}"
+    );
+    let owner = world
+        .manager
+        .views(Viewer::new(World::as_user(world.alice)))
+        .session(session.id())
+        .await
+        .unwrap()
+        .channel(main.id())
+        .await
+        .unwrap()
+        .attachment(MessageId::new(), kept.id)
+        .await;
+    assert!(
+        matches!(owner, Err(ViewError::MessageNotFound { .. })),
+        "nor for its owner, who reads what the history holds: {owner:?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// An agent does not read a channel of its session that its owner may not
 /// read and it takes no part in (issue 264): bob's `reader` does not reach
 /// alice's "side" (`GetChannel`), and nothing of it is asked to be copied -

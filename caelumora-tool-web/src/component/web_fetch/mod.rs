@@ -10,7 +10,7 @@ mod tool;
 use crate::NAMESPACE;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
 use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
-use caelumora_api::component::{ComponentError, ComponentFacets, ComponentKind};
+use caelumora_api::component::{ComponentError, ComponentFacets, ComponentKind, ComponentResult};
 use caelumora_api::component::{LibraryComponents, Params};
 use caelumora_api::error::describe_request_error;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
@@ -33,9 +33,26 @@ struct WebFetchParams {
     /// What the tool is for, as its tool set tells it; left out, the catalogue's text.
     #[serde(default)]
     description: Option<String>,
+    /// From how many bytes of its text on a page is kept whole, and a preview given in its stead;
+    /// left out, no page is (issue 547). Whoever sets it knows that the agent has the component
+    /// `attachments` to read what is kept, and that there is a storage to keep it in.
+    #[serde(default)]
+    keep_whole_above_bytes: Option<usize>,
 }
 
-impl Params for WebFetchParams {}
+impl Params for WebFetchParams {
+    /// # Errors
+    /// `ComponentError::InvalidConfig` for a threshold below the preview, which could not say less
+    /// than the page.
+    fn check(&self) -> ComponentResult<()> {
+        match self.keep_whole_above_bytes {
+            Some(above) if above < tool::MAX_PREVIEW_BYTES => Err(ComponentError::InvalidConfig(
+                format!("keep_whole_above_bytes must be at least {}", tool::MAX_PREVIEW_BYTES),
+            )),
+            _ => Ok(()),
+        }
+    }
+}
 
 /// A component of the kind `web_fetch`: the tool `fetch_page`, which fetches a page of the web by
 /// its URL.
@@ -46,6 +63,10 @@ struct WebFetchComponent {
     tool: Tool,
     /// The texts its results give.
     prompts: PromptTexts,
+    /// From how many bytes of its text on a page is kept whole, if any is.
+    keep_whole_above: Option<usize>,
+    /// Where to read on in a page kept whole.
+    kept_whole: String,
 }
 
 impl WebFetchComponent {
@@ -63,7 +84,9 @@ impl WebFetchComponent {
             Some(description) => description,
             None => tool_text(&prompts, NAMESPACE, WEB_FETCH_KIND, "description", ())?,
         };
-        Ok(Self { client, description, tool, prompts })
+        let kept_whole = tool_text(&prompts, NAMESPACE, WEB_FETCH_KIND, "kept_whole", ())?;
+        let keep_whole_above = params.keep_whole_above_bytes;
+        Ok(Self { client, description, tool, prompts, keep_whole_above, kept_whole })
     }
 }
 
@@ -126,5 +149,9 @@ mod tests {
             WebFetchParams::read(&json!({ "destination": { "level": "internal" } })).is_err(),
             "its destination is not configured: what it fetches from is anyone"
         );
+        let below = json!({ "keep_whole_above_bytes": tool::MAX_PREVIEW_BYTES - 1 });
+        assert!(WebFetchParams::read(&below).is_err(), "a threshold below the preview");
+        let at = json!({ "keep_whole_above_bytes": tool::MAX_PREVIEW_BYTES });
+        assert!(WebFetchParams::read(&at).is_ok());
     }
 }

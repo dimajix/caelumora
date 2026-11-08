@@ -111,10 +111,11 @@ pub trait ChannelReader: Send + Sync {
     /// Message `id`, if the reader may read it.
     async fn message(&self, id: MessageId) -> ViewResult<Message>;
 
-    /// What message `message` carries as `id`, if the reader may read it.
+    /// What message `message` carries as `id`, if the reader may read it; until its channel has
+    /// recorded the message of a tool's result, what was kept as `id` for the reader there.
     async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<ContentRef>;
 
-    /// What message `message` carries as `id`, with its size and its content.
+    /// What `attachment` answers, with its size and its content.
     async fn attachment_content(
         &self,
         message: MessageId,

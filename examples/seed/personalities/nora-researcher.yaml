@@ -39,6 +39,9 @@ personalities:
     fail_policy: FailClosed
   - id: web-fetch
     kind: web_fetch
+    # A page that would not fit one result is kept whole, for `read_attachment`.
+    params:
+      keep_whole_above_bytes: 65536
     fail_policy: FailClosed
   # What people attached to their questions, and `attach`, by which it shows such a file to others.
   - id: attachments

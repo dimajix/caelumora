@@ -15,6 +15,9 @@ skills:
     - `fetch_page` reads one page as text - a web page as Markdown, plain text and JSON as they are -
       a part at a time. Where its result has `next`, go on as it says, as far as you need; every part
       fetches the page again. It refuses PDFs, images, other files and anything above 5 MiB.
+    - A very long page comes as its beginning only, with the whole kept as an attachment whose number
+      (`a3`) its note names. Read on with `read_attachment`, not with `fetch_page`; to search it, put it
+      into the workspace with `copy_attachment` and use `grep_files`.
 
     **Downloading files**
     A file is always downloaded with `curl`, as a command in the workspace (`run_command`), and in no

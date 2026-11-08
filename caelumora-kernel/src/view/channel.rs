@@ -413,13 +413,23 @@ impl ChannelView {
     /// The attachment `id` of message `message` as it stands - one it carries, or one its tool
     /// results gave or showed their model (`Message::carried`, issues 282, 512) -, if the viewer
     /// sees the message and may read what it carries. What a result the viewer is not shown gave or
-    /// showed is not carried for them.
+    /// showed is not carried for them. A message the history does not hold yet may be the result
+    /// of the viewer's own tool: what the kernel kept for them is found until it does
+    /// (`AttachmentManager::kept_media`, issue 547), so that a turn's next step reads it.
     ///
     /// # Errors
     /// As `message`; `Attachment` with `NotFound` if it carries no such attachment or one the
     /// viewer may not read - a channel read entry by entry releases each by its own label.
     pub async fn attachment(&self, message: MessageId, id: ContentId) -> ViewResult<ContentRef> {
-        let message = self.message(message).await?;
+        let said = self.message(message).await;
+        if matches!(said, Err(ViewError::MessageNotFound { .. })) {
+            // Answered only to a reader of the whole channel, for whom no label is in question.
+            let attachments = self.views().attachment_manager();
+            if let Some(kept) = attachments.kept_media(self.reader(), self.channel.id, id) {
+                return Ok(kept);
+            }
+        }
+        let message = said?;
         let attachment = message
             .carried()
             .find(|attachment| {
