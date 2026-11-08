@@ -415,6 +415,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [541](541-skill-loaded-again-though-given.md) | done | After a participant gave an agent a skill with `/skill`, models call `load_skill` for it anyway, and the skill is given a second time; `load_skill` could answer for a skill that stands in the transcript already without giving it again. |
 | [542](542-what-is-given-again-unbounded.md) | done | After a compaction, every file the agent read whole in the part replaced and still needs is given again, each bounded by `max_output_bytes` but not all of them together, so a context can stay above the threshold and be compacted again and again, giving the same files each time. |
 | [543](543-told-when-a-file-read-changed.md) | open | A file the agent read and somebody else changed since is refused to be written over, but the agent learns of the change only when it tries to write, and answers and plans from what it read until then. |
+| [550](550-a-skill-is-an-entity-alone.md) | open | A skill exists only as a `Skill` entity and cannot come from a Markdown file with a header, as other agent tools keep them, and it says nothing of itself but its name and one line, so nothing but the model's reading of that line can bring it into a turn without being asked. |
 
 ## Maintenance
 
