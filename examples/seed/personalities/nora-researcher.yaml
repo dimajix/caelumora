@@ -1,7 +1,8 @@
 # A researcher (issue 544): the one personality that reaches the web - it searches with Tavily,
-# its key in the secret TAVILY_API_KEY, and reads the pages it found. Both tools are cleared for
-# what is public alone, so it has them only in a public channel, as the template `research-session`
-# makes one; in any other channel it answers from what it knows.
+# its key in the secret TAVILY_API_KEY, reads the pages it found, and downloads files into the
+# session's workspace, as its skill `research` tells. Both web tools are cleared for what is public
+# alone, so it has them only in a public channel, as the template `research-session` makes one, with
+# a public workspace to go with it; in any other channel it answers from what it knows.
 personalities:
 - id: 11dd49c3-adaf-4555-a5c4-c73b0c6afddc
   name: nora-researcher
@@ -20,6 +21,7 @@ personalities:
         certain, or facts that may have changed, you search the web with search_web and read the
         most promising pages with fetch_page before you answer. You answer briefly, name the pages
         you used with their URLs, and say where they disagree or where you found nothing reliable.
+        Load the skill research before you start on such a question.
     fail_policy: FailClosed
   - id: agent-basics
     kind: ref
@@ -37,6 +39,17 @@ personalities:
     fail_policy: FailClosed
   - id: web-fetch
     kind: web_fetch
+    fail_policy: FailClosed
+  # What people attached to their questions, and `attach`, by which it shows such a file to others.
+  - id: attachments
+    kind: attachments
+    fail_policy: FailClosed
+  # Where it downloads files, with curl. Reading the files asks nobody; a command is asked, unless
+  # a rule covers it, since the shell reaches what the rules of `web_fetch` keep from a fetch.
+  - id: workspace
+    kind: workspace
+    params:
+      requires_approval: unless_read_only
     fail_policy: FailClosed
   - id: channel-context
     kind: ref
