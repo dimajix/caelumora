@@ -98,10 +98,6 @@ personalities:
     where that is someone else: a channel's components are built in its owner's name, so whoever
     creates the channel may name only bundles they may read themselves
     (`ComponentRegistry::require_acceptable`, issue 321).
-*   A kind whose params are trusted - where it sends what it is given, what that is cleared for -
-    is declared `operator_only` (issue 403): it is written only where an operator writes, in the
-    seed's templates, personalities and component bundles. A request that writes one itself
-    is refused (`ComponentError::OperatorOnly`); it names one through a `ref`.
 
 ## Facets
 
@@ -120,6 +116,7 @@ facet trait lives next to the code that uses it, not among the implementations -
 | `LanguageModelClient` | the language model the agent talks to | `caelumora_api::model` |
 | `ModelProfileProvider` | how the agent's model is given its context, of agents and external agents alike | `caelumora_api::model` |
 | `ImageModelClient` | an image model the agent's tools generate images with, of which it may have several | `caelumora_api::image` |
+| `DecisionModelClient` | a decision model, asked typed questions about a text | `caelumora_api::decision` |
 | `ExternalAgent` | the remote agent an external personality's agents are | `crate::external` |
 | `PerceiveInProcessor` | filtering of incoming messages, of agents and external agents alike | `crate::message` |
 | `EmitOutProcessor` | filtering of the messages an agent emits | `crate::message` |
@@ -285,9 +282,6 @@ personalities:                   # of the seed
     that includes the bundle. A default cannot build on a default itself.
 *   What the container was built from (`ComponentContainer::components`) shows the component as it
     is built, its params merged; `ComponentRegistry::kind_of` tells the default's kind.
-*   A component that builds on a default of a kind only an operator configures counts as written,
-    since what the operator decides are the params: a request that names it is refused as one that
-    writes the kind (`ComponentError::OperatorOnly`).
 
 ### Parameters
 
@@ -298,8 +292,7 @@ of a component a `ref` brings too, and of one that builds on a default, with the
 merged -, and the defaults of the singles as they are set, and has the struct check its values
 (`Params::check`): a parameter misspelt, set on the wrong component or moved to another kind, or a
 value its kind finds wrong, is refused before anything is built, and a request that writes it is
-refused before the verb. A request that writes a kind only an operator configures itself is
-refused as such, whatever the params. That every kind of the program refuses a parameter it does
+refused before the verb. That every kind of the program refuses a parameter it does
 not take - that no struct of parameters lacks `deny_unknown_fields` - a test of `caelumora-app`
 checks.
 
@@ -510,6 +503,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `external_context` | `ContextProvider` | - | The default context provider of an external agent: each prompt part on its own, for its actor to give the remote agent when it changed, and the withdrawal of a part it was given that holds nothing now ([CHANNELS.md](CHANNELS.md#external-agents)). |
 | `a2a_agent` | `ExternalAgent`, `ModelProfileProvider` | `endpoint` (the agent's base URL, or its card's own; timeout 30 s per request, a streamed one until its stream begins; the card kept for 300 s), `classification` (the channel's), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the library `caelumora-a2a`, registered where it is joined. An external agent reached over A2A 1.x by JSON-RPC: streams where its agent card offers it, otherwise asks for the task until it ends or asks back. A card it cannot read, or one without JSON-RPC of A2A 1.x, fails when the agent is asked, not when it is built; an agent not reached where its card said has its card read again at the next request. A2A has no sender, so who said what is told in the content ([AGENT-TURN.md](AGENT-TURN.md#who-said-what)). |
 | `language_model` | `LanguageModelClient`, `ModelProfileProvider` | `name` (the one model of `plugins.model.language`; needed among several), `reasoning_history` (`current_turn`), `system_messages` (`only_at_start`), `sender_format` (`prefix`), `sender_style` (`handle`), `message_times` (`true`), `prompt_texts` (the default) | Of the plugin `caelumora-model`, registered where it is joined; the default model of an agent: a model the platform offers (`plugins.model.language`, [CONFIGURATION.md](CONFIGURATION.md#the-model)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then; how the agent's context is framed for it, and whether it sees images, as the model says (issue 520). |
+| `decision_model` | `DecisionModelClient` | `name` (the one model of `plugins.model.decision`; needed among several) | Of the plugin `caelumora-model`, registered where it is joined (issue 551): a decision model the platform offers ([CONFIGURATION.md](CONFIGURATION.md#decision-models)), asked through a client built for whoever it is a component of alone, which sends nothing that may not reach its server. |
 | `image_model` | `ImageModelClient` | `name` (the one model of `plugins.model.image`; needed among several) | Of the plugin `caelumora-model`, registered where it is joined (issue 525): an image model the platform offers ([CONFIGURATION.md](CONFIGURATION.md#image-models)), asked through a client built for the agent alone, which makes every call in the agent's name as the kernel holds it then. An agent may have several, which a tool that generates images offers. |
 | `policy_moderator` | `Moderator` | `mentions_replace_policy` (`anyone`; `agents`), `on_undecided` (`none`; `all`), `max_agent_hops` (`3`), `max_span_depth` (`100`), `context_messages` (`10`) | The default moderator of a channel: routes as every channel does, asks the agents a message mentions - nobody for a message to people alone, unless `agents` - and else asks its `ResponderPolicy` whom to ask, told the last `context_messages` messages heard before - if it could not choose, whom `on_undecided` says, and tells the users when that is nobody ([CHANNELS.md](CHANNELS.md#moderators)); ends a chain between agents after `max_agent_hops` hops, and asks nobody to respond to an event `max_span_depth` deep ([CHANNELS.md](CHANNELS.md#chains-between-agents)). |
 | `broadcast_policy` | `ResponderPolicy` | - | Asks every agent. |
@@ -517,7 +511,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `random_policy` | `ResponderPolicy` | - | Asks one agent, chosen at random. |
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `user_driven_policy` | `ResponderPolicy` | - | Asks every agent if a user wrote, nobody if an agent did. |
-| `decision_policy` | `ResponderPolicy` | `endpoint`, `model` (`nimble`), `keep_alive`, `threshold` (`0.3`), `max_responders` (`1`), `destination` (`public`) | Of the plugin `caelumora-decision`, registered where it is joined; configured by an operator alone. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
+| `decision_policy` | `ResponderPolicy` | `name` (the one model of `plugins.model.decision`; needed among several), `threshold` (`0.3`), `max_responders` (`1`) | Of the plugin `caelumora-decision`, registered where it is joined. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
 | `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the library `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it knew there, within half of the room between `keep` and `threshold`; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
 | `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LanguageModelClient`. |
 | `help` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |

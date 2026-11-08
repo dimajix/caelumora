@@ -129,7 +129,8 @@ most models above handle reasonably well.
 
 `decision_policy` ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)) asks a decision model, not
 a chat model: one that answers typed questions about a text with probabilities, served by Ollama
-since 0.35 (2026-09-29) at `/v1/systemone`, a contract that hosted services implement too. The
+since 0.35 (2026-09-29) at `/v1/systemone`, a contract that hosted services implement too, and
+offered under `plugins.model.decision` ([CONFIGURATION.md](CONFIGURATION.md#decision-models)). The
 default is `nimble`; a server that has pulled it by its size knows it as `nimble:9b`, which is then
 what `model` has to name. A model is given the question and what was said within 8,192 tokens;
 shorter is better tested.

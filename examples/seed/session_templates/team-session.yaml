@@ -3,14 +3,11 @@
 # most fitting one, and a second if it fits almost as well. `nimble:9b`
 # chose best in a quick comparison of the decision models of the local
 # Ollama: as reliably as a 27B model, at about a third of a second once it
-# is loaded. Loading it took over a minute, far beyond the endpoint's
-# timeout of 5 s, so it is kept loaded for an hour after each decision. The
-# server is local, so what is said may go to it up to the highest level;
-# what is classified with a compartment is not sent, and nobody is asked, as
+# is loaded. The model is the one `plugins.model.decision` of the
+# configuration offers (examples/config.yaml), which says where it is served
+# and what may go to it; what may not is not sent, and nobody is asked, as
 # when the model cannot be reached (the moderator's `on_undecided: none`),
-# and the users are told so. A template may write
-# the policy itself - its params are the operator's -, a channel created on
-# request only names a bundle that holds one.
+# and the users are told so.
 session_templates:
 - id: b6f36657-cb30-4fac-8873-c216b46bbf2c
   name: team-session
@@ -49,12 +46,8 @@ session_templates:
     - id: responders
       kind: decision_policy
       params:
-        endpoint:
-          url: "http://127.0.0.1:11434"
-        model: "nimble:9b"
-        keep_alive: 1h
+        name: nimble
         max_responders: 2
-        destination: { level: strictly_confidential }
     internal_actors:
     - Approver:
         strategy: Any

@@ -54,13 +54,6 @@ pub enum ComponentError {
     /// (`ComponentError::is_unavailable`).
     #[error("component bundle '{name}' cannot be read: {cause}")]
     Bundle { name: String, cause: StoreError },
-    /// A component of a kind only an operator configures was written in a
-    /// request rather than named through a `ref` (issue 403,
-    /// `ComponentKind::operator_only`).
-    #[error(
-        "components of kind '{0}' are configured by an operator: name a bundle that holds one"
-    )]
-    OperatorOnly(String),
     /// A component of a graph could not be built. Wraps whatever went wrong
     /// with the component's id and kind, so that the message names the
     /// offending component on its own (issue 02).
@@ -261,7 +254,6 @@ pub struct ComponentKind {
     uses: Vec<TypeKey>,
     needs: Vec<TypeKey>,
     extensions: Vec<(Face, TypeKey)>,
-    operator_only: bool,
 }
 
 /// How the params of a component of a kind are checked: read as the configuration the kind
@@ -308,11 +300,6 @@ impl ComponentKind {
         &self.extensions
     }
 
-    /// Whether only an operator configures it (`operator_only`).
-    pub fn is_operator_only(&self) -> bool {
-        self.operator_only
-    }
-
     pub fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -321,19 +308,7 @@ impl ComponentKind {
             uses: Vec::new(),
             needs: Vec::new(),
             extensions: Vec::new(),
-            operator_only: false,
         }
-    }
-
-    /// Declares that components of this kind are configured by an operator
-    /// alone (issue 403): their params are trusted - where they send what
-    /// they are given, what that is cleared for -, so they are written only
-    /// where an operator writes, in the templates, personalities and
-    /// component bundles of the seed. A request names one only
-    /// through a `ref` (`require_acceptable`).
-    pub fn operator_only(mut self) -> Self {
-        self.operator_only = true;
-        self
     }
 
     /// Declares that components of this kind take the parameters `C` (`Params`), which their

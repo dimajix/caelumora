@@ -85,12 +85,13 @@ drawn in [CRATES.md](CRATES.md):
     brings nothing but its component kind `a2a_agent`, so that the agents keep the facet
     `ExternalAgent` and name no protocol (issue 326). See
     [Agents that run elsewhere](#agents-that-run-elsewhere).
-*   **`caelumora-model`** - the models the platform offers, language models (issue 520) and image
-    models (issue 525), a plugin: the section `plugins.model`, the service that builds each agent
-    its clients of them - which make every call in the agent's name as the kernel holds it then -,
-    the kind `language_model`, the default of the language model's facets, and the kind
-    `image_model`, of which an agent may have several. A model is needed only within an agent, so
-    it is no part of the kernel. See [CONFIGURATION.md](CONFIGURATION.md#the-model).
+*   **`caelumora-model`** - the models the platform offers, language models (issue 520), image
+    models (issue 525) and decision models (issue 551), a plugin: the section `plugins.model`, the
+    service that builds each of whoever asks one its clients of them - which make every call in
+    their name as the kernel holds it then -, the kind `language_model`, the default of the language
+    model's facets, the kind `image_model`, of which an agent may have several, and the kind
+    `decision_model`. A model is no part of the kernel. See
+    [CONFIGURATION.md](CONFIGURATION.md#the-model).
 *   **`caelumora-model-ollama`** - language models served by Ollama, a plugin that brings nothing
     but the backend `ollama` of the models of `caelumora-model`, so that neither names a model
     provider; the programs offer a local one where the configuration names no language model
@@ -98,9 +99,13 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-model-comfyui`** - image models served by ComfyUI (issues 512, 525), a plugin that
     brings nothing but the backend `comfyui` of the image models of `caelumora-model`: one workflow
     on one ComfyUI server, read and checked whole. See [CONFIGURATION.md](CONFIGURATION.md#comfyui).
-*   **`caelumora-decision`** - decision models, which answer typed questions about a text with
-    probabilities, reached through the `/v1/systemone` contract: a plugin that brings nothing but
-    its component kind `decision_policy`, a `ResponderPolicy` that chooses who answers by what was
+*   **`caelumora-model-systemone`** - decision models, which answer typed questions about a text
+    with probabilities, reached through the `/v1/systemone` contract that Ollama and some hosted
+    services serve (issue 551): a plugin that brings nothing but the backend `systemone` of the
+    decision models of `caelumora-model`. See
+    [CONFIGURATION.md](CONFIGURATION.md#decision-models).
+*   **`caelumora-decision`** - a plugin that brings nothing but the component kind
+    `decision_policy`, a `ResponderPolicy` that asks one of those models who answers by what was
     said (issue 403). See [CHANNELS.md](CHANNELS.md#choosing-by-what-was-said).
 *   **`caelumora-open-terminal`** - the storages of workspaces backed by Open Terminal,
     `open_terminal_shared` and `open_terminal_docker`, a plugin that brings nothing but these
@@ -182,27 +187,28 @@ configuration by their `type` (issue 324): the stores (`PersistenceBackend`, iss
 storages of workspaces (`TerminalProvider`), the storages of binary content (`ContentStorage`, issue
 282), the secret providers (`SecretProvider`) and the user providers (`UserProvider`); a plugin's
 service may be served so too - the models of `caelumora-model` (`LanguageModelProvider`, issue 520;
-`ImageModelProvider`, issue 525), which it makes of its section (`KernelBuilder::make_named`). A
-backend is made by the factory registered under its type for its service, in `Backends`
-(`caelumora_kernel::backend`), which reads its parameters and asks the services it is given for what
-it needs. The kernel registers its own (`Backends::built_in`); a plugin adds one by registering its
-factory in `Plugin::backends`, which is asked before anything is made - so a new storage or provider
-is a crate linked into the program, and no edit of the kernel, as the Open Terminal storages of
-`caelumora-open-terminal` are (issue 327). The backends are made once, when the kernel is built
-(`KernelBuilder::from_config`): the secret providers first, which need only the policies, then the
-stores, which may ask for the secrets - a database connects by one -, then the storages and the user
-providers with the secrets and the records of the users at hand. The stores' backends are opened
-last, once the plugins registered and opened the stores of their kinds (`PersistenceBackend::open`,
-issue 447), so that one that cannot be made ready fails the start. The backends a section names by
-name are handed to their owners as one `NamedBackends` - the storages of workspaces, the storages of
-content, a plugin's models -, of which an owner uses the one named - where it keeps what is new, the
-model an agent's component names - or the one there is: among several, one has to be named
-(`NamedBackends::chosen`). What is kept names the backend it lies in and finds it again by that name
-(`NamedBackends::kept_in`); one since removed from the configuration is `StorageGone`, the server's
-failure and not the request's. What a plugin keeps beyond documents it keeps in the kernel's
-storages of content, which it is handed when it registers (`KernelBuilder::content_storages`), in a
-key space of its own - the artifacts do. Unlike a component, a backend serves the whole process and
-lives in no container, which is why it is no component.
+`ImageModelProvider`, issue 525; `DecisionModelProvider`, issue 551), which it makes of its section
+(`KernelBuilder::make_named`). A backend is made by the factory registered under its type for its
+service, in `Backends` (`caelumora_kernel::backend`), which reads its parameters and asks the
+services it is given for what it needs. The kernel registers its own (`Backends::built_in`); a
+plugin adds one by registering its factory in `Plugin::backends`, which is asked before anything is
+made - so a new storage or provider is a crate linked into the program, and no edit of the kernel,
+as the Open Terminal storages of `caelumora-open-terminal` are (issue 327). The backends are made
+once, when the kernel is built (`KernelBuilder::from_config`): the secret providers first, which
+need only the policies, then the stores, which may ask for the secrets - a database connects by
+one -, then the storages and the user providers with the secrets and the records of the users at
+hand. The stores' backends are opened last, once the plugins registered and opened the stores of
+their kinds (`PersistenceBackend::open`, issue 447), so that one that cannot be made ready fails the
+start. The backends a section names by name are handed to their owners as one `NamedBackends` - the
+storages of workspaces, the storages of content, a plugin's models -, of which an owner uses the one
+named - where it keeps what is new, the model an agent's component names - or the one there is:
+among several, one has to be named (`NamedBackends::chosen`). What is kept names the backend it lies
+in and finds it again by that name (`NamedBackends::kept_in`); one since removed from the
+configuration is `StorageGone`, the server's failure and not the request's. What a plugin keeps
+beyond documents it keeps in the kernel's storages of content, which it is handed when it registers
+(`KernelBuilder::content_storages`), in a key space of its own - the artifacts do. Unlike a
+component, a backend serves the whole process and lives in no container, which is why it is no
+component.
 
 The stores are such backends since what a backend keeps is not generic: documents of any kind and
 states, each offered by a method of its own (`PersistenceBackend`, issue 448); the stores, one
@@ -491,8 +497,8 @@ The design repeats a few decisions; new code follows them.
     kernel is to its user space - a modular one: its own services are sessions, channels with their
     history, the attachments of their messages and their approver, actors and their state, and
     persistence, with what they need around them - security with the secrets bound to a context, the
-    event bus, projects -; the models the platform offers are a plugin's service beside it, needed
-    within an agent alone (issue 520); the workspace, skills, artifacts and memory are system
+    event bus, projects -; the models the platform offers are a plugin's service beside it (issue
+    520); the workspace, skills, artifacts and memory are system
     services that extend it (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)) - the workspace the
     kernel's own, skills, artifacts and memory plugins'. A plugin that brings what is the kernel's -

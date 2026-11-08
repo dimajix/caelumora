@@ -476,8 +476,7 @@ impl ComponentRegistry {
     /// `context`: for whoever writes a configuration in a request, before
     /// the verb (issue 337), and builds it in someone else's name - the
     /// components of a channel, built in its owner's (issue 321) -, so that
-    /// they name only what they may read themselves, and a kind an operator
-    /// configures alone only through a `ref` (issue 403). Nothing is built.
+    /// they name only what they may read themselves. Nothing is built.
     ///
     /// # Errors
     /// As `ComponentContainer::from_config` before it builds anything: `ComponentError::Bundle`,
@@ -486,9 +485,6 @@ impl ComponentRegistry {
     /// `ComponentError::InvalidConfig` for two components of a single, one nobody asks for, or one
     /// whose params its kind does not take or finds wrong - wrapped with it, and with the `ref`
     /// that brings it -;
-    /// and `ComponentError::OperatorOnly`, wrapped with the component, for one of a kind only an
-    /// operator configures, written in `config` itself. That one is refused before the params are
-    /// checked: whatever its params, a request may not write it.
     pub async fn require_acceptable(
         &self,
         config: &ComponentConfig,
@@ -496,15 +492,6 @@ impl ComponentRegistry {
         context: &SecurityContext,
     ) -> ComponentResult<()> {
         let planned = self.plan(config, &HashMap::new(), context).await?;
-        if let Some(written) = planned.iter().find(|p| {
-            p.brought_by.is_none()
-                && self.kinds.get(&p.descriptor.kind).is_some_and(|r| r.kind.is_operator_only())
-        }) {
-            return Err(ComponentError::of_component(
-                &written.descriptor,
-                ComponentError::OperatorOnly(written.descriptor.kind.clone()),
-            ));
-        }
         self.require_buildable(&planned, &HashMap::new(), asked)
     }
 
@@ -1643,46 +1630,6 @@ mod tests {
             error
                 .to_string()
                 .contains("the params given over component default 'model' are no object"),
-            "{error}"
-        );
-    }
-
-    /// What an operator configures alone are the params of its kind
-    /// (issue 403): a request that changes those of such a default is
-    /// refused as one that writes the component - also where it gives a
-    /// parameter the kind does not take, which is no question of the
-    /// params a request may not write anyway.
-    #[tokio::test]
-    async fn a_request_cannot_change_the_params_of_a_default_only_an_operator_configures() {
-        let (mut registry, _) = choices();
-        registry.register(
-            ComponentKind::new("operated")
-                .params::<ModelParams>()
-                .provides::<dyn Choice>()
-                .operator_only(),
-            |descriptor, _| {
-                let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn Choice>(Arc::new(Name(descriptor.id.clone())));
-                Ok(facets)
-            },
-        );
-        registry.set_defaults(&config(&[("model", "operated")])).unwrap();
-        let config = ComponentConfig {
-            component_nodes: vec![on_default(
-                "mine",
-                "model",
-                json!({ "url": "http://elsewhere" }),
-            )],
-        };
-        let error = registry
-            .require_acceptable(&config, ASKED, &SecurityContext::default())
-            .await
-            .expect_err("written");
-        assert!(
-            matches!(
-                causes(&error).last(),
-                Some(ComponentError::OperatorOnly(kind)) if kind == "operated"
-            ),
             "{error}"
         );
     }

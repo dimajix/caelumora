@@ -1,9 +1,13 @@
-//! How the models are joined to the kernel (issues 520, 525): the section `plugins.model`, the
-//! service that builds an agent its clients, the kind `language_model` with the language model's
-//! facets and the kind `image_model` with an image model's.
+//! How the models are joined to the kernel (issues 520, 525, 551): the section `plugins.model`, the
+//! service that builds the clients of them, the kind `language_model` with the language model's
+//! facets, the kind `image_model` with an image model's and the kind `decision_model` with a
+//! decision model's.
 
 use crate::manager::ModelManager;
-use crate::{image_model, language_model, ImageModelProvider, LanguageModelProvider};
+use crate::{
+    decision_model, image_model, language_model, DecisionModelProvider, ImageModelProvider,
+    LanguageModelProvider,
+};
 use anyhow::Result;
 use caelumora_domain::config::{AppConfig, BackendConfig};
 use caelumora_kernel::kernel::KernelBuilder;
@@ -14,7 +18,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The name of the plugin, and of its section of the configuration: the models by their kind -
-/// `LANGUAGE`, `IMAGE` - and their names, each a backend.
+/// `LANGUAGE`, `IMAGE`, `DECISION` - and their names, each a backend.
 pub const MODEL: &str = "model";
 
 /// The key of the language models in the section.
@@ -22,6 +26,9 @@ pub const LANGUAGE: &str = "language";
 
 /// The key of the image models in the section (issue 525).
 pub const IMAGE: &str = "image";
+
+/// The key of the decision models in the section (issue 551).
+pub const DECISION: &str = "decision";
 
 /// The section `plugins.model`: the models the platform offers, by their kind and their names.
 #[derive(Debug, Default, Deserialize)]
@@ -31,6 +38,8 @@ struct ModelConfig {
     language: BTreeMap<String, BackendConfig>,
     /// The image models; left out, none.
     image: BTreeMap<String, BackendConfig>,
+    /// The decision models; left out, none.
+    decision: BTreeMap<String, BackendConfig>,
 }
 
 /// The models, as a plugin.
@@ -47,9 +56,13 @@ impl Plugin for ModelPlugin {
         let language =
             kernel.make_named::<dyn LanguageModelProvider>("language model", &section.language)?;
         let image = kernel.make_named::<dyn ImageModelProvider>("image model", &section.image)?;
-        kernel.provide(Arc::new(ModelManager::new(language, image)))?;
+        let decision =
+            kernel.make_named::<dyn DecisionModelProvider>("decision model", &section.decision)?;
+        let confidentiality = Arc::clone(kernel.confidentiality());
+        kernel.provide(Arc::new(ModelManager::new(language, image, decision, confidentiality)))?;
         language_model::register_all(kernel.components());
         image_model::register_all(kernel.components());
+        decision_model::register_all(kernel.components());
         Ok(())
     }
 }

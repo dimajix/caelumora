@@ -17,12 +17,13 @@ const RESPONDER_POLICIES: Record<string, ResponderPolicyInfo> = {
 };
 
 /**
- * Policies only an operator configures (issue 403): explained, but not offered for a new channel.
+ * Policies that need what a deployment may not have - a decision model (issue 551): explained, but
+ * not offered for a new channel.
  */
-const OPERATOR_ONLY_POLICIES = new Set(['decision_policy']);
+const POLICIES_NOT_OFFERED = new Set(['decision_policy']);
 
 /** The policy kinds this UI knows and a new channel may be given (issue 09). */
-export const RESPONDER_POLICY_KINDS = Object.keys(RESPONDER_POLICIES).filter(kind => !OPERATOR_ONLY_POLICIES.has(kind));
+export const RESPONDER_POLICY_KINDS = Object.keys(RESPONDER_POLICIES).filter(kind => !POLICIES_NOT_OFFERED.has(kind));
 
 /** The policy of a channel that names none - the server's default. */
 export const DEFAULT_RESPONDER_POLICY = 'round_robin_policy';

@@ -28,6 +28,7 @@ use caelumora_memory::plugin::MemoryPlugin;
 use caelumora_model::plugin::ModelPlugin;
 use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
+use caelumora_model_systemone::plugin::SystemOneModelPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_rest_server::auth::{Auth, TokenService};
 use caelumora_rest_server::error::{self, ApiError};
@@ -209,6 +210,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(ModelPlugin),
         Box::new(OllamaModelPlugin),
         Box::new(ComfyUiModelPlugin),
+        Box::new(SystemOneModelPlugin),
         Box::new(DecisionPlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),

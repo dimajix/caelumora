@@ -134,6 +134,13 @@ plugins:
   # `<path>.json`, exported from ComfyUI with "Export (API)", and `<path>.yaml`
   # beside it, which says what it is for and where the parts of a request go.
   # Read and checked when the kernel is built. Here ComfyUI on this machine.
+  #
+  # The decision models under `decision` (issue 551), each by its name and a
+  # backend - `systemone` of the plugin caelumora-model-systemone, the contract
+  # `/v1/systemone` that Ollama serves too. Here nimble:9b at the local Ollama:
+  # loading it took over a minute, far beyond the endpoint's timeout of 5 s, so
+  # it is kept loaded for an hour after each decision, and since the server is
+  # local, what is said may go to it up to the highest level.
   model:
     language:
       gemma:
@@ -147,6 +154,14 @@ plugins:
           url: http://127.0.0.1:8188
           timeout_secs: 300
         workflow: examples/comfyui/workflows/z_image_turbo
+    decision:
+      nimble:
+        type: systemone
+        endpoint:
+          url: "http://127.0.0.1:11434"
+        model: "nimble:9b"
+        keep_alive: 1h
+        destination: { level: strictly_confidential }
 
 # Where users and their credentials come from. Without this section nobody
 # can authenticate. `accept_any` is a development stand-in that accepts ANY

@@ -8,4 +8,5 @@ caelumora-tool-image caelumora-tool-mcp caelumora-tool-web caelumora-tool-worksp
 both_levels='caelumora-skills caelumora-artifacts caelumora-memory'
 library_side='extension.rs component.rs library.rs'
 plugins='caelumora-decision caelumora-model caelumora-model-ollama caelumora-model-comfyui
+caelumora-model-systemone
 caelumora-open-terminal caelumora-store-json caelumora-store-postgres'

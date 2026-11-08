@@ -1,13 +1,7 @@
-//! Decision models (issue 403): models that answer typed questions about a
-//! text with probabilities instead of generating text, reached through the
-//! `/v1/systemone` contract that Ollama serves since version 0.35 and some
-//! hosted services implement too. The crate is named after the contract,
-//! not after a provider.
-//!
-//! It holds the client of the contract (`client`), the component kind
-//! `decision_policy`, a `ResponderPolicy` that asks a decision model which
-//! agents should respond to a message (`policy`), and the plugin that
-//! registers it (`plugin`).
+//! Choosing by a decision model (issue 403): the component kind `decision_policy`, a
+//! `ResponderPolicy` that asks one of the decision models the platform offers which agents should
+//! respond to a message (`policy`), and the plugin that registers it (`plugin`). The model itself
+//! is the plugin `caelumora-model`'s, and what serves it a backend of that (issue 551).
 
 /// The namespace of the questions of the decision model in the prompt
 /// catalogue (issue 57).
@@ -16,6 +10,5 @@ pub const NAMESPACE: &str = "decision";
 /// Their texts, added to the catalogue under `NAMESPACE` by the plugin.
 pub const PROMPTS: &str = include_str!("prompts.yaml");
 
-pub mod client;
 pub mod plugin;
 pub mod policy;

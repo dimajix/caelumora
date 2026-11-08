@@ -1,6 +1,6 @@
 # 551 — A decision model is asked past the models the platform offers
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -123,6 +123,8 @@ What is not only structure, each named here for the review:
 - The policy asks in the context of the channel's owner, the `Acting` of what is built for a
   channel, not in that of the event routed. `may_publish` does not depend on the context; which
   credential is resolved changes, to the owner's from the sender's.
+- A configuration that names no decision model refuses to build a `decision_policy`, where a policy
+  used to default to the local server and to be undecided when nothing answered there.
 - A provider is handed who asks, where a language model's is not: a server that takes a credential
   needs it, which `caelumora-model-ollama` avoids by refusing `endpoint.auth`.
 
@@ -148,3 +150,16 @@ deleted.
 - 2026-11-08: Opened at the maintainer's request, drawn out of the plan of issue
   [550](550-a-skill-is-an-entity-alone.md), whose step 2 this replaces and which waits for it.
   Decided with the maintainer: a crate of its own, `caelumora-model-systemone` (option B).
+- 2026-11-08: Implemented on the branch `issue-551-decision-models-as-models`, as planned but for
+  two things. `DecisionModelClient::decide` takes `classifications`, a list: the policy sends
+  messages each of which may reach the model, and a single join has no answer for disjoint
+  compartments. `Question` and `Answer` carry no serde: how they are written is the backend's, as
+  for `ImageRequest`.
+- 2026-11-08: Decided with the maintainer: `operator_only` goes altogether, not only from the
+  policy, whose was the one use. `mcp_server`, which has `endpoint` and `destination` in its params
+  too, was checked and needs no such guard: the one configuration a request writes is a channel's,
+  which takes a `Moderator` and what that needs; personalities and component bundles have no route
+  that writes them. The web UI still does not offer the policy for a new channel, now because it
+  needs a decision model a deployment may not have.
+- 2026-11-08: Done, accepted by the maintainer and merged into `main`. Left as a finding:
+  `ActingKind::Given` takes no initiator, so that the log of a channel's policy names its owner.
