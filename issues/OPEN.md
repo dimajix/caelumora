@@ -64,6 +64,12 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [378](378-resource-management-epic.md) | open | medium | epic | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
+## Integrations
+
+| No. | Status | Priority | Type | Issue |
+|---|---|---|---|---|
+| [548](548-a-workspace-container-has-to-run-a-server.md) | open | medium | feature | A workspace of an `open_terminal_docker` storage can only run in Open Terminal's image, needs a network Caelumora reaches it through, and keeps a key and a server beside the commands it is meant to contain, although Caelumora holds the Docker daemon that could reach the container without any of them. |
+
 ## Low priority
 
 | No. | Status | Priority | Type | Issue |
