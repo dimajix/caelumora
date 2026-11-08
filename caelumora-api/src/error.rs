@@ -82,9 +82,10 @@ pub enum AttachmentError {
     /// More files for one tool result than a message may carry attachments (issue 512).
     #[error("more than {0} files for one tool result")]
     TooMany(usize),
-    /// What is to be given a model to see that is no image a model can be given (issue 512).
-    #[error("'{name}' is {media_type}, not an image a model can be given")]
-    NotAnImage { name: String, media_type: String },
+    /// What is to be given a model that is neither an image it can be given nor a text (issues 512,
+    /// 547).
+    #[error("'{name}' is {media_type}, neither an image a model can be given nor a text")]
+    NotMedia { name: String, media_type: String },
     #[error(transparent)]
     Invalid(#[from] ValueError),
     /// What the storage of content reported: content too large, other than it was said to be, or

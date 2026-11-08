@@ -322,7 +322,7 @@ impl From<AttachmentError> for ApiError {
                 Self::internal("attachment_altered", "reading an attachment", &Error::new(altered))
             }
             // What a tool gave its model (issue 512), which no request hands over.
-            given @ (AttachmentError::TooMany(_) | AttachmentError::NotAnImage { .. }) => {
+            given @ (AttachmentError::TooMany(_) | AttachmentError::NotMedia { .. }) => {
                 Self::internal("internal_error", "keeping what a tool gave", &Error::new(given))
             }
             AttachmentError::Invalid(e) => e.into(),

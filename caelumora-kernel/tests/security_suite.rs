@@ -1382,6 +1382,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
 async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     use bytes::Bytes;
     use caelumora_api::error::AttachmentError;
+    use caelumora_domain::message::MessageId;
     use caelumora_domain::tool::ToolMedia;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
@@ -1412,6 +1413,42 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     let (refused, asked) = world.asked(keep(world.carol)).await;
     assert!(matches!(refused, Err(AttachmentError::NotAParticipant(_))), "{refused:?}");
     assert!(asked.is_empty(), "asking nothing: {asked:?}");
+
+    // Before the channel has recorded the message of the result (issue 547).
+    let kept = keep(world.alice).await.unwrap().remove(0);
+    let channel_of = |user: UserId| {
+        let manager = &world.manager;
+        let (session, channel) = (session.id(), main.id());
+        async move {
+            manager
+                .views(Viewer::new(World::as_user(user)))
+                .session(session)
+                .await
+                .unwrap()
+                .channel(channel)
+                .await
+                .unwrap()
+        }
+    };
+    let unrecorded = MessageId::new();
+    let (read, asked) = world
+        .asked(async { channel_of(world.alice).await.attachment(unrecorded, kept.id).await })
+        .await;
+    assert_eq!(read.expect("kept for her, as the kernel made it"), kept);
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes"
+        ]),
+        "reaching the channel, as reading a message asks"
+    );
+    let not_his = channel_of(world.bob).await.attachment(unrecorded, kept.id).await;
+    assert!(
+        matches!(not_his, Err(ViewError::MessageNotFound { .. })),
+        "not for another of the channel: {not_his:?}"
+    );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -45,6 +45,12 @@ libraries that are not, and these calls do not keep it.
   attachment's id, and reads it through the view as the attachment tools do already
   (`ChannelView::attachment`). It has that view's checks for free, and needs no comparison. For
   `load_attachments` the same means the kernel loads the transcript's messages itself.
+- **Reading needs less than copying.** `ActorRuntime` is made for one channel, so `load_attachments`
+  can ask `lies_in` of every reference with what it holds. For a read in the agent's own channel
+  that is as good as enough: `Reading::Whole` admits every label, an attachment a change removed was
+  heard before, and what never reached the agent lies under a key with a random id. The check is one
+  call. What only the message knows, the true label, counts where something is written, so `copy` is
+  the real case.
 - **State the trust.** The agent side's transcript is declared the kernel's input by design, and
   SECURITY.md says so for these calls. It removes no gap, it only names it.
 
@@ -63,5 +69,7 @@ id at hand. How the labels of a result's `media` and `shown` should be checked g
 
 ## History
 
-- 2026-11-08: Opened from the review of issue [547](547-long-page-kept-whole-as-media.md), where
-  letting the view read a reference handed in by the agent side was rejected for this reason.
+- **2026-11-08** — Opened from the review of issue [547](547-long-page-kept-whole-as-media.md),
+  where letting the view read a reference handed in by the agent side was rejected for this reason.
+- **2026-11-08** — Added with the maintainer: reading in the agent's own channel needs only
+  `lies_in`, which `ActorRuntime` can ask, since it is made for that channel.

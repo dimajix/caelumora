@@ -40,7 +40,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 | [545](545-web-fetch-through-the-proxy-reaches-anything.md) | open | medium | feature | `web_fetch` refuses addresses inside the network only where it connects itself; a fetch through the proxy the environment names reaches whatever the proxy reaches, internal hosts and the cloud's metadata service among them. |
-| [547](547-long-page-kept-whole-as-media.md) | open | medium | feature | A page of the web too long for one result is fetched anew for every part the agent reads, may change between the parts, and can be neither searched nor handed on, because a tool can keep nothing but an image beside its result. |
+| [547](547-long-page-kept-whole-as-media.md) | in progress | medium | feature | A page of the web too long for one result is fetched anew for every part the agent reads, may change between the parts, and can be neither searched nor handed on, because a tool can keep nothing but an image beside its result. |
 
 ## User interaction
 

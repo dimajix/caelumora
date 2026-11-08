@@ -96,7 +96,7 @@ impl From<ModelError> for ToolError {
 
 /// What reaching an attachment failed with (issue 282), as the model is told it: a storage that
 /// failed, is no longer configured, or holds other bytes than were kept is the tool's, as is what
-/// a tool gave its model that may not be kept (`TooMany`, `NotAnImage`, issue 512); an attachment
+/// a tool gave its model that may not be kept (`TooMany`, `NotMedia`, issue 512); an attachment
 /// that is not there, or what does not fit, the model's to correct.
 impl From<AttachmentError> for ToolError {
     fn from(error: AttachmentError) -> Self {
@@ -105,7 +105,7 @@ impl From<AttachmentError> for ToolError {
             AttachmentError::StorageGone(e) => e.into(),
             AttachmentError::Altered(_)
             | AttachmentError::TooMany(_)
-            | AttachmentError::NotAnImage { .. } => ToolError::ExecutionFailed(error.to_string()),
+            | AttachmentError::NotMedia { .. } => ToolError::ExecutionFailed(error.to_string()),
             AttachmentError::NotConfigured
             | AttachmentError::ClassificationRefused
             | AttachmentError::StorageNotCleared(_)
@@ -942,8 +942,8 @@ impl ToolExecutor {
 
     /// Keeps `media`, what the tool of a call in `turn` gave its model, as its result's (issue
     /// 512): in the agent's name, classified `classification` as the result
-    /// (`ActorRuntime::create_media`) - images alone, as their bytes say, as many as a message may
-    /// carry attachments, all of them or none.
+    /// (`ActorRuntime::create_media`) - images and texts alone, as their bytes say, as many as a
+    /// message may carry attachments, all of them or none.
     ///
     /// # Errors
     /// `ExecutionFailed` for what could not be kept so, saying why.
@@ -1996,7 +1996,7 @@ mod tests {
             _turn: &mut Turn,
         ) -> ToolResult<ToolOutput> {
             let (file, content): (&str, &'static [u8]) = match name {
-                "write" => ("notes.txt", b"notes"),
+                "write" => ("notes.pdf", b"%PDF-1.7"),
                 _ => ("drawn.png", PNG),
             };
             let media = vec![ToolMedia { name: file.to_string(), content: Bytes::from(content) }];
@@ -2013,9 +2013,9 @@ mod tests {
 
     /// Issue 512: what a tool gave its model is kept as the result's - in the agent's name, in the
     /// channel's key space, classified as the result - where the result goes to the model and what
-    /// it gave is an image; nothing is kept otherwise.
+    /// it gave is an image or a text; nothing is kept otherwise.
     #[tokio::test]
-    async fn what_a_tool_gave_is_kept_as_the_results_where_it_is_an_image() {
+    async fn what_a_tool_gave_is_kept_as_the_results_where_it_may_be_given() {
         let world = testing::world().await;
         let personality = world.personality("plain", None, &[]).await;
         let helper = world.agent("helper", world.alice, &personality).await;
@@ -2065,8 +2065,8 @@ mod tests {
         assert!(secret.media.is_empty());
         let text = executor.execute(&call("write"), None, &mut turn, future::pending()).await;
         assert_eq!(text.status, ToolResultStatus::Failed);
-        assert!(text.content.contains("text/plain"), "the model is told why: {}", text.content);
-        assert_eq!(files(), before, "nothing kept of a result withheld, nor of what is no image");
+        assert!(text.content.contains("application/pdf"), "told why: {}", text.content);
+        assert_eq!(files(), before, "nothing kept of a result withheld, nor of what may not be");
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 

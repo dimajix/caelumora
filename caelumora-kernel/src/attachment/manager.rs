@@ -57,9 +57,9 @@ fn new_key(channel: ChannelId) -> (ContentId, String) {
     (id, format!("{}/{id}", channel_key(channel)))
 }
 
-/// An upload no message claimed yet: who uploaded it for which channel, and when.
+/// Content kept for a message yet to come: who it was kept by, for which channel, and when.
 #[derive(Debug)]
-struct Upload {
+struct Pending {
     by: ActorId,
     channel: ChannelId,
     content: ContentRef,
@@ -82,7 +82,12 @@ pub struct AttachmentManager {
     unclaimed_expire: Duration,
     /// The uploads no message claimed yet, in memory: what a restart loses has never been part of
     /// anything, and lies in its channel's key space until the channel is purged.
-    uploads: Mutex<HashMap<ContentId, Upload>>,
+    uploads: Mutex<HashMap<ContentId, Pending>>,
+    /// What a tool gave its model, for as long as an upload waits: how the turn that made the call
+    /// reaches it before its channel has recorded the message of the result (`kept_media`). Only
+    /// remembered, in memory: nothing here is removed from a storage, since media wait for no
+    /// message, and a call waiting for its approval may take longer than this.
+    media: Mutex<HashMap<ContentId, Pending>>,
     /// The content models are given along, held for their next calls.
     cache: ContentCache,
 }
@@ -119,6 +124,7 @@ impl AttachmentManager {
             max_per_message: config.max_per_message,
             unclaimed_expire: Duration::from_secs(config.unclaimed_expire_secs),
             uploads: Mutex::new(HashMap::new()),
+            media: Mutex::new(HashMap::new()),
             cache: ContentCache::new(config.cache_bytes),
         })
     }
@@ -164,12 +170,13 @@ impl AttachmentManager {
     /// result, kept as an upload is, but waiting for no message - the result refers to them from
     /// the moment they are kept, and the channel admits what lies in its key space (`lies_in`);
     /// so it is a way of creating of its own, apart from `create`, whose uploads wait. Each is an
-    /// image a model can be given, as its first bytes say (`content::is_image`), and there are at
-    /// most as many as a message may carry attachments - all checked before any is kept. All are
-    /// kept or none: what was kept before one failed is removed again (`roll_back_media`).
+    /// image a model can be given or a text, as its first bytes say (`content::is_media`), and
+    /// there are at most as many as a message may carry attachments - all checked before any is
+    /// kept. All are kept or none: what was kept before one failed is removed again
+    /// (`roll_back_media`). What is kept is remembered for its caller (`kept_media`).
     ///
     /// # Errors
-    /// As `create`; `TooMany` for more than a message may carry, `NotAnImage`.
+    /// As `create`; `TooMany` for more than a message may carry, `NotMedia`.
     pub async fn create_media(
         &self,
         ctx: &SecurityContext,
@@ -186,8 +193,8 @@ impl AttachmentManager {
             .map(|ToolMedia { name, content }| {
                 let name = FileName::new(&name)?;
                 let media_type = content::media_type(&content[..content.len().min(HEAD)]);
-                if !content::is_image(media_type) {
-                    return Err(AttachmentError::NotAnImage {
+                if !content::is_media(media_type) {
+                    return Err(AttachmentError::NotMedia {
                         name: name.to_string(),
                         media_type: media_type.to_string(),
                     });
@@ -196,6 +203,7 @@ impl AttachmentManager {
             })
             .collect::<AttachmentResult<Vec<_>>>()?;
         let storage = self.storage_for(ctx, channel, &classification)?;
+        self.forget_expired().await;
 
         let mut kept = Vec::with_capacity(media.len());
         for (name, media_type, content) in media {
@@ -213,8 +221,30 @@ impl AttachmentManager {
                 }
             }
         }
+        let mut remembered = self.media.lock().unwrap_or_else(PoisonError::into_inner);
+        for content in &kept {
+            let pending =
+                Pending { by, channel: channel.id, at: Instant::now(), content: content.clone() };
+            remembered.insert(content.id, pending);
+        }
+        drop(remembered);
         debug!(channel = %channel.id, by = %by, count = kept.len(), "Media of a tool kept");
         Ok(kept)
+    }
+
+    /// What `create_media` kept as `id` for `by` in `channel`: the reference the kernel made, for
+    /// the turn that made the call, whose channel may not have recorded the message of the result
+    /// when the turn's next step reads it (issue 547). `None` for anybody else, in any other
+    /// channel, and once it was remembered longer than an upload waits.
+    pub(crate) fn kept_media(
+        &self,
+        by: ActorId,
+        channel: ChannelId,
+        id: ContentId,
+    ) -> Option<ContentRef> {
+        let media = self.media.lock().unwrap_or_else(PoisonError::into_inner);
+        let kept = media.get(&id).filter(|kept| kept.is_for(by, channel, self.unclaimed_expire))?;
+        Some(kept.content.clone())
     }
 
     /// The storage content classified `classification` is kept in for the caller of `ctx` in
@@ -408,7 +438,7 @@ impl AttachmentManager {
 
     /// Lets `content`, kept for a message `by` will say in `channel`, wait for that message.
     fn wait(&self, by: ActorId, channel: ChannelId, content: ContentRef) {
-        let upload = Upload { by, channel, at: Instant::now(), content };
+        let upload = Pending { by, channel, at: Instant::now(), content };
         self.uploads
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -467,7 +497,7 @@ impl AttachmentManager {
 
     /// Removes every attachment of the channel `channel` for good (issue 282), with the history
     /// that carries them: from every storage, since one configured before may hold some, and the
-    /// uploads that wait for a message there.
+    /// uploads that wait for a message there and the media remembered for it.
     ///
     /// # Errors
     /// `Content` if a storage cannot remove them.
@@ -477,6 +507,10 @@ impl AttachmentManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|_, upload| upload.channel != channel);
+        self.media
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, kept| kept.channel != channel);
         self.cache.forget_under(&format!("{prefix}/"));
         for (_, storage) in self.storages.iter() {
             storage.remove_under(&prefix).await?;
@@ -484,9 +518,14 @@ impl AttachmentManager {
         Ok(())
     }
 
-    /// Removes the uploads that waited longer than configured for their message, and their content.
-    /// Logged where that fails: it lies in its channel's key space until the channel is purged.
+    /// Removes the uploads that waited longer than configured for their message with their content,
+    /// and forgets the media remembered as long, whose content stays. Logged where removing fails:
+    /// the content lies in its channel's key space until the channel is purged.
     async fn forget_expired(&self) {
+        self.media
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, kept| kept.at.elapsed() <= self.unclaimed_expire);
         let expired: Vec<ContentRef> = {
             let mut uploads = self.uploads.lock().unwrap_or_else(PoisonError::into_inner);
             let ids: Vec<ContentId> = uploads
@@ -508,8 +547,8 @@ impl AttachmentManager {
     }
 }
 
-impl Upload {
-    /// Whether it waits for a message `by` says in `channel`: theirs, for that channel, and not
+impl Pending {
+    /// Whether it is for a message `by` says in `channel`: theirs, for that channel, and not
     /// waiting longer than `expire`.
     fn is_for(&self, by: ActorId, channel: ChannelId, expire: Duration) -> bool {
         self.by == by && self.channel == channel && self.at.elapsed() <= expire
@@ -705,6 +744,12 @@ mod tests {
             .iter()
             .all(|d| d.classification == classification && attachments.lies_in(main.id, d)));
         assert_eq!(read(attachments.content_of(&drawn[0]).await.unwrap()).await, PNG, "kept");
+        let notes = ToolMedia { name: "notes.txt".to_string(), content: Bytes::from_static(b"n") };
+        let text = attachments
+            .create_media(&hers, &main, classification.clone(), vec![notes])
+            .await
+            .expect("a text may be given too");
+        assert!(text[0].is_text() && !text[0].is_image(), "{:?}", text[0]);
         assert!(
             matches!(
                 attachments.named(alice, main.id, &[drawn[0].id], &[]),
@@ -719,11 +764,12 @@ mod tests {
             attachments.create_media(&hers, &main, classification.clone(), many).await,
             Err(AttachmentError::TooMany(_))
         ));
-        let notes = ToolMedia { name: "notes.txt".to_string(), content: Bytes::from_static(b"n") };
-        let text = vec![png("a.png"), notes];
-        let refused = attachments.create_media(&hers, &main, classification.clone(), text).await;
+        let scan =
+            ToolMedia { name: "scan.pdf".to_string(), content: Bytes::from_static(b"%PDF-1.7") };
+        let neither = vec![png("a.png"), scan];
+        let refused = attachments.create_media(&hers, &main, classification.clone(), neither).await;
         assert!(
-            matches!(&refused, Err(AttachmentError::NotAnImage { name, media_type }) if name == "notes.txt" && media_type == "text/plain"),
+            matches!(&refused, Err(AttachmentError::NotMedia { name, media_type }) if name == "scan.pdf" && media_type == "application/pdf"),
             "{refused:?}"
         );
         let mut huge = PNG.to_vec();
@@ -906,6 +952,36 @@ mod tests {
             matches!(changed, Err(AttachmentError::Altered(id)) if id == image.id),
             "read again once let go of, and refused as not what the message says: {changed:?}"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn what_a_tool_gave_is_remembered_for_its_caller_for_a_while_and_stays_kept() {
+        let world = World::new().await;
+        let session = world.shared_session(&[], &[]).await;
+        let main = main_of(&session);
+        let hers = World::as_user(world.alice);
+        let alice = ActorId::User(world.alice);
+        let attachments = world.kernel.attachment_manager();
+        let classification = main.classification.clone();
+
+        let drawn = attachments
+            .create_media(&hers, &main, classification.clone(), vec![png("a.png")])
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(attachments.kept_media(alice, main.id, drawn.id).as_ref(), Some(&drawn));
+        assert_eq!(
+            attachments.kept_media(alice, ChannelId::new(), drawn.id),
+            None,
+            "in no other channel"
+        );
+        let bob = ActorId::User(world.bob);
+        assert_eq!(attachments.kept_media(bob, main.id, drawn.id), None, "for nobody else");
+
+        time::advance(Duration::from_secs(3601)).await;
+        assert_eq!(attachments.kept_media(alice, main.id, drawn.id), None, "only so long");
+        attachments.create_media(&hers, &main, classification, vec![png("b.png")]).await.unwrap();
+        assert_eq!(read(attachments.content_of(&drawn).await.unwrap()).await, PNG, "and it stays");
     }
 
     #[tokio::test(start_paused = true)]

@@ -1,12 +1,14 @@
 //! The facet `ToolProvider` of `web_fetch` (issue 544): the tool `fetch_page`, which fetches a
 //! page of the web by its URL and gives it as text, a page at a time (`page_of`, issue 282), public
 //! as anything anyone can fetch. A rule derived from a call is about the pages of its host, not the
-//! one page (`ToolProvider::matcher`).
+//! one page (`ToolProvider::matcher`). A page above the component's threshold is kept whole beside
+//! a preview of it (issue 547).
 
 use super::client::{FetchError, Refusal};
 use super::{WebFetchComponent, WEB_FETCH_KIND};
 use crate::NAMESPACE;
 use async_trait::async_trait;
+use bytes::Bytes;
 use caelumora_agents::tool::{
     arguments, described, page_of, page_parameters, proposed_matcher, TextPosition, ToolError,
     ToolOutput, ToolProvider, ToolResult,
@@ -14,10 +16,11 @@ use caelumora_agents::tool::{
 use caelumora_agents::turn::Turn;
 use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
 use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::content;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::redact_endpoint;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, ToolVisibility};
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -34,6 +37,9 @@ const WEB_PAGE_PRESENTATION: ToolPresentation = ToolPresentation::new("web_page"
 /// How many bytes of a page `fetch_page` gives at once, as `read_file` gives 64 KiB unless
 /// configured.
 const MAX_PAGE_BYTES: usize = 64 * 1024;
+
+/// How many bytes of a page kept whole `fetch_page` gives in its stead.
+pub(super) const MAX_PREVIEW_BYTES: usize = 4 * 1024;
 
 /// The arguments of a call of `fetch_page`.
 #[derive(Deserialize)]
@@ -102,6 +108,16 @@ fn same_host(url: &str) -> Option<ToolMatcher> {
     })
 }
 
+impl WebFetchComponent {
+    /// Whether `text`, of which no part was asked for, is kept whole: above the threshold, if there
+    /// is one, and text as far as its bytes say - all of them, so that what is kept is certain to
+    /// be taken for text, and nothing can pass for an image.
+    fn keeps(&self, text: &str) -> bool {
+        self.keep_whole_above.is_some_and(|above| text.len() > above)
+            && content::media_type(text.as_bytes()) == content::TEXT
+    }
+}
+
 #[async_trait]
 impl ToolProvider for WebFetchComponent {
     fn description(&self) -> String {
@@ -130,14 +146,24 @@ impl ToolProvider for WebFetchComponent {
         let Fetch { url, start_line, start_offset, line_count } = arguments(params)?;
         let page = self.client.fetch(&url).await?;
         let shown = format!("'{}'", redact_endpoint(page.url.as_str()));
+        let whole_asked = start_line.is_none() && start_offset.is_none() && line_count.is_none();
+        let kept = whole_asked && self.keeps(&page.text);
+        let max_bytes = if kept { MAX_PREVIEW_BYTES } else { MAX_PAGE_BYTES };
         let start = TextPosition::asked(start_line, start_offset);
         let mut value =
-            page_of(&page.text, &shown, start, line_count, MAX_PAGE_BYTES)?.value(&self.prompts);
+            page_of(&page.text, &shown, start, line_count, max_bytes)?.value(&self.prompts);
         value["url"] = json!(page.url.as_str());
         if let Some(title) = page.title {
             value["title"] = json!(title);
         }
-        Ok(ToolOutput::classified(value, Classification::PUBLIC))
+        let media = if kept {
+            value["next"] = json!(self.kept_whole);
+            let name = format!("{}.txt", page.url.host_str().unwrap_or("page"));
+            vec![ToolMedia { name, content: Bytes::from(page.text) }]
+        } else {
+            Vec::new()
+        };
+        Ok(ToolOutput { media, ..ToolOutput::classified(value, Classification::PUBLIC) })
     }
 
     /// The calls that fetch a page of the same host; as the parameters tell for any other.
@@ -158,16 +184,37 @@ mod tests {
     use crate::prompts;
     use axum::routing::get;
     use axum::Router;
-    use caelumora_agents::testing::detached_actor_runtime;
-    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_agents::library::AgentsLibrary;
+    use caelumora_agents::testing::{
+        calling, detached_actor_runtime, register_scripted, saying, ONCE_MODEL_KIND,
+    };
+    use caelumora_agents::tool::ApprovalMode;
+    use caelumora_api::component::{ComponentFacets, ComponentKind};
+    use caelumora_domain::actor::ActorEvent;
+    use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
     use caelumora_domain::approval::Coverage;
-    use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_domain::tool::{ToolCall, ToolResultStatus};
     use caelumora_domain::work::Work;
+    use caelumora_kernel::testing::World;
+    use caelumora_tool_attachment::library::AttachmentToolLibrary;
+    use std::sync::Arc;
+    use std::time::Duration;
     use tokio::net::TcpListener;
+    use tokio::time;
 
     /// The component, fetching from the host itself too.
     fn component() -> WebFetchComponent {
-        let params = WebFetchParams { requires_approval: Default::default(), description: None };
+        keeping(None)
+    }
+
+    /// The component, keeping a page whole above `above` bytes, if any.
+    fn keeping(above: Option<usize>) -> WebFetchComponent {
+        let params = WebFetchParams {
+            requires_approval: ApprovalMode::never(),
+            description: None,
+            keep_whole_above_bytes: above,
+        };
         WebFetchComponent::new(params, Client::reaching_the_host(), prompts()).unwrap()
     }
 
@@ -185,14 +232,19 @@ mod tests {
         component.execute(FETCH_PAGE, &params, None, &mut turn).await
     }
 
-    /// A server of the test on the host itself, with a page of three paragraphs and a text of one
-    /// line longer than a part; its port.
+    /// A server of the test on the host itself, with a page of three paragraphs, a text of one
+    /// line longer than a part, and such a text that begins with a control character; its port.
     async fn server() -> u16 {
         let page = "<title>Three</title><p>one</p><p>two</p><p>three</p>";
         let long = "x".repeat(MAX_PAGE_BYTES + 1);
+        let controls = format!("\u{1}{}", "x".repeat(MAX_PAGE_BYTES));
         let router = Router::new()
             .route("/page", get(move || async move { ([("content-type", "text/html")], page) }))
-            .route("/long", get(move || async move { ([("content-type", "text/plain")], long) }));
+            .route("/long", get(move || async move { ([("content-type", "text/plain")], long) }))
+            .route(
+                "/controls",
+                get(move || async move { ([("content-type", "text/plain")], controls) }),
+            );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
@@ -230,6 +282,111 @@ mod tests {
         assert_eq!(last["content"], json!("x"));
         assert_eq!(last["start_offset"], json!(MAX_PAGE_BYTES));
         assert!(last.get("next").is_none(), "{last}");
+    }
+
+    #[tokio::test]
+    async fn a_page_above_the_threshold_is_kept_whole_beside_a_preview() {
+        let port = server().await;
+        let url = format!("http://localhost:{port}/long");
+        let component = keeping(Some(MAX_PREVIEW_BYTES));
+        let output = fetched(&component, json!({ "url": url })).await.unwrap();
+        let [kept] = output.media.as_slice() else { panic!("one file: {:?}", output.media) };
+        assert_eq!(kept.name, "localhost.txt");
+        assert_eq!(kept.content.len(), MAX_PAGE_BYTES + 1, "the whole page");
+        assert_eq!(output.value["content"].as_str().map(str::len), Some(MAX_PREVIEW_BYTES));
+        let next = output.value["next"].as_str().unwrap();
+        assert!(next.contains("read_attachment") && !next.contains("start_"), "{next}");
+        assert_eq!(output.classification, Some(Classification::PUBLIC));
+    }
+
+    #[tokio::test]
+    async fn a_page_is_kept_only_where_it_is_asked_whole_and_above_a_threshold_and_text() {
+        let port = server().await;
+        let long = format!("http://localhost:{port}/long");
+        let none = fetched(&component(), json!({ "url": long })).await.unwrap();
+        assert!(none.media.is_empty(), "no threshold, nothing kept");
+        let keeping = keeping(Some(MAX_PREVIEW_BYTES));
+        let page = format!("http://localhost:{port}/page");
+        let short = fetched(&keeping, json!({ "url": page })).await.unwrap();
+        assert!(short.media.is_empty(), "at most the threshold");
+        let asked = [("start_line", 1), ("start_offset", 0), ("line_count", 1)];
+        for (parameter, value) in asked {
+            let params = json!({ "url": long, parameter: value });
+            let part = fetched(&keeping, params.clone()).await.unwrap();
+            assert_eq!(part.value["content"].as_str().map(str::len), Some(MAX_PAGE_BYTES));
+            assert!(part.media.is_empty(), "a part asked for: {params}");
+        }
+        let controls = format!("http://localhost:{port}/controls");
+        let no_text = fetched(&keeping, json!({ "url": controls })).await.unwrap();
+        assert!(no_text.media.is_empty(), "what is no text by its bytes is given a part at a time");
+    }
+
+    /// A page kept is offered and found in the next step of the very turn that fetched it, though
+    /// the transcript numbered no attachment as the turn began.
+    #[tokio::test]
+    async fn a_page_kept_is_read_in_the_next_step_of_the_turn_that_fetched_it() {
+        let port = server().await;
+        let url = format!("http://localhost:{port}/long");
+        let answers = vec![
+            calling("fetch_page", json!({ "url": url })),
+            calling("read_attachment", json!({ "ref": "a1", "start_offset": MAX_PAGE_BYTES })),
+            saying("read"),
+        ];
+        let world = World::with(&[], &[&AgentsLibrary, &AttachmentToolLibrary], |registry| {
+            register_scripted(registry, ONCE_MODEL_KIND, answers);
+            registry.register(
+                ComponentKind::new("fetching").provides::<dyn ToolProvider>(),
+                |_, _| {
+                    let mut facets = ComponentFacets::empty();
+                    let component = keeping(Some(MAX_PREVIEW_BYTES));
+                    facets.insert::<dyn ToolProvider>(Arc::new(component));
+                    Ok(facets)
+                },
+            );
+        })
+        .await;
+        let mut working = Personality {
+            components: ComponentConfig {
+                component_nodes: vec![
+                    ComponentDescriptor::new("model", ONCE_MODEL_KIND),
+                    ComponentDescriptor::new("fetching", "fetching"),
+                    ComponentDescriptor::new("attachments", "attachments"),
+                ],
+            },
+            ..world.personality("working", None, &[]).await
+        };
+        let personalities = &world.kernel.entity_stores().personalities;
+        personalities.update(&World::system(), &mut working).await.unwrap();
+        let helper = world.agent("helper", world.alice, &working).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        let alice = World::as_user(world.alice);
+        main.reclassify(&alice, Classification::PUBLIC).await.expect("where the tool is offered");
+        let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
+        main.user_actor(world.alice)
+            .unwrap()
+            .send_message(Some("@helper read it".to_string()), None, Vec::new())
+            .await
+            .expect("sent");
+
+        let read = time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let ActorEvent::CompleteMessageGenerated(message) =
+                    watch.recv().await.expect("the channel runs").event
+                {
+                    if let Some(result) =
+                        message.tool_results.iter().find(|r| r.tool_name == "read_attachment")
+                    {
+                        break (result.status, result.content.clone());
+                    }
+                }
+            }
+        })
+        .await
+        .expect("the attachment is read");
+        assert_eq!(read.0, ToolResultStatus::Ok, "{}", read.1);
+        assert!(read.1.contains(r#""content":"x""#), "the end of the page kept: {}", read.1);
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
     #[tokio::test]

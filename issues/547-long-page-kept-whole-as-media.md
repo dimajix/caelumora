@@ -1,6 +1,6 @@
 # 547 — A page too long for one result is fetched again for every part of it
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -82,13 +82,27 @@ pub fn is_media(media_type: &str) -> bool;
   `ActorRuntime::create_media`, `ToolExecutor::keep`, TOOLS.md).
 - A first call of `fetch_page` - no `start_line`, no `line_count` - whose text is above the
   threshold gives a preview of 4 KiB through `page_of`, as a constant of the tool, and the whole
-  text as `ToolMedia`, named after the page's host (`<host>.md`), so that no name has to be made
-  safe. Its result says that the whole is kept and how it is read, in a text of the catalogue.
-- A text whose first bytes do not read as text (`content::media_type`) is not kept: it is given a
-  part at a time as today. `start_line` goes on working in any case.
+  text as `ToolMedia`, named after the page's host (`<host>.txt`, since a page may be plain text or
+  JSON as well as Markdown), so that no name has to be made safe. Where to read on (`next`) then
+  says that the whole is kept and how it is read, in a text of the catalogue, instead of naming a
+  `start_line`: that would lead the model to the fetch again that keeping the page is to spare it.
+- A text that does not read as text (`content::media_type`, of all its bytes) is not kept: it is
+  given a part at a time as today. `start_line` goes on working in any case. A text between 64 KiB
+  and a threshold above them is given a part at a time as well.
+- Every first call keeps a copy of its own, as every call fetches anew: nothing is cached.
 - `Params::check` of `web_fetch` refuses a threshold below the preview.
 - A storage of content that is missing fails the call, as for every tool that hands over media: the
   threshold says that it is there.
+- The tools of `attachments` are offered from the start, not only once something is numbered: the
+  tools of a turn are fixed as it begins, and the first page kept is numbered in the middle of one.
+- Until the channel has recorded the message of the result, `ChannelView::attachment` finds what
+  `create_media` kept for its caller in that channel (`AttachmentManager::kept_media`), so that the
+  next step of the turn does not depend on the channel's being ahead of it. The kernel holds these
+  references itself, in memory, as long as an upload waits: a reference the agent side handed in
+  would be its word (issue [549](549-kernel-takes-an-agents-word-on-a-content-reference.md)). They
+  are not uploads: nothing is claimed and nothing removed, since media wait for no message, a result
+  said after a restart carries what was kept before it, and a call may wait longer for its approval.
+- The summary of a compaction is told to keep the refs of attachments, since no tool lists them.
 
 The web UI needs no change: the card of a call already shows what a result gave, and `web_page` the
 lines it covers.
@@ -103,7 +117,8 @@ lines it covers.
 ## Done when
 
 - A page above the configured threshold is kept whole beside a preview, and `read_attachment` and
-  `copy_attachment` reach it; a page below it and a component without a threshold behave as today.
+  `copy_attachment` reach it, in the steps of the same turn too, which a test holds; a page below
+  it and a component without a threshold behave as today.
 - TOOLS.md and COMPONENTS.md describe it, and the example seed's `nora-researcher` sets the
   threshold, with its skill `research` telling how such a page is read.
 
@@ -112,3 +127,9 @@ lines it covers.
 - **2026-11-08** — Opened at the maintainer's request after checking how `fetch_page` treats large
   results and how Claude Code does: designed as above, the threshold configurable at the
   maintainer's wish.
+- **2026-11-08** — Changed with the maintainer before step 2: where to read on no longer names a
+  line once a page is kept, and what is kept is named `<host>.txt`.
+- **2026-11-08** — Step 2 implemented. The end-to-end test showed that a page kept could not be read
+  in the turn that fetched it: `read_attachment` was not offered, and the next step could come
+  before the channel had recorded the result. Both decided with the maintainer as above; a view
+  reading a reference handed in by the agent side was built and taken back.
