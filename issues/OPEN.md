@@ -65,12 +65,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [378](378-resource-management-epic.md) | open | medium | epic | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
-## Code structure
-
-| No. | Status | Priority | Type | Issue |
-|---|---|---|---|---|
-| [551](551-a-decision-model-is-asked-past-the-model-plugin.md) | open | medium | refactoring | The client of a decision model lives in the crate of the `decision_policy` that uses it and is configured by the policy's parameters, while language and image models are offered by `caelumora-model` and served by backends of their own, so no call of a decision model passes that plugin and nothing but the policy can ask one. |
-
 ## Integrations
 
 | No. | Status | Priority | Type | Issue |

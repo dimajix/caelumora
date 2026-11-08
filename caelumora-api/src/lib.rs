@@ -6,6 +6,7 @@ pub mod actor;
 pub mod cache;
 pub mod command;
 pub mod component;
+pub mod decision;
 pub mod error;
 pub mod image;
 pub mod library;

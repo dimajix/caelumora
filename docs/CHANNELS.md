@@ -1040,9 +1040,10 @@ is answered as `all` intends.
 ### Choosing by what was said
 
 `decision_policy`, of the plugin `caelumora-decision` (issue 403), asks a decision model which of
-the agents should respond: a model that answers typed questions about a text with probabilities,
-served by Ollama since 0.35 at `/v1/systemone` (see [LLM-MODELS.md](LLM-MODELS.md#decision-models)).
-It is given the conversation and the candidates as they are introduced. Each message goes to the
+the agents should respond: a model that answers typed questions about a text with probabilities
+(see [LLM-MODELS.md](LLM-MODELS.md#decision-models)), one of those the platform offers (see
+[CONFIGURATION.md](CONFIGURATION.md#decision-models)), asked in the name of the channel's owner. It
+is given the conversation and the candidates as they are introduced. Each message goes to the
 model as a model is given one of another participant (see
 [AGENT-TURN.md](AGENT-TURN.md#who-said-what)), its sender marked as `sender_format` and
 `sender_style` say - by default `@handle: ...`, the name its options have, without when it was
@@ -1052,27 +1053,21 @@ left out beyond about 4,096 tokens, the oldest first. Up to 25 candidates it ask
 most probable - and every other at or above `threshold` besides, at most `max_responders`. Beyond 25
 it asks whether each should respond, up to 64, and asks those at or above `threshold`.
 
-The channel waits for the decision before it routes anything else, so it is bounded by the
-endpoint's timeout, 5 s unless written. What keeps the model from choosing - a timeout, an error,
-an answer naming no option, more than 64 candidates - leaves the policy undecided, without anything
-that was said, and the moderator asks whom its `on_undecided` says (see above).
+The channel waits for the decision before it routes anything else, so it is bounded by the timeout
+of the model's endpoint, 5 s unless written. What keeps the model from choosing - a timeout, an
+error, an answer naming no option, more than 64 candidates - leaves the policy undecided, without
+anything that was said, and the moderator asks whom its `on_undecided` says (see above).
 
-What was said leaves the system where the endpoint lies outside it. The policy sends a message only
-if it may flow to the endpoint's `destination` - `public` unless configured, as for an MCP server -
-asked in the context of the event routed, in which the endpoint's credential is resolved too. What
-was said before is left out if it may not; if what is to be answered may not, it is undecided as
-on failure. Since its parameters say where what it is given goes, an operator configures it alone
-(`ComponentKind::operator_only`): a channel created on request names it only through a `ref` to a
-component bundle, while a template may write it.
+What was said leaves the system where the model's server lies outside it. The policy sends a message
+only if it may reach the model - it may flow to the `destination` the model is configured with. What
+was said before is left out if it may not; if what is to be answered may not, it is undecided as on
+failure.
 
 | Parameter | Meaning | Default |
 |---|---|---|
-| `endpoint` | The server, its credential and `timeout_secs` (see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)) | `url: http://127.0.0.1:11434`, 5 s |
-| `model` | The decision model | `nimble` |
-| `keep_alive` | How long the model stays loaded after a decision | the server's |
+| `name` | The decision model of `plugins.model.decision` | the one there is - needed where there are several |
 | `threshold` | How probable it must be that a candidate fits | `0.3` |
 | `max_responders` | How many are asked at most | `1` |
-| `destination` | What the server is cleared for | `public` |
 | `sender_format` | How the model is told who said what: `none`, `prefix` or `xml` | `prefix` |
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 | `prompt_texts` | Which variant of its questions the model is asked (see [CONFIGURATION.md](CONFIGURATION.md#the-texts-given-to-models)) | the default |

@@ -30,6 +30,7 @@ caelumora-model.workspace = true
 caelumora-model-ollama.workspace = true
 caelumora-decision.workspace = true
 caelumora-model-comfyui.workspace = true
+caelumora-model-systemone.workspace = true
 caelumora-tool-image.workspace = true
 caelumora-tool-attachment.workspace = true
 caelumora-tool-web.workspace = true

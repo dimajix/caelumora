@@ -55,7 +55,7 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - so far `type: local`, a file per key under `root`, with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |
 | `attachments` | What a message may carry besides its text (issue 282): `max_bytes`, the largest attachment and the largest file a tool gives its model (issue 512); `max_per_message`, also the most files one tool result gives; `keep_in`, the storage of content attachments are kept in, needed where there are several; `unclaimed_expire_secs`, how long an upload waits for the message that names it, and how long the kernel remembers what a tool gave its model for the turn that made the call; `cache_bytes`, how much of them the process holds in memory for the models given them along. See [CHANNELS.md](CHANNELS.md#what-a-message-carries). | 50 MiB; 10; the one storage of content there is - none, and nothing can be attached; one hour; 256 MiB |
 | `plugins.artifacts` | The section of the plugin `caelumora-artifacts` (issue 328): `max_bytes`, the largest version, and `keep_in`, the storage of content new artifacts are kept in, needed where there are several. An artifact's later versions go where it was made. | 50 MiB; the one storage of content there is - none, and nothing can be published |
-| `plugins.model` | The section of the plugin `caelumora-model` (issues 520, 525): the models the platform offers by their kind - the language models under `language`, the image models under `image` -, each a [backend](#backends) by its name - see [The model](#the-model) and [Image models](#image-models). | no language model - the program offers one; no image model |
+| `plugins.model` | The section of the plugin `caelumora-model` (issues 520, 525, 551): the models the platform offers by their kind - the language models under `language`, the image models under `image`, the decision models under `decision` -, each a [backend](#backends) by its name - see [The model](#the-model), [Image models](#image-models) and [Decision models](#decision-models). | no language model - the program offers one; no image model; no decision model |
 | `prompts` | The variants of the texts given to models, each by its name and the directory of its files - `default` overriding the defaults for every model. See [The texts given to models](#the-texts-given-to-models). | none - the texts compiled in |
 | `component_defaults` | Components that replace the default of a facet of which an agent or a channel has exactly one (`LanguageModelClient`, `ContextProvider`; `Moderator`, `ResponderPolicy`), for every personality or channel that does not configure its own - except the `ContextProvider` of an external personality, whose default is its own. One component per such facet; one that provides several is the default of each, built once. See [COMPONENTS.md](COMPONENTS.md#facets-of-which-there-is-exactly-one). | the built-in defaults - for the model, the kind `language_model` ([The model](#the-model)) |
 
@@ -196,8 +196,9 @@ one stored before is not built: its agent does not start. Which values suit whic
 measured, is in [LLM-MODELS.md](LLM-MODELS.md).
 
 A channel may choose who answers by asking a decision model (`decision_policy`, see
-[CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). Only an operator configures it: in a
-template, or in a component bundle a channel created on request names by a `ref`:
+[CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)), one of the [decision
+models](#decision-models) the platform offers. A template, a request that creates a channel or a
+component bundle writes it:
 
 ```yaml
 component_bundles:               # of the seed: entities, found by name
@@ -207,11 +208,8 @@ component_bundles:               # of the seed: entities, found by name
   - id: responders
     kind: decision_policy
     params:
-      endpoint:
-        url: "http://127.0.0.1:11434"
-      model: nimble
+      name: nimble
       max_responders: 2
-      destination: { level: internal }
 ```
 
 Every message the model produces carries the size of the context it was produced in: the configured
@@ -241,6 +239,39 @@ An agent is given an image model as a component of the kind `image_model` of `ca
 which names it - `name`, the one there is unless given, needed among several - and provides its
 `ImageModelClient`. An agent may have several, and the tool that generates images offers those it
 has ([TOOLS.md](TOOLS.md#images)).
+
+### Decision models
+
+The decision models the platform offers are the same plugin's (issue 551): under `decision`, its
+section `plugins.model` names each by its name and a [backend](#backends), and every call of one
+passes the plugin. Without one, nothing can ask one, and a `decision_policy` is not built.
+
+```yaml
+plugins:
+  model:
+    decision:
+      nimble:
+        type: systemone
+        endpoint:
+          url: "http://127.0.0.1:11434"
+        model: "nimble:9b"
+        keep_alive: 1h
+        destination: { level: strictly_confidential }
+```
+
+The backend `systemone`, of the plugin `caelumora-model-systemone`, reaches a model through the
+contract `/v1/systemone`, which Ollama serves as well as hosted services:
+
+| Parameter of `systemone` | Meaning | Default |
+|---|---|---|
+| `endpoint` | The server: its `url`, its `timeout_secs`, how long a decision may take, and its credential, resolved for whoever asks (see [COMPONENTS.md](COMPONENTS.md#remote-endpoints)) | `url: http://127.0.0.1:11434`, 5 s |
+| `model` | The model the server is asked for | `nimble` |
+| `keep_alive` | How long the server keeps the model loaded after a decision | the server's |
+| `destination` | What the server is cleared for: what may flow there is all that is sent to it | `public` |
+
+A component is given a decision model as a component of the kind `decision_model` of
+`caelumora-model`, which names it - `name`, the one there is unless given, needed among several -
+and provides its `DecisionModelClient`; a `decision_policy` names its model itself.
 
 ### ComfyUI
 

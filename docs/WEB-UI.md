@@ -483,7 +483,8 @@ completion offers `@all` and `@channel` as well, and both are highlighted in a m
 mentions anyone. Who
 answers - the channel's responder policy - is shown above it as its moderator, and for
 `mentions_only_policy` the input says that agents answer only when mentioned. `decision_policy`
-is explained, but not offered for a new channel: an operator configures it alone.
+is explained, but not offered for a new channel: it needs a decision model, which a deployment may
+not have.
 
 What can be done with a participant is in its menu, each entry only where the participant offers it:
 its profile, its history, its private notes, its tools, removing it from the channel (where

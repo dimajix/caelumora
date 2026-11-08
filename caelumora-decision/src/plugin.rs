@@ -1,4 +1,4 @@
-//! How decision models are joined to the kernel (issue 403): by the component kind
+//! How choosing by a decision model is joined to the kernel (issue 403): by the component kind
 //! `decision_policy`.
 
 use crate::policy;

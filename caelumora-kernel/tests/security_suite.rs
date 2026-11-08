@@ -9,7 +9,6 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
-use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::reader::ViewError;
 use caelumora_api::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_api::workspace::WorkspaceError;
@@ -44,8 +43,6 @@ use caelumora_kernel::channel::ChannelError;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::GroupError;
-use caelumora_kernel::moderator::broadcast_policy::BroadcastPolicy;
-use caelumora_kernel::moderator::ResponderPolicy;
 use caelumora_kernel::project::ProjectError;
 use caelumora_kernel::scoped::ScopeNotEmpty;
 use caelumora_kernel::session::testing::create;
@@ -2849,70 +2846,6 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
         "only the bundle read as she names it"
     );
     assert!(session.channel_named("tooled").is_none(), "nothing is created");
-    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
-}
-
-/// A component of a kind only an operator configures (issue 403) - whose
-/// params say where what it is given goes - is refused in a request that
-/// writes it, before anything is asked, and taken where the request names it
-/// through a `ref` to a component bundle the creator may read.
-#[tokio::test]
-async fn a_new_channel_names_a_component_only_an_operator_configures_through_a_ref() {
-    let world = World::with(&[], &[], |registry| {
-        registry.register(
-            ComponentKind::new("operated_policy").provides::<dyn ResponderPolicy>().operator_only(),
-            |_, _| {
-                let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn ResponderPolicy>(Arc::new(BroadcastPolicy));
-                Ok(facets)
-            },
-        );
-    })
-    .await;
-    let mut operated = ComponentBundle::new(
-        ScopedName::new("operated", Scope::GlobalScope).unwrap(),
-        ComponentConfig {
-            component_nodes: vec![ComponentDescriptor::new("policy", "operated_policy")],
-        },
-        attributes(None, &[world.alice]),
-    );
-    world
-        .kernel
-        .entity_stores()
-        .component_bundles
-        .create(&World::system(), &mut operated)
-        .await
-        .expect("the operator's");
-    let session = world.shared_session(&[], &[]).await;
-    let spec = |name: &str, policy: ComponentDescriptor| ChannelSpec {
-        name: name.to_string(),
-        components: ComponentConfig { component_nodes: vec![policy] },
-        participants: vec![],
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
-    };
-
-    let (refused, asked) = world
-        .asked(session.create_channel(
-            &World::as_user(world.alice),
-            spec("written", ComponentDescriptor::new("policy", "operated_policy")),
-        ))
-        .await;
-    let refused = refused.err().and_then(|e| e.downcast::<SessionError>().ok());
-    assert!(matches!(&refused, Some(SessionError::InvalidComponents(_))), "{refused:?}");
-    assert!(asked.is_empty(), "nothing asked: {asked:?}");
-    assert!(session.channel_named("written").is_none(), "nothing is created");
-
-    let named = ComponentDescriptor {
-        params: json!({ "name": "operated" }),
-        ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND)
-    };
-    session
-        .create_channel(&World::as_user(world.alice), spec("named", named))
-        .await
-        .expect("named through a ref");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

@@ -79,7 +79,8 @@ it registers, a plugin
     beyond documents - the versions of artifacts -, under a key space of its own;
 *   makes the backends its own service is served by, which other plugins may bring, from its section
     (`make_named`, issue 520) - the models of `caelumora-model`, served by the backend `ollama` of
-    `caelumora-model-ollama` and the backend `comfyui` of `caelumora-model-comfyui` (issue 525);
+    `caelumora-model-ollama`, the backend `comfyui` of `caelumora-model-comfyui` (issue 525) and the
+    backend `systemone` of `caelumora-model-systemone` (issue 551);
 *   makes its kind go with what holds the scope it lies in (`scope_member`, a `ScopeMember`, which
     says only what its kind adds - where it announces and what lies behind an entity), and
     puts it into a scope only by the holders of scopes (`scope_holders`, a `ScopeHolders`): asked

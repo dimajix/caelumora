@@ -1,20 +1,22 @@
-//! The models the platform offers (issues 520, 525), as a plugin: a service whose backends other
-//! plugins bring - of language models (`LanguageModelProvider`) and of image models
-//! (`ImageModelProvider`) -, configured by kind and name in the section `plugins.model`. An agent
-//! asks such a model through a client the plugin builds for it alone
-//! (`ModelManager::language_client_for`, `image_client_for`), which makes each call in the agent's
-//! name as the kernel holds it at that call - the one place where what is called of the models the
-//! platform offers, by whom, can be known. A model an agent's library brings itself is the agent's
-//! affair, and passes no such place.
+//! The models the platform offers (issues 520, 525, 551), as a plugin: a service whose backends
+//! other plugins bring - of language models (`LanguageModelProvider`), of image models
+//! (`ImageModelProvider`) and of decision models (`DecisionModelProvider`) -, configured by kind
+//! and name in the section `plugins.model`. Such a model is asked through a client the plugin
+//! builds for whoever asks it alone (`ModelManager::language_client_for`, `image_client_for`,
+//! `decision_client_for`), which makes each call in their name as the kernel holds it at that call:
+//! the one place where what is called of the models the platform offers, by whom, can be known. A
+//! model an agent's library brings itself is the agent's affair, and passes no such place.
 //!
 //! An agent is given its language model as a component of the kind `language_model` (module
 //! `language_model`), the default of both its model's facets, `LanguageModelClient` and
-//! `ModelProfileProvider`, and each image model it may use as a component of the kind
-//! `image_model` (module `image_model`), which provides its `ImageModelClient`. Which model a
-//! component names, and how an agent's context is framed for its language model, are the
+//! `ModelProfileProvider`, and each image model it may use as a component of the kind `image_model`
+//! (module `image_model`), which provides its `ImageModelClient`; a decision model as one of the
+//! kind `decision_model` (module `decision_model`), which provides its `DecisionModelClient`. Which
+//! model a component names, and how an agent's context is framed for its language model, are the
 //! components' parameters; where a model is served and how is the backend's. The plugin that joins
 //! them to the kernel is `plugin`.
 
+mod decision_model;
 mod image_model;
 mod language_model;
 mod manager;
@@ -22,12 +24,18 @@ pub mod plugin;
 #[cfg(test)]
 mod testing;
 
+pub use manager::ModelManager;
+
 use async_trait::async_trait;
+use caelumora_api::decision::{Answer, Question};
 use caelumora_api::image::{Image, ImageRequest};
 use caelumora_api::model::ModelResult;
+use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::message::{Message, MessageEvent};
 use caelumora_domain::tool::Tool;
+use caelumora_security::SecurityContext;
 use futures::stream::BoxStream;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
 
 /// A language model the platform offers: one entry of `plugins.model.language`, served by the
@@ -64,4 +72,26 @@ pub trait ImageModelProvider: Send + Sync + Debug {
     /// `ModelError::Unfit` for a request the model does not take, before anything is sent; the
     /// others for what its server failed with.
     async fn generate(&self, request: &ImageRequest) -> ModelResult<Vec<Image>>;
+}
+
+/// A decision model the platform offers (issue 551): one entry of `plugins.model.decision`, served
+/// by the backend its `type` names, as a language model is. It knows where and how its model is
+/// served and what that server is cleared for, and decides nothing.
+#[async_trait]
+pub trait DecisionModelProvider: Send + Sync + Debug {
+    /// What its server is cleared for: where what it is sent goes.
+    fn destination(&self) -> &Classification;
+
+    /// The answers to `questions` about `state`, by the name of each, its credential resolved for
+    /// `asking`: unlike a language model's backend, a server of decision models may take one.
+    ///
+    /// # Errors
+    /// What its server failed with; `ModelError::InvalidResponse` for an answer that leaves a
+    /// question unanswered.
+    async fn decide(
+        &self,
+        asking: &SecurityContext,
+        state: &str,
+        questions: &BTreeMap<String, Question>,
+    ) -> ModelResult<HashMap<String, Answer>>;
 }
