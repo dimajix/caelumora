@@ -305,6 +305,7 @@ impl AttachmentManager {
             key,
             number: None,
             content: None,
+            left_out: false,
         })
     }
 
@@ -916,7 +917,7 @@ mod tests {
         );
         assert_eq!(contents(&blind), [None, None]);
         let given = attachments
-            .load(&mut seeing, &ModelProfile { images: true, ..ModelProfile::default() })
+            .load(&mut seeing, &ModelProfile { max_images: 4, ..ModelProfile::default() })
             .await
             .unwrap();
         assert_eq!(contents(&seeing), [Some(PNG.to_vec()), None], "the image alone");
@@ -937,7 +938,7 @@ mod tests {
         fs::write(&file, b"another image").unwrap();
         assert!(
             attachments
-                .load(&mut messages(), &ModelProfile { images: true, ..ModelProfile::default() })
+                .load(&mut messages(), &ModelProfile { max_images: 4, ..ModelProfile::default() })
                 .await
                 .is_ok(),
             "held: not read again"
@@ -946,7 +947,7 @@ mod tests {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, b"another image").unwrap();
         let changed = attachments
-            .load(&mut messages(), &ModelProfile { images: true, ..ModelProfile::default() })
+            .load(&mut messages(), &ModelProfile { max_images: 4, ..ModelProfile::default() })
             .await;
         assert!(
             matches!(changed, Err(AttachmentError::Altered(id)) if id == image.id),

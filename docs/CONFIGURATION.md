@@ -148,7 +148,7 @@ plugins:
 | `tokenizer` | The model whose tokens are read for the model's control tokens: one on the same server that shares its tokenizer and lists them - for a model that lists none, as one Ollama serves from its cloud (see [LLM-MODELS.md](LLM-MODELS.md#models-of-ollamas-cloud)). Whether the two share it is not checked | `model` itself |
 | `think` | Whether the model is asked to reason; left out, Ollama's default for the model applies | left out |
 | `context_size` | How many tokens the model's context holds, sent to Ollama as `num_ctx`; left out, Ollama's default applies - which may be far below what the model was trained for, and Ollama cuts a longer prompt off without saying so | left out |
-| `vision` | Whether the model sees images, which it is then given along with their messages (see [AGENT-TURN.md](AGENT-TURN.md#attachments)); left out, it is asked of the server's `/api/show` as the first agent of it is built - one that cannot say gives none, with a warning | left out |
+| `vision` | Whether the model sees images, which it is then given along with their messages, as many as `max_images` of the component `language_model` says (see [AGENT-TURN.md](AGENT-TURN.md#attachments)); left out, it is asked of the server's `/api/show` as the first agent of it is built - one that cannot say gives none, with a warning | left out |
 
 Before the first call to a model, the backend reads the model's control tokens from the server and
 keeps them from being produced by any text it sends; if they cannot be read, the call fails
@@ -189,6 +189,7 @@ component_defaults:
 | `sender_style` | By which name a sender is marked: `handle` or `name` | `handle` |
 | `message_times` | Whether the marker says when the message was written, in the session's time zone (see [AGENT-TURN.md](AGENT-TURN.md#who-said-what)) | `true` |
 | `prompt_texts` | Which variant of the texts the model is given (see [The texts given to models](#the-texts-given-to-models)); one not configured keeps the agent from being built | the default |
+| `max_images` | How many images a model that sees is given along at most, the newest of its context; of the others it is told alone (see [AGENT-TURN.md](AGENT-TURN.md#attachments)). 0: none | 4 |
 
 An unknown parameter is refused: of a model, in `component_defaults` or a key of `plugins.model` it
 does not know, the kernel does not start; in a personality, a request that writes it is refused, and

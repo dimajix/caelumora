@@ -364,13 +364,20 @@ impl<'a> ContextResolver<'a> {
         let Some(trailing) = placed_at(PromptAt::End) else { return Ok(None) };
         let mut placed = leading.len() + trailing.len();
         let time_zone = reference.frame.time_zone;
+        let mut path: Vec<_> = path
+            .into_iter()
+            .map(|(node, message)| {
+                let in_turn = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
+                let message = message.and_then(|m| match m.turn_id.and_then(|t| lowered.get(&t)) {
+                    Some(channel) => m.names_only(channel),
+                    None => Some(m),
+                });
+                (node, message, in_turn)
+            })
+            .collect();
+        profile.leave_out_images(path.iter_mut().filter_map(|(_, message, _)| message.as_mut()));
         let mut entries = Vec::with_capacity(path.len());
-        for (node, message) in path {
-            let in_turn = message.as_ref().is_some_and(|m| m.turn_id == Some(turn));
-            let message = message.and_then(|m| match m.turn_id.and_then(|t| lowered.get(&t)) {
-                Some(channel) => m.names_only(channel),
-                None => Some(m),
-            });
+        for (node, message, in_turn) in path {
             let mut given = Vec::new();
             // The end of a turn is no message; one given up is told where it
             // stands, and so is who joined or left. A part may have been
@@ -512,16 +519,19 @@ fn participant_notice(
 mod tests {
     use super::*;
     use crate::agent::AgentId;
+    use crate::content::testing::make_content_ref;
+    use crate::content::ContentRef;
     use crate::context::testing::text;
     use crate::context::{FrameRef, PromptRef, ReasoningHistory, SenderFormat, SystemMessages};
     use crate::digest;
     use crate::digest::prompt;
     use crate::message::TokenUsage;
     use crate::prompt_catalogue::{kernel_catalogue, PromptVariant, KERNEL_PROMPTS};
-    use crate::tool::Tool;
+    use crate::tool::{Tool, ToolCall, ToolCallResult};
     use crate::turn::TurnState;
     use crate::user::UserId;
     use crate::work::Work;
+    use serde_json::Value;
     use std::fs;
 
     fn contents(items: &[ContextItem]) -> Vec<String> {
@@ -580,6 +590,167 @@ mod tests {
             .unwrap()
             .expect("resolved");
         assert_eq!(contents(&seen.items), ["question", "answer"]);
+    }
+
+    /// Issue 465: a model is given along the newest of the images of its context, the last of a
+    /// message first; of the others it is told alone, and what a turn given up for a lowered
+    /// channel carried, which it is not given, takes no place among them. The transcript keeps
+    /// every one as it was.
+    #[test]
+    fn a_model_is_given_along_the_newest_images_and_told_of_the_others_alone() {
+        let agent = ActorId::Agent(AgentId::new());
+        let image = |name: &str| make_content_ref(name, b"x");
+        let said = |attachments: Vec<ContentRef>| Message {
+            role: MessageRole::User,
+            attachments,
+            ..text("look")
+        };
+        let call = ToolCall {
+            id: None,
+            function_name: "draw".to_string(),
+            arguments: Value::Null,
+            visibility: Default::default(),
+            presentation: Default::default(),
+        };
+        let lowered = TurnId::new();
+        let mut state = AgentChannelState::default();
+        state.transcript.push(said(vec![image("first.png")]));
+        state.transcript.push(said(vec![image("second.png"), image("third.png")]));
+        state.transcript.push(Message {
+            role: MessageRole::Tool,
+            turn_id: Some(lowered),
+            tool_results: vec![ToolCallResult {
+                media: vec![image("withheld.png")],
+                ..ToolCallResult::of(
+                    &call,
+                    Default::default(),
+                    "drawn".to_string(),
+                    Classification::PUBLIC,
+                )
+            }],
+            ..text("")
+        });
+        state.transcript.record(TranscriptEntry::TurnGivenUp {
+            turn_id: lowered,
+            reason: GivenUpReason::Lowered { channel: Classification::PUBLIC },
+            at: Utc::now(),
+        });
+        let resolver = ContextResolver::of(&state, kernel_catalogue());
+        let reference = |max_images| ContextRef {
+            transcript: state.transcript.digest(),
+            frame: FrameRef {
+                profile: ModelProfile { max_images, ..ModelProfile::default() },
+                ..FrameRef::default()
+            },
+        };
+        let items = |max_images| {
+            resolver.resolve(&reference(max_images), TurnId::new(), agent).unwrap().unwrap().items
+        };
+        let given = |max_images| {
+            let profile = ModelProfile { max_images, ..ModelProfile::default() };
+            let mut names = Vec::new();
+            for item in items(max_images) {
+                if let ContextItem::Conversation { message } = item {
+                    names.extend(
+                        message
+                            .carried()
+                            .filter(|content| profile.gives_along(content))
+                            .map(|content| content.name.to_string()),
+                    );
+                }
+            }
+            names
+        };
+        let tokens = |max_images| {
+            *resolver
+                .token_positions(&reference(max_images), TurnId::new(), agent)
+                .unwrap()
+                .unwrap()
+                .0
+                .last()
+                .unwrap()
+        };
+
+        assert_eq!(given(2), ["second.png", "third.png"], "the newest");
+        assert_eq!(given(1), ["third.png"], "the last of a message first");
+        assert_eq!(given(3), ["first.png", "second.png", "third.png"], "none withheld counted");
+        assert!(given(0).is_empty(), "a model that sees none");
+        let first_note = |max_images| contents(&items(max_images))[0].clone();
+        assert!(first_note(2).ends_with(", not shown]"), "told of it alone: {}", first_note(2));
+        assert!(!first_note(3).ends_with(", not shown]"), "{}", first_note(3));
+        let two_fewer = tokens(3) - tokens(1);
+        assert!(
+            (1500..1536).contains(&two_fewer),
+            "two images less, two notes longer: {two_fewer}"
+        );
+        assert!(
+            state.transcript.messages().iter().flat_map(Message::carried).all(|c| !c.left_out),
+            "the transcript's copy keeps nothing of it"
+        );
+    }
+
+    /// Issue 465: an image a result showed again is the newest, and pushes an older one out.
+    #[test]
+    fn an_image_shown_again_counts_as_the_newest() {
+        let agent = ActorId::Agent(AgentId::new());
+        let old = make_content_ref("old.png", b"x");
+        let later = make_content_ref("later.png", b"y");
+        let said = |attachment: &ContentRef| Message {
+            role: MessageRole::User,
+            attachments: vec![attachment.clone()],
+            ..text("look")
+        };
+        let call = ToolCall {
+            id: None,
+            function_name: "view_attachment".to_string(),
+            arguments: Value::Null,
+            visibility: Default::default(),
+            presentation: Default::default(),
+        };
+        let mut state = AgentChannelState::default();
+        state.transcript.push(said(&old));
+        state.transcript.push(said(&later));
+        state.transcript.push(Message {
+            role: MessageRole::Tool,
+            tool_results: vec![ToolCallResult {
+                shown: vec![old.clone()],
+                ..ToolCallResult::of(
+                    &call,
+                    Default::default(),
+                    "shown".to_string(),
+                    Classification::PUBLIC,
+                )
+            }],
+            ..text("")
+        });
+        let profile = ModelProfile { max_images: 1, ..ModelProfile::default() };
+        let reference = ContextRef {
+            transcript: state.transcript.digest(),
+            frame: FrameRef { profile, ..FrameRef::default() },
+        };
+        let resolved = ContextResolver::of(&state, kernel_catalogue())
+            .resolve(&reference, TurnId::new(), agent)
+            .unwrap()
+            .unwrap();
+        let carried: Vec<(String, bool)> = resolved
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ContextItem::Conversation { message } => Some(message),
+                ContextItem::Prompt { .. } => None,
+            })
+            .flat_map(Message::carried)
+            .map(|content| (content.name.to_string(), profile.gives_along(content)))
+            .collect();
+        assert_eq!(
+            carried,
+            [
+                ("old.png".to_string(), false),
+                ("later.png".to_string(), false),
+                ("old.png".to_string(), true)
+            ],
+            "the one shown again alone, not where it was attached"
+        );
     }
 
     #[test]

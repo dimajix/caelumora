@@ -46,6 +46,11 @@ pub struct ContentRef {
     /// (`ModelProfile::gives_along`) - never stored.
     #[serde(skip)]
     pub content: Option<Bytes>,
+    /// Whether the model is told of it alone, beyond the images it is given along
+    /// (`ModelProfile::leave_out_images`, issue 465), on the copy of a message a model is given -
+    /// never stored.
+    #[serde(skip)]
+    pub left_out: bool,
 }
 
 impl ContentRef {
@@ -164,6 +169,7 @@ pub mod testing {
             key: format!("attachments/{id}"),
             number: None,
             content: None,
+            left_out: false,
         }
     }
 }

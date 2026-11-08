@@ -1,6 +1,6 @@
 # 547 — A page too long for one result is fetched again for every part of it
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -112,7 +112,7 @@ lines it covers.
 1. Issue [546](546-one-long-line-exceeds-a-page.md), since the preview goes through `page_of` and a
    long first line would pass it.
 2. A tool may keep a text (`is_media`), and `fetch_page` does so above the threshold.
-3. The form under the tools, with issue 465.
+3. The form for other tools, issue [552](552-a-tool-result-has-no-bound.md).
 
 ## Done when
 
@@ -133,3 +133,5 @@ lines it covers.
   in the turn that fetched it: `read_attachment` was not offered, and the next step could come
   before the channel had recorded the result. Both decided with the maintainer as above; a view
   reading a reference handed in by the agent side was built and taken back.
+- **2026-11-08** — Step 3 moved to issue [552](552-a-tool-result-has-no-bound.md), split from issue
+  465.

@@ -117,7 +117,12 @@ an image showing "KIWI 7319", given in a user message and as a tool's result.
 | gemma4:cloud | read | read with `think: true`; with `think: false` garbled or no answer |
 
 Every model made up an image it was told of but not given, which is why an attachment that cannot
-be read fails the call rather than be left out.
+be read fails the call rather than be left out, and why an image beyond the bound is noted as not
+shown.
+
+How many images a model is given along is `max_images` of its `language_model` component, the
+newest of its context: 4 unless given, each counted as 768 tokens. For a context of 8k that is
+already a large share, so a small one is given fewer. Not measured against the models above.
 
 ## External agents
 
