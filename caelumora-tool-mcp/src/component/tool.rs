@@ -228,12 +228,11 @@ impl McpServerComponent {
             .collect::<Vec<_>>()
             .join("\n");
 
+        let blocks =
+            text.is_empty().then(|| serde_json::to_value(&result.content).unwrap_or(Value::Null));
+
         if result.is_error == Some(true) {
-            let message = if !text.is_empty() {
-                text
-            } else {
-                serde_json::to_string(&result.content).unwrap_or_default()
-            };
+            let message = blocks.map_or(text, |blocks| blocks.to_string());
             let message =
                 if keep_whole_above.is_some() { cut_to_preview(message) } else { message };
             return Err(McpError::ToolCallFailed(format!(
@@ -242,9 +241,7 @@ impl McpServerComponent {
             )));
         }
 
-        let data = result.structured_content.or_else(|| {
-            text.is_empty().then(|| serde_json::to_value(&result.content).unwrap_or(Value::Null))
-        });
+        let data = result.structured_content.or(blocks);
         let json = data.as_ref().map(Value::to_string);
         let given = json.as_deref().unwrap_or(&text);
         if !keep_whole_above.is_some_and(|above| above.keeps(given)) {
@@ -481,6 +478,15 @@ mod tests {
         assert!(cut.len() < BOUND && cut.ends_with("e..."), "{}", cut.len());
         let Err(whole) = provider().output_of("t", failure()) else { panic!("it failed") };
         assert!(whole.to_string().ends_with(&long), "without a bound, as it came");
+    }
+
+    #[test]
+    fn a_failure_without_a_text_says_its_blocks_as_json() {
+        let blocks = vec![ContentBlock::image("x", "image/png")];
+        let json = serde_json::to_value(&blocks).unwrap().to_string();
+        let result = CallToolResult::error(blocks);
+        let Err(failure) = provider().output_of("t", result) else { panic!("it failed") };
+        assert!(failure.to_string().ends_with(&json), "{failure}");
     }
 
     #[tokio::test]
