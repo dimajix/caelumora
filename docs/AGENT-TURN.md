@@ -570,7 +570,7 @@ of the agent's transcript.
     that the note, the estimate, the label and what is loaded agree; the others are noted alone,
     a result that showed one too, and `view_attachment` makes one the newest again. It is given
     in the message it is attached to, or with the result of the tool that gave or showed it (see
-    [TOOLS.md](TOOLS.md#media-a-tool-gives-its-model),
+    [TOOLS.md](TOOLS.md#content-a-tool-gives-its-model),
     [attachments](TOOLS.md#attachments)), with its content, for every call. Before each call the
     turn has the content put on what is given along (`Turn::full_context`, `conversation_until`,
     through `ActorRuntime::load_attachments`), from a cache of the process

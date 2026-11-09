@@ -100,7 +100,7 @@ What a message carries besides its text has a classification of its own (issue 2
 unless its sender says otherwise, and never above the channel, as the message's. A label decides
 where what was read of something may flow, so a turn that reads a message but is never given its
 confidential attachment stays below it. A channel lowered fits every attachment as it fits every
-message (`Message::fit_into`). What a tool gave its model besides its text (`ToolCallResult::media`)
+message (`Message::fit_into`). What a tool gave its model besides its text (`ToolCallResult::files`)
 goes with the result: classified with it, withheld with it.
 
 ### Reclassification

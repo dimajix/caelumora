@@ -1093,7 +1093,7 @@ export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, message
   const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
   // What the call gave and showed its model, as a message shows what it carries - but what its
   // turn attached, which only its message shows.
-  const seen = [...(result?.media ?? []), ...(result?.shown ?? [])];
+  const seen = [...(result?.files ?? []), ...(result?.shown ?? [])];
   const attached = seen.filter(item => attachedInTurn?.has(item.digest));
   const kept = seen.filter(item => !attached.includes(item));
   return (

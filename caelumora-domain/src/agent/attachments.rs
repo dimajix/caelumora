@@ -159,14 +159,14 @@ mod tests {
         };
         let mut result = Message {
             tool_results: vec![ToolCallResult {
-                media: vec![drawn.clone()],
+                files: vec![drawn.clone()],
                 ..ToolCallResult::of(&call, Default::default(), String::new(), Default::default())
             }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         let mut index = AttachmentIndex::default();
         index.number(&mut result);
-        assert_eq!(result.tool_results[0].media[0].reference().as_deref(), Some("a1"));
+        assert_eq!(result.tool_results[0].files[0].reference().as_deref(), Some("a1"));
         assert_eq!(index.named("a1"), Some((result.id, drawn.id)));
     }
 }

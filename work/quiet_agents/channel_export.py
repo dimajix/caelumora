@@ -26,7 +26,7 @@ needs the script brought up to date first, then verified on that export:
   - the system prompt is the parts at the start in the role of one alone: a
     system message of the transcript at the start is a user message under
     `only_at_start` (`ContextResolver::resolve`, issue 539);
-  - attachments and the media of tool results are noted after the text
+  - attachments and the files of tool results are noted after the text
     (`ModelProfile::with_notes`).
 
 What it left out already then, as its exports hold none: of a turn given up

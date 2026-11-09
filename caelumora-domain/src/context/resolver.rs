@@ -620,7 +620,7 @@ mod tests {
             role: MessageRole::Tool,
             turn_id: Some(lowered),
             tool_results: vec![ToolCallResult {
-                media: vec![image("withheld.png")],
+                files: vec![image("withheld.png")],
                 ..ToolCallResult::of(
                     &call,
                     Default::default(),

@@ -415,7 +415,7 @@ impl ChannelView {
     /// sees the message and may read what it carries. What a result the viewer is not shown gave or
     /// showed is not carried for them. A message the history does not hold yet may be the result
     /// of the viewer's own tool: what the kernel kept for them is found until it does
-    /// (`AttachmentManager::kept_media`, issue 547), so that a turn's next step reads it.
+    /// (`AttachmentManager::kept_content`, issue 547), so that a turn's next step reads it.
     ///
     /// # Errors
     /// As `message`; `Attachment` with `NotFound` if it carries no such attachment or one the
@@ -425,7 +425,7 @@ impl ChannelView {
         if matches!(said, Err(ViewError::MessageNotFound { .. })) {
             // Answered only to a reader of the whole channel, for whom no label is in question.
             let attachments = self.views().attachment_manager();
-            if let Some(kept) = attachments.kept_media(self.reader(), self.channel.id, id) {
+            if let Some(kept) = attachments.kept_content(self.reader(), self.channel.id, id) {
                 return Ok(kept);
             }
         }

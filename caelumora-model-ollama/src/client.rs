@@ -300,7 +300,7 @@ impl OllamaChatMessage {
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,
                 tool_call_id: r.id.clone(),
-                images: images_of(r.media.iter().chain(&r.shown)),
+                images: images_of(r.files.iter().chain(&r.shown)),
             })
         }
 
@@ -1357,7 +1357,7 @@ mod tests {
             Message {
                 role: MessageRole::Tool,
                 tool_results: vec![ToolCallResult {
-                    media: vec![drawn],
+                    files: vec![drawn],
                     shown: vec![given_too],
                     ..ToolCallResult::of(
                         &ToolCall {

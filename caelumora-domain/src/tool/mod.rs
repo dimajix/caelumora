@@ -1,6 +1,6 @@
 //! Tools as a model is offered them and their calls as they are recorded: a `Tool` with its
 //! parameters, who sees its calls and how they are shown, the `ToolSet` of a provider, a `ToolCall`
-//! and how it ended (`ToolCallResult`) - with what its tool gave its model (`ToolMedia`) -, and
+//! and how it ended (`ToolCallResult`) - with what its tool gave its model (`ToolContent`) -, and
 //! where a call stands while its turn runs (`ToolCallState`).
 //!
 //! A call as it is recorded, and where it stands, is `call`'s; here a tool as it is offered.
@@ -8,7 +8,7 @@
 mod call;
 
 pub use call::{
-    ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolMedia, ToolResultStatus,
+    ToolCall, ToolCallResult, ToolCallState, ToolCallStatus, ToolContent, ToolResultStatus,
 };
 
 use crate::confidentiality::{Classification, Visibility};

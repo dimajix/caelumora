@@ -418,7 +418,7 @@ content (`ContentRef`) in the message's `attachments`: its bytes lie in a storag
 the digest of the bytes, which is what they are checked against, never how they are found. An
 attachment is part of what was said: heard, published, modified and taken back with its message, and
 covered by its digest. What a tool gave its model besides its text is a reference of the same kind,
-but no attachment: it stays with the tool's result (`ToolCallResult::media`), seen rather than said,
+but no attachment: it stays with the tool's result (`ToolCallResult::files`), seen rather than said,
 and is withheld with it.
 
 A person attaches a file in two steps. First they upload it for the channel
@@ -441,9 +441,9 @@ An agent attaches what it heard by its number (`attach`, see [TOOLS.md](TOOLS.md
 copy of it under an id and a key of its own waits for the agent's answer as an upload does, and the
 channel claims it as it claims one. What a tool's result showed its model again (`shown`) the
 channel admits where it lies in the channel's key space - one of its attachments - and its label
-flows in. What a tool gave its model (`media`) its agent's executor had kept for the channel (see
-[TOOLS.md](TOOLS.md#media-a-tool-gives-its-model)), waiting for no message: the result refers to it
-from the moment it is kept, and the turn that holds the result keeps it across a restart, however
+flows in. What a tool gave its model (`files`) its agent's executor had kept for the channel (see
+[TOOLS.md](TOOLS.md#content-a-tool-gives-its-model)), waiting for no message: the result refers to
+it from the moment it is kept, and the turn that holds the result keeps it across a restart, however
 long the other calls of its step wait. The channel admits it as it admits what a result showed: it
 lies in the channel's key space, and its label flows in.
 

@@ -20,7 +20,7 @@ use caelumora_domain::content;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::redact_endpoint;
-use caelumora_domain::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolPresentation, ToolVisibility};
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -156,14 +156,14 @@ impl ToolProvider for WebFetchComponent {
         if let Some(title) = page.title {
             value["title"] = json!(title);
         }
-        let media = if kept {
+        let files = if kept {
             value["next"] = json!(self.kept_whole);
             let name = format!("{}.txt", page.url.host_str().unwrap_or("page"));
-            vec![ToolMedia { name, content: Bytes::from(page.text) }]
+            vec![ToolContent { name, bytes: Bytes::from(page.text) }]
         } else {
             Vec::new()
         };
-        Ok(ToolOutput { media, ..ToolOutput::classified(value, Classification::PUBLIC) })
+        Ok(ToolOutput { files, ..ToolOutput::classified(value, Classification::PUBLIC) })
     }
 
     /// The calls that fetch a page of the same host; as the parameters tell for any other.
@@ -290,9 +290,9 @@ mod tests {
         let url = format!("http://localhost:{port}/long");
         let component = keeping(Some(MAX_PREVIEW_BYTES));
         let output = fetched(&component, json!({ "url": url })).await.unwrap();
-        let [kept] = output.media.as_slice() else { panic!("one file: {:?}", output.media) };
+        let [kept] = output.files.as_slice() else { panic!("one file: {:?}", output.files) };
         assert_eq!(kept.name, "localhost.txt");
-        assert_eq!(kept.content.len(), MAX_PAGE_BYTES + 1, "the whole page");
+        assert_eq!(kept.bytes.len(), MAX_PAGE_BYTES + 1, "the whole page");
         assert_eq!(output.value["content"].as_str().map(str::len), Some(MAX_PREVIEW_BYTES));
         let next = output.value["next"].as_str().unwrap();
         assert!(next.contains("read_attachment") && !next.contains("start_"), "{next}");
@@ -304,21 +304,21 @@ mod tests {
         let port = server().await;
         let long = format!("http://localhost:{port}/long");
         let none = fetched(&component(), json!({ "url": long })).await.unwrap();
-        assert!(none.media.is_empty(), "no threshold, nothing kept");
+        assert!(none.files.is_empty(), "no threshold, nothing kept");
         let keeping = keeping(Some(MAX_PREVIEW_BYTES));
         let page = format!("http://localhost:{port}/page");
         let short = fetched(&keeping, json!({ "url": page })).await.unwrap();
-        assert!(short.media.is_empty(), "at most the threshold");
+        assert!(short.files.is_empty(), "at most the threshold");
         let asked = [("start_line", 1), ("start_offset", 0), ("line_count", 1)];
         for (parameter, value) in asked {
             let params = json!({ "url": long, parameter: value });
             let part = fetched(&keeping, params.clone()).await.unwrap();
             assert_eq!(part.value["content"].as_str().map(str::len), Some(MAX_PAGE_BYTES));
-            assert!(part.media.is_empty(), "a part asked for: {params}");
+            assert!(part.files.is_empty(), "a part asked for: {params}");
         }
         let controls = format!("http://localhost:{port}/controls");
         let no_text = fetched(&keeping, json!({ "url": controls })).await.unwrap();
-        assert!(no_text.media.is_empty(), "what is no text by its bytes is given a part at a time");
+        assert!(no_text.files.is_empty(), "what is no text by its bytes is given a part at a time");
     }
 
     /// A page kept is offered and found in the next step of the very turn that fetched it, though

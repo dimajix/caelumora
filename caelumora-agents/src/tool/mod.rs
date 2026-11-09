@@ -35,7 +35,7 @@ use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::{Answers, Questions};
 use caelumora_domain::tool::{
-    Tool, ToolCall, ToolCallResult, ToolCallState, ToolMedia, ToolParameters, ToolResultStatus,
+    Tool, ToolCall, ToolCallResult, ToolCallState, ToolContent, ToolParameters, ToolResultStatus,
     ToolSet, ToolVisibility,
 };
 use caelumora_domain::turn::GivenUpReason;
@@ -189,8 +189,8 @@ impl From<TerminalError> for ToolError {
 /// what it read, by the source it drew on - how sensitive it is. `None` leaves it to the tool's
 /// configuration or the channel (`ToolExecutor`). And what its model is given with the result as
 /// it is given an attachment: the attachments of its channel the tool shows it again (issue 282,
-/// `ToolCallResult::shown`), and the media the tool gives it (issue 512), which the executor keeps
-/// as the result's (`ToolCallResult::media`). And what the tool read for it (issue 538), which the
+/// `ToolCallResult::shown`), and the files the tool gives it (issue 512), which the executor keeps
+/// as the result's (`ToolCallResult::files`). And what the tool read for it (issue 538), which the
 /// executor records with the turn and keeps on the result (`ToolCallResult::knowledge`) where the
 /// model is given it.
 #[derive(Debug, Clone, PartialEq)]
@@ -198,7 +198,7 @@ pub struct ToolOutput {
     pub value: Value,
     pub classification: Option<Classification>,
     pub shown: Vec<ContentRef>,
-    pub media: Vec<ToolMedia>,
+    pub files: Vec<ToolContent>,
     pub knowledge: Vec<KnowledgeRef>,
 }
 
@@ -216,7 +216,7 @@ impl From<Value> for ToolOutput {
             value,
             classification: None,
             shown: Vec::new(),
-            media: Vec::new(),
+            files: Vec::new(),
             knowledge: Vec::new(),
         }
     }
@@ -878,7 +878,7 @@ impl ToolExecutor {
     /// as the tool is configured - as the turn began with its tools - else as the channel, and
     /// withheld - with what it showed (issue 282) - if that, or what it showed, may not flow into
     /// the channel (`ActorRuntime::may_publish`, in the agent's name: the result enters
-    /// its context in the channel). The media it gave are kept as the result's (`keep`, issue 512)
+    /// its context in the channel). The files it gave are kept as the result's (`keep`, issue 512)
     /// only where it is not withheld; what cannot be kept fails the call. What it read or wrote is
     /// recorded with `turn` and kept on the result where the model is given the result (issue
     /// 538), and neither where it is withheld or fails.
@@ -910,13 +910,13 @@ impl ToolExecutor {
             );
         }
         match successful_result(&turn.situation().texts(), output.value, call.visibility) {
-            Ok(content) => match self.keep(output.media, &classification, turn).await {
-                Ok(media) => {
+            Ok(content) => match self.keep(output.files, &classification, turn).await {
+                Ok(files) => {
                     for read in &output.knowledge {
                         turn.record_knowledge(read.clone());
                     }
                     ToolCallResult {
-                        media,
+                        files,
                         shown: output.shown,
                         knowledge: output.knowledge,
                         ..ToolCallResult::of(call, ToolResultStatus::Ok, content, classification)
@@ -940,24 +940,27 @@ impl ToolExecutor {
         }
     }
 
-    /// Keeps `media`, what the tool of a call in `turn` gave its model, as its result's (issue
+    /// Keeps `files`, what the tool of a call in `turn` gave its model, as its result's (issue
     /// 512): in the agent's name, classified `classification` as the result
-    /// (`ActorRuntime::create_media`) - images and texts alone, as their bytes say, as many as a
+    /// (`ActorRuntime::create_content`) - images and texts alone, as their bytes say, as many as a
     /// message may carry attachments, all of them or none.
     ///
     /// # Errors
     /// `ExecutionFailed` for what could not be kept so, saying why.
     async fn keep(
         &self,
-        media: Vec<ToolMedia>,
+        files: Vec<ToolContent>,
         classification: &Classification,
         turn: &Turn<'_>,
     ) -> ToolResult<Vec<ContentRef>> {
-        if media.is_empty() {
+        if files.is_empty() {
             return Ok(Vec::new());
         }
         let initiator = turn.situation().initiator();
-        self.runtime.create_media(initiator, classification.clone(), media).await.map_err(not_kept)
+        self.runtime
+            .create_content(initiator, classification.clone(), files)
+            .await
+            .map_err(not_kept)
     }
 
     /// How `call`, made by the model in `turn`, is admitted: a call that cannot succeed is answered
@@ -1999,7 +2002,7 @@ mod tests {
                 "write" => ("notes.pdf", b"%PDF-1.7"),
                 _ => ("drawn.png", PNG),
             };
-            let media = vec![ToolMedia { name: file.to_string(), content: Bytes::from(content) }];
+            let files = vec![ToolContent { name: file.to_string(), bytes: Bytes::from(content) }];
             let output = match name {
                 "draw_secret" => ToolOutput::classified(
                     json!({ "drawn": true }),
@@ -2007,7 +2010,7 @@ mod tests {
                 ),
                 _ => json!({ "drawn": true }).into(),
             };
-            Ok(ToolOutput { media, ..output })
+            Ok(ToolOutput { files, ..output })
         }
     }
 
@@ -2043,7 +2046,7 @@ mod tests {
 
         let drawn = executor.execute(&call("draw"), None, &mut turn, future::pending()).await;
         assert_eq!(drawn.status, ToolResultStatus::Ok, "{}", drawn.content);
-        let [image] = drawn.media.as_slice() else { panic!("one image: {:?}", drawn.media) };
+        let [image] = drawn.files.as_slice() else { panic!("one image: {:?}", drawn.files) };
         assert_eq!(
             (image.name.as_str(), image.media_type.as_str(), &image.classification),
             ("drawn.png", "image/png", &drawn.classification),
@@ -2062,7 +2065,7 @@ mod tests {
         let secret =
             executor.execute(&call("draw_secret"), None, &mut turn, future::pending()).await;
         assert_eq!(secret.status, ToolResultStatus::Withheld);
-        assert!(secret.media.is_empty());
+        assert!(secret.files.is_empty());
         let text = executor.execute(&call("write"), None, &mut turn, future::pending()).await;
         assert_eq!(text.status, ToolResultStatus::Failed);
         assert!(text.content.contains("application/pdf"), "told why: {}", text.content);

@@ -667,7 +667,7 @@ impl ChannelLoop {
         classification: &Classification,
     ) -> Result<(), Rejection> {
         let mut seen =
-            message.tool_results.iter().flat_map(|result| result.media.iter().chain(&result.shown));
+            message.tool_results.iter().flat_map(|result| result.files.iter().chain(&result.shown));
         if !seen.all(|content| self.attachments.lies_in(self.id, content)) {
             return Err(Rejection::Invalid);
         }
@@ -1009,7 +1009,7 @@ mod tests {
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::history::{HistoryEntry, Recipients};
     use caelumora_domain::message::{Message, MessageId, MessageRole};
-    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolMedia};
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolContent};
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
@@ -2824,9 +2824,9 @@ mod tests {
             visibility: Default::default(),
             presentation: Default::default(),
         };
-        let giving = |media: ContentRef| {
+        let giving = |file: ContentRef| {
             let result = ToolCallResult {
-                media: vec![media],
+                files: vec![file],
                 ..ToolCallResult::of(
                     &call,
                     Default::default(),
@@ -2844,12 +2844,17 @@ mod tests {
                 }),
             )
         };
-        let png = ToolMedia {
+        let png = ToolContent {
             name: "d.png".to_string(),
-            content: Bytes::from_static(b"\x89PNG\r\n\x1a\ndrawn"),
+            bytes: Bytes::from_static(b"\x89PNG\r\n\x1a\ndrawn"),
         };
         let drawn = attachments
-            .create_media(&World::as_user(world.alice), &channel, main.classification(), vec![png])
+            .create_content(
+                &World::as_user(world.alice),
+                &channel,
+                main.classification(),
+                vec![png],
+            )
             .await
             .unwrap()
             .remove(0);

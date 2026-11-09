@@ -175,21 +175,21 @@ the turn and keeps it on the result (`ToolCallResult::knowledge`) where the resu
 model, not where it is withheld: the transcript holds what the agent read, as an entry given holds
 what it was given, and the model is never given the record.
 
-### Media a tool gives its model
+### Content a tool gives its model
 
-A tool may give its model files to see besides its value (`ToolOutput::media`, issue 512) - an
+A tool may give its model files to see besides its value (`ToolOutput::files`, issue 512) - an
 image it generated, say: each a name and its bytes. A tool hands over bytes; the executor has them
 kept, so that what is checked is checked once for every tool and no tool reaches the storage. They
 are kept only for a result that goes to the model, not one withheld, as the result's
-(`ToolCallResult::media`, through `ActorRuntime::create_media`): in the agent's name, classified as
-the result, in the channel's key space, each what its bytes say, never what the tool or a name
+(`ToolCallResult::files`, through `ActorRuntime::create_content`): in the agent's name, classified
+as the result, in the channel's key space, each what its bytes say, never what the tool or a name
 claims - an image a model can be given (png, jpeg or webp) or a text -, at most as many as a message
 may carry attachments, and all of them or none. Anything else fails the call, saying why. They wait
 for no message: the result refers to them from the moment they are kept, and its turn keeps the
 result (see [CHANNELS.md](CHANNELS.md#what-a-message-carries)). Until the channel has recorded the
 message of the result, the kernel finds what it kept for the caller by itself
-(`AttachmentManager::kept_media`, `ChannelView::attachment`), so that the next step of the turn can
-read it, however fast it follows.
+(`AttachmentManager::kept_content`, `ChannelView::attachment`), so that the next step of the turn
+can read it, however fast it follows.
 
 What a tool gave is seen, not said: the model is given an image with the result as it is given an
 attachment - a text is read with `read_attachment` -, each numbered as one and noted after the
@@ -264,11 +264,11 @@ tool names no backend; where and how a model generates is its backend's - ComfyU
 *   **A seed** left out is chosen at random, below 2^53, so that another call gives another
     image; the result names the seed taken, so that the agent's model can repeat or vary one.
 *   **A call** asks the image model, in the agent's name, and gives the images it generated to the
-    agent's model ([Media a tool gives its model](#media-a-tool-gives-its-model)); its value names
-    the image model, the seed and the files. What the image model's server refused or failed with
-    is the call's failure, in its words. A call given up - its turn cancelled or stopped - drops the
-    request to the image model, and a backend that started something on its server ends it (see
-    [Running tool calls](#running-tool-calls)).
+    agent's model ([Content a tool gives its model](#content-a-tool-gives-its-model)); its value
+    names the image model, the seed and the files. What the image model's server refused or failed
+    with is the call's failure, in its words. A call given up - its turn cancelled or stopped -
+    drops the request to the image model, and a backend that started something on its server ends
+    it (see [Running tool calls](#running-tool-calls)).
 *   **Parameters.** `requires_approval` (`false` unless given: a call changes nothing but the
     server's time), `destination` (`public` unless given - what the servers of its image models are
     cleared for, where the arguments go and stay, in a server's history and in what it saves) and
@@ -295,7 +295,7 @@ URL, with the tool `fetch_page`:
     again; nothing is cached. What failed names the URL without credentials, query and fragment.
 *   **What it keeps.** With `keep_whole_above_bytes`, the text of a page above that size, asked for
     with none of `start_line`, `start_offset` and `line_count`, is kept whole beside its result, as
-    a text the tool gives its model ([media](#media-a-tool-gives-its-model)), named after the
+    a text the tool gives its model ([content](#content-a-tool-gives-its-model)), named after the
     page's host. Its result is then a preview of 4 KiB, whose `next` says that the whole is kept and
     how it is read: `read_attachment`, or `copy_attachment` to search it in the workspace. So a long
     page is fetched once and read as it was. Whoever sets it gives the agent `attachments` too.

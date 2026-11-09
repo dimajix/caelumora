@@ -1,6 +1,6 @@
 # 552 — What an MCP tool gives back goes into the context whole, however long
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -56,8 +56,77 @@ compaction reads. The same question for `fetch_page`, once it is answered here.
 - The logic is shared with `fetch_page`.
 - TOOLS.md and COMPONENTS.md describe it.
 
+## Decision
+
+Decided with the maintainer: a parameter of the component, in bytes, as `fetch_page` has one. The
+context size is no measure: only the backend of Ollama reports it, and not before the first call,
+when a large result may already arrive; issue 465 chose a bound that needs no context size for the
+same reason.
+
+**Keeping is not interpreting.** What a tool gives is stored byte for byte; everything after that -
+which label it gets, whether it can be read as a text, how a frontend shows it - is interpretation.
+So `AttachmentManager::create_content` no longer refuses what is neither an image nor a text, as
+`create` never did, and `is_media` and `NotMedia` go. What is left of their purpose moves to who
+knows it: `generate_image` checks that it was given images, and `read_attachment` decides by the
+bytes of an attachment whether it can read it, a valid UTF-8 being a page at a time, instead of by
+its label. No control character is replaced, and no JSON indented, for what is kept.
+
+**What of an MCP result is kept.** Above the bound, measured on what would go to the model:
+
+- its text, if there is one, which is what the server sent;
+- its `structuredContent` as well, as JSON, unless the text parses to the same JSON - the case the
+  specification recommends, where it would only be a copy. Text alone would lose the data of a
+  server whose text is a summary.
+
+They are two ordinary attachments of the one result, `<component id>.txt` and `<component id>.json`,
+named after the component and not after a remote tool, whose name need not be a file's. A kind of
+attachment with several representations of one thing was weighed and left until there is another
+user: `ToolCallResult::files` already holds what belongs to one result. The preview is made of the
+text, without one of the JSON. A failure of the tool (`is_error`) is cut to the size of a preview
+where a bound is configured, and not kept.
+
+If keeping fails after the server acted - no storage, too large, a label no storage is cleared for -
+the call is reported as failed all the same; whoever sets the bound knows that there is a storage.
+
+**The names.** What a tool hands over is content, as in `ContentRef`, which it becomes:
+`ToolMedia` is `ToolContent`, with `bytes`; `create_media` is `create_content`, `kept_media`
+`kept_content`. The field on `ToolOutput` and `ToolCallResult` is `files`, since `content` is the
+text of a result already. `media_type` stays: it is what `Content-Type` carries.
+
+```rust
+// caelumora-agents/src/tool
+/// From how many bytes on a text is kept whole; refuses less than a preview when it is read.
+#[serde(try_from = "usize")]
+pub struct KeepWholeAbove(usize);
+
+impl KeepWholeAbove {
+    /// Whether `text` is above the bound.
+    pub fn keeps(self, text: &str) -> bool;
+}
+
+impl ToolOutput {
+    /// A preview of `text` as the value, and `text` whole as content named `name`.
+    pub fn kept_whole(text: String, name: String, prompts: &PromptTexts) -> Self;
+}
+```
+
+The text that says how the whole is read becomes `results.kept_whole` of the agents' catalogue and
+names no tool of another library. `mcp_server` becomes `writing_for_the_model`, to have it.
+
+What the original of a page fetched is, which this makes possible, is issue
+[553](553-a-fetched-page-keeps-no-original.md). How a frontend shows control characters is no part
+of this.
+
+## Steps
+
+1. The names above, without a change of behaviour.
+2. What is kept is not judged (`is_media` goes, `generate_image` and `read_attachment` decide for
+   themselves), and the logic of keeping moves from `web_fetch` to `caelumora-agents`.
+3. `mcp_server` keeps what is above its bound.
+
 ## History
 
 - **2026-11-08** — Opened at the maintainer's request, split from issue
   [465](465-attachments-in-the-context.md), where the question had been recorded on 2026-11-06, and
   taking over the step left open in issue [547](547-long-page-kept-whole-as-media.md).
+- **2026-11-09** — Decided with the maintainer as above; step 1 implemented.

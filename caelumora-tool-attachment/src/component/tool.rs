@@ -316,7 +316,7 @@ mod tests {
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::Grant;
-    use caelumora_domain::tool::ToolMedia;
+    use caelumora_domain::tool::ToolContent;
     use caelumora_domain::workspace::Workspace;
     use caelumora_kernel::session::SessionLoop;
     use caelumora_kernel::testing::{checks, participant_runtime_in, World};
@@ -439,9 +439,9 @@ mod tests {
         let runtime = agent_runtime(participant_runtime_in(main, ActorId::Agent(helper)));
         let classification = main.classification();
         let page =
-            ToolMedia { name: "page.txt".to_string(), content: Bytes::from_static(b"text\n") };
+            ToolContent { name: "page.txt".to_string(), bytes: Bytes::from_static(b"text\n") };
         let kept = runtime
-            .create_media(ActorId::User(world.alice), classification.clone(), vec![page])
+            .create_content(ActorId::User(world.alice), classification.clone(), vec![page])
             .await
             .unwrap();
         let mut state = AgentChannelState::default();

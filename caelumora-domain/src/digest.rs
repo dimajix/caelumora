@@ -251,7 +251,7 @@ fn results_seen(results: &[ToolCallResult]) -> Value {
             .iter()
             .map(|result| {
                 let mut seen = to_json(result);
-                for (field, refs) in [("media", &result.media), ("shown", &result.shown)] {
+                for (field, refs) in [("files", &result.files), ("shown", &result.shown)] {
                     if !refs.is_empty() {
                         seen[field] = content_seen(refs);
                     }
@@ -807,10 +807,10 @@ mod tests {
             "and what is attached"
         );
 
-        let result = |media: ContentRef| Message {
+        let result = |file: ContentRef| Message {
             role: MessageRole::Tool,
             tool_results: vec![ToolCallResult {
-                media: vec![media],
+                files: vec![file],
                 ..ToolCallResult::of(
                     &ToolCall {
                         id: Some("1".to_string()),
@@ -828,14 +828,14 @@ mod tests {
         };
         let given = result(attached.attachments[0].clone());
         let mut elsewhere = given.clone();
-        elsewhere.tool_results[0].media[0].key = "attachments/elsewhere".to_string();
+        elsewhere.tool_results[0].files[0].key = "attachments/elsewhere".to_string();
         assert_eq!(
             message_chain(None, &given),
             message_chain(None, &elsewhere),
             "what a tool gave counts as an attachment does"
         );
         let mut other = given.clone();
-        other.tool_results[0].media[0].digest = content(b"b");
+        other.tool_results[0].files[0].digest = content(b"b");
         assert_ne!(message_chain(None, &given), message_chain(None, &other));
     }
 

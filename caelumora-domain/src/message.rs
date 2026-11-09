@@ -238,7 +238,7 @@ impl Message {
             if !result.visibility.result.is_channel() {
                 result.content.clear();
                 result.answers = None;
-                result.media.clear();
+                result.files.clear();
                 result.shown.clear();
             }
         }
@@ -274,7 +274,7 @@ impl Message {
         for result in &mut message.tool_results {
             result.content.clear();
             result.answers = None;
-            result.media.clear();
+            result.files.clear();
             result.shown.clear();
             result.knowledge.clear();
             result.classification = classification.clone();
@@ -286,7 +286,7 @@ impl Message {
     /// gave and showed their model (issue 512).
     pub fn carried(&self) -> impl Iterator<Item = &ContentRef> {
         self.attachments.iter().chain(
-            self.tool_results.iter().flat_map(|result| result.media.iter().chain(&result.shown)),
+            self.tool_results.iter().flat_map(|result| result.files.iter().chain(&result.shown)),
         )
     }
 
@@ -295,7 +295,7 @@ impl Message {
         self.attachments.iter_mut().chain(
             self.tool_results
                 .iter_mut()
-                .flat_map(|result| result.media.iter_mut().chain(&mut result.shown)),
+                .flat_map(|result| result.files.iter_mut().chain(&mut result.shown)),
         )
     }
 
@@ -492,8 +492,8 @@ pub mod testing {
     }
 
     /// A message with id `id` of the result of a call of `generate_image`, shown to the channel,
-    /// that gave its model `media` (issue 512): seen, not said - no attachment of the message.
-    pub fn make_generated(id: MessageId, media: Vec<ContentRef>) -> Message {
+    /// that gave its model `files` (issue 512): seen, not said - no attachment of the message.
+    pub fn make_generated(id: MessageId, files: Vec<ContentRef>) -> Message {
         let call = ToolCall {
             id: Some("1".to_string()),
             function_name: "generate_image".to_string(),
@@ -502,7 +502,7 @@ pub mod testing {
             presentation: Default::default(),
         };
         let result = ToolCallResult {
-            media,
+            files,
             ..ToolCallResult::of(
                 &call,
                 ToolResultStatus::Ok,
@@ -570,7 +570,7 @@ pub(crate) mod tests {
             finished_at: Some(started_at + Duration::milliseconds(250)),
             answers: None,
             approval: Vec::new(),
-            media: Vec::new(),
+            files: Vec::new(),
             shown: Vec::new(),
             knowledge: Vec::new(),
         }
@@ -621,7 +621,7 @@ pub(crate) mod tests {
         );
 
         let seen = |visibility| ToolCallResult {
-            media: vec![make_content_ref("chart.png", b"chart")],
+            files: vec![make_content_ref("chart.png", b"chart")],
             shown: vec![screenshot.clone()],
             ..result("1", visibility)
         };
@@ -633,12 +633,12 @@ pub(crate) mod tests {
         };
         let published = results.published().expect("both calls are public");
         assert_eq!(
-            (published.tool_results[0].media.len(), published.tool_results[0].shown.len()),
+            (published.tool_results[0].files.len(), published.tool_results[0].shown.len()),
             (1, 1),
             "a public result with what it gave and showed"
         );
         assert!(
-            published.tool_results[1].media.is_empty()
+            published.tool_results[1].files.is_empty()
                 && published.tool_results[1].shown.is_empty(),
             "withheld with the result"
         );
@@ -649,12 +649,12 @@ pub(crate) mod tests {
         );
         let given = results.names_only(&Classification::PUBLIC).expect("results");
         assert!(
-            given.tool_results.iter().all(|r| r.media.is_empty() && r.shown.is_empty()),
+            given.tool_results.iter().all(|r| r.files.is_empty() && r.shown.is_empty()),
             "how the calls ended, not what they gave"
         );
         let for_the_model = results.tool_results[0].for_the_model();
         assert!(
-            for_the_model.media.is_empty() && for_the_model.shown.is_empty(),
+            for_the_model.files.is_empty() && for_the_model.shown.is_empty(),
             "a model is given them as what they are, not as text"
         );
     }

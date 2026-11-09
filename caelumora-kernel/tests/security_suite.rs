@@ -1295,7 +1295,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
         "reaching the channel, as reading the message asks; its attachment asks nothing more"
     );
 
-    let seeing = |visibility: ToolVisibility, media: Vec<ContentRef>, shown: Vec<ContentRef>| {
+    let seeing = |visibility: ToolVisibility, files: Vec<ContentRef>, shown: Vec<ContentRef>| {
         let call = ToolCall {
             id: Some("1".to_string()),
             function_name: "view_attachment".to_string(),
@@ -1304,7 +1304,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
             presentation: Default::default(),
         };
         let result = ToolCallResult {
-            media,
+            files,
             shown,
             ..ToolCallResult::of(
                 &call,
@@ -1380,14 +1380,14 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     use bytes::Bytes;
     use caelumora_api::error::AttachmentError;
     use caelumora_domain::message::MessageId;
-    use caelumora_domain::tool::ToolMedia;
+    use caelumora_domain::tool::ToolContent;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let main = Arc::clone(&session.channels()[0]);
     let attachments = world.kernel.attachment_manager();
     let drawn = || {
-        let content = Bytes::from_static(b"\x89PNG\r\n\x1a\ndrawn");
-        vec![ToolMedia { name: "drawn.png".to_string(), content }]
+        let bytes = Bytes::from_static(b"\x89PNG\r\n\x1a\ndrawn");
+        vec![ToolContent { name: "drawn.png".to_string(), bytes }]
     };
     let channel = main.channel();
     let keep = |user: UserId| {
@@ -1395,7 +1395,7 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
         async move {
             let context = World::as_user(user);
             attachments
-                .create_media(&context, &channel, channel.classification.clone(), drawn())
+                .create_content(&context, &channel, channel.classification.clone(), drawn())
                 .await
         }
     };

@@ -19,7 +19,7 @@ use caelumora_domain::content::{self, ContentId, ContentRef};
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::digest;
 use caelumora_domain::message::Message;
-use caelumora_domain::tool::ToolMedia;
+use caelumora_domain::tool::ToolContent;
 use caelumora_domain::value::text::FileName;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_security::SecurityContext;
@@ -84,10 +84,10 @@ pub struct AttachmentManager {
     /// anything, and lies in its channel's key space until the channel is purged.
     uploads: Mutex<HashMap<ContentId, Pending>>,
     /// What a tool gave its model, for as long as an upload waits: how the turn that made the call
-    /// reaches it before its channel has recorded the message of the result (`kept_media`). Only
-    /// remembered, in memory: nothing here is removed from a storage, since media wait for no
+    /// reaches it before its channel has recorded the message of the result (`kept_content`). Only
+    /// remembered, in memory: nothing here is removed from a storage, since files wait for no
     /// message, and a call waiting for its approval may take longer than this.
-    media: Mutex<HashMap<ContentId, Pending>>,
+    kept: Mutex<HashMap<ContentId, Pending>>,
     /// The content models are given along, held for their next calls.
     cache: ContentCache,
 }
@@ -124,7 +124,7 @@ impl AttachmentManager {
             max_per_message: config.max_per_message,
             unclaimed_expire: Duration::from_secs(config.unclaimed_expire_secs),
             uploads: Mutex::new(HashMap::new()),
-            media: Mutex::new(HashMap::new()),
+            kept: Mutex::new(HashMap::new()),
             cache: ContentCache::new(config.cache_bytes),
         })
     }
@@ -165,7 +165,7 @@ impl AttachmentManager {
         Ok(content)
     }
 
-    /// Keeps `media`, what a tool gave its model for the result of a call the caller of `ctx` makes
+    /// Keeps `files`, what a tool gave its model for the result of a call the caller of `ctx` makes
     /// in `channel`, handed over as for `create` (issue 512): classified `classification`, as the
     /// result, kept as an upload is, but waiting for no message - the result refers to them from
     /// the moment they are kept, and the channel admits what lies in its key space (`lies_in`);
@@ -173,77 +173,78 @@ impl AttachmentManager {
     /// image a model can be given or a text, as its first bytes say (`content::is_media`), and
     /// there are at most as many as a message may carry attachments - all checked before any is
     /// kept. All are kept or none: what was kept before one failed is removed again
-    /// (`roll_back_media`). What is kept is remembered for its caller (`kept_media`).
+    /// (`roll_back_content`). What is kept is remembered for its caller (`kept_content`).
     ///
     /// # Errors
     /// As `create`; `TooMany` for more than a message may carry, `NotMedia`.
-    pub async fn create_media(
+    pub async fn create_content(
         &self,
         ctx: &SecurityContext,
         channel: &Channel,
         classification: Classification,
-        media: Vec<ToolMedia>,
+        files: Vec<ToolContent>,
     ) -> AttachmentResult<Vec<ContentRef>> {
         let by = uploader(ctx, channel)?;
-        if media.len() > self.max_per_message {
+        if files.len() > self.max_per_message {
             return Err(AttachmentError::TooMany(self.max_per_message));
         }
-        let media = media
+        let files = files
             .into_iter()
-            .map(|ToolMedia { name, content }| {
+            .map(|ToolContent { name, bytes }| {
                 let name = FileName::new(&name)?;
-                let media_type = content::media_type(&content[..content.len().min(HEAD)]);
+                let media_type = content::media_type(&bytes[..bytes.len().min(HEAD)]);
                 if !content::is_media(media_type) {
                     return Err(AttachmentError::NotMedia {
                         name: name.to_string(),
                         media_type: media_type.to_string(),
                     });
                 }
-                Ok((name, media_type, content))
+                Ok((name, media_type, bytes))
             })
             .collect::<AttachmentResult<Vec<_>>>()?;
         let storage = self.storage_for(ctx, channel, &classification)?;
         self.forget_expired().await;
 
-        let mut kept = Vec::with_capacity(media.len());
-        for (name, media_type, content) in media {
-            let size = content.len() as u64;
-            let bytes: ByteStream = Box::pin(stream::iter([Ok(content)]));
+        let mut kept = Vec::with_capacity(files.len());
+        for (name, media_type, bytes) in files {
+            let size = bytes.len() as u64;
+            let stream: ByteStream = Box::pin(stream::iter([Ok(bytes)]));
             let classification = classification.clone();
             let given =
-                self.keep(storage, channel.id, name, classification, media_type, (size, bytes));
+                self.keep(storage, channel.id, name, classification, media_type, (size, stream));
             match given.await {
                 Ok(given) => kept.push(given),
                 Err(e) => {
                     let (_, kept_in) = storage;
-                    self.roll_back_media(kept_in.as_ref(), &kept).await;
+                    self.roll_back_content(kept_in.as_ref(), &kept).await;
                     return Err(e);
                 }
             }
         }
-        let mut remembered = self.media.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut remembered = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
         for content in &kept {
             let pending =
                 Pending { by, channel: channel.id, at: Instant::now(), content: content.clone() };
             remembered.insert(content.id, pending);
         }
         drop(remembered);
-        debug!(channel = %channel.id, by = %by, count = kept.len(), "Media of a tool kept");
+        debug!(channel = %channel.id, by = %by, count = kept.len(), "Content of a tool kept");
         Ok(kept)
     }
 
-    /// What `create_media` kept as `id` for `by` in `channel`: the reference the kernel made, for
+    /// What `create_content` kept as `id` for `by` in `channel`: the reference the kernel made, for
     /// the turn that made the call, whose channel may not have recorded the message of the result
     /// when the turn's next step reads it (issue 547). `None` for anybody else, in any other
     /// channel, and once it was remembered longer than an upload waits.
-    pub(crate) fn kept_media(
+    pub(crate) fn kept_content(
         &self,
         by: ActorId,
         channel: ChannelId,
         id: ContentId,
     ) -> Option<ContentRef> {
-        let media = self.media.lock().unwrap_or_else(PoisonError::into_inner);
-        let kept = media.get(&id).filter(|kept| kept.is_for(by, channel, self.unclaimed_expire))?;
+        let remembered = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
+        let kept =
+            remembered.get(&id).filter(|kept| kept.is_for(by, channel, self.unclaimed_expire))?;
         Some(kept.content.clone())
     }
 
@@ -309,13 +310,13 @@ impl AttachmentManager {
         })
     }
 
-    /// Removes `kept` from `storage` again, the media of a result that could not all be kept: in
+    /// Removes `kept` from `storage` again, the files of a result that could not all be kept: in
     /// the kernel's name, since keeping them was permitted. What cannot be removed is logged and
     /// stays, until its channel is purged.
-    async fn roll_back_media(&self, storage: &dyn ContentStorage, kept: &[ContentRef]) {
+    async fn roll_back_content(&self, storage: &dyn ContentStorage, kept: &[ContentRef]) {
         for content in kept {
             if let Err(e) = storage.delete(&content.key).await {
-                warn!(attachment = %content.id, "Media of a tool not removed again: {e}");
+                warn!(attachment = %content.id, "Content of a tool not removed again: {e}");
             }
         }
     }
@@ -498,7 +499,7 @@ impl AttachmentManager {
 
     /// Removes every attachment of the channel `channel` for good (issue 282), with the history
     /// that carries them: from every storage, since one configured before may hold some, and the
-    /// uploads that wait for a message there and the media remembered for it.
+    /// uploads that wait for a message there and the files remembered for it.
     ///
     /// # Errors
     /// `Content` if a storage cannot remove them.
@@ -508,7 +509,7 @@ impl AttachmentManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|_, upload| upload.channel != channel);
-        self.media
+        self.kept
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|_, kept| kept.channel != channel);
@@ -520,10 +521,10 @@ impl AttachmentManager {
     }
 
     /// Removes the uploads that waited longer than configured for their message with their content,
-    /// and forgets the media remembered as long, whose content stays. Logged where removing fails:
+    /// and forgets the files remembered as long, whose content stays. Logged where removing fails:
     /// the content lies in its channel's key space until the channel is purged.
     async fn forget_expired(&self) {
-        self.media
+        self.kept
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|_, kept| kept.at.elapsed() <= self.unclaimed_expire);
@@ -609,8 +610,8 @@ mod tests {
     }
 
     /// A png in memory, as a tool gives it, named `name`.
-    fn png(name: &str) -> ToolMedia {
-        ToolMedia { name: name.to_string(), content: Bytes::from_static(PNG) }
+    fn png(name: &str) -> ToolContent {
+        ToolContent { name: name.to_string(), bytes: Bytes::from_static(PNG) }
     }
 
     /// The channel "main" of `session` as it stands.
@@ -734,7 +735,7 @@ mod tests {
         let kept = || world.attachments_kept().len();
 
         let drawn = attachments
-            .create_media(&hers, &main, classification.clone(), vec![png("a.png"), png("b.png")])
+            .create_content(&hers, &main, classification.clone(), vec![png("a.png"), png("b.png")])
             .await
             .expect("hers, in a channel she takes part in");
         assert_eq!(
@@ -745,9 +746,9 @@ mod tests {
             .iter()
             .all(|d| d.classification == classification && attachments.lies_in(main.id, d)));
         assert_eq!(read(attachments.content_of(&drawn[0]).await.unwrap()).await, PNG, "kept");
-        let notes = ToolMedia { name: "notes.txt".to_string(), content: Bytes::from_static(b"n") };
+        let notes = ToolContent { name: "notes.txt".to_string(), bytes: Bytes::from_static(b"n") };
         let text = attachments
-            .create_media(&hers, &main, classification.clone(), vec![notes])
+            .create_content(&hers, &main, classification.clone(), vec![notes])
             .await
             .expect("a text may be given too");
         assert!(text[0].is_text() && !text[0].is_image(), "{:?}", text[0]);
@@ -762,34 +763,35 @@ mod tests {
 
         let many = vec![png("a.png"); AttachmentsConfig::default().max_per_message + 1];
         assert!(matches!(
-            attachments.create_media(&hers, &main, classification.clone(), many).await,
+            attachments.create_content(&hers, &main, classification.clone(), many).await,
             Err(AttachmentError::TooMany(_))
         ));
         let scan =
-            ToolMedia { name: "scan.pdf".to_string(), content: Bytes::from_static(b"%PDF-1.7") };
+            ToolContent { name: "scan.pdf".to_string(), bytes: Bytes::from_static(b"%PDF-1.7") };
         let neither = vec![png("a.png"), scan];
-        let refused = attachments.create_media(&hers, &main, classification.clone(), neither).await;
+        let refused =
+            attachments.create_content(&hers, &main, classification.clone(), neither).await;
         assert!(
             matches!(&refused, Err(AttachmentError::NotMedia { name, media_type }) if name == "scan.pdf" && media_type == "application/pdf"),
             "{refused:?}"
         );
         let mut huge = PNG.to_vec();
         huge.resize(usize::try_from(AttachmentsConfig::default().max_bytes).unwrap() + 1, 0);
-        let huge = ToolMedia { name: "huge.png".to_string(), content: Bytes::from(huge) };
+        let huge = ToolContent { name: "huge.png".to_string(), bytes: Bytes::from(huge) };
         let too_large = vec![png("a.png"), huge];
         assert!(matches!(
-            attachments.create_media(&hers, &main, classification.clone(), too_large).await,
+            attachments.create_content(&hers, &main, classification.clone(), too_large).await,
             Err(AttachmentError::Content(ContentError::TooLarge { .. }))
         ));
         assert_eq!(kept(), before, "all or none: what was kept before one failed is gone again");
         let above = Classification::general(Confidentiality::StrictlyConfidential);
         assert!(matches!(
-            attachments.create_media(&hers, &main, above, vec![png("a.png")]).await,
+            attachments.create_content(&hers, &main, above, vec![png("a.png")]).await,
             Err(AttachmentError::ClassificationRefused)
         ));
         let bobs = World::as_user(UserId::new());
         assert!(matches!(
-            attachments.create_media(&bobs, &main, classification, vec![png("a.png")]).await,
+            attachments.create_content(&bobs, &main, classification, vec![png("a.png")]).await,
             Err(AttachmentError::NotAParticipant(_))
         ));
     }
@@ -871,11 +873,11 @@ mod tests {
         let text =
             attachments.create(&hers, &main, "notes.txt", None, bytes(b"notes")).await.unwrap();
         let drawn = attachments
-            .create_media(&hers, &main, main.classification.clone(), vec![png("drawn.png")])
+            .create_content(&hers, &main, main.classification.clone(), vec![png("drawn.png")])
             .await
             .unwrap();
         let showing = ToolCallResult {
-            media: drawn,
+            files: drawn,
             shown: vec![image.clone()],
             ..ToolCallResult::of(
                 &ToolCall {
@@ -927,7 +929,7 @@ mod tests {
             "and what a tool showed (issue 282, step 5)"
         );
         assert_eq!(
-            seeing[1].tool_results[0].media[0].content.as_deref(),
+            seeing[1].tool_results[0].files[0].content.as_deref(),
             Some(PNG),
             "and what a tool gave (issue 512)"
         );
@@ -966,22 +968,22 @@ mod tests {
         let classification = main.classification.clone();
 
         let drawn = attachments
-            .create_media(&hers, &main, classification.clone(), vec![png("a.png")])
+            .create_content(&hers, &main, classification.clone(), vec![png("a.png")])
             .await
             .unwrap()
             .remove(0);
-        assert_eq!(attachments.kept_media(alice, main.id, drawn.id).as_ref(), Some(&drawn));
+        assert_eq!(attachments.kept_content(alice, main.id, drawn.id).as_ref(), Some(&drawn));
         assert_eq!(
-            attachments.kept_media(alice, ChannelId::new(), drawn.id),
+            attachments.kept_content(alice, ChannelId::new(), drawn.id),
             None,
             "in no other channel"
         );
         let bob = ActorId::User(world.bob);
-        assert_eq!(attachments.kept_media(bob, main.id, drawn.id), None, "for nobody else");
+        assert_eq!(attachments.kept_content(bob, main.id, drawn.id), None, "for nobody else");
 
         time::advance(Duration::from_secs(3601)).await;
-        assert_eq!(attachments.kept_media(alice, main.id, drawn.id), None, "only so long");
-        attachments.create_media(&hers, &main, classification, vec![png("b.png")]).await.unwrap();
+        assert_eq!(attachments.kept_content(alice, main.id, drawn.id), None, "only so long");
+        attachments.create_content(&hers, &main, classification, vec![png("b.png")]).await.unwrap();
         assert_eq!(read(attachments.content_of(&drawn).await.unwrap()).await, PNG, "and it stays");
     }
 

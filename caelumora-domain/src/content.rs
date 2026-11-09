@@ -1,7 +1,7 @@
 //! References to binary content kept in a storage of content (issue 282): what is known of the
 //! content, how it is classified, and where its bytes lie. A reference is part of what holds it - a
 //! message, whose attachments are what was said with its text (`Message::attachments`), or a tool's
-//! result, which gave or showed it to a model (`ToolCallResult::media`, `shown`) -: taken back with
+//! result, which gave or showed it to a model (`ToolCallResult::files`, `shown`) -: taken back with
 //! it, covered by its digest, and read by whoever may read it. The digest beside it is what the
 //! bytes are checked against, never a key, so that what holds it records what it was wherever its
 //! bytes lie.

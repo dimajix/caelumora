@@ -29,7 +29,7 @@ use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::secret::Secrets;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResult;
-use caelumora_domain::tool::{ToolCall, ToolMedia};
+use caelumora_domain::tool::{ToolCall, ToolContent};
 use caelumora_domain::turn::StagedChanges;
 use caelumora_domain::type_map::{ErasedArc, TypeKey};
 use caelumora_domain::value::time_zone::TimeZone;
@@ -263,16 +263,16 @@ impl ActorRuntime for AgentRuntime {
         self.kernel.attachment_manager().load(messages, profile).await
     }
 
-    async fn create_media(
+    async fn create_content(
         &self,
         initiator: ActorId,
         classification: Classification,
-        media: Vec<ToolMedia>,
+        files: Vec<ToolContent>,
     ) -> AttachmentResult<Vec<ContentRef>> {
         let context = &self.acting_for(initiator);
         let channel = self.participant.channel();
         let attachments = self.kernel.attachment_manager();
-        attachments.create_media(context, &channel, classification, media).await
+        attachments.create_content(context, &channel, classification, files).await
     }
 
     async fn copy_attachment(

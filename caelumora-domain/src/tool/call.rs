@@ -1,5 +1,5 @@
 //! A call of a tool as it is recorded (`ToolCall`), how it ended (`ToolCallResult`,
-//! `ToolResultStatus`) with what its tool gave its model (`ToolMedia`), and where it stands while
+//! `ToolResultStatus`) with what its tool gave its model (`ToolContent`), and where it stands while
 //! its turn runs (`ToolCallState`, `ToolCallStatus`).
 
 use super::{ToolPresentation, ToolVisibility};
@@ -114,7 +114,7 @@ pub struct ToolCallResult {
     /// What the tool gave its model besides `content` (issue 282): seen, not said - no attachment
     /// of the message, heard by no other agent, published as `content` is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub media: Vec<ContentRef>,
+    pub files: Vec<ContentRef>,
     /// The attachments the call showed its model again, heard before - their references, not their
     /// content kept again (issue 282); published as `content` is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -149,7 +149,7 @@ impl ToolCallResult {
             finished_at: None,
             answers: None,
             approval: Vec::new(),
-            media: Vec::new(),
+            files: Vec::new(),
             shown: Vec::new(),
             knowledge: Vec::new(),
         }
@@ -162,7 +162,7 @@ impl ToolCallResult {
         ToolCallResult {
             answers: None,
             approval: Vec::new(),
-            media: Vec::new(),
+            files: Vec::new(),
             shown: Vec::new(),
             knowledge: Vec::new(),
             ..self.clone()
@@ -171,12 +171,12 @@ impl ToolCallResult {
 }
 
 /// What a tool gives its model besides its value (issues 512, 547), before it is kept as the
-/// result's (`ToolCallResult::media`): a file by its name and its bytes, an image or a text. What
+/// result's (`ToolCallResult::files`): a file by its name and its bytes, an image or a text. What
 /// it is, its bytes tell, never the name nor the tool.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ToolMedia {
+pub struct ToolContent {
     pub name: String,
-    pub content: Bytes,
+    pub bytes: Bytes,
 }
 
 /// A tool call of the current step of a turn, and where it stands (issue

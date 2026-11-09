@@ -204,7 +204,7 @@ impl ModelProfile {
         }
         for result in &mut message.tool_results {
             let left_out = result.shown.iter().filter(|shown| shown.left_out);
-            if let Some(note) = self.noted(result.media.iter().chain(left_out)) {
+            if let Some(note) = self.noted(result.files.iter().chain(left_out)) {
                 result.content = with_note(mem::take(&mut result.content), note);
             }
         }
@@ -506,7 +506,7 @@ mod tests {
             role: MessageRole::Tool,
             content: None,
             tool_results: vec![ToolCallResult {
-                media: vec![image.clone()],
+                files: vec![image.clone()],
                 ..ToolCallResult::of(
                     &call,
                     Default::default(),
@@ -536,7 +536,7 @@ mod tests {
         let seeing = ModelProfile { max_images: 4, ..ModelProfile::default() };
         let showed = |left_out: bool| Message {
             tool_results: vec![ToolCallResult {
-                media: Vec::new(),
+                files: Vec::new(),
                 shown: vec![ContentRef { left_out, ..image.clone() }],
                 ..drew.tool_results[0].clone()
             }],

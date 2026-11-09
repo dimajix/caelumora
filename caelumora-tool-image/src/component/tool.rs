@@ -13,7 +13,7 @@ use caelumora_api::image::{ImageModelClient, ImageRequest};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolMedia, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -143,11 +143,11 @@ impl ToolProvider for ImageGenerationComponent {
             "seed": seed,
             "images": images.iter().map(|image| &image.name).collect::<Vec<_>>(),
         });
-        let media = images
+        let files = images
             .into_iter()
-            .map(|image| ToolMedia { name: image.name, content: image.content })
+            .map(|image| ToolContent { name: image.name, bytes: image.content })
             .collect();
-        Ok(ToolOutput { media, ..ToolOutput::classified(value, turn.situation().label()) })
+        Ok(ToolOutput { files, ..ToolOutput::classified(value, turn.situation().label()) })
     }
 }
 
@@ -235,8 +235,8 @@ mod tests {
             "negative_prompt": "fog"
         });
         let output = generated(&tool, params).await.expect("generated");
-        let [image] = output.media.as_slice() else { panic!("one image: {:?}", output.media) };
-        assert_eq!((image.name.as_str(), image.content.as_ref()), ("drawn.png", PNG));
+        let [image] = output.files.as_slice() else { panic!("one image: {:?}", output.files) };
+        assert_eq!((image.name.as_str(), image.bytes.as_ref()), ("drawn.png", PNG));
         assert_eq!(output.value, json!({ "model": "slow", "seed": 7, "images": ["drawn.png"] }));
         let asked = slow.asked.lock().unwrap()[0].clone();
         let request = ImageRequest {

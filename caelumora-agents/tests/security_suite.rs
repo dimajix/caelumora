@@ -2246,7 +2246,7 @@ async fn an_agent_reads_another_channel_with_its_owners_rights_whoever_asked() {
 async fn what_a_tool_kept_is_found_by_its_agent_alone_until_its_channel_recorded_it() {
     use caelumora_agents::testing::agent_runtime;
     use caelumora_domain::message::MessageId;
-    use caelumora_domain::tool::ToolMedia;
+    use caelumora_domain::tool::ToolContent;
     use caelumora_kernel::testing::participant_runtime_in;
     let world = agent_testing::world().await;
     let personality = world.personality("plain", None, &[]).await;
@@ -2257,9 +2257,9 @@ async fn what_a_tool_kept_is_found_by_its_agent_alone_until_its_channel_recorded
     let runtime_of = |agent| agent_runtime(participant_runtime_in(&main, ActorId::Agent(agent)));
     let alice = ActorId::User(world.alice);
     let classification = main.classification();
-    let page = ToolMedia { name: "page.txt".to_string(), content: b"a page\n".to_vec().into() };
+    let page = ToolContent { name: "page.txt".to_string(), bytes: b"a page\n".to_vec().into() };
     let kept = runtime_of(helper)
-        .create_media(alice, classification.clone(), vec![page])
+        .create_content(alice, classification.clone(), vec![page])
         .await
         .unwrap()
         .remove(0);
