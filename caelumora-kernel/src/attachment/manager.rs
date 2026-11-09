@@ -169,14 +169,14 @@ impl AttachmentManager {
     /// in `channel`, handed over as for `create` (issue 512): classified `classification`, as the
     /// result, kept as an upload is, but waiting for no message - the result refers to them from
     /// the moment they are kept, and the channel admits what lies in its key space (`lies_in`);
-    /// so it is a way of creating of its own, apart from `create`, whose uploads wait. Each is an
-    /// image a model can be given or a text, as its first bytes say (`content::is_media`), and
-    /// there are at most as many as a message may carry attachments - all checked before any is
-    /// kept. All are kept or none: what was kept before one failed is removed again
+    /// so it is a way of creating of its own, apart from `create`, whose uploads wait. Each is kept
+    /// byte for byte, whatever it is, labelled as its first bytes say (`content::media_type`), and
+    /// there are at most as many as a message may carry attachments - checked before any is kept.
+    /// All are kept or none: what was kept before one failed is removed again
     /// (`roll_back_content`). What is kept is remembered for its caller (`kept_content`).
     ///
     /// # Errors
-    /// As `create`; `TooMany` for more than a message may carry, `NotMedia`.
+    /// As `create`; `TooMany` for more than a message may carry.
     pub async fn create_content(
         &self,
         ctx: &SecurityContext,
@@ -193,12 +193,6 @@ impl AttachmentManager {
             .map(|ToolContent { name, bytes }| {
                 let name = FileName::new(&name)?;
                 let media_type = content::media_type(&bytes[..bytes.len().min(HEAD)]);
-                if !content::is_media(media_type) {
-                    return Err(AttachmentError::NotMedia {
-                        name: name.to_string(),
-                        media_type: media_type.to_string(),
-                    });
-                }
                 Ok((name, media_type, bytes))
             })
             .collect::<AttachmentResult<Vec<_>>>()?;
@@ -746,12 +740,24 @@ mod tests {
             .iter()
             .all(|d| d.classification == classification && attachments.lies_in(main.id, d)));
         assert_eq!(read(attachments.content_of(&drawn[0]).await.unwrap()).await, PNG, "kept");
-        let notes = ToolContent { name: "notes.txt".to_string(), bytes: Bytes::from_static(b"n") };
-        let text = attachments
-            .create_content(&hers, &main, classification.clone(), vec![notes])
+        let given = |name: &str, bytes: &'static [u8]| ToolContent {
+            name: name.to_string(),
+            bytes: Bytes::from_static(bytes),
+        };
+        let others = vec![
+            given("notes.txt", b"n"),
+            given("scan.pdf", b"%PDF-1.7"),
+            given("colours.txt", b"\x1b[1m\x00"),
+        ];
+        let others = attachments
+            .create_content(&hers, &main, classification.clone(), others)
             .await
-            .expect("a text may be given too");
-        assert!(text[0].is_text() && !text[0].is_image(), "{:?}", text[0]);
+            .expect("what a tool gave is kept, whatever it is");
+        assert_eq!(
+            others.iter().map(|o| o.media_type.as_str()).collect::<Vec<_>>(),
+            ["text/plain", "application/pdf", "application/octet-stream"]
+        );
+        assert_eq!(read(attachments.content_of(&others[2]).await.unwrap()).await, b"\x1b[1m\x00");
         assert!(
             matches!(
                 attachments.named(alice, main.id, &[drawn[0].id], &[]),
@@ -766,15 +772,6 @@ mod tests {
             attachments.create_content(&hers, &main, classification.clone(), many).await,
             Err(AttachmentError::TooMany(_))
         ));
-        let scan =
-            ToolContent { name: "scan.pdf".to_string(), bytes: Bytes::from_static(b"%PDF-1.7") };
-        let neither = vec![png("a.png"), scan];
-        let refused =
-            attachments.create_content(&hers, &main, classification.clone(), neither).await;
-        assert!(
-            matches!(&refused, Err(AttachmentError::NotMedia { name, media_type }) if name == "scan.pdf" && media_type == "application/pdf"),
-            "{refused:?}"
-        );
         let mut huge = PNG.to_vec();
         huge.resize(usize::try_from(AttachmentsConfig::default().max_bytes).unwrap() + 1, 0);
         let huge = ToolContent { name: "huge.png".to_string(), bytes: Bytes::from(huge) };

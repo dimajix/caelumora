@@ -8,7 +8,6 @@ use super::client::{FetchError, Refusal};
 use super::{WebFetchComponent, WEB_FETCH_KIND};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use bytes::Bytes;
 use caelumora_agents::tool::{
     arguments, described, page_of, page_parameters, proposed_matcher, TextPosition, ToolError,
     ToolOutput, ToolProvider, ToolResult,
@@ -16,11 +15,10 @@ use caelumora_agents::tool::{
 use caelumora_agents::turn::Turn;
 use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::content;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::redact_endpoint;
-use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -37,9 +35,6 @@ const WEB_PAGE_PRESENTATION: ToolPresentation = ToolPresentation::new("web_page"
 /// How many bytes of a page `fetch_page` gives at once, as `read_file` gives 64 KiB unless
 /// configured.
 const MAX_PAGE_BYTES: usize = 64 * 1024;
-
-/// How many bytes of a page kept whole `fetch_page` gives in its stead.
-pub(super) const MAX_PREVIEW_BYTES: usize = 4 * 1024;
 
 /// The arguments of a call of `fetch_page`.
 #[derive(Deserialize)]
@@ -108,16 +103,6 @@ fn same_host(url: &str) -> Option<ToolMatcher> {
     })
 }
 
-impl WebFetchComponent {
-    /// Whether `text`, of which no part was asked for, is kept whole: above the threshold, if there
-    /// is one, and text as far as its bytes say - all of them, so that what is kept is certain to
-    /// be taken for text, and nothing can pass for an image.
-    fn keeps(&self, text: &str) -> bool {
-        self.keep_whole_above.is_some_and(|above| text.len() > above)
-            && content::media_type(text.as_bytes()) == content::TEXT
-    }
-}
-
 #[async_trait]
 impl ToolProvider for WebFetchComponent {
     fn description(&self) -> String {
@@ -145,25 +130,23 @@ impl ToolProvider for WebFetchComponent {
         }
         let Fetch { url, start_line, start_offset, line_count } = arguments(params)?;
         let page = self.client.fetch(&url).await?;
-        let shown = format!("'{}'", redact_endpoint(page.url.as_str()));
         let whole_asked = start_line.is_none() && start_offset.is_none() && line_count.is_none();
-        let kept = whole_asked && self.keeps(&page.text);
-        let max_bytes = if kept { MAX_PREVIEW_BYTES } else { MAX_PAGE_BYTES };
-        let start = TextPosition::asked(start_line, start_offset);
-        let mut value =
-            page_of(&page.text, &shown, start, line_count, max_bytes)?.value(&self.prompts);
-        value["url"] = json!(page.url.as_str());
-        if let Some(title) = page.title {
-            value["title"] = json!(title);
-        }
-        let files = if kept {
-            value["next"] = json!(self.kept_whole);
+        let kept = whole_asked && self.keep_whole_above.is_some_and(|a| a.keeps(&page.text));
+        let mut output = if kept {
             let name = format!("{}.txt", page.url.host_str().unwrap_or("page"));
-            vec![ToolContent { name, bytes: Bytes::from(page.text) }]
+            ToolOutput::kept_whole(page.text, name, &self.prompts)
         } else {
-            Vec::new()
+            let shown = format!("'{}'", redact_endpoint(page.url.as_str()));
+            let start = TextPosition::asked(start_line, start_offset);
+            page_of(&page.text, &shown, start, line_count, MAX_PAGE_BYTES)?
+                .value(&self.prompts)
+                .into()
         };
-        Ok(ToolOutput { files, ..ToolOutput::classified(value, Classification::PUBLIC) })
+        output.value["url"] = json!(page.url.as_str());
+        if let Some(title) = page.title {
+            output.value["title"] = json!(title);
+        }
+        Ok(ToolOutput { classification: Some(Classification::PUBLIC), ..output })
     }
 
     /// The calls that fetch a page of the same host; as the parameters tell for any other.
@@ -188,7 +171,7 @@ mod tests {
     use caelumora_agents::testing::{
         calling, detached_actor_runtime, register_scripted, saying, ONCE_MODEL_KIND,
     };
-    use caelumora_agents::tool::ApprovalMode;
+    use caelumora_agents::tool::{ApprovalMode, KeepWholeAbove};
     use caelumora_api::component::{ComponentFacets, ComponentKind};
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
@@ -203,17 +186,21 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::time;
 
-    /// The component, fetching from the host itself too.
+    /// The component, fetching from the host itself too, keeping no page.
     fn component() -> WebFetchComponent {
-        keeping(None)
+        built(None)
     }
 
-    /// The component, keeping a page whole above `above` bytes, if any.
-    fn keeping(above: Option<usize>) -> WebFetchComponent {
+    /// The component, keeping a page whole above a part: `/long` is, `/page` is not.
+    fn keeping() -> WebFetchComponent {
+        built(Some(KeepWholeAbove::try_from(MAX_PAGE_BYTES).unwrap()))
+    }
+
+    fn built(keep_whole_above_bytes: Option<KeepWholeAbove>) -> WebFetchComponent {
         let params = WebFetchParams {
             requires_approval: ApprovalMode::never(),
             description: None,
-            keep_whole_above_bytes: above,
+            keep_whole_above_bytes,
         };
         WebFetchComponent::new(params, Client::reaching_the_host(), prompts()).unwrap()
     }
@@ -288,24 +275,26 @@ mod tests {
     async fn a_page_above_the_threshold_is_kept_whole_beside_a_preview() {
         let port = server().await;
         let url = format!("http://localhost:{port}/long");
-        let component = keeping(Some(MAX_PREVIEW_BYTES));
+        let component = keeping();
         let output = fetched(&component, json!({ "url": url })).await.unwrap();
         let [kept] = output.files.as_slice() else { panic!("one file: {:?}", output.files) };
         assert_eq!(kept.name, "localhost.txt");
         assert_eq!(kept.bytes.len(), MAX_PAGE_BYTES + 1, "the whole page");
-        assert_eq!(output.value["content"].as_str().map(str::len), Some(MAX_PREVIEW_BYTES));
+        let preview = output.value["content"].as_str().unwrap();
+        assert!(preview.len() < MAX_PAGE_BYTES, "{}", preview.len());
         let next = output.value["next"].as_str().unwrap();
-        assert!(next.contains("read_attachment") && !next.contains("start_"), "{next}");
+        assert!(next.contains("attachment") && !next.contains("start_"), "{next}");
+        assert_eq!(output.value["url"], json!(url));
         assert_eq!(output.classification, Some(Classification::PUBLIC));
     }
 
     #[tokio::test]
-    async fn a_page_is_kept_only_where_it_is_asked_whole_and_above_a_threshold_and_text() {
+    async fn a_page_is_kept_only_where_it_is_asked_whole_and_above_a_threshold() {
         let port = server().await;
         let long = format!("http://localhost:{port}/long");
         let none = fetched(&component(), json!({ "url": long })).await.unwrap();
         assert!(none.files.is_empty(), "no threshold, nothing kept");
-        let keeping = keeping(Some(MAX_PREVIEW_BYTES));
+        let keeping = keeping();
         let page = format!("http://localhost:{port}/page");
         let short = fetched(&keeping, json!({ "url": page })).await.unwrap();
         assert!(short.files.is_empty(), "at most the threshold");
@@ -317,8 +306,9 @@ mod tests {
             assert!(part.files.is_empty(), "a part asked for: {params}");
         }
         let controls = format!("http://localhost:{port}/controls");
-        let no_text = fetched(&keeping, json!({ "url": controls })).await.unwrap();
-        assert!(no_text.files.is_empty(), "what is no text by its bytes is given a part at a time");
+        let output = fetched(&keeping, json!({ "url": controls })).await.unwrap();
+        let [kept] = output.files.as_slice() else { panic!("one file: {:?}", output.files) };
+        assert_eq!(kept.bytes[0], 1, "a control character is kept as any other");
     }
 
     /// A page kept is offered and found in the next step of the very turn that fetched it, though
@@ -338,8 +328,7 @@ mod tests {
                 ComponentKind::new("fetching").provides::<dyn ToolProvider>(),
                 |_, _| {
                     let mut facets = ComponentFacets::empty();
-                    let component = keeping(Some(MAX_PREVIEW_BYTES));
-                    facets.insert::<dyn ToolProvider>(Arc::new(component));
+                    facets.insert::<dyn ToolProvider>(Arc::new(keeping()));
                     Ok(facets)
                 },
             );

@@ -1,17 +1,20 @@
 //! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that runs an agent's tool calls
 //! with the tools of its providers and with the checks the kernel keeps to itself (issues 127,
-//! 280), what tools share - a text given a page at a time (`page_of`, issue 282) -, and the
-//! built-in tool components, one file per component kind. A component that offers tools along with
-//! another facet - a prompt part, say - stays in `components`.
+//! 280), what tools share - a text given a page at a time (`page_of`, issue 282), or kept whole
+//! beside a preview (`KeepWholeAbove`, issue 552) -, and the built-in tool components, one file per
+//! component kind. A component that offers tools along with another facet - a prompt part, say -
+//! stays in `components`.
 
 pub mod ask_user;
 pub mod calculator;
 pub mod echo;
+mod kept;
 mod page;
 mod providers;
 pub mod sleep;
 pub mod turn_end;
 
+pub use kept::KeepWholeAbove;
 pub use page::{page_of, page_parameters, TextPage, TextPosition};
 
 use crate::prompt::NAMESPACE;
@@ -96,16 +99,16 @@ impl From<ModelError> for ToolError {
 
 /// What reaching an attachment failed with (issue 282), as the model is told it: a storage that
 /// failed, is no longer configured, or holds other bytes than were kept is the tool's, as is what
-/// a tool gave its model that may not be kept (`TooMany`, `NotMedia`, issue 512); an attachment
-/// that is not there, or what does not fit, the model's to correct.
+/// a tool gave its model that may not be kept (`TooMany`, issue 512); an attachment that is not
+/// there, or what does not fit, the model's to correct.
 impl From<AttachmentError> for ToolError {
     fn from(error: AttachmentError) -> Self {
         match error {
             AttachmentError::Content(e) => e.into(),
             AttachmentError::StorageGone(e) => e.into(),
-            AttachmentError::Altered(_)
-            | AttachmentError::TooMany(_)
-            | AttachmentError::NotMedia { .. } => ToolError::ExecutionFailed(error.to_string()),
+            AttachmentError::Altered(_) | AttachmentError::TooMany(_) => {
+                ToolError::ExecutionFailed(error.to_string())
+            }
             AttachmentError::NotConfigured
             | AttachmentError::ClassificationRefused
             | AttachmentError::StorageNotCleared(_)
@@ -2015,8 +2018,8 @@ mod tests {
     }
 
     /// Issue 512: what a tool gave its model is kept as the result's - in the agent's name, in the
-    /// channel's key space, classified as the result - where the result goes to the model and what
-    /// it gave is an image or a text; nothing is kept otherwise.
+    /// channel's key space, classified as the result - where the result goes to the model, whatever
+    /// it gave; nothing is kept otherwise.
     #[tokio::test]
     async fn what_a_tool_gave_is_kept_as_the_results_where_it_may_be_given() {
         let world = testing::world().await;
@@ -2066,10 +2069,12 @@ mod tests {
             executor.execute(&call("draw_secret"), None, &mut turn, future::pending()).await;
         assert_eq!(secret.status, ToolResultStatus::Withheld);
         assert!(secret.files.is_empty());
-        let text = executor.execute(&call("write"), None, &mut turn, future::pending()).await;
-        assert_eq!(text.status, ToolResultStatus::Failed);
-        assert!(text.content.contains("application/pdf"), "told why: {}", text.content);
-        assert_eq!(files(), before, "nothing kept of a result withheld, nor of what may not be");
+        assert_eq!(files(), before, "nothing kept of a result withheld");
+        let other = executor.execute(&call("write"), None, &mut turn, future::pending()).await;
+        assert_eq!(other.status, ToolResultStatus::Ok, "{}", other.content);
+        let [other] = other.files.as_slice() else { panic!("one file: {:?}", other.files) };
+        assert_eq!(other.media_type, "application/pdf", "kept, whatever it is, as its bytes say");
+        assert_eq!(files(), before + 1);
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 

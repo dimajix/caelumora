@@ -129,4 +129,4 @@ of this.
 - **2026-11-08** — Opened at the maintainer's request, split from issue
   [465](465-attachments-in-the-context.md), where the question had been recorded on 2026-11-06, and
   taking over the step left open in issue [547](547-long-page-kept-whole-as-media.md).
-- **2026-11-09** — Decided with the maintainer as above; step 1 implemented.
+- **2026-11-09** — Decided with the maintainer as above; steps 1 and 2 implemented.

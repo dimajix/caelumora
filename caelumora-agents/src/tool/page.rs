@@ -100,6 +100,28 @@ pub fn page_of(
         )));
     }
     let start_offset = first_line.floor_char_boundary(start.offset);
+    Ok(page_within(
+        &lines,
+        TextPosition { line: first, offset: start_offset },
+        line_count,
+        max_bytes,
+    ))
+}
+
+/// The first page of `text`, of as many whole lines as `max_bytes` holds, as `page_of` gives it.
+pub(super) fn beginning_of(text: &str, max_bytes: usize) -> TextPage {
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    page_within(&lines, TextPosition::asked(None, None), None, max_bytes)
+}
+
+/// The page of `lines` from `start`, which lies within them, on a character boundary.
+fn page_within(
+    lines: &[&str],
+    start: TextPosition,
+    line_count: Option<usize>,
+    max_bytes: usize,
+) -> TextPage {
+    let TextPosition { line: first, offset: start_offset } = start;
     let wanted = lines.iter().skip(first - 1).take(line_count.unwrap_or(usize::MAX));
     let mut content = String::new();
     let mut end = first - 1;
@@ -122,7 +144,7 @@ pub fn page_of(
         end = line;
     }
     let total_lines = lines.len();
-    Ok(TextPage { content, start_line: first, start_offset, end_line: end, total_lines, next })
+    TextPage { content, start_line: first, start_offset, end_line: end, total_lines, next }
 }
 
 /// How many bytes of `line` a page of `max_bytes` takes: as many whole characters as it holds, one

@@ -396,6 +396,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
  "caelumora-agents",
  "caelumora-api",
  "caelumora-domain",
@@ -954,7 +955,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "bytes",
  "caelumora-agents",
  "caelumora-api",
  "caelumora-domain",

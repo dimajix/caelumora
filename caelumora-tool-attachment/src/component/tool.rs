@@ -228,16 +228,17 @@ impl ToolProvider for AttachmentsComponent {
             READ_ATTACHMENT => {
                 let Read { reference, start_line, start_offset, line_count } = arguments(params)?;
                 let (attachment, content) = attachment_content(turn, &reference).await?;
-                if !attachment.is_text() {
-                    return Err(ToolError::InvalidParameter(format!("'{reference}' is no text but {}; copy it into the workspace to work on it there", attachment.media_type)));
-                }
                 let bytes: Vec<u8> = content
                     .map_ok(|chunk| chunk.to_vec())
                     .try_concat()
                     .await
                     .map_err(ContentError::unavailable)?;
+                // Its bytes decide, not its label, which goes by its first bytes alone (issue 552).
+                let text = String::from_utf8(bytes).map_err(|_| {
+                    ToolError::InvalidParameter(format!("'{reference}' cannot be read as text: it is {} and not UTF-8; copy it into the workspace to work on it there", attachment.media_type))
+                })?;
                 let mut value = page_of(
-                    &String::from_utf8_lossy(&bytes),
+                    &text,
                     &format!("'{reference}'"),
                     TextPosition::asked(start_line, start_offset),
                     line_count,
@@ -313,6 +314,7 @@ mod tests {
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::context::ModelProfile;
     use caelumora_domain::history::HistoryEntry;
+    use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::Grant;
@@ -429,6 +431,48 @@ mod tests {
         assert!(last.get("next").is_none(), "{last}");
     }
 
+    /// Issue 552: whether an attachment can be read is told by all of its bytes. UTF-8 is read
+    /// whatever control characters it holds, with none of them replaced; what is not UTF-8 is
+    /// refused, also where only its end shows it and its label says text.
+    #[tokio::test]
+    async fn an_attachment_is_read_as_text_if_its_bytes_are_utf8() {
+        let world = testing::world().await;
+        let (session, helper, _) = session_with_helper(&world).await;
+        let main = &session.channels()[0];
+        let runtime = agent_runtime(participant_runtime_in(main, ActorId::Agent(helper)));
+        let classification = main.classification();
+        let mut late = vec![b'x'; 4096];
+        late.push(0xff);
+        let given = [
+            ("colours.txt", Bytes::from_static(b"\x1b[1mbold\x1b[0m\x00\n")),
+            ("late.txt", Bytes::from(late)),
+        ]
+        .map(|(name, bytes)| ToolContent { name: name.to_string(), bytes });
+        let kept = runtime
+            .create_content(ActorId::User(world.alice), classification.clone(), given.to_vec())
+            .await
+            .unwrap();
+        assert_eq!(kept[1].media_type, "text/plain", "by its first bytes");
+        let mut state = AgentChannelState::default();
+        let unrecorded =
+            Message { attachments: kept, classification, ..make_message(MessageId::new()) };
+        state.perceive(vec![unrecorded]);
+        let mut turn = testing::turn(&session, helper, world.alice, &mut state);
+        let tool = tool();
+
+        let args = json!({ "ref": "a1" });
+        let read = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap();
+        assert_eq!(read.value["content"], "\u{1b}[1mbold\u{1b}[0m\0\n", "nothing replaced");
+        let args = json!({ "ref": "a2" });
+        let refused = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await;
+        assert!(
+            matches!(&refused, Err(ToolError::InvalidParameter(e)) if e.contains("not UTF-8")),
+            "{refused:?}"
+        );
+        drop(turn);
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    }
+
     /// Issue 547: what a tool gave is read and copied by its number in the step after the call,
     /// before the channel has recorded the message of the result.
     #[tokio::test]
@@ -446,7 +490,7 @@ mod tests {
             .unwrap();
         let mut state = AgentChannelState::default();
         let unrecorded =
-            Message { role: MessageRole::User, attachments: kept, ..Message::new(classification) };
+            Message { attachments: kept, classification, ..make_message(MessageId::new()) };
         state.perceive(vec![unrecorded]);
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         let tool = tool();

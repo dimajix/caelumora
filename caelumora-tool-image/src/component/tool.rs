@@ -9,8 +9,9 @@ use caelumora_agents::tool::{
     arguments, described, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::image::{ImageModelClient, ImageRequest};
+use caelumora_api::image::{Image, ImageModelClient, ImageRequest};
 use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::content;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolPresentation, ToolVisibility};
@@ -138,6 +139,14 @@ impl ToolProvider for ImageGenerationComponent {
         let request = ImageRequest { prompt, negative_prompt, width, height, seed };
         let initiator = turn.situation().initiator();
         let images = model.generate(initiator, &request).await?;
+        let no_image = |image: &&Image| !content::is_image(content::media_type(&image.content));
+        if let Some(other) = images.iter().find(no_image) {
+            return Err(ToolError::ExecutionFailed(format!(
+                "the model '{}' gave '{}', which is no image a model can be given",
+                model.name(),
+                other.name
+            )));
+        }
         let value = json!({
             "model": model.name(),
             "seed": seed,
@@ -159,7 +168,6 @@ mod tests {
     use bytes::Bytes;
     use caelumora_agents::testing::detached_actor_runtime;
     use caelumora_api::component::{ComponentResult, Params};
-    use caelumora_api::image::Image;
     use caelumora_api::model::{ModelError, ModelResult};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
@@ -295,6 +303,22 @@ mod tests {
         let failed = generated(&tool, json!({ "prompt": "x" })).await.unwrap_err();
         assert!(
             matches!(&failed, ToolError::ExecutionFailed(why) if why.contains("out of memory")),
+            "{failed}"
+        );
+    }
+
+    /// What a model gave that is no image a model can be given, whatever its name says, fails the
+    /// call: the tool is the one that knows it asked for images (issue 552).
+    #[tokio::test]
+    async fn what_is_no_image_fails_the_call() {
+        let text = |_: &str| {
+            let content = Bytes::from_static(b"out of memory");
+            Ok(vec![Image { name: "drawn.png".to_string(), content }])
+        };
+        let tool = built(json!({}), &[painter("fast", text)]).unwrap();
+        let failed = generated(&tool, json!({ "prompt": "x" })).await.unwrap_err();
+        assert!(
+            matches!(&failed, ToolError::ExecutionFailed(why) if why.contains("'drawn.png'")),
             "{failed}"
         );
     }

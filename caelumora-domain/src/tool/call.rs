@@ -171,8 +171,8 @@ impl ToolCallResult {
 }
 
 /// What a tool gives its model besides its value (issues 512, 547), before it is kept as the
-/// result's (`ToolCallResult::files`): a file by its name and its bytes, an image or a text. What
-/// it is, its bytes tell, never the name nor the tool.
+/// result's (`ToolCallResult::files`): a file by its name and its bytes, kept as they are, whatever
+/// they are (issue 552). What it is, its bytes tell, never the name nor the tool.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolContent {
     pub name: String,

@@ -86,19 +86,13 @@ impl ContentRef {
     pub fn is_image(&self) -> bool {
         is_image(&self.media_type)
     }
-
-    /// Whether it is plain text, as its bytes say (`media_type`): what a model reads a page at a
-    /// time (issue 282).
-    pub fn is_text(&self) -> bool {
-        self.media_type == TEXT
-    }
 }
 
 const PNG: &str = "image/png";
 const JPEG: &str = "image/jpeg";
 const WEBP: &str = "image/webp";
 /// What `media_type` calls text.
-pub const TEXT: &str = "text/plain";
+const TEXT: &str = "text/plain";
 
 /// What content is, as its first bytes say (issue 282) - never as whoever hands it over claims:
 /// png, jpeg, webp, gif, pdf or zip (the Office formats among it) by their signatures, plain text
@@ -122,12 +116,6 @@ pub fn media_type(head: &[u8]) -> &'static str {
 /// anything (`ContentRef::is_image`).
 pub fn is_image(media_type: &str) -> bool {
     matches!(media_type, PNG | JPEG | WEBP)
-}
-
-/// Whether a tool may give its model this (issues 512, 547): an image, or a text it reads a page at
-/// a time.
-pub fn is_media(media_type: &str) -> bool {
-    is_image(media_type) || media_type == TEXT
 }
 
 /// Whether `head` reads as text: UTF-8, but for a character cut off at its end, without a control

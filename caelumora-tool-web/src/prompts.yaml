@@ -16,10 +16,6 @@ tools:
     fetch_page.start_line: The first line to read, from 1; the first unless given
     fetch_page.start_offset: How many bytes of the first line to skip, as a result said to go on; none unless given
     fetch_page.line_count: How many lines to read; to the end unless given
-    # Where to read on, in place of a line to read on from, once the whole page is kept (issue 547).
-    kept_whole: >-
-      This is only the beginning. The whole page is kept as the attachment noted below: read it with
-      read_attachment, or, if you are offered copy_attachment, copy it into the workspace to search it.
   # Issue 544. `default_results` and `max_results`: how many pages a search finds unless the call
   # says otherwise, and at most.
   web_search:

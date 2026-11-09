@@ -177,26 +177,31 @@ what it was given, and the model is never given the record.
 
 ### Content a tool gives its model
 
-A tool may give its model files to see besides its value (`ToolOutput::files`, issue 512) - an
-image it generated, say: each a name and its bytes. A tool hands over bytes; the executor has them
-kept, so that what is checked is checked once for every tool and no tool reaches the storage. They
-are kept only for a result that goes to the model, not one withheld, as the result's
-(`ToolCallResult::files`, through `ActorRuntime::create_content`): in the agent's name, classified
-as the result, in the channel's key space, each what its bytes say, never what the tool or a name
-claims - an image a model can be given (png, jpeg or webp) or a text -, at most as many as a message
-may carry attachments, and all of them or none. Anything else fails the call, saying why. They wait
-for no message: the result refers to them from the moment they are kept, and its turn keeps the
-result (see [CHANNELS.md](CHANNELS.md#what-a-message-carries)). Until the channel has recorded the
-message of the result, the kernel finds what it kept for the caller by itself
+A tool may give its model files besides its value (`ToolOutput::files`, issue 512) - an image it
+generated, a text too long for its result: each a name and its bytes. A tool hands over bytes; the
+executor has them kept, so that what is checked is checked once for every tool and no tool reaches
+the storage. They are kept only for a result that goes to the model, not one withheld, as the
+result's (`ToolCallResult::files`, through `ActorRuntime::create_content`): in the agent's name,
+classified as the result, in the channel's key space, byte for byte and whatever they are, each
+labelled as its bytes say, never as the tool or a name claims, at most as many as a message may
+carry attachments, and all of them or none. Keeping is not interpreting: what a tool expects of what
+it hands over it checks itself, as `generate_image` that it was given images. They wait for no
+message: the result refers to them from the moment they are kept, and its turn keeps the result
+(see [CHANNELS.md](CHANNELS.md#what-a-message-carries)). Until the channel has recorded the message
+of the result, the kernel finds what it kept for the caller by itself
 (`AttachmentManager::kept_content`, `ChannelView::attachment`), so that the next step of the turn
 can read it, however fast it follows.
 
+A text above a bound its component is configured with (`keep_whole_above_bytes`, `KeepWholeAbove`)
+is kept this way, beside a preview of 4 KiB whose `next` says how the whole is read
+(`ToolOutput::kept_whole`).
+
 What a tool gave is seen, not said: the model is given an image with the result as it is given an
-attachment - a text is read with `read_attachment` -, each numbered as one and noted after the
-result's text - its number, name, type and whether it is given along -, so that a model that cannot
-see learns of it and any model can name it; the agent shows it to the others by `attach`. The card
-of the call shows it where the result is shown, until a message of the same turn carries it: then
-the message shows it, and the card names it.
+attachment - anything else is reached with the tools for [attachments](#attachments) -, each
+numbered as one and noted after the result's text - its number, name, type and whether it is given
+along -, so that a model that cannot see learns of it and any model can name it; the agent shows it
+to the others by `attach`. The card of the call shows it where the result is shown, until a message
+of the same turn carries it: then the message shows it, and the card names it.
 
 ## MCP servers
 
@@ -297,10 +302,9 @@ URL, with the tool `fetch_page`:
     with none of `start_line`, `start_offset` and `line_count`, is kept whole beside its result, as
     a text the tool gives its model ([content](#content-a-tool-gives-its-model)), named after the
     page's host. Its result is then a preview of 4 KiB, whose `next` says that the whole is kept and
-    how it is read: `read_attachment`, or `copy_attachment` to search it in the workspace. So a long
-    page is fetched once and read as it was. Whoever sets it gives the agent `attachments` too.
-    Without it, nothing is kept; a storage of content that is missing fails the call. What does not
-    read as text is given a part at a time.
+    is reached with the tools for [attachments](#attachments). So a long page is fetched once and
+    read as it was. Whoever sets it gives the agent `attachments` too.
+    Without it, nothing is kept; a storage of content that is missing fails the call.
 *   **What it reaches.** `http` and `https` alone, at most five redirects. A fetch goes through the
     proxy the environment names (`HTTPS_PROXY`, `NO_PROXY`), as the server reaches the internet.
     Where it connects itself - to an address written in the URL, to a host the proxy is not asked
@@ -464,7 +468,9 @@ where a workspace may be written to.
     `ToolCallResult::shown`), and the model is given it along with the result as it is given an
     attachment. A result shows only attachments of its channel, which the channel checks as it
     admits the result.
-*   `read_attachment` gives a text a page at a time, as `read_file` gives a file (`page_of`).
+*   `read_attachment` gives a text a page at a time, as `read_file` gives a file (`page_of`). All
+    of its bytes decide what is a text, not its label: valid UTF-8, whatever control characters it
+    holds; anything else is refused.
 *   `copy_attachment` writes an attachment into the workspace the turn may use, to be worked on
     there: a document converted, data processed. A workspace used in the channel takes what the
     channel holds. It writes, so it is always asked.
