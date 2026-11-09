@@ -1,6 +1,6 @@
 # 552 — What an MCP tool gives back goes into the context whole, however long
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Tools and approvals
@@ -130,3 +130,12 @@ of this.
   [465](465-attachments-in-the-context.md), where the question had been recorded on 2026-11-06, and
   taking over the step left open in issue [547](547-long-page-kept-whole-as-media.md).
 - **2026-11-09** — Decided with the maintainer as above; steps 1 and 2 implemented.
+- **2026-11-09** — Step 3 implemented. Beyond the decision: `cut_to_preview` of `caelumora-agents`
+  cuts the text of a failure, since the size of a preview is that module's; and an answer with
+  neither text nor structured content, which goes to the model as the JSON of its blocks, is kept
+  as that JSON above the bound.
+- **2026-11-09** — Decided with the maintainer in the review of step 3:
+  `ToolOutput::kept(preview: Option<&str>, files, prompts)` takes the place of `kept_whole` as
+  decided above, since an answer without a text has neither a preview nor a text to keep. Such a
+  result holds only its `next`. A failure of the protocol, as opposed to one of the tool, stays
+  uncut.

@@ -4,10 +4,12 @@
 
 mod tool;
 
-use caelumora_agents::tool::{ApprovalMode, ToolProvider};
+use caelumora_agents::prompt::{texts_of, writing_for_the_model};
+use caelumora_agents::tool::{ApprovalMode, KeepWholeAbove, ToolProvider};
 use caelumora_api::cache::ExpiringCache;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents, Params};
 use caelumora_domain::confidentiality::Classification;
+use caelumora_domain::prompt_catalogue::PromptTexts;
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::tool::Tool;
 use serde::Deserialize;
@@ -54,6 +56,10 @@ struct McpServerParams {
     /// where it is configured.
     #[serde(default)]
     destination: Option<Classification>,
+    /// From how many bytes on what a tool gives is kept whole, and a preview given in its stead;
+    /// left out, nothing is, and a result goes to the model whatever its size (issue 552).
+    #[serde(default)]
+    keep_whole_above_bytes: Option<KeepWholeAbove>,
 }
 
 impl Params for McpServerParams {}
@@ -77,28 +83,35 @@ struct McpServerComponent {
     /// The server's tools, and what it says of itself (`instructions`) if
     /// it does, as last discovered.
     discovered: ExpiringCache<(Vec<Tool>, Option<String>)>,
+    /// The texts its results give.
+    prompts: PromptTexts,
 }
 
 impl McpServerComponent {
-    /// The component `descriptor_id` configured by `params`; its tools are not discovered yet.
-    fn new(descriptor_id: String, params: McpServerParams) -> Self {
+    /// The component `descriptor_id` configured by `params`, its texts from `prompts`; its tools
+    /// are not discovered yet.
+    fn new(descriptor_id: String, params: McpServerParams, prompts: PromptTexts) -> Self {
         let discovered = ExpiringCache::new(params.refresh());
-        Self { descriptor_id, params, discovered }
+        Self { descriptor_id, params, discovered, prompts }
     }
 }
 
-/// Registers the component kind `mcp_server`, built of its params alone.
+/// Registers the component kind `mcp_server`, which writes for the agent's model.
 pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
-    registry.register(
-        ComponentKind::new(MCP_SERVER_KIND)
-            .params::<McpServerParams>()
-            .provides::<dyn ToolProvider>(),
-        |descriptor, _context| {
+    registry.register_async(
+        writing_for_the_model(
+            ComponentKind::new(MCP_SERVER_KIND)
+                .params::<McpServerParams>()
+                .provides::<dyn ToolProvider>(),
+        ),
+        |descriptor, context| async move {
+            let prompts = texts_of(&context).await?;
             let params = McpServerParams::read(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::new(McpServerComponent::new(
                 descriptor.id.clone(),
                 params,
+                prompts,
             )));
             Ok(facets)
         },

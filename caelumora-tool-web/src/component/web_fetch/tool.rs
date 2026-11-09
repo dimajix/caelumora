@@ -18,7 +18,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::redact_endpoint;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolPresentation, ToolVisibility};
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -134,7 +134,8 @@ impl ToolProvider for WebFetchComponent {
         let kept = whole_asked && self.keep_whole_above.is_some_and(|a| a.keeps(&page.text));
         let mut output = if kept {
             let name = format!("{}.txt", page.url.host_str().unwrap_or("page"));
-            ToolOutput::kept_whole(page.text, name, &self.prompts)
+            let files = vec![ToolContent { name, bytes: page.text.clone().into() }];
+            ToolOutput::kept(Some(&page.text), files, &self.prompts)
         } else {
             let shown = format!("'{}'", redact_endpoint(page.url.as_str()));
             let start = TextPosition::asked(start_line, start_offset);

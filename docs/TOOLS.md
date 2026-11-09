@@ -194,7 +194,7 @@ can read it, however fast it follows.
 
 A text above a bound its component is configured with (`keep_whole_above_bytes`, `KeepWholeAbove`)
 is kept this way, beside a preview of 4 KiB whose `next` says how the whole is read
-(`ToolOutput::kept_whole`).
+(`ToolOutput::kept`).
 
 What a tool gave is seen, not said: the model is given an image with the result as it is given an
 attachment - anything else is reached with the tools for [attachments](#attachments) -, each
@@ -236,9 +236,20 @@ the kind as before. What such a component kind may use of the kernel is said in
     default 10 -, `refresh_secs` - default 300; see
     [COMPONENTS.md](COMPONENTS.md#remote-endpoints)), `requires_approval` (`true` by default,
     `false` or `"unless_read_only"`; see [What needs approval](APPROVALS.md#what-needs-approval)),
-    `classification`, `description` and `destination`.
+    `classification`, `description`, `destination` and `keep_whole_above_bytes`.
 *   **Calls.** Each call opens a connection, and so an MCP session, of its own. An interrupted call
     drops it, which ends the session; whether the remote tool stops is up to the server.
+*   **What it keeps.** Without `keep_whole_above_bytes`, a result goes to the model whole, whatever
+    its size. With it, at least the 4 KiB of a preview, a result above that size, measured on what
+    would go to the model, is kept ([content](#content-a-tool-gives-its-model)): its text as
+    `<component id>.txt`, and its structured content as `<component id>.json` unless the text parses
+    to the same JSON, in which case it would only be a copy; an answer with neither is kept as the
+    JSON of its blocks. The result is then a preview of the text, none where there is no text, since
+    a preview would cut JSON in the middle; its `next` says that the whole is kept and is reached
+    with the tools for [attachments](#attachments). Whoever sets it gives the agent `attachments`
+    too, and a storage of content that is missing fails the call, after the server has acted. What
+    a failure of the tool says is not kept: it is cut to the size of a preview where a bound is
+    configured.
 
 ## Images
 

@@ -131,8 +131,12 @@ fn names(tools: &[Tool]) -> Vec<String> {
 
 /// A kernel over `store` with the library of MCP servers, as the programs build theirs.
 fn kernel(store: &Persistence) -> Arc<Kernel> {
-    TestKernel { store: store.clone(), libraries: vec![&McpToolLibrary], ..Default::default() }
-        .build()
+    TestKernel {
+        store: store.clone(),
+        libraries: vec![&AgentsLibrary, &McpToolLibrary],
+        ..Default::default()
+    }
+    .build()
 }
 
 /// The tool provider of the one MCP tool component, `test-echo`, configured with `params`.
@@ -207,6 +211,29 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
         .unwrap();
     assert_eq!(result.value, json!("hello mcp"));
     assert!(result.classification.is_none(), "an MCP server does not classify its results");
+}
+
+/// Issue 552: a component with a bound keeps what lies above it, whatever a server answers.
+#[tokio::test]
+async fn an_answer_above_the_bound_is_kept_whole_beside_a_preview() {
+    let (addr, _server) = start_test_server().await;
+    let url = format!("http://{}/mcp", addr);
+    let provider =
+        provider(json!({ "endpoint": { "url": url }, "keep_whole_above_bytes": 4096 })).await;
+    offered_anywhere(provider.as_ref()).await.unwrap();
+
+    let short = json!({ "message": "hello mcp" });
+    let result = executed(provider.as_ref(), "test-echo__echo", short).await.unwrap();
+    assert_eq!(result.value, json!("hello mcp"), "as it came below the bound");
+    assert!(result.files.is_empty());
+
+    let message = "x".repeat(10_000);
+    let long = json!({ "message": message });
+    let result = executed(provider.as_ref(), "test-echo__echo", long).await.unwrap();
+    let [kept] = result.files.as_slice() else { panic!("one file: {:?}", result.files) };
+    assert_eq!((kept.name.as_str(), kept.bytes.as_ref()), ("test-echo.txt", message.as_bytes()));
+    assert!(result.value["content"].as_str().unwrap().len() < message.len(), "a preview");
+    assert!(result.value["next"].is_string(), "says where the rest is: {}", result.value);
 }
 
 #[tokio::test]

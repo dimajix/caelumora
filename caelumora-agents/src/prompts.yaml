@@ -308,10 +308,12 @@ results:
   # where a line was too long for a page.
   read_on: "Not all of it fits into one result: read on with start_line {{ line }}."
   read_on_within: "Not all of it fits into one result: read on with start_line {{ line }} and start_offset {{ offset }}."
-  # In place of where to read on, once a text is kept whole beside its beginning (`ToolOutput::kept_whole`).
+  # In place of where to read on, once what a tool gave is kept whole, beside its beginning if it
+  # is a text (`ToolOutput::kept`).
   kept_whole: >-
-    This is only the beginning. The whole is kept as the attachment noted below: read it with your
-    tools for attachments, or, if they let you, copy it into the workspace to search it.
+    This is at most the beginning: the whole is kept in the attachments noted below. Read them
+    with your tools for attachments, or, if they let you, copy them into the workspace to search
+    them.
   owners: Only you see this result - the channel does not. Do not quote or reveal it in your answers.
   denied: The user declined this tool call. Do not repeat it; continue without it or ask the user how to proceed.
   timed_out: No one approved this tool call in time; it was not executed. You may ask the user whether to try again.

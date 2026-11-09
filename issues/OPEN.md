@@ -40,7 +40,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 | [545](545-web-fetch-through-the-proxy-reaches-anything.md) | open | medium | feature | `web_fetch` refuses addresses inside the network only where it connects itself; a fetch through the proxy the environment names reaches whatever the proxy reaches, internal hosts and the cloud's metadata service among them. |
-| [552](552-a-tool-result-has-no-bound.md) | in progress | medium | feature | The result of an MCP tool is put into the model's context whole, whatever its size, is sent again with every call of the turn, and cannot be read on or searched, while `fetch_page` can already keep what is too long for one result beside a preview. |
 
 ## User interaction
 

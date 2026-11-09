@@ -9,18 +9,19 @@
 //! the endpoint's `refresh_secs`, or after the server did not know a tool that was called (issue
 //! 126); `execute()` opens a fresh connection per call (the Streamable HTTP transport supports
 //! stateless operation), which keeps the component free of any stale-connection state. Its
-//! credential it resolves of the secrets of whoever asks it (`Situation::secrets`, issue 516).
+//! credential it resolves of the secrets of whoever asks it (`Situation::secrets`, issue 516). What
+//! a tool answers above the component's bound is kept whole beside a preview (issue 552).
 
 use super::{McpServerComponent, McpServerParams};
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
-use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{cut_to_preview, ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::secret::{SecretError, Secrets};
-use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolVisibility};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
 use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -207,34 +208,60 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
     }
 }
 
-fn call_tool_result_to_value(name: &str, result: CallToolResult) -> McpResult<Value> {
-    let text: String = result
-        .content
-        .iter()
-        .filter_map(|c| c.as_text().map(|t| t.text.clone()))
-        .collect::<Vec<_>>()
-        .join("\n");
+impl McpServerComponent {
+    /// What the model of the agent is given of what the tool `name` answered (issue 552). As it
+    /// came, up to the component's bound: the structured content if there is any, else the text,
+    /// else the blocks of the answer as JSON. Above the bound, measured on that, a preview of the
+    /// text, with the text kept as `<component id>.txt` where there is one, and the JSON as
+    /// `<component id>.json` - unless the text parses to the same JSON, as the specification
+    /// recommends, where it would only be a copy.
+    ///
+    /// # Errors
+    /// `ToolCallFailed` for a failure of the tool, which is not kept: what it says is cut to the
+    /// size of a preview where a bound is configured.
+    fn output_of(&self, name: &str, result: CallToolResult) -> McpResult<ToolOutput> {
+        let keep_whole_above = self.params.keep_whole_above_bytes;
+        let text: String = result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+            .collect::<Vec<_>>()
+            .join("\n");
 
-    if result.is_error == Some(true) {
-        let message = if !text.is_empty() {
-            text
-        } else {
-            serde_json::to_string(&result.content).unwrap_or_default()
+        if result.is_error == Some(true) {
+            let message = if !text.is_empty() {
+                text
+            } else {
+                serde_json::to_string(&result.content).unwrap_or_default()
+            };
+            let message =
+                if keep_whole_above.is_some() { cut_to_preview(message) } else { message };
+            return Err(McpError::ToolCallFailed(format!(
+                "MCP tool '{}' returned an error: {}",
+                name, message
+            )));
+        }
+
+        let data = result.structured_content.or_else(|| {
+            text.is_empty().then(|| serde_json::to_value(&result.content).unwrap_or(Value::Null))
+        });
+        let json = data.as_ref().map(Value::to_string);
+        let given = json.as_deref().unwrap_or(&text);
+        if !keep_whole_above.is_some_and(|above| above.keeps(given)) {
+            return Ok(data.unwrap_or(Value::String(text)).into());
+        }
+
+        let id = &self.descriptor_id;
+        let content = |extension: &str, whole: String| ToolContent {
+            name: format!("{id}.{extension}"),
+            bytes: whole.into(),
         };
-        return Err(McpError::ToolCallFailed(format!(
-            "MCP tool '{}' returned an error: {}",
-            name, message
-        )));
-    }
-
-    if let Some(structured) = result.structured_content {
-        return Ok(structured);
-    }
-
-    if !text.is_empty() {
-        Ok(Value::String(text))
-    } else {
-        Ok(serde_json::to_value(&result.content).unwrap_or(Value::Null))
+        let copy = serde_json::from_str::<Value>(&text).ok() == data;
+        let preview = (!text.is_empty()).then_some(text.as_str());
+        let whole_text = preview.map(|text| content("txt", text.to_string()));
+        let whole_json = json.filter(|_| !copy).map(|json| content("json", json));
+        let files = whole_text.into_iter().chain(whole_json).collect();
+        Ok(ToolOutput::kept(preview, files, &self.prompts))
     }
 }
 
@@ -289,7 +316,7 @@ impl ToolProvider for McpServerComponent {
         let remote_name = self.strip_prefix(name)?.to_string();
         let secrets = turn.situation().secrets();
 
-        let call_result: McpResult<Value> = async {
+        let call_result: McpResult<ToolOutput> = async {
             let auth_header = self.params.endpoint.bearer_token(&*secrets).await?;
 
             let service = connect(&self.params.endpoint, auth_header).await?;
@@ -316,19 +343,25 @@ impl ToolProvider for McpServerComponent {
                     McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, self.params.endpoint.redact_in(&e.to_string())))
                 })?;
 
-            call_tool_result_to_value(name, result)
+            self.output_of(name, result)
         }.await;
 
-        call_result.map(ToolOutput::from).map_err(|e| ToolError::ExecutionFailed(e.to_string()))
+        call_result.map_err(|e| ToolError::ExecutionFailed(e.to_string()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use caelumora_agents::tool::ApprovalMode;
+    use caelumora_agents::testing::prompts;
+    use caelumora_agents::tool::{ApprovalMode, KeepWholeAbove};
     use caelumora_domain::confidentiality::Confidentiality;
+    use rmcp::model::ContentBlock;
     use serde_json::json;
+
+    /// The bound of the tests, and the size of a preview below it.
+    const BOUND: usize = 8 * 1024;
+    const PREVIEW_AT_MOST: usize = 4 * 1024;
 
     /// The params of a server configured with nothing but its endpoint, and no approval.
     fn unconfigured() -> McpServerParams {
@@ -338,7 +371,116 @@ mod tests {
             classification: None,
             description: None,
             destination: None,
+            keep_whole_above_bytes: None,
         }
+    }
+
+    fn provider() -> McpServerComponent {
+        McpServerComponent::new("github-mcp".to_string(), unconfigured(), prompts())
+    }
+
+    /// The component `tracker`, which keeps what lies above `BOUND`.
+    fn keeping() -> McpServerComponent {
+        let keep_whole_above_bytes = Some(KeepWholeAbove::try_from(BOUND).unwrap());
+        let params = McpServerParams { keep_whole_above_bytes, ..unconfigured() };
+        McpServerComponent::new("tracker".to_string(), params, prompts())
+    }
+
+    /// An answer with `text`, if any, and with `structured` content, if any.
+    fn answer(text: Option<&str>, structured: Option<Value>) -> CallToolResult {
+        let blocks = text.map(ContentBlock::text).into_iter().collect();
+        let mut answer = CallToolResult::success(blocks);
+        answer.structured_content = structured;
+        answer
+    }
+
+    /// JSON whose compact form is above `BOUND`.
+    fn large_json() -> Value {
+        json!({ "items": "x".repeat(BOUND) })
+    }
+
+    /// The names and bytes of what `output` keeps.
+    fn kept(output: &ToolOutput) -> Vec<(&str, &[u8])> {
+        output.files.iter().map(|file| (file.name.as_str(), file.bytes.as_ref())).collect()
+    }
+
+    #[test]
+    fn below_the_bound_and_without_one_an_answer_is_given_as_it_came() {
+        let long = "x".repeat(BOUND + 1);
+        let keeping = keeping();
+        for (given, value) in [
+            (answer(Some("short"), None), json!("short")),
+            (answer(Some("summary"), Some(json!({ "a": 1 }))), json!({ "a": 1 })),
+            (answer(None, Some(json!({ "a": 1 }))), json!({ "a": 1 })),
+            (answer(None, None), json!([])),
+        ] {
+            let output = keeping.output_of("t", given).unwrap();
+            assert_eq!(output, value.into(), "nothing kept below the bound");
+        }
+        let at = answer(Some(&long[1..]), None);
+        assert!(keeping.output_of("t", at).unwrap().files.is_empty(), "at the bound");
+        let whole = provider().output_of("t", answer(Some(&long), None)).unwrap();
+        assert_eq!(whole, json!(long).into(), "without a bound, whatever its size");
+    }
+
+    #[test]
+    fn a_text_above_the_bound_is_kept_as_it_came_beside_a_preview() {
+        let text = format!("\u{1b}[1m{}", "x".repeat(BOUND));
+        let output = keeping().output_of("t", answer(Some(&text), None)).unwrap();
+        assert_eq!(kept(&output), [("tracker.txt", text.as_bytes())], "byte for byte");
+        assert_eq!(output.value["content"].as_str().map(str::len), Some(PREVIEW_AT_MOST));
+        assert!(output.value["next"].as_str().unwrap().contains("attachment"), "{}", output.value);
+    }
+
+    /// Text alone would lose the data of a server whose text only sums it up.
+    #[test]
+    fn structured_content_above_the_bound_is_kept_beside_a_text_that_is_something_else() {
+        let data = large_json();
+        let output =
+            keeping().output_of("t", answer(Some("Found one."), Some(data.clone()))).unwrap();
+        let json = data.to_string();
+        assert_eq!(
+            kept(&output),
+            [("tracker.txt", b"Found one.".as_slice()), ("tracker.json", json.as_bytes())]
+        );
+        assert_eq!(output.value["content"], "Found one.", "the preview is of the text");
+    }
+
+    #[test]
+    fn a_text_that_is_the_structured_content_again_is_all_that_is_kept() {
+        let data = large_json();
+        let indented = serde_json::to_string_pretty(&data).unwrap();
+        let output = keeping().output_of("t", answer(Some(&indented), Some(data))).unwrap();
+        assert_eq!(kept(&output), [("tracker.txt", indented.as_bytes())], "as it was sent");
+    }
+
+    #[test]
+    fn json_without_a_text_is_kept_without_a_preview() {
+        let data = large_json();
+        let output = keeping().output_of("t", answer(None, Some(data.clone()))).unwrap();
+        assert_eq!(kept(&output), [("tracker.json", data.to_string().as_bytes())]);
+        assert!(output.value.get("content").is_none(), "JSON is not cut in the middle");
+        assert!(output.value["next"].is_string(), "{}", output.value);
+    }
+
+    /// What is neither text nor structured content goes to the model as JSON, and so is bounded.
+    #[test]
+    fn an_answer_of_other_blocks_above_the_bound_is_kept_as_their_json() {
+        let blocks = vec![ContentBlock::image("x".repeat(BOUND), "image/png")];
+        let json = serde_json::to_value(&blocks).unwrap().to_string();
+        let output = keeping().output_of("t", CallToolResult::success(blocks)).unwrap();
+        assert_eq!(kept(&output), [("tracker.json", json.as_bytes())]);
+    }
+
+    #[test]
+    fn a_failure_is_cut_where_a_bound_is_configured_and_never_kept() {
+        let long = "e".repeat(BOUND * 2);
+        let failure = || CallToolResult::error(vec![ContentBlock::text(long.as_str())]);
+        let Err(cut) = keeping().output_of("t", failure()) else { panic!("it failed") };
+        let cut = cut.to_string();
+        assert!(cut.len() < BOUND && cut.ends_with("e..."), "{}", cut.len());
+        let Err(whole) = provider().output_of("t", failure()) else { panic!("it failed") };
+        assert!(whole.to_string().ends_with(&long), "without a bound, as it came");
     }
 
     #[tokio::test]
@@ -372,7 +514,7 @@ mod tests {
 
     #[test]
     fn namespacing_round_trips_through_prefix_stripping() {
-        let provider = McpServerComponent::new("github-mcp".to_string(), unconfigured());
+        let provider = provider();
         let stripped = provider.strip_prefix("github-mcp__search").unwrap();
         assert_eq!(stripped, "search");
         assert!(provider.strip_prefix("unrelated_tool").is_err());
@@ -381,12 +523,13 @@ mod tests {
     /// Issue 180: the server is cleared for what is configured, public unless configured.
     #[test]
     fn the_server_is_cleared_for_what_is_configured_and_public_unless() {
-        let provider = McpServerComponent::new("github-mcp".to_string(), unconfigured());
+        let provider = provider();
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         let internal = Classification::general(Confidentiality::Internal);
         let cleared = McpServerComponent::new(
             "github-mcp".to_string(),
             McpServerParams { destination: Some(internal.clone()), ..provider.params.clone() },
+            prompts(),
         );
         assert_eq!(cleared.destination(), Some(internal));
     }
