@@ -14,17 +14,18 @@ anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+serde-saphyr = { workspace = true, features = ["serialize"] }
 # What lies where is looked up in the directories, and what a removal left
 # empty is removed on a thread of its own.
 tokio = { workspace = true, features = ["fs", "rt"] }
 tracing.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
 caelumora-domain = { workspace = true, features = ["test-support"] }
 caelumora-security = { workspace = true, features = ["test-support"] }
 caelumora-store = { workspace = true, features = ["test-support"] }
-serde_json.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 

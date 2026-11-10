@@ -179,6 +179,23 @@ and states as the JSON store does (`FileDocuments`, `JsonStates`), in places of 
 *   **What lies where is searched for**, by the names of the directories, and what is found is
     remembered, never stored: the stores name a document by its id alone, and only this layout needs
     what lies above it. A channel no document names keeps its states in `channels/<id>`.
+*   **A name is a link beside the directory of a document named by its id**, made anew when the
+    name changes: one the backend never reads, so that one out of date or missing does no harm, and
+    a platform without links loses nothing but the label. None is made for what lies beside another
+    kind, in a user's or a group's scope, whose names share a directory with those of others, or
+    under a name that is an id.
+*   **The kinds the program names in `definitions` are files named by their names**: the skills,
+    personalities, bundles and templates a person writes, in YAML or in Markdown, the text after
+    the front matter a field. They lie in a directory of their kind, in the configuration directory
+    for the global scope, in `users/<id>` and `groups/<id>` of the data directory for a user's and
+    a group's, and in the directory of their scope otherwise, so that the names of different scopes
+    never share a file. Their id is the field `id`
+    of the file, or derived from their kind and name (`Uuid::new_v5`), the same on every start: a
+    file moved by hand without an `id` is another definition, one with an `id` the same. What the
+    file and its place tell, and what reading it without gives, is left out where the program
+    writes it; an `id` once in a file stays. A deleted definition lies by its id in `.deleted`, so
+    that its name is free. Two files of one id, or of one name as names compare, are both left out
+    and logged, since which of them won would depend on the order of a directory.
 *   **Several programs may use one data directory at a time**: a lock of the file system per kind
     keeps their writes apart (`locks/<kind>`), and what one wrote the other finds when it next
     reads, though it hears of nothing.

@@ -2,9 +2,12 @@
 //! of its own below the data directory, and what lies in a scope lies in that scope's directory
 //! (`HomeStore`), registered as the backend `home` by its plugin (`HomeStorePlugin`).
 
+mod definitions;
 mod layout;
 mod places;
 pub mod plugin;
+
+pub use definitions::{DefinitionFiles, FileFormat};
 
 use caelumora_domain::store::{EntityKind, StoreResult};
 use caelumora_store::documents::{DocumentOf, DocumentStorage};
@@ -14,6 +17,7 @@ use caelumora_store::{PersistenceBackend, StateStore};
 use caelumora_store_json::{
     to_backend_error, FileDocuments, JsonFormat, JsonStates, DEFAULT_JOURNAL_FLOOR,
 };
+use definitions::Definitions;
 use layout::{HomeDocuments, HomeStates};
 use places::Places;
 use serde::Deserialize;
@@ -26,8 +30,14 @@ use std::sync::{Arc, PoisonError, RwLock};
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HomeStoreConfig {
+    /// What the person writes: the definitions of the global scope.
+    pub config_dir: PathBuf,
     /// What the program writes.
     pub data_dir: PathBuf,
+    /// Which kinds are definitions, by their names, and how each is written; any other is kept as
+    /// state.
+    #[serde(default)]
+    pub definitions: BTreeMap<String, DefinitionFiles>,
     /// The kinds that lie with the document of their id of another kind - `memory` with `agent` -,
     /// by their names.
     #[serde(default)]
@@ -39,6 +49,7 @@ pub struct HomeStoreConfig {
 #[derive(Debug)]
 pub struct HomeStore {
     places: Arc<Places>,
+    definitions: BTreeMap<String, DefinitionFiles>,
     states: Arc<JsonStates>,
     /// The storage of every kind asked for, by its name.
     documents: RwLock<HashMap<EntityKind, Arc<FileDocuments>>>,
@@ -48,13 +59,26 @@ impl HomeStore {
     /// The store of the files below the data directory of `config`.
     ///
     /// # Errors
-    /// If the directories cannot be made, so that a path that cannot be written fails the start.
+    /// If the directories cannot be made, so that a path that cannot be written fails the start;
+    /// `StoreError::Validation` for definitions of a directory that is not one of their own.
     pub fn new(config: &HomeStoreConfig) -> StoreResult<Self> {
-        let places = Arc::new(Places::new(config.data_dir.clone(), config.within.clone()));
+        for (kind, files) in &config.definitions {
+            files.check(kind)?;
+        }
+        let places = Arc::new(Places::new(
+            config.data_dir.clone(),
+            config.config_dir.clone(),
+            config.within.clone(),
+        ));
         fs::create_dir_all(places.locks()).map_err(to_backend_error)?;
         let states =
             JsonStates::new(Arc::new(HomeStates::new(Arc::clone(&places))), DEFAULT_JOURNAL_FLOOR);
-        Ok(Self { places, states: Arc::new(states), documents: RwLock::default() })
+        Ok(Self {
+            places,
+            definitions: config.definitions.clone(),
+            states: Arc::new(states),
+            documents: RwLock::default(),
+        })
     }
 }
 
@@ -68,13 +92,25 @@ impl PersistenceBackend for HomeStore {
         if let Some(storage) = all.get(&kind) {
             return Ok(Arc::<FileDocuments>::clone(storage));
         }
-        let layout = HomeDocuments::new(
-            Arc::clone(&self.places),
-            self.places.shelf_of(kind),
-            self.places.locks().join(kind.name()),
-        );
-        let format = Arc::new(JsonFormat);
-        let storage = Arc::new(FileDocuments::new(kind, Arc::new(layout), format, document_of));
+        let lock = self.places.locks().join(kind.name());
+        let storage = Arc::new(match self.definitions.get(kind.name()) {
+            Some(files) => {
+                let places = Arc::clone(&self.places);
+                let definitions =
+                    Arc::new(Definitions::new(places, kind, files, document_of, lock));
+                FileDocuments::new(
+                    kind,
+                    Arc::<Definitions>::clone(&definitions),
+                    definitions,
+                    document_of,
+                )
+            }
+            None => {
+                let shelf = self.places.shelf_of(kind);
+                let layout = HomeDocuments::new(Arc::clone(&self.places), shelf, lock);
+                FileDocuments::new(kind, Arc::new(layout), Arc::new(JsonFormat), document_of)
+            }
+        });
         all.insert(kind, Arc::clone(&storage));
         Ok(storage)
     }
@@ -97,30 +133,57 @@ mod tests {
     use super::*;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::testing::make_personality;
-    use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, PersonalityId};
+    use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality, PersonalityId};
     use caelumora_domain::channel::testing::make_channel;
     use caelumora_domain::channel::{Channel, ChannelId, ChannelState};
-    use caelumora_domain::group::Group;
+    use caelumora_domain::group::{Group, GroupId};
     use caelumora_domain::project::Project;
     use caelumora_domain::query::Query;
     use caelumora_domain::removal::Removal;
     use caelumora_domain::scope::Scope;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::SessionId;
-    use caelumora_domain::store::StoreError;
+    use caelumora_domain::store::{StoreError, Stored};
+    use caelumora_domain::template::testing::make_template;
+    use caelumora_domain::template::SessionTemplate;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::{UserChannelState, UserId, UserProfile};
     use caelumora_domain::value::name::{Name, ScopedName};
+    use caelumora_domain::value::text::Briefing;
+    use caelumora_domain::value::text::Description;
     use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
     use caelumora_store::{suite, EntityStores, Persistence};
+    use definitions::derived_id;
     use std::path::Path;
     use tempfile::tempdir;
     use tokio::task::JoinSet;
+    use uuid::Uuid;
 
-    /// The store below `dir`, a profile lying with its user.
+    /// The definitions of `kind` in the directory `dir`, written as `format` says.
+    fn definitions(kind: &str, dir: &str, format: FileFormat) -> (String, DefinitionFiles) {
+        (kind.to_string(), DefinitionFiles { dir: dir.to_string(), format })
+    }
+
+    /// What the store below `dir` is made of: its data in `dir`, its definitions - the
+    /// personalities, the templates and the bundles - in `dir/config`, a profile lying with its
+    /// user.
+    fn config(dir: &Path) -> HomeStoreConfig {
+        HomeStoreConfig {
+            config_dir: dir.join("config"),
+            data_dir: dir.to_path_buf(),
+            definitions: [
+                definitions("personality", "personalities", FileFormat::Yaml),
+                definitions("session_template", "templates", FileFormat::Yaml),
+                definitions("component_bundle", "bundles", FileFormat::Yaml),
+            ]
+            .into(),
+            within: [("user_profile".to_string(), "user".to_string())].into(),
+        }
+    }
+
+    /// The store below `dir`, as `config` makes it.
     fn store(dir: &Path) -> Arc<HomeStore> {
-        let within = [("user_profile".to_string(), "user".to_string())].into();
-        Arc::new(HomeStore::new(&HomeStoreConfig { data_dir: dir.to_path_buf(), within }).unwrap())
+        Arc::new(HomeStore::new(&config(dir)).unwrap())
     }
 
     fn persistence(store: &Arc<HomeStore>) -> Persistence {
@@ -429,6 +492,312 @@ mod tests {
             let answers = writes.join_all().await;
             let made = answers.iter().filter(|answer| answer.is_ok()).count();
             assert_eq!(made, 1, "{answers:?}");
+        }
+    }
+
+    /// The personality `name` of the global scope.
+    fn global(name: &str) -> ScopedName {
+        ScopedName::new(name, Scope::GlobalScope).unwrap()
+    }
+
+    /// The text of the file at `path`.
+    fn text(path: &Path) -> String {
+        fs::read_to_string(path).unwrap()
+    }
+
+    /// The id of a name is the same always (issue 554): one that changed would show that names
+    /// are folded otherwise, and every file without an id would be another definition.
+    #[test]
+    fn the_id_of_a_name_stays_the_same() {
+        assert_eq!(
+            derived_id(Personality::KIND, &global("plain")).to_string(),
+            "345476c2-4f68-5832-8e80-c61710dd286a"
+        );
+    }
+
+    /// A definition written by hand is read by its name, with the id its name derives.
+    #[tokio::test]
+    async fn a_definition_written_by_hand_is_found_by_its_name() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        fs::write(personalities.join("plain.yaml"), "description: A plain one\n").unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+
+        let found = stores.personalities.find_by_name(&system, &global("plain")).await.unwrap();
+
+        assert_eq!(found.id.0, derived_id(Personality::KIND, &global("plain")));
+        assert_eq!(found.description.unwrap().as_str(), "A plain one");
+        assert!(stores.personalities.get(&system, found.id).await.is_ok(), "and by its id");
+    }
+
+    /// What the file's name and place tell, and what reading it without gives, is not written.
+    #[tokio::test]
+    async fn a_definition_is_written_without_what_its_file_tells() {
+        let dir = tempdir().unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        let id = derived_id(Personality::KIND, &global("plain"));
+        let mut personality = Personality { id: id.into(), ..make_personality("plain") };
+        stores.personalities.create(&system, &mut personality).await.unwrap();
+
+        let path = dir.path().join("config/personalities/plain.yaml");
+        let written = text(&path);
+        for left_out in ["id:", "name:", "scope:", "security_attributes:"] {
+            assert!(!written.contains(left_out), "{left_out} in {written}");
+        }
+        assert!(written.contains("revision:"), "a revision another than reading gives: {written}");
+
+        personality.name = global("renamed");
+        stores.personalities.update(&system, &mut personality).await.unwrap();
+        let renamed = dir.path().join("config/personalities/renamed.yaml");
+        assert!(!path.exists() && renamed.is_file(), "renamed, its file is");
+        assert!(text(&renamed).contains(&id.to_string()), "with the id its name no longer derives");
+        let found = stores.personalities.find_by_name(&system, &global("renamed")).await.unwrap();
+        assert_eq!(found.id, personality.id);
+    }
+
+    /// A file moved by hand without an id is another definition; one with an id is the same.
+    #[tokio::test]
+    async fn a_file_moved_by_hand_keeps_its_definition_by_its_id_alone() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        fs::write(personalities.join("plain.yaml"), "{}\n").unwrap();
+        let kept = Uuid::new_v4();
+        fs::write(personalities.join("kept.yaml"), format!("id: {kept}\n")).unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        let plain = derived_id(Personality::KIND, &global("plain"));
+
+        fs::rename(personalities.join("plain.yaml"), personalities.join("moved.yaml")).unwrap();
+        fs::rename(personalities.join("kept.yaml"), personalities.join("still.yaml")).unwrap();
+
+        assert!(stores.personalities.get(&system, plain.into()).await.is_err(), "a new identity");
+        let moved = stores.personalities.find_by_name(&system, &global("moved")).await.unwrap();
+        assert_eq!(moved.id.0, derived_id(Personality::KIND, &global("moved")));
+        let still = stores.personalities.get(&system, kept.into()).await.expect("found by its id");
+        assert_eq!(still.name, global("still"));
+    }
+
+    /// Two files of one id, or of one name as names compare, are both left out.
+    #[tokio::test]
+    async fn two_files_of_one_definition_are_both_left_out() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        let id = Uuid::new_v4();
+        fs::write(personalities.join("one.yaml"), format!("id: {id}\n")).unwrap();
+        fs::write(personalities.join("copy.yaml"), format!("id: {id}\n")).unwrap();
+        fs::write(personalities.join("Zoë.yaml"), "{}\n").unwrap();
+        fs::write(personalities.join("zoe.yaml"), "{}\n").unwrap();
+        fs::write(personalities.join("alone.yaml"), "{}\n").unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+
+        let listed = stores.personalities.list(&system, &Query::all()).await.unwrap().items;
+
+        let names: Vec<_> = listed.iter().map(|p| p.name.as_str().to_string()).collect();
+        assert_eq!(names, ["alone"]);
+        assert!(stores.personalities.get(&system, id.into()).await.is_err());
+    }
+
+    /// A deleted definition frees its name, and takes it again when it is restored.
+    #[tokio::test]
+    async fn a_deleted_definition_frees_its_name() {
+        let dir = tempdir().unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        let mut first = make_personality("plain");
+        stores.personalities.create(&system, &mut first).await.unwrap();
+        let path = dir.path().join("config/personalities/plain.yaml");
+
+        stores.personalities.delete(&system, first.id, &removal()).await.unwrap();
+        assert!(!path.exists(), "out of the way");
+        let deleted = dir.path().join(format!("config/personalities/.deleted/{}.yaml", first.id));
+        assert!(text(&deleted).contains("plain"), "by its id, its name in it");
+        let mut second = make_personality("plain");
+        stores.personalities.create(&system, &mut second).await.expect("its name is free");
+        assert!(matches!(
+            stores.personalities.restore(&system, first.id).await,
+            Err(StoreError::NameTaken { .. })
+        ));
+        stores.personalities.delete(&system, second.id, &removal()).await.unwrap();
+        assert!(stores.personalities.purge(&system, second.id).await.unwrap());
+        stores.personalities.restore(&system, first.id).await.expect("its name free again");
+        assert!(path.is_file(), "by its name again");
+    }
+
+    /// A definition of a session, a user lies in their directories, its scope told by them.
+    #[tokio::test]
+    async fn a_definition_lies_in_the_directory_of_its_scope() {
+        let dir = tempdir().unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        let session = SessionId::new();
+        let user = UserId::new();
+        let group = GroupId::new();
+        for (scope, place) in [
+            (Scope::SessionScope { session_id: session }, format!("sessions/{session}")),
+            (Scope::UserScope { user_id: user }, format!("users/{user}")),
+            (Scope::GroupScope { group_id: group }, format!("groups/{group}")),
+        ] {
+            let name = ScopedName::new("plain", scope).unwrap();
+            let mut personality = Personality { name: name.clone(), ..make_personality("x") };
+            stores.personalities.create(&system, &mut personality).await.unwrap();
+            let path = dir.path().join(place).join("personalities/plain.yaml");
+            assert!(!text(&path).contains("scope:"), "told by its directory: {}", path.display());
+            assert_eq!(stores.personalities.find_by_name(&system, &name).await.unwrap().name, name);
+        }
+    }
+
+    /// A definition in Markdown has the text after its front matter as a field.
+    #[tokio::test]
+    async fn a_definition_in_markdown_has_its_text_as_a_field() {
+        let dir = tempdir().unwrap();
+        let mut config = config(dir.path());
+        let body = "description".to_string();
+        config.definitions.insert(
+            "personality".to_string(),
+            DefinitionFiles {
+                dir: "personalities".to_string(),
+                format: FileFormat::Markdown { body },
+            },
+        );
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        fs::write(
+            personalities.join("plain.md"),
+            "---\nintroduction: I am plain.\n---\nA plain one",
+        )
+        .unwrap();
+        let stores = opened(&Arc::new(HomeStore::new(&config).unwrap()));
+        let system = SecurityContext::system();
+
+        let mut found = stores.personalities.find_by_name(&system, &global("plain")).await.unwrap();
+        assert_eq!(found.description.as_ref().unwrap().as_str(), "A plain one");
+        assert_eq!(found.introduction.as_ref().unwrap().as_str(), "I am plain.");
+
+        found.description = Some(Description::new("Plainer").unwrap());
+        stores.personalities.update(&system, &mut found).await.unwrap();
+        let written = text(&personalities.join("plain.md"));
+        assert!(written.starts_with("---\n") && written.ends_with("---\nPlainer"), "{written}");
+        let read = stores.personalities.get(&system, found.id).await.unwrap();
+        assert_eq!(read.description.unwrap().as_str(), "Plainer");
+        assert_eq!(read.introduction.unwrap().as_str(), "I am plain.", "the front matter kept");
+    }
+
+    /// A document named so has a link beside its directory by its name, which follows a new name
+    /// and goes with it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_named_document_has_a_link_by_its_name() {
+        let dir = tempdir().unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        let session = SessionId::new();
+        let mut channel = make_channel(session, "main");
+        stores.channels.create(&system, &mut channel).await.unwrap();
+        let channels = dir.path().join(format!("sessions/{session}/channels"));
+        let id = channel.id.to_string();
+        assert_eq!(fs::read_link(channels.join("main")).unwrap(), Path::new(&id));
+
+        channel.name = Name::new("renamed").unwrap();
+        stores.channels.update(&system, &mut channel).await.unwrap();
+        assert_eq!(fs::read_link(channels.join("renamed")).unwrap(), Path::new(&id));
+        assert!(fs::symlink_metadata(channels.join("main")).is_err(), "the old one gone");
+
+        stores.channels.delete(&system, channel.id, &removal()).await.unwrap();
+        assert!(stores.channels.purge(&system, channel.id).await.unwrap());
+        assert!(fs::symlink_metadata(channels.join("renamed")).is_err(), "and with it");
+    }
+
+    /// What lies in a channel's scope does not keep the channel's link, nor its session's
+    /// directory, from going.
+    #[tokio::test]
+    async fn a_session_goes_whole_with_what_lay_in_its_channels() {
+        let dir = tempdir().unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        let session = SessionId::new();
+        stores.sessions.create(&system, &mut bare_session(session)).await.unwrap();
+        let mut channel = make_channel(session, "main");
+        stores.channels.create(&system, &mut channel).await.unwrap();
+        let in_channel = Scope::ChannelScope { session_id: session, channel_id: channel.id };
+        let mut helper = agent("helper", in_channel);
+        stores.agents.create(&system, &mut helper).await.unwrap();
+
+        stores.channels.delete(&system, channel.id, &removal()).await.unwrap();
+        assert!(stores.channels.purge(&system, channel.id).await.unwrap());
+        stores.agents.delete(&system, helper.id, &removal()).await.unwrap();
+        assert!(stores.agents.purge(&system, helper.id).await.unwrap());
+        stores.sessions.delete(&system, session, &removal()).await.unwrap();
+        assert!(stores.sessions.purge(&system, session).await.unwrap());
+
+        assert!(!dir.path().join(format!("sessions/{session}")).exists());
+    }
+
+    /// What the program writes in YAML and Markdown is read back as it was, many lines too.
+    #[tokio::test]
+    async fn what_is_written_is_read_back() {
+        let dir = tempdir().unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        let briefing = "One line,\n\nanother after a blank one,\n  and one indented.";
+        let mut template = SessionTemplate {
+            briefing: Some(Briefing::new(briefing).unwrap()),
+            ..make_template("briefed")
+        };
+        stores.session_templates.create(&system, &mut template).await.unwrap();
+        let read = stores.session_templates.get(&system, template.id).await.unwrap();
+        assert_eq!(read.briefing.unwrap().as_str(), briefing);
+    }
+
+    /// A field `name` in a file named by its name is not what it is found by.
+    #[tokio::test]
+    async fn a_definition_is_named_by_its_file() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        fs::write(personalities.join("plain.yaml"), "name: other\n").unwrap();
+        fs::write(personalities.join(".swap.yaml"), "{}\n").unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+
+        assert!(stores.personalities.find_by_name(&system, &global("plain")).await.is_ok());
+        assert!(stores.personalities.find_by_name(&system, &global("other")).await.is_err());
+        let listed = stores.personalities.list(&system, &Query::all()).await.unwrap().items;
+        assert_eq!(listed.len(), 1, "a hidden file is no definition");
+    }
+
+    /// A copy made after the definitions were read is seen, and both are left out.
+    #[tokio::test]
+    async fn a_copy_made_later_is_seen() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        let id = Uuid::new_v4();
+        fs::write(personalities.join("one.yaml"), format!("id: {id}\n")).unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+        assert!(stores.personalities.get(&system, id.into()).await.is_ok());
+
+        fs::copy(personalities.join("one.yaml"), personalities.join("copy.yaml")).unwrap();
+
+        assert!(stores.personalities.get(&system, id.into()).await.is_err());
+    }
+
+    #[test]
+    fn definitions_lie_in_one_directory_of_their_own() {
+        let dir = tempdir().unwrap();
+        for wrong in ["", "a/b", ".deleted", ".."] {
+            let mut config = config(dir.path());
+            config.definitions.insert(
+                "personality".to_string(),
+                DefinitionFiles { dir: wrong.to_string(), format: FileFormat::Yaml },
+            );
+            assert!(HomeStore::new(&config).is_err(), "{wrong}");
         }
     }
 }

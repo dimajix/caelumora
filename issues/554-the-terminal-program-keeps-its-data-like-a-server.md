@@ -348,3 +348,14 @@ Each reviewed and committed on its own, on a branch of this issue.
   id first: what does not meet a filter is passed over for what follows, so that how many are
   needed cannot be told, and a bounded selection would list the directory anew within one scan.
   A format is given the path, since a definition takes its name and its id from it.
+- **2026-11-10** — Step 4, its second part: the definitions as files and the links of names. A
+  definition of a user's or a group's scope lies in the directory of that user or group in the data
+  directory, not in the configuration directory with its scope in it: the names of different
+  scopes would share a file there. A deleted definition lies by its id in `.deleted`, so that its
+  name is free, as the store asks of what is deleted. Looking one up by its name reads every file of
+  the kind: whether another file holds the same id or name is told by reading them all, also for
+  one looked up by its id, so that a copy made meanwhile is seen. One type of `home`,
+  `Definitions`, is the layout and the format of a kind's definitions alike. A file named by a
+  name takes it from its file, whatever a field says. No link is made for what lies in a user's or
+  a group's scope, whose names share a directory, nor under a name that is an id. What prints the
+  id of a file goes public with `caelumora id`, in step 6.

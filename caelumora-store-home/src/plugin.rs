@@ -53,7 +53,10 @@ mod tests {
     fn the_stores_keep_their_data_below_the_data_directory() {
         let backends = Backends::with_plugins(&[&HomeStorePlugin]);
         let dir = tempfile::tempdir().unwrap();
-        let home = BackendConfig::new("home", json!({ "data_dir": dir.path() }));
+        let home = BackendConfig::new(
+            "home",
+            json!({ "data_dir": dir.path(), "config_dir": dir.path().join("config") }),
+        );
         let files = backends
             .make_one::<dyn PersistenceBackend>(
                 "entity store",

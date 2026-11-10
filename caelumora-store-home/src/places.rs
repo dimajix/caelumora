@@ -1,12 +1,14 @@
-//! Where things lie below the data directory (issue 554), told from their ids and scopes: a kind's
-//! documents are found by looking through the directories things can lie in, and what is found
-//! is remembered.
+//! Where things lie below the data and the configuration directory (issue 554), told from their
+//! ids, names and scopes: a kind's documents are found by looking through the directories things
+//! can lie in, and what is found is remembered.
 
 use caelumora_domain::channel::{Channel, ChannelId};
+use caelumora_domain::group::Group;
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::Session;
 use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
+use caelumora_domain::user::User;
 use caelumora_domain::value::name::ScopedName;
 use caelumora_store_json::{entries_in, id_named, to_backend_error};
 use futures::stream::{self, BoxStream};
@@ -37,24 +39,67 @@ impl Shelf {
     fn of(kind: &str) -> Self {
         Self { family: family_of(kind), file: format!("{kind}.json"), beside: None }
     }
+
+    /// Whether its documents lie beside those of another kind, in their directories.
+    pub(crate) fn lies_beside(&self) -> bool {
+        self.beside.is_some()
+    }
 }
 
-/// Which directories things lie in, below `data_dir`. What is found by looking is remembered,
-/// never stored, and looked for again once it is not there any more, so that what another program
-/// wrote or removed is seen.
+/// The text a file or a link is named by for `name`: the name as it is, but for `%`, `/` and a
+/// leading `.`, which are written `%25`, `%2F` and `%2E`, so that it can be told back.
+pub(crate) fn file_name_of(name: &str) -> String {
+    let escaped = name.replace('%', "%25").replace('/', "%2F");
+    match escaped.strip_prefix('.') {
+        Some(rest) => format!("%2E{rest}"),
+        None => escaped,
+    }
+}
+
+/// The name a file or a link is named by, as `file_name_of` wrote it; `None` for what it cannot
+/// have written, as a hidden file.
+pub(crate) fn name_of_file(text: &str) -> Option<String> {
+    if text.starts_with('.') {
+        return None;
+    }
+    let mut name = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('%') {
+        name.push_str(&rest[..at]);
+        let escaped = rest.get(at..at + 3)?;
+        name.push(match escaped {
+            "%25" => '%',
+            "%2F" => '/',
+            "%2E" if at == 0 && name.is_empty() => '.',
+            _ => return None,
+        });
+        rest = &rest[at + 3..];
+    }
+    name.push_str(rest);
+    Some(name)
+}
+
+/// Which directories things lie in, below `data_dir`, and definitions of the global scope below
+/// `config_dir`. What is found by looking is remembered, never stored, and looked for again once it
+/// is not there any more, so that what another program wrote or removed is seen.
 #[derive(Debug)]
 pub(crate) struct Places {
     data_dir: PathBuf,
+    config_dir: PathBuf,
     /// The kinds that lie beside the document of their id of another kind.
     within: BTreeMap<String, String>,
     found: Mutex<HashMap<(Shelf, Uuid), PathBuf>>,
 }
 
 impl Places {
-    /// The places below `data_dir`, where the kinds named in `within` lie beside the document of
-    /// their id of the kind named with them.
-    pub(crate) fn new(data_dir: PathBuf, within: BTreeMap<String, String>) -> Self {
-        Self { data_dir, within, found: Mutex::default() }
+    /// The places below `data_dir` and `config_dir`, where the kinds named in `within` lie beside
+    /// the document of their id of the kind named with them.
+    pub(crate) fn new(
+        data_dir: PathBuf,
+        config_dir: PathBuf,
+        within: BTreeMap<String, String>,
+    ) -> Self {
+        Self { data_dir, config_dir, within, found: Mutex::default() }
     }
 
     /// The directory of the locks of the kinds.
@@ -134,6 +179,78 @@ impl Places {
                 Ok(exists(&path).await?.then_some((id, path)))
             })
             .boxed()
+    }
+
+    /// Every directory a definition can lie in: the configuration directory, those of the data
+    /// directory something lies in, and those of the users and the groups. Each holds the
+    /// definitions of its scope (`scope_of`).
+    ///
+    /// # Errors
+    /// If a directory cannot be looked into.
+    pub(crate) async fn holders_of_definitions(&self) -> StoreResult<Vec<PathBuf>> {
+        let mut holders = vec![self.config_dir.clone()];
+        for holder in self.holders().await? {
+            holders.extend(paths_of_ids(holder.join(family_of(User::KIND.name()))).await?);
+            holders.extend(paths_of_ids(holder.join(family_of(Group::KIND.name()))).await?);
+            if holder != self.data_dir {
+                holders.push(holder);
+            }
+        }
+        Ok(holders)
+    }
+
+    /// The scope of what lies in the directory `holder`, one `holders_of_definitions` answers.
+    pub(crate) fn scope_of(&self, holder: &Path) -> Option<Scope> {
+        if holder == self.config_dir {
+            return Some(Scope::GlobalScope);
+        }
+        let parts: Vec<&str> = holder
+            .strip_prefix(&self.data_dir)
+            .ok()?
+            .iter()
+            .map(|part| part.to_str())
+            .collect::<Option<_>>()?;
+        let [.., family, id] = parts.as_slice() else { return None };
+        let id = id_named(id)?;
+        let is = |kind: EntityKind| *family == family_of(kind.name());
+        Some(if is(Channel::KIND) {
+            let [.., sessions, session, _, _] = parts.as_slice() else { return None };
+            if *sessions != family_of(Session::KIND.name()) {
+                return None;
+            }
+            Scope::ChannelScope { session_id: id_named(session)?.into(), channel_id: id.into() }
+        } else if is(Session::KIND) {
+            Scope::SessionScope { session_id: id.into() }
+        } else if is(Project::KIND) {
+            Scope::ProjectScope { project_id: id.into() }
+        } else if is(User::KIND) {
+            Scope::UserScope { user_id: id.into() }
+        } else if is(Group::KIND) {
+            Scope::GroupScope { group_id: id.into() }
+        } else {
+            return None;
+        })
+    }
+
+    /// The directory of the definitions of `scope`: the configuration directory for the global
+    /// one, that of its user or its group for theirs, where names of others' cannot take its
+    /// files, and that of what holds it otherwise.
+    ///
+    /// # Errors
+    /// If a directory cannot be looked into.
+    pub(crate) async fn holder_of_definitions(&self, scope: &Scope) -> StoreResult<PathBuf> {
+        match scope {
+            Scope::GlobalScope => Ok(self.config_dir.clone()),
+            Scope::UserScope { user_id } => {
+                self.directory_of(&Shelf::of(User::KIND.name()), (*user_id).into()).await
+            }
+            Scope::GroupScope { group_id } => {
+                self.directory_of(&Shelf::of(Group::KIND.name()), (*group_id).into()).await
+            }
+            Scope::SessionScope { .. }
+            | Scope::ChannelScope { .. }
+            | Scope::ProjectScope { .. } => self.holder_of(scope).await,
+        }
     }
 
     /// The directory of what lies in `scope`: the data directory for what no directory holds, as a
@@ -232,4 +349,27 @@ fn directories_of_ids(dir: PathBuf) -> impl Stream<Item = StoreResult<(Uuid, Pat
 /// The directories in `dir` named by an id.
 async fn paths_of_ids(dir: PathBuf) -> StoreResult<Vec<PathBuf>> {
     directories_of_ids(dir).map_ok(|(_, path)| path).try_collect().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_name_is_told_back_from_the_name_of_its_file() {
+        for (name, file) in [
+            ("plain", "plain"),
+            ("a/b", "a%2Fb"),
+            ("50%", "50%25"),
+            (".hidden", "%2Ehidden"),
+            ("a.b", "a.b"),
+            ("Zoë", "Zoë"),
+        ] {
+            assert_eq!(file_name_of(name), file);
+            assert_eq!(name_of_file(file).as_deref(), Some(name));
+        }
+        assert_eq!(name_of_file("a%2Eb"), None, "a dot is written so only at the start");
+        assert_eq!(name_of_file("a%"), None);
+        assert_eq!(name_of_file(".hidden"), None, "a hidden file is none it wrote");
+    }
 }
