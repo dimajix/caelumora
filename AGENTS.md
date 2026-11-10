@@ -136,7 +136,8 @@ under `## History`), and numbers are never reused.
 5.  **Document.** Update the document in `docs/` on the subject, `docs/ARCHITECTURE.md` and/or
     `README.md` where your change changes a concept, a rule or how the parts fit together; what a
     type or method does in detail goes into its doc comments. What belongs where is described in
-    [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#what-goes-where).
+    [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#what-goes-where). Check a factual claim against
+    the code or the data before you write it into a document or an issue.
 6.  **Self-review.** Read the whole diff as a reviewer would, and answer:
     *   Can it be simpler? For every new type, trait, method and parameter: is it needed, or could
         an existing one take its place?
@@ -162,7 +163,9 @@ under `## History`), and numbers are never reused.
     and append a dated entry under `## History`.
 9.  **Report.** Leave the change in the working tree and summarise it: what it changes, what the
     self-review simplified and what it could not, your findings (below) and the reviewer's, and
-    which stored data has to be deleted, if any. Then wait for the maintainer's review.
+    which stored data has to be deleted, if any. State exactly what was verified and what was not,
+    including skipped database tests, untested target systems and UI changes not checked in a
+    browser. Then wait for the maintainer's review.
 
 ## Working together
 
@@ -172,6 +175,10 @@ Architecture questions are discussed before they are implemented: where a method
 owns a responsibility, how context reaches the code that needs it, new types or layers, a new or
 changed public interface. Lay out the options with their trade-offs, give a recommendation, and wait
 for the decision. Proposals from the maintainer are to be assessed honestly, not just accepted.
+
+Before you propose a design or a rename, check the issue files and the documents on its subject,
+[SECURITY.md](docs/SECURITY.md) included, for decisions already made. Where your proposal conflicts
+with one, say so, instead of silently reopening or contradicting it.
 
 The rules of this document and of `docs/` serve the goal above. Where one stands in the way of a
 clean solution, present the problem and say which rule blocks it, rather than bending the solution
@@ -200,6 +207,8 @@ branch for the same work, keep using it. Only two things happen on `main` direct
 maintainer explicitly asks for there, and opening a new issue - in a commit of its own, pushed at
 once, as [issues/README.md](issues/README.md#creating-a-new-issue) describes. Changing an existing
 issue - its status, its history, a decision recorded - belongs to the work on it, on its branch.
+Where the maintainer may expect work directly on `main`, confirm the target branch before
+committing.
 
 Work of several steps - a plan whose steps an issue records - is reviewed and committed step by
 step: once a step is done and verified, stop and report it. Only after the maintainer has reviewed
@@ -207,9 +216,25 @@ and accepted it, commit it on the work's branch - one commit per step, so that e
 reviewable on its own - and only then begin the next. Apart from that, commit only when asked to.
 Do not push unless asked to, except a new issue.
 
+A commit message has a short subject, a blank line, and then the body. Before pushing, run
+`git remote -v` and use the actual name of the remote: a clone need not have an `origin` (the
+maintainer's has `dimajix` and `github`). Before amending or rewriting a commit, check with
+`git branch -r --contains <commit>` whether it has been pushed; a pushed commit is not rewritten
+without the maintainer's explicit approval.
+
 When the work is done, ask whether the branch should be merged into `main`, and merge only after the
 maintainer agreed. Before merging, update `main` from the remote repository (`git fetch`, then
 fast-forward `main` to its upstream, `git merge --ff-only @{upstream}`), then merge the branch into
 it. Resolve merge conflicts so that the intent of both sides is kept; where that is not clear, ask
 instead of guessing. After a merge that needed conflict resolution, run the tests and
 `cargo clippy --workspace --all-targets` again before reporting the merge as done.
+
+### Editing and shell safety
+
+*   Markdown in issue files and documents stays within 100 characters, by the rules and exceptions
+    of [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#comments-and-documentation):
+    `scripts/wrapping.sh` checks it, and the pre-commit hook refuses a commit that breaks it.
+*   Markdown is not rewrapped or bulk-edited by an ad hoc script: make targeted edits and review
+    the resulting diff.
+*   Never use `pkill -f` with a pattern that appears in the current command line: it can kill your
+    own shell. Find the exact PID first, and kill that PID.
