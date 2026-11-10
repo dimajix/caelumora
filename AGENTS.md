@@ -234,7 +234,8 @@ instead of guessing. After a merge that needed conflict resolution, run the test
 *   Markdown in issue files and documents stays within 100 characters, by the rules and exceptions
     of [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#comments-and-documentation):
     `scripts/wrapping.sh` checks it, and the pre-commit hook refuses a commit that breaks it.
-*   Markdown is not rewrapped or bulk-edited by an ad hoc script: make targeted edits and review
-    the resulting diff.
+*   Markdown is rewrapped by a script only one paragraph of prose at a time, never a list, a table
+    or a code block, and never across files; then `scripts/wrapping.sh` runs and the resulting diff
+    is read. A change of a few words is edited by hand, so that the diff shows what changed.
 *   Never use `pkill -f` with a pattern that appears in the current command line: it can kill your
     own shell. Find the exact PID first, and kill that PID.
