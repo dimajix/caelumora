@@ -235,7 +235,9 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     );
     let id: ArtifactId = first["artifact"].as_str().unwrap().parse().unwrap();
     let artifact = store(&world).get(&World::system(), id).await.unwrap();
-    let kept = world.files.path().join("content").join("artifacts").join(id.to_string());
+    let project = artifact.project().unwrap().to_string();
+    let kept =
+        world.files.path().join("content").join("artifacts").join(project).join(id.to_string());
     let content = |number: usize| kept.join(artifact.versions[number - 1].content.to_string());
     assert_eq!(fs::read_to_string(content(1)).unwrap(), "a,b", "the first as it was");
     assert_eq!(fs::read_to_string(content(2)).unwrap(), "a,b\n1,2");
@@ -990,15 +992,14 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     let refused = manager(&world).restore(&alice, draft.id).await;
     assert!(matches!(refused, Err(ArtifactError::NotFound(_))), "{refused:?}");
     assert!(world.manager.purge(&World::system(), session_id).await.unwrap());
+    let project = artifact.project().unwrap().to_string();
+    let content = world.files.path().join("content").join("artifacts").join(project);
     for gone in [artifact.id, draft.id] {
         assert!(
             store(&world).get_deleted(&World::system(), gone).await.is_err(),
             "what lay in its own project went with the session"
         );
-        assert!(
-            !world.files.path().join("content").join("artifacts").join(gone.to_string()).exists(),
-            "its content too"
-        );
+        assert!(!content.join(gone.to_string()).exists(), "its content too");
     }
 }
 
@@ -1606,6 +1607,29 @@ async fn a_version_published_meanwhile_is_numbered_after_what_was_published() {
     let mut kept = files_under(files.path());
     kept.sort();
     assert_eq!(kept, [b"a,b".to_vec(), b"c,d,e".to_vec()], "both kept");
+}
+
+/// A first version whose document cannot be stored leaves no content, wherever it was kept.
+#[tokio::test]
+async fn a_first_version_whose_document_is_refused_leaves_no_content() {
+    let (store, refusals) = ContendedStore::stores(Artifact::KIND);
+    let Kept { files, manager, alice, name } = kept_in(store).await;
+    refusals.store(1, Ordering::SeqCst);
+
+    let refused = manager
+        .publish(
+            &alice,
+            (SessionId::new(), ChannelId::new()),
+            (3, file("a,b")),
+            &Classification::PUBLIC,
+            &name,
+            None,
+        )
+        .await;
+
+    assert!(matches!(refused, Err(ArtifactError::Store(_))), "{refused:?}");
+    assert_eq!(refusals.load(Ordering::SeqCst), 0, "the document was refused");
+    assert!(files_under(files.path()).is_empty(), "and what was kept for it is gone");
 }
 
 /// Issue 492: an artifact's purge is begun before its content goes, so that one that fails between

@@ -90,8 +90,8 @@ impl Field for ArtifactField {
 pub struct Artifact {
     pub id: ArtifactId,
     /// What it is found by and where it lies: a file name, unique in its project (issue 250), in
-    /// the project's scope (issue 467). The project says how long it is kept, not whose it is: it
-    /// is its owner's.
+    /// the project's scope (issue 467), fixed when the artifact is made: its content lies under
+    /// its project. The project says how long it is kept, not whose it is: it is its owner's.
     #[serde(flatten)]
     pub name: ScopedName,
     /// The name of the storage its content lies in, as the configuration
@@ -133,7 +133,7 @@ pub struct ArtifactVersion {
     /// (`Artifact::add_version`).
     pub number: u32,
     /// Where its content lies in the artifact's storage: under a key of this publication's own
-    /// (`artifacts/<artifact>/<content>`, issue 492), as an attachment lies under its
+    /// (`artifacts/<project>/<artifact>/<content>`, issue 492), as an attachment lies under its
     /// `ContentId`.
     pub content: ContentId,
     pub size: u64,

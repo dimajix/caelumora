@@ -79,7 +79,8 @@ impl From<ArtifactError> for ApiError {
             ArtifactError::StorageGone(e) => e.into(),
             ArtifactError::Store(e) => e.into(),
             // A caller that is no user, a name not in a project's scope - which the publisher
-            // vouches for -, a kernel without artifacts: not the client's request.
+            // vouches for, and which a stored document has -, a kernel without artifacts: not the
+            // client's request.
             ArtifactError::OwnerNotAUser
             | ArtifactError::InvalidScope
             | ArtifactError::NotJoined => {

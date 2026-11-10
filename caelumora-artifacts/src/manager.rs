@@ -2,8 +2,9 @@
 //! content kept first, then the document, then announced -, deletes, restores and purges them -
 //! also with the project that holds their scope (`scoped`, as their `ScopeMember`) -, and is the
 //! only code that keeps content in the key space `artifacts` of the storages of content (issue
-//! 282): a version under `artifacts/<artifact>/<content>` - a key of its publication's own,
-//! which the version names (issue 492) -, an artifact's versions under `artifacts/<artifact>`.
+//! 282): a version under `artifacts/<project>/<artifact>/<content>` - a key of its publication's
+//! own, which the version names (issue 492) -, an artifact's versions under
+//! `artifacts/<project>/<artifact>`.
 //!
 //! An artifact is published into the scope of the project its session's results go to (issue 467),
 //! made with the first version of its name there and gone with the project: with the session where
@@ -24,6 +25,7 @@ use caelumora_domain::config::DEFAULT_MAX_FILE_BYTES;
 use caelumora_domain::content::ContentId;
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
+use caelumora_domain::project::ProjectId;
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{AclEntry, SecuredMut, SecurityAttributes, Subject};
@@ -65,14 +67,25 @@ impl Default for ArtifactsConfig {
     }
 }
 
-/// The key the content `content` of artifact `artifact` lies under.
-fn content_key(artifact: ArtifactId, content: ContentId) -> String {
-    format!("{}/{content}", versions_key(artifact))
+/// The key the content `content` lies under, of the artifact whose versions lie under `versions`.
+fn content_key(versions: &str, content: ContentId) -> String {
+    format!("{versions}/{content}")
 }
 
-/// The key every version of artifact `artifact` lies under.
-fn versions_key(artifact: ArtifactId) -> String {
-    format!("artifacts/{artifact}")
+/// The key every version of artifact `artifact` lies under, in the project `project` it lies in:
+/// known before the document is, which does not exist at the first publication, and fixed, since
+/// an artifact stays in its project.
+fn versions_key(project: ProjectId, artifact: ArtifactId) -> String {
+    format!("artifacts/{project}/{artifact}")
+}
+
+/// The key every version of `artifact` lies under.
+///
+/// # Errors
+/// `InvalidScope` for a document that could not be stored (`Artifact::project`).
+fn versions_key_of(artifact: &Artifact) -> ArtifactResult<String> {
+    let project = artifact.project().ok_or(ArtifactError::InvalidScope)?;
+    Ok(versions_key(project, artifact.id))
 }
 
 /// `NotFound` for artifact `id` where the store found nothing.
@@ -239,7 +252,7 @@ impl ArtifactManager {
         let content_id = ContentId::new();
         let digest = keep_digested(
             storage.as_ref(),
-            &content_key(id, content_id),
+            &content_key(&versions_key(project_id, id), content_id),
             size,
             content,
             self.max_bytes,
@@ -289,7 +302,7 @@ impl ArtifactManager {
         let (artifact, number) = match stored {
             Ok(written) => written,
             Err(e) => {
-                self.forget(storage, id, content_id, made).await;
+                self.forget(storage, project_id, id, content_id, made).await;
                 return Err(e.into());
             }
         };
@@ -354,24 +367,25 @@ impl ArtifactManager {
         self.artifacts.update(ctx, artifact).await
     }
 
-    /// Removes what was kept as `content` of artifact `artifact` for a
-    /// publication that failed after - all of it for an artifact that was
-    /// to be made by it. Logged where it fails: the failure that led here
-    /// is what the caller is told.
+    /// Removes what was kept as `content` of artifact `artifact` of `project` for a publication
+    /// that failed after - all of it for an artifact that was to be made by it. Logged where it
+    /// fails: the failure that led here is what the caller is told.
     async fn forget(
         &self,
         storage: &Arc<dyn ContentStorage>,
+        project: ProjectId,
         artifact: ArtifactId,
         content: ContentId,
         made: bool,
     ) {
+        let versions = versions_key(project, artifact);
         let removed = if made {
-            storage.remove_under(&versions_key(artifact)).await
+            storage.remove_under(&versions).await
         } else {
-            storage.delete(&content_key(artifact, content)).await
+            storage.delete(&content_key(&versions, content)).await
         };
         if let Err(e) = removed {
-            warn!(%artifact, %content, "What was kept of a publication that failed stays: {e}");
+            warn!(%project, %artifact, %content, "What was kept of a publication that failed stays: {e}");
         }
     }
 
@@ -380,7 +394,8 @@ impl ArtifactManager {
     /// (`ArtifactView::content`, issue 292).
     ///
     /// # Errors
-    /// `VersionNotFound`, `StorageGone`, or `Content`.
+    /// `VersionNotFound`, `StorageGone`, `InvalidScope` for a document that could not be stored, or
+    /// `Content`.
     pub(crate) async fn content_of(
         &self,
         artifact: &Artifact,
@@ -391,7 +406,7 @@ impl ArtifactManager {
         };
         self.storages
             .kept_in(&artifact.storage)?
-            .get(&content_key(artifact.id, version.content))
+            .get(&content_key(&versions_key_of(artifact)?, version.content))
             .await
             .map_err(|e| match e {
                 ContentError::NotFound(_) => {
@@ -530,7 +545,8 @@ impl ArtifactManager {
     /// that the next purge tries again. `false` if there was nothing deleted the caller could see.
     ///
     /// # Errors
-    /// `PermissionDenied`, `StorageGone`, `Content`, or whatever the store reports.
+    /// `PermissionDenied`, `StorageGone`, `InvalidScope` for a document that could not be stored,
+    /// `Content`, or whatever the store reports.
     pub async fn purge(&self, ctx: &SecurityContext, id: ArtifactId) -> ArtifactResult<bool> {
         let purged = purge_behind(self.artifacts.as_ref(), ctx, id, async |artifact| {
             self.remove_content(artifact).await
@@ -545,9 +561,10 @@ impl ArtifactManager {
     /// Removes the content of `artifact`, every version of it, which is about to be purged.
     ///
     /// # Errors
-    /// `StorageGone` if its storage is no longer configured, or `Content` if removing it failed.
+    /// `StorageGone` if its storage is no longer configured, `InvalidScope` for a document that
+    /// could not be stored, or `Content` if removing it failed.
     async fn remove_content(&self, artifact: &Artifact) -> ArtifactResult<()> {
-        self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key(artifact.id)).await?;
+        self.storages.kept_in(&artifact.storage)?.remove_under(&versions_key_of(artifact)?).await?;
         Ok(())
     }
 }

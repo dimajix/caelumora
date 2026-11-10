@@ -308,3 +308,6 @@ Each reviewed and committed on its own, on a branch of this issue.
   in the name of whoever makes it and before anything is stored; what an agent keeps is its id. The
   rule of addresses and identities is in `docs/STORAGE.md`, and `docs/CRATES.md` allows a plugin
   that builds a backend on another's. Stored data: the session templates, to be deleted.
+- **2026-11-10** — Step 3: the key of an artifact's content holds its project,
+  `artifacts/<project>/<artifact>/<content>`. An artifact never leaves its project: lifting one
+  keeps its id. Stored data: the content of artifacts and their documents, to be deleted.
