@@ -1,6 +1,6 @@
 # 554 — The terminal program keeps its data as a server does, out of reach of its user
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Persistence
@@ -299,3 +299,8 @@ Each reviewed and committed on its own, on a branch of this issue.
   identity, an `id` in a file taking precedence; `Agent::personality_id`, owner, access list and
   scope stay ids; configuration held by state stays by name; a crate of its own over the state side
   of the JSON store; directories of state by id, with names as symbolic links.
+- **2026-11-10** — Step 1: `JsonStates` and `StateLayout` out of `JsonFileStore`, which no longer is
+  a state store itself but hands out its `JsonStates`; a layout says where alone, and what is
+  written makes its directories. `JsonFileStore::new` takes the journal's floor in place of
+  `with_journal_floor`. To be settled in the plan of step 4: the store suite puts states of channels
+  that have no document, for which the layout of `home` knows no session.

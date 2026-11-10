@@ -1,19 +1,17 @@
-//! The transcripts of the agents, as the `JsonFileStore` keeps them (issue
-//! 380): per agent and channel a directory beside the state's snapshot,
-//! `<agent>.transcript`, with the chain as every chain is kept (`chains`)
-//! and nothing laid over it. Slow where it has to be - a path is followed
-//! back segment by segment, a message is looked for in every segment -,
-//! which a database's indexes are for.
+//! The transcripts of the agents, as `JsonStates` keeps them (issue 380): per agent and channel a
+//! directory beside the state's snapshot, `<agent>.transcript`, with the chain as every chain is
+//! kept (`chains`) and nothing laid over it. Slow where it has to be - a path is followed back
+//! segment by segment, a message is looked for in every segment -, which a database's indexes are
+//! for.
 //!
-//! Beside it the prompt texts and the tool sets the agent's model was given
-//! (issue 383), and the frames of the contexts its messages were produced
-//! from (issue 426), in `<agent>.given`: a file per digest,
-//! `prompt-<digest>.json`, `tools-<digest>.json` and `frame-<digest>.json`,
-//! read by its digest and written once - one there already is not written
-//! again.
+//! Beside it the prompt texts and the tool sets the agent's model was given (issue 383), and the
+//! frames of the contexts its messages were produced from (issue 426), in `<agent>.given`: a file
+//! per digest, `prompt-<digest>.json`, `tools-<digest>.json` and `frame-<digest>.json`, read by its
+//! digest and written once - one there already is not written again.
 
 use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
-use super::{read_json_opt, size_of, to_backend_error, write_json_atomic, JsonFileStore};
+use super::states::{size_of, JsonStates};
+use super::{read_json_opt, to_backend_error, write_json_atomic};
 use async_trait::async_trait;
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::chain::{Node, Position};
@@ -59,11 +57,11 @@ async fn write_kept<V: Serialize + Clone>(
     Ok(())
 }
 
-impl JsonFileStore {
+impl JsonStates {
     /// The directory of the transcript of `agent` in `channel`, beside the
     /// snapshot of its state.
-    pub(super) fn transcript_dir(&self, agent: AgentId, channel: ChannelId) -> PathBuf {
-        self.agent_channel_state_path(agent, channel).with_extension("transcript")
+    async fn transcript_dir(&self, agent: AgentId, channel: ChannelId) -> StoreResult<PathBuf> {
+        Ok(self.agent_channel_state_path(agent, channel).await?.with_extension("transcript"))
     }
 
     /// Appends what `transcript`, that of `agent` in `channel` as its state
@@ -75,20 +73,16 @@ impl JsonFileStore {
         transcript: &mut Transcript,
     ) -> StoreResult<()> {
         let Some(changes) = transcript.changes() else { return Ok(()) };
-        chains::append(
-            &self.transcript_dir(agent, channel),
-            transcript_of(agent, channel),
-            changes,
-        )
-        .await?;
+        let dir = self.transcript_dir(agent, channel).await?;
+        chains::append(&dir, transcript_of(agent, channel), changes).await?;
         transcript.mark_stored();
         Ok(())
     }
 
     /// The directory of the prompt texts, tool sets and frames of `agent` in
     /// `channel`, beside the snapshot of its state.
-    pub(super) fn given_dir(&self, agent: AgentId, channel: ChannelId) -> PathBuf {
-        self.agent_channel_state_path(agent, channel).with_extension("given")
+    async fn given_dir(&self, agent: AgentId, channel: ChannelId) -> StoreResult<PathBuf> {
+        Ok(self.agent_channel_state_path(agent, channel).await?.with_extension("given"))
     }
 
     /// Writes the prompt texts, the tool sets and the frames `state`, that
@@ -100,7 +94,7 @@ impl JsonFileStore {
         channel: ChannelId,
         state: &mut AgentChannelState,
     ) -> StoreResult<()> {
-        let dir = self.given_dir(agent, channel);
+        let dir = self.given_dir(agent, channel).await?;
         write_kept(&dir, "prompt", &state.prompts).await?;
         write_kept(&dir, "tools", &state.offered_tools).await?;
         write_kept(&dir, "frame", &state.frames).await?;
@@ -118,21 +112,21 @@ impl JsonFileStore {
         channel: ChannelId,
         from: Position,
     ) -> StoreResult<Transcript> {
-        chains::load(&self.transcript_dir(agent, channel), transcript_of(agent, channel), from)
-            .await
+        let dir = self.transcript_dir(agent, channel).await?;
+        chains::load(&dir, transcript_of(agent, channel), from).await
     }
 }
 
 #[async_trait]
-impl TranscriptStore for JsonFileStore {
+impl TranscriptStore for JsonStates {
     async fn path(
         &self,
         agent: AgentId,
         channel: ChannelId,
         digest: Digest,
     ) -> StoreResult<Option<Vec<Node<TranscriptEntry>>>> {
-        chains::path(&self.transcript_dir(agent, channel), transcript_of(agent, channel), digest)
-            .await
+        let dir = self.transcript_dir(agent, channel).await?;
+        chains::path(&dir, transcript_of(agent, channel), digest).await
     }
 
     async fn message(
@@ -141,7 +135,7 @@ impl TranscriptStore for JsonFileStore {
         channel: ChannelId,
         id: MessageId,
     ) -> StoreResult<Option<Message>> {
-        let dir = self.transcript_dir(agent, channel);
+        let dir = self.transcript_dir(agent, channel).await?;
         let end = read_head(&dir).await?.end;
         let nodes: Vec<Node<TranscriptEntry>> = read_chain(&dir, Position::START, end).await?;
         Ok(known(nodes.iter(), id))
@@ -153,7 +147,7 @@ impl TranscriptStore for JsonFileStore {
         channel: ChannelId,
         ids: &[MessageId],
     ) -> StoreResult<HashSet<MessageId>> {
-        let dir = self.transcript_dir(agent, channel);
+        let dir = self.transcript_dir(agent, channel).await?;
         let end = read_head(&dir).await?.end;
         let mut wanted: HashSet<MessageId> = ids.iter().copied().collect();
         let mut found = HashSet::new();
@@ -176,7 +170,7 @@ impl TranscriptStore for JsonFileStore {
         channel: ChannelId,
         digests: &[Digest],
     ) -> StoreResult<BTreeMap<Digest, String>> {
-        let dir = self.given_dir(agent, channel);
+        let dir = self.given_dir(agent, channel).await?;
         let mut prompts = BTreeMap::new();
         for &digest in digests {
             if let Some(text) = read_json_opt(&given_path(&dir, "prompt", digest)).await? {
@@ -192,7 +186,7 @@ impl TranscriptStore for JsonFileStore {
         channel: ChannelId,
         digest: Digest,
     ) -> StoreResult<Option<Vec<ToolSet>>> {
-        read_json_opt(&given_path(&self.given_dir(agent, channel), "tools", digest)).await
+        read_json_opt(&given_path(&self.given_dir(agent, channel).await?, "tools", digest)).await
     }
 
     async fn frame(
@@ -201,6 +195,6 @@ impl TranscriptStore for JsonFileStore {
         channel: ChannelId,
         digest: Digest,
     ) -> StoreResult<Option<FrameRef>> {
-        read_json_opt(&given_path(&self.given_dir(agent, channel), "frame", digest)).await
+        read_json_opt(&given_path(&self.given_dir(agent, channel).await?, "frame", digest)).await
     }
 }

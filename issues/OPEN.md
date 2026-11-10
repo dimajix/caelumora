@@ -15,7 +15,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [554](554-the-terminal-program-keeps-its-data-like-a-server.md) | open | medium | feature | `caelumora-tui` keeps everything in directories it is configured with, in files named by UUID, and works in workspaces of its own, so that on one person's machine nothing it does can be told by the files in their home, and none of its sessions can be found or read there. |
+| [554](554-the-terminal-program-keeps-its-data-like-a-server.md) | in progress | medium | feature | `caelumora-tui` keeps everything in directories it is configured with, in files named by UUID, and works in workspaces of its own, so that on one person's machine nothing it does can be told by the files in their home, and none of its sessions can be found or read there. |
 
 ## Sessions and channels
 

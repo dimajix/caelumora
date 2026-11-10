@@ -45,9 +45,11 @@ their histories and transcripts, and asks nothing. It offers each of them by a m
 (`documents`, `state_store`, `history_store`, `transcript_store`, issue
 [448](../issues/448-persistence-inherits-the-state-stores.md)) and is none of them, so that a
 backend that keeps only the one part - a database of the entities alone - refuses the other; the
-memory and the JSON store are the three state stores themselves and hand out themselves. The
-history and the transcript store read what the state store of the same backend writes, so all three
-are taken from one backend. A storage keeps documents serialized, by id, and is not generic, so
+memory store is the three state stores itself and hands out itself, the JSON store hands out its
+`JsonStates`, which keeps them where a `StateLayout` puts them, so that another backend over files
+keeps them in places of its own. The history and the transcript store read what the state store of
+the same backend writes, so all three are taken from one backend. A storage keeps documents
+serialized, by id, and is not generic, so
 that a backend opens the storage of any kind, a plugin's too, without knowing its type: the memory
 store keeps them in a map, the JSON store one file per document in the kind's directory,
 `entities/<kind>/<id>.json`. What every kind's store does - read the document as its type, ask the
@@ -462,7 +464,7 @@ parts is a digest or an id, resolved when read and never while replaying, so the
 loses nothing.
 
 A put stores the state, whole or only what changed, and marks it stored on success; on failure the
-changes stay pending and come with the next put. The `JsonFileStore` keeps a **snapshot** and a
+changes stay pending and come with the next put. `JsonStates` keeps a **snapshot** and a
 **journal** per state: a put appends its changes to the journal, unless the journal has grown to the
 size of the snapshot (and to `journal_floor`), when the state is written as a new snapshot and the
 journal emptied. So the bytes written over a state's life are a small multiple of its final size
@@ -531,7 +533,7 @@ participant (issue 417), and is kept apart from the channel state's document (is
     reads in memory reads from the end and stays within its window (see
     [AGENT-TURN.md](AGENT-TURN.md#what-is-held-in-memory)); a change of a message before the window
     is recorded, and the store applies it.
-*   **The `JsonFileStore`** keeps a history in `<key>.history/` beside its state's snapshot: the
+*   **`JsonStates`** keeps a history in `<key>.history/` beside its state's snapshot: the
     chain in segments of 256 positions (`chain-<from>.json`) and `head.json` - the head and where
     the chain ends -, written after the segments; the items likewise (`items-<from>.json`), the
     attendance (`attendance.json`) and `items-head.json` - up to where both are derived -,
@@ -572,7 +574,7 @@ history is (issue 380), with what differs:
     have been one. Both name the same content after the same predecessors; the store makes no
     digest unique, and a path is followed back from the newest entry with the digest.
 *   **One way of keeping a chain.** Both stores keep a history's and a transcript's chain alike, by
-    position: the `MemoryStore` as nodes by position (`KeptChain`), the `JsonFileStore` in segments
+    position: the `MemoryStore` as nodes by position (`KeptChain`), `JsonStates` in segments
     and a head (`chains`), the transcript in `<agent>.transcript/` beside the agent's snapshot,
     without anything laid over it. A path is followed back segment by segment, a message looked for
     in every segment: slow where a database has indexes. In Postgres a transcript is the table
@@ -606,7 +608,7 @@ document as the transcript is (issue 383):
     (`keep_window`); between turns it holds none, and a state loaded holds those its turn names, so
     that a turn cut off by a crash is resumed with them. A frame it lets go of at once: the turn
     under way holds its own whole, in its context.
-*   **The `JsonFileStore`** keeps them in `<agent>.given/` beside the agent's snapshot, one file per
+*   **`JsonStates`** keeps them in `<agent>.given/` beside the agent's snapshot, one file per
     digest (`prompt-<digest>.json`, `tools-<digest>.json`, `frame-<digest>.json`), and looks for
     the file before it writes one. In Postgres each is a table keyed by agent, channel and digest,
     written with `ON CONFLICT DO NOTHING`.
@@ -658,10 +660,11 @@ takes them out with the put that has none, and deleting the state takes them out
 `StateStore::channels_with_work_under_way` lists the channels. Since a turn is stored after every
 step, the index is as current after a crash as after an orderly shutdown.
 
-The `JsonFileStore` keeps an empty file per entry, `runtime/under_way/<channel_id>.<agent_id>`,
-written only when the entry comes or goes. It is entered before the state is written and taken out
-after it: what a crash leaves between the two is a session started for nothing, never work that is
-not started. The `MemoryStore` asks the states it keeps.
+`JsonStates` keeps an empty file per entry, `<channel_id>.<agent_id>`, in the directory its layout
+names (`runtime/under_way` in the JSON store), written only when the entry comes or goes. It is
+entered before the state is written and taken out after it: what a crash leaves between the two is
+a session started for nothing, never work that is not started. The `MemoryStore` asks the states
+it keeps.
 
 ### Deleting state
 

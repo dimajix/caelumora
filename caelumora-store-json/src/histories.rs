@@ -1,17 +1,15 @@
-//! The histories of the states, as the `JsonFileStore` keeps them (issue
-//! 379): per history a directory beside its state's snapshot, `<key>.history`,
-//! with the chain as every chain is kept (`chains`), and laid over it the
-//! items as they stand in segments of the same positions
-//! (`items-<from>.json`), who took part when (`attendance.json`, issue
-//! 417), and `items-head.json`, which says up to where both were derived. A
-//! put writes the chain, then the items' segments and the attendance, then
-//! how far they go: what is behind the chain is derived anew from it when
-//! the history is next loaded or appended to. Slow where it has to be - finding
-//! a message scans the items backwards, a fitting rewrites every segment -,
-//! which a database's indexes are for.
+//! The histories of the states, as `JsonStates` keeps them (issue 379): per history a directory
+//! beside its state's snapshot, `<key>.history`, with the chain as every chain is kept (`chains`),
+//! and laid over it the items as they stand in segments of the same positions
+//! (`items-<from>.json`), who took part when (`attendance.json`, issue 417), and `items-head.json`,
+//! which says up to where both were derived. A put writes the chain, then the items' segments and
+//! the attendance, then how far they go: what is behind the chain is derived anew from it when the
+//! history is next loaded or appended to. Slow where it has to be - finding a message scans the
+//! items backwards, a fitting rewrites every segment -, which a database's indexes are for.
 
 use super::chains::{self, read_chain, read_head, segment_before, segment_of, SEGMENT};
-use super::{delete_if_exists, read_json_opt, write_json_atomic, JsonFileStore};
+use super::states::JsonStates;
+use super::{delete_if_exists, read_json_opt, write_json_atomic};
 use async_trait::async_trait;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::{Node, Position};
@@ -163,11 +161,11 @@ fn history_of(channel: ChannelId) -> String {
     format!("the history of channel {channel}")
 }
 
-impl JsonFileStore {
+impl JsonStates {
     /// The directory of the history of `channel`, beside its state's
     /// snapshot.
-    pub(super) fn history_dir(&self, channel: ChannelId) -> PathBuf {
-        self.channel_state_path(channel).with_extension("history")
+    pub(super) async fn history_dir(&self, channel: ChannelId) -> StoreResult<PathBuf> {
+        Ok(self.channel_state_path(channel).await?.with_extension("history"))
     }
 
     /// Appends what `history`, that of `channel` as its state holds it,
@@ -179,7 +177,7 @@ impl JsonFileStore {
         history: &mut History,
     ) -> StoreResult<()> {
         let Some(changes) = history.changes() else { return Ok(()) };
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         let items_end = derive_missing(&dir, channel).await?;
         let (head, added) = chains::append(&dir, history_of(channel), changes).await?;
         derive_items(&dir, items_end, head.end, &added).await?;
@@ -194,14 +192,14 @@ impl JsonFileStore {
         channel: ChannelId,
         from: Position,
     ) -> StoreResult<History> {
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         derive_missing(&dir, channel).await?;
         chains::load(&dir, history_of(channel), from).await
     }
 }
 
 #[async_trait]
-impl HistoryStore for JsonFileStore {
+impl HistoryStore for JsonStates {
     async fn page(
         &self,
         channel: ChannelId,
@@ -211,7 +209,7 @@ impl HistoryStore for JsonFileStore {
         limit: usize,
         filter: Option<&Filter<HistoryField>>,
     ) -> StoreResult<HistoryPage> {
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         let head = read_head(&dir).await?;
         let items_end = read_items_end(&dir).await?;
         let before = before.map_or(items_end, |before| before.min(items_end));
@@ -243,7 +241,7 @@ impl HistoryStore for JsonFileStore {
         reader: &Reader,
         id: MessageId,
     ) -> StoreResult<Option<(Position, HistoryEntry)>> {
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         let mut segment = read_items_end(&dir).await?.previous().map(segment_of);
         while let Some(from) = segment {
             if let Some(found) = read_items(&dir, from).await?.said(id) {
@@ -261,7 +259,7 @@ impl HistoryStore for JsonFileStore {
         reader: &Reader,
         range: Range<Position>,
     ) -> StoreResult<Vec<Node<Recorded>>> {
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         let head = read_head(&dir).await?;
         let chain: Vec<Node<Recorded>> =
             read_chain(&dir, range.start, head.end.min(range.end)).await?;
@@ -277,7 +275,7 @@ impl HistoryStore for JsonFileStore {
         reader: &Reader,
         end: Position,
     ) -> StoreResult<Vec<Message>> {
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         let Some(ended) = read_chain::<Recorded>(&dir, end, end.next()).await?.pop() else {
             return Ok(Vec::new());
         };
@@ -306,13 +304,13 @@ impl HistoryStore for JsonFileStore {
         channel: ChannelId,
         actor: ActorId,
     ) -> StoreResult<Vec<Range<Position>>> {
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         derive_missing(&dir, channel).await?;
         Ok(read_attendance(&dir).await?.of_participant(actor))
     }
 
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()> {
-        let dir = self.history_dir(channel);
+        let dir = self.history_dir(channel).await?;
         let end = read_head(&dir).await?.end;
         let mut segment = Position::START;
         while segment < end.max(read_items_end(&dir).await?) {

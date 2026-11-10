@@ -391,8 +391,7 @@ impl StateStore for MemoryStore {
         Ok(state)
     }
 
-    /// The prompt texts and the tool sets first, as the `JsonFileStore`
-    /// writes them.
+    /// The prompt texts and the tool sets first, as `JsonStates` writes them.
     async fn put_agent_channel_state(
         &self,
         agent_id: AgentId,
