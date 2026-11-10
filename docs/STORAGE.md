@@ -49,12 +49,13 @@ memory store is the three state stores itself and hands out itself, the JSON sto
 `JsonStates`, which keeps them where a `StateLayout` puts them, so that another backend over files
 keeps them in places of its own. The history and the transcript store read what the state store of
 the same backend writes, so all three are taken from one backend. A storage keeps documents
-serialized, by id, and is not generic, so
-that a backend opens the storage of any kind, a plugin's too, without knowing its type: the memory
-store keeps them in a map, the JSON store one file per document in the kind's directory,
-`entities/<kind>/<id>.json`. What every kind's store does - read the document as its type, ask the
-policies, order the steps - is written once, in `caelumora-store` (`CheckedStore`, over `access`),
-for every backend alike.
+serialized, by id, and is not generic, so that a backend opens the storage of any kind, a plugin's
+too, without knowing its type: the memory store keeps them in a map, the JSON store one file per
+document in the kind's directory, `entities/<kind>/<id>.json`, as `JsonDocuments`, which keeps them
+where a `DocumentLayout` puts them, so that another backend over files keeps them in places of its
+own. What every kind's store does - read the document as its type, ask the policies, order the
+steps - is written once, in `caelumora-store` (`CheckedStore`, over `access`), for every backend
+alike.
 
 A backend is made ready once, at start (`PersistenceBackend::open`, issue
 [447](../issues/447-store-seam-not-fit-for-a-database.md)): after every plugin registered, so after

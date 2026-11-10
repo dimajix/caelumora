@@ -1,15 +1,126 @@
-//! Where the states of channels, agents and users lie (issue 554): a backend over files says so
-//! with a `StateLayout`, and `JsonStates` keeps them there.
+//! Where documents and states lie as files (issue 554): a backend over files says so with a
+//! `DocumentLayout` and a `StateLayout`, and `JsonDocuments` and `JsonStates` keep them there.
 
 use super::to_backend_error;
 use async_trait::async_trait;
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::store::StoreResult;
+use caelumora_domain::store::{EntityKind, StoreResult};
+use caelumora_store::documents::Document;
 use std::fmt::Debug;
 use std::fs as std_fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
+use tokio::sync::Mutex;
+use tracing::warn;
+use uuid::Uuid;
+
+/// Where the documents of one kind lie as JSON files, and what keeps their writers apart. A layout
+/// makes no directories: what is written makes those it needs, and a directory not there holds
+/// nothing.
+///
+/// # Errors
+/// A method answering a `StoreResult` fails if the place cannot be told, and what the storage was
+/// asked then fails with that error.
+#[async_trait]
+pub trait DocumentLayout: Debug + Send + Sync {
+    /// Where the document `id` lies, if there is one.
+    async fn find(&self, id: Uuid) -> StoreResult<Option<PathBuf>>;
+
+    /// Where the new `document` is to lie.
+    async fn place(&self, document: &Document) -> StoreResult<PathBuf>;
+
+    /// Every document of the kind, each with its id and where it lies.
+    async fn all(&self) -> StoreResult<Vec<(Uuid, PathBuf)>>;
+
+    /// Held by a write from reading what it judges until it has written.
+    async fn writing(&self) -> StoreResult<Box<dyn Send>>;
+
+    /// Tidies up once the file at `path` was removed; nothing unless a layout says otherwise.
+    async fn removed(&self, _path: &Path) -> StoreResult<()> {
+        Ok(())
+    }
+}
+
+/// The layout of the documents of one kind in the JSON store: one file per document in the kind's
+/// directory, `entities/<kind>`, named by its id.
+#[derive(Debug)]
+pub(crate) struct EntitiesLayout {
+    dir: PathBuf,
+    /// Held by every write: within this process, which is the only one that writes the files.
+    writes: Arc<Mutex<()>>,
+}
+
+impl EntitiesLayout {
+    /// The layout of the documents of `kind` under `root`.
+    ///
+    /// # Errors
+    /// If its directory cannot be made, so that a path that cannot be written fails the start.
+    pub(crate) fn new(root: &Path, kind: EntityKind) -> StoreResult<Self> {
+        let dir = root.join("entities").join(kind.name());
+        std_fs::create_dir_all(&dir).map_err(to_backend_error)?;
+        Ok(Self { dir, writes: Default::default() })
+    }
+
+    /// Where the document `id` is.
+    fn path(&self, id: Uuid) -> PathBuf {
+        self.dir.join(format!("{id}.json"))
+    }
+}
+
+#[async_trait]
+impl DocumentLayout for EntitiesLayout {
+    async fn find(&self, id: Uuid) -> StoreResult<Option<PathBuf>> {
+        let path = self.path(id);
+        Ok(fs::try_exists(&path).await.map_err(to_backend_error)?.then_some(path))
+    }
+
+    async fn place(&self, document: &Document) -> StoreResult<PathBuf> {
+        Ok(self.path(document.id))
+    }
+
+    async fn all(&self) -> StoreResult<Vec<(Uuid, PathBuf)>> {
+        documents_in_dir(&self.dir).await
+    }
+
+    async fn writing(&self) -> StoreResult<Box<dyn Send>> {
+        Ok(Box::new(Arc::clone(&self.writes).lock_owned().await))
+    }
+}
+
+/// The documents in `dir` - every `*.json` file named by a UUID -, each with
+/// its id, the file's name without `.json`, and its path; temporary files of
+/// writes in progress, or left behind by a crash, are not among them, and a
+/// file of another name is left out and logged. Only the directory is read:
+/// a document is read when it is its turn.
+async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(Uuid, PathBuf)>> {
+    let mut documents = Vec::new();
+    let mut entries = fs::read_dir(dir).await.map_err(to_backend_error)?;
+    loop {
+        let path = match entries.next_entry().await {
+            Ok(Some(e)) => e.path(),
+            Ok(None) => break,
+            Err(err) => {
+                warn!("Failed to read directory entry in {:?}: {}", dir, err);
+                continue;
+            }
+        };
+
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+
+        // Named as `EntitiesLayout::path` names it - hyphenated, in small letters -, so that what
+        // a scan lists is found by its id.
+        let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
+        match Uuid::parse_str(stem) {
+            Ok(id) if id.to_string() == stem => documents.push((id, path)),
+            _ => warn!("A document in {:?} is not named by its id: {:?}", dir, path.file_name()),
+        }
+    }
+    Ok(documents)
+}
 
 /// Where the states of channels, agents and users lie. It only says where: what is written makes
 /// the directories it needs, and a directory not there holds nothing. The directories `agents_in`

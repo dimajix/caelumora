@@ -311,3 +311,23 @@ Each reviewed and committed on its own, on a branch of this issue.
 - **2026-11-10** — Step 3: the key of an artifact's content holds its project,
   `artifacts/<project>/<artifact>/<content>`. An artifact never leaves its project: lifting one
   keeps its id. Stored data: the content of artifacts and their documents, to be deleted.
+- **2026-11-10** — Decided for step 4, with the maintainer. **The backend finds what lies where by
+  searching, and remembers it.** `DocumentStorage` and the state stores name a document or a channel
+  by its id alone, and only this layout needs what lies above it. Passing the session down
+  (`Address<Channel>`) was weighed and rejected: it costs 21 methods of the kernel's stores, and
+  leaves what lies in a scope, which no address names, to be searched for all the same. `Address`
+  stays what issue 335 made it, how an event names an entity. A channel without a directory of a
+  session lies in `channels/<id>`, for the store suite, which keeps states of channels no document
+  names. **A document stays where it was made**: a project is tied to the directory the program was
+  started in, so that nothing is lifted, and should a scope change all the same, the document says
+  so and nothing moves. **A session's artifacts lie in its project**, `projects/<id>/artifacts`, not
+  in the session's directory, and outlive it. Sessions stay flat, `sessions/<id>`, since the kernel
+  makes each in its own project and moves it from there. **`memory` and `user_profile` lie in the
+  directory of their agent and user** (`HomeStoreConfig::within`), since the backend knows kinds by
+  name alone. **Comments in a file are lost** when the program writes it. The session's lock moves
+  to step 6: only the program knows when a session runs. Step 4 is committed in three parts: the
+  crate with its documents and states; the definitions as files; the content and the plugin.
+- **2026-11-10** — Before step 4, without a change of behaviour: `JsonDocuments` and
+  `DocumentLayout` out of `JsonFileStore`, as step 1 did with its states. Documents by id lie as
+  JSON files in `home` too, so that it would otherwise repeat their revisions and names; what is
+  written makes its directories.

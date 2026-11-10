@@ -1,41 +1,37 @@
 //! The JSON store (issue 446): a backend of the stores that keeps every document and every state in
 //! files below a directory (`JsonFileStore`), registered as the backend `json` by its plugin
-//! (`JsonStorePlugin`). Its states (`JsonStates`) lie where a `StateLayout` puts them, so that
-//! another backend over files can keep them in places of its own (issue 554).
+//! (`JsonStorePlugin`). Its states (`JsonStates`) lie where a `StateLayout` puts them, its
+//! documents (`JsonDocuments`) where a `DocumentLayout` does, so that another backend over files
+//! can keep them in places of its own (issue 554).
 
 mod chains;
+mod documents;
 mod histories;
 mod layout;
 pub mod plugin;
 mod states;
 mod transcripts;
 
-pub use layout::StateLayout;
+pub use documents::JsonDocuments;
+pub use layout::{DocumentLayout, StateLayout};
 pub use states::{JsonStates, DEFAULT_JOURNAL_FLOOR};
 
-use async_trait::async_trait;
-use caelumora_domain::query::{ordered_after, FieldPath, Filter};
-use caelumora_domain::store::{EntityKind, Revision, StoreError, StoreResult};
-use caelumora_domain::value::name::ScopedName;
-use caelumora_security::Admission;
-use caelumora_store::documents::{Document, DocumentOf, DocumentStorage};
+use caelumora_domain::store::{EntityKind, StoreError, StoreResult};
+use caelumora_store::documents::{DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::transcript::TranscriptStore;
-use caelumora_store::{PersistenceBackend, Presence, StateStore};
-use layout::RuntimeLayout;
+use caelumora_store::{PersistenceBackend, StateStore};
+use layout::{EntitiesLayout, RuntimeLayout};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::fmt::{self, Debug, Display};
-use std::fs as std_fs;
+use std::fmt::{Debug, Display};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 use tokio::fs;
-use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::info;
 use uuid::Uuid;
 
 /// The parameters of the backend `json` (issue 446): the directory the
@@ -59,8 +55,8 @@ impl JsonStoreConfig {
     }
 }
 
-/// One JSON file per document (`EntityStore`), and the states as `JsonStates` keeps them, in the
-/// layout of this store (`RuntimeLayout`).
+/// One JSON file per document (`JsonDocuments`, in the layout `EntitiesLayout`), and the states as
+/// `JsonStates` keeps them, in the layout `RuntimeLayout`.
 #[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
@@ -107,6 +103,17 @@ async fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> StoreResult<
     Ok(())
 }
 
+/// Makes the directory the file at `path` is to lie in.
+///
+/// # Errors
+/// If it cannot be made.
+async fn make_parent(path: &Path) -> StoreResult<()> {
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent).await.map_err(to_backend_error),
+        None => Ok(()),
+    }
+}
+
 async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T>> {
     match fs::read_to_string(path).await {
         Ok(content) => {
@@ -116,59 +123,6 @@ async fn read_json_opt<T: DeserializeOwned>(path: &Path) -> StoreResult<Option<T
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
         Err(err) => Err(to_backend_error(err)),
     }
-}
-
-/// What the file at `path` holds, `None` if it is gone or holds no JSON -
-/// which is logged: one broken file does not break a list.
-///
-/// # Errors
-/// If the file cannot be read.
-async fn read_body(path: &Path) -> StoreResult<Option<Value>> {
-    let text = match fs::read_to_string(path).await {
-        Ok(text) => text,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(err) => return Err(to_backend_error(err)),
-    };
-    match serde_json::from_str(&text) {
-        Ok(body) => Ok(Some(body)),
-        Err(err) => {
-            warn!("Failed to read JSON file {:?}: {}", path, err);
-            Ok(None)
-        }
-    }
-}
-
-/// The documents in `dir` - every `*.json` file named by a UUID -, each with
-/// its id, the file's name without `.json`, and its path; temporary files of
-/// writes in progress, or left behind by a crash, are not among them, and a
-/// file of another name is left out and logged. Only the directory is read:
-/// a document is read when it is its turn.
-async fn documents_in_dir(dir: &Path) -> StoreResult<Vec<(Uuid, PathBuf)>> {
-    let mut documents = Vec::new();
-    let mut entries = fs::read_dir(dir).await.map_err(to_backend_error)?;
-    loop {
-        let path = match entries.next_entry().await {
-            Ok(Some(e)) => e.path(),
-            Ok(None) => break,
-            Err(err) => {
-                warn!("Failed to read directory entry in {:?}: {}", dir, err);
-                continue;
-            }
-        };
-
-        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-            continue;
-        }
-
-        // Named as `JsonDocuments::path` names it - hyphenated, in small
-        // letters -, so that what a scan lists is found by its id.
-        let stem = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or_default();
-        match Uuid::parse_str(stem) {
-            Ok(id) if id.to_string() == stem => documents.push((id, path)),
-            _ => warn!("A document in {:?} is not named by its id: {:?}", dir, path.file_name()),
-        }
-    }
-    Ok(documents)
 }
 
 async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
@@ -194,7 +148,8 @@ impl PersistenceBackend for JsonFileStore {
         if let Some(storage) = all.get(&kind) {
             return Ok(Arc::<JsonDocuments>::clone(storage));
         }
-        let storage = Arc::new(JsonDocuments::new(&self.root, kind, document_of)?);
+        let layout = Arc::new(EntitiesLayout::new(&self.root, kind)?);
+        let storage = Arc::new(JsonDocuments::new(kind, layout, document_of));
         all.insert(kind, Arc::clone(&storage));
         Ok(storage)
     }
@@ -212,178 +167,6 @@ impl PersistenceBackend for JsonFileStore {
     }
 }
 
-/// The documents of one kind as JSON files (issue 446), one per document in
-/// the kind's directory, `entities/<kind>`, named by its id. Every write
-/// holds the kind's lock from reading what it judges - the revision it
-/// writes in place of (issue 492), the names of the others (issue 250) - to
-/// writing, so that no two writes miss each other and no two take one name.
-struct JsonDocuments {
-    kind: EntityKind,
-    dir: PathBuf,
-    /// What a document read is told by: its id, its name, its mark, its
-    /// security attributes, its revision.
-    document_of: DocumentOf,
-    /// Held by every write: within this process, which is the only one that
-    /// writes the files.
-    writes: Mutex<()>,
-}
-
-impl Debug for JsonDocuments {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("JsonDocuments")
-            .field("kind", &self.kind)
-            .field("dir", &self.dir)
-            .finish_non_exhaustive()
-    }
-}
-
-impl JsonDocuments {
-    /// The storage of the documents of `kind` under `root`.
-    ///
-    /// # Errors
-    /// If its directory cannot be made.
-    fn new(root: &Path, kind: EntityKind, document_of: DocumentOf) -> StoreResult<Self> {
-        let dir = root.join("entities").join(kind.name());
-        std_fs::create_dir_all(&dir).map_err(to_backend_error)?;
-        Ok(Self { kind, dir, document_of, writes: Mutex::new(()) })
-    }
-
-    /// Where the document of `id` is.
-    fn path(&self, id: Uuid) -> PathBuf {
-        self.dir.join(format!("{id}.json"))
-    }
-
-    /// The document at `path`; `None` if there is none, or it cannot be read
-    /// or told, which is logged.
-    async fn read(&self, path: &Path) -> Option<Document> {
-        let body = match read_json_opt::<Value>(path).await {
-            Ok(body) => body?,
-            Err(err) => {
-                warn!("Failed to read JSON file {:?}: {}", path, err);
-                return None;
-            }
-        };
-        match (self.document_of)(body) {
-            Ok(document) => Some(document),
-            Err(err) => {
-                warn!("Failed to read the document {:?}: {}", path, err);
-                None
-            }
-        }
-    }
-
-    /// The document `id` as stored, if it is at the revision `read`:
-    /// `StoreError::Outdated` otherwise, also if there is none (issue 492).
-    /// Called under the kind's lock.
-    async fn at_revision(&self, id: Uuid, read: Revision) -> StoreResult<Document> {
-        match self.read(&self.path(id)).await {
-            Some(stored) if stored.revision == read => Ok(stored),
-            _ => Err(StoreError::Outdated { entity: self.kind.name(), id: id.to_string() }),
-        }
-    }
-
-    /// Refuses `document` if another document of the kind that is not
-    /// deleted has its name (issue 250). Called under the kind's lock.
-    async fn name_free(&self, document: &Document) -> StoreResult<()> {
-        let Some(name) = named(document) else { return Ok(()) };
-        for (_, path) in documents_in_dir(&self.dir).await? {
-            if let Some(other) = self.read(&path).await {
-                if other.id != document.id && named(&other) == Some(name) {
-                    return Err(StoreError::NameTaken { entity: self.kind.name() });
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// The name `document` takes: its name, unless it is deleted.
-fn named(document: &Document) -> Option<&ScopedName> {
-    document.name.as_ref().filter(|_| document.removal_id.is_none())
-}
-
-#[async_trait]
-impl DocumentStorage for JsonDocuments {
-    async fn get(&self, id: Uuid) -> StoreResult<Option<Value>> {
-        read_json_opt(&self.path(id)).await
-    }
-
-    /// Reads the files in the order of their names, each only when it is its
-    /// turn, and judges `filter` on what they hold; whether one is marked
-    /// deleted, and whether it is admitted, it leaves to the store, which
-    /// would read it as its type to tell. A file that is not JSON is left
-    /// out and logged.
-    async fn scan(
-        &self,
-        filter: Option<&Filter<FieldPath>>,
-        _admission: Option<&Admission>,
-        _presence: Presence,
-        after: Option<Uuid>,
-        limit: usize,
-    ) -> StoreResult<Vec<(Uuid, Value)>> {
-        let mut found = Vec::new();
-        for (id, path) in ordered_after(documents_in_dir(&self.dir).await?, after) {
-            if found.len() >= limit {
-                break;
-            }
-            let Some(body) = read_body(&path).await? else { continue };
-            if filter.is_none_or(|filter| filter.matches(&body)) {
-                found.push((id, body));
-            }
-        }
-        Ok(found)
-    }
-
-    async fn named(&self, name: &ScopedName) -> StoreResult<Option<Value>> {
-        for (_, path) in documents_in_dir(&self.dir).await? {
-            if let Some(document) = self.read(&path).await {
-                if named(&document) == Some(name) {
-                    return Ok(Some(document.body));
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    async fn insert(&self, document: Document) -> StoreResult<()> {
-        let path = self.path(document.id);
-        let _writing = self.writes.lock().await;
-        if fs::try_exists(&path).await.map_err(to_backend_error)? {
-            return Err(StoreError::Conflict(format!(
-                "{} {} already exists",
-                self.kind, document.id
-            )));
-        }
-        self.name_free(&document).await?;
-        debug!("Writing {} {} to {}", self.kind, document.id, path.display());
-        write_json_atomic(&path, &document.body).await
-    }
-
-    /// Reads the others of the kind only if `document` takes another name
-    /// than it has as stored: whatever else changes takes nobody's name.
-    async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {
-        let path = self.path(document.id);
-        let _writing = self.writes.lock().await;
-        let stored = self.at_revision(document.id, read).await?;
-        if named(&document).is_some() && named(&stored) != named(&document) {
-            self.name_free(&document).await?;
-        }
-        debug!("Writing {} {} to {}", self.kind, document.id, path.display());
-        write_json_atomic(&path, &document.body).await
-    }
-
-    async fn remove(&self, id: Uuid, read: Revision) -> StoreResult<bool> {
-        let path = self.path(id);
-        let _writing = self.writes.lock().await;
-        if !fs::try_exists(&path).await.map_err(to_backend_error)? {
-            return Ok(false);
-        }
-        self.at_revision(id, read).await?;
-        debug!("Purging {} at {}", self.kind, path.display());
-        delete_if_exists(&path).await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,10 +179,11 @@ mod tests {
     use caelumora_domain::session::{Session, SessionId};
     use caelumora_domain::store::{StoreError, Stored};
     use caelumora_domain::user::UserId;
-    use caelumora_domain::value::name::Name;
+    use caelumora_domain::value::name::{Name, ScopedName};
     use caelumora_domain::value::text::Description;
     use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
     use caelumora_store::{suite, EntityStore, EntityStores, Persistence};
+    use std::fs as std_fs;
     use tempfile::tempdir;
     use tokio::task::JoinSet;
 

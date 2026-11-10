@@ -11,7 +11,7 @@
 //! `transcripts`, issues 379, 380).
 
 use super::layout::StateLayout;
-use super::{delete_if_exists, read_json_opt, to_backend_error, write_json_atomic};
+use super::{delete_if_exists, make_parent, read_json_opt, to_backend_error, write_json_atomic};
 use async_trait::async_trait;
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::channel::{ChannelId, ChannelState};
@@ -81,9 +81,7 @@ impl JsonStates {
 
 /// Creates the empty file `path` unless it exists, and the directory it lies in.
 async fn create_if_missing(path: &Path) -> StoreResult<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(to_backend_error)?;
-    }
+    make_parent(path).await?;
     match OpenOptions::new().write(true).create_new(true).open(path).await {
         Ok(_) => Ok(()),
         Err(err) if err.kind() == ErrorKind::AlreadyExists => Ok(()),
@@ -216,9 +214,7 @@ impl JsonStates {
     /// the journal is emptied. The sizes are asked of the file system every
     /// time; nothing is kept between puts.
     async fn store_state<T: Journaled>(&self, path: &Path, state: &mut T) -> StoreResult<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.map_err(to_backend_error)?;
-        }
+        make_parent(path).await?;
         let journal = journal_path(path);
         let journal_len = size_of(&journal).await?.unwrap_or(0);
         match size_of(path).await? {
