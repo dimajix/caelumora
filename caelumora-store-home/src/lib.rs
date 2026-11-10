@@ -11,7 +11,9 @@ use caelumora_store::documents::{DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::transcript::TranscriptStore;
 use caelumora_store::{PersistenceBackend, StateStore};
-use caelumora_store_json::{to_backend_error, JsonDocuments, JsonStates, DEFAULT_JOURNAL_FLOOR};
+use caelumora_store_json::{
+    to_backend_error, FileDocuments, JsonFormat, JsonStates, DEFAULT_JOURNAL_FLOOR,
+};
 use layout::{HomeDocuments, HomeStates};
 use places::Places;
 use serde::Deserialize;
@@ -39,7 +41,7 @@ pub struct HomeStore {
     places: Arc<Places>,
     states: Arc<JsonStates>,
     /// The storage of every kind asked for, by its name.
-    documents: RwLock<HashMap<EntityKind, Arc<JsonDocuments>>>,
+    documents: RwLock<HashMap<EntityKind, Arc<FileDocuments>>>,
 }
 
 impl HomeStore {
@@ -64,14 +66,15 @@ impl PersistenceBackend for HomeStore {
     ) -> StoreResult<Arc<dyn DocumentStorage>> {
         let mut all = self.documents.write().unwrap_or_else(PoisonError::into_inner);
         if let Some(storage) = all.get(&kind) {
-            return Ok(Arc::<JsonDocuments>::clone(storage));
+            return Ok(Arc::<FileDocuments>::clone(storage));
         }
         let layout = HomeDocuments::new(
             Arc::clone(&self.places),
             self.places.shelf_of(kind),
             self.places.locks().join(kind.name()),
         );
-        let storage = Arc::new(JsonDocuments::new(kind, Arc::new(layout), document_of));
+        let format = Arc::new(JsonFormat);
+        let storage = Arc::new(FileDocuments::new(kind, Arc::new(layout), format, document_of));
         all.insert(kind, Arc::clone(&storage));
         Ok(storage)
     }

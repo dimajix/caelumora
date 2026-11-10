@@ -1,5 +1,5 @@
 //! Where the documents and the states of the backend `home` lie (issue 554): the layouts its
-//! `JsonDocuments` and `JsonStates` are given, over its `Places`.
+//! `FileDocuments` and `JsonStates` are given, over its `Places`.
 
 use crate::places::{Places, Shelf};
 use async_trait::async_trait;
@@ -7,7 +7,8 @@ use caelumora_domain::channel::ChannelId;
 use caelumora_domain::store::StoreResult;
 use caelumora_store::documents::Document;
 use caelumora_store_json::{to_backend_error, DocumentLayout, StateLayout};
-use std::fs::{self, File, OpenOptions};
+use futures::stream::BoxStream;
+use std::fs;
 use std::io;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -20,8 +21,7 @@ use uuid::Uuid;
 /// channel's scope can be taken for them.
 const STATE: &str = "state";
 
-/// The documents of one kind where its `Shelf` and their scopes say, a lock of the file system
-/// keeping apart the writers of every program.
+/// The documents of one kind where its `Shelf` and their scopes say.
 #[derive(Debug)]
 pub(crate) struct HomeDocuments {
     places: Arc<Places>,
@@ -35,13 +35,6 @@ impl HomeDocuments {
     pub(crate) fn new(places: Arc<Places>, shelf: Shelf, lock: PathBuf) -> Self {
         Self { places, shelf, lock }
     }
-}
-
-/// Opens the file at `path`, made if it is not there, and waits for its lock.
-fn locked(path: &Path) -> io::Result<File> {
-    let file = OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
-    file.lock()?;
-    Ok(file)
 }
 
 /// Removes the directories below `dir` that hold nothing, and then `dir` if it holds nothing. What
@@ -80,19 +73,12 @@ impl DocumentLayout for HomeDocuments {
         self.places.place(&self.shelf, document.id, document.name.as_ref()).await
     }
 
-    async fn all(&self) -> StoreResult<Vec<(Uuid, PathBuf)>> {
-        self.places.all(&self.shelf).await
+    fn all(&self) -> BoxStream<'_, StoreResult<(Uuid, PathBuf)>> {
+        self.places.all(&self.shelf)
     }
 
-    /// On a thread of its own, since the lock may be another program's, and held by the file it
-    /// answers: closing it lets go.
-    async fn writing(&self) -> StoreResult<Box<dyn Send>> {
-        let lock = self.lock.clone();
-        let file = task::spawn_blocking(move || locked(&lock))
-            .await
-            .map_err(to_backend_error)?
-            .map_err(to_backend_error)?;
-        Ok(Box::new(file))
+    fn lock(&self) -> PathBuf {
+        self.lock.clone()
     }
 
     /// Removes the directory of the document, once nothing is left in it: not what lies in it and

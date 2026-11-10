@@ -1,8 +1,8 @@
 //! The JSON store (issue 446): a backend of the stores that keeps every document and every state in
 //! files below a directory (`JsonFileStore`), registered as the backend `json` by its plugin
 //! (`JsonStorePlugin`). Its states (`JsonStates`) lie where a `StateLayout` puts them, its
-//! documents (`JsonDocuments`) where a `DocumentLayout` does, so that another backend over files
-//! can keep them in places of its own (issue 554).
+//! documents (`FileDocuments`) where a `DocumentLayout` does and as a `DocumentFormat` writes them,
+//! so that another backend over files can keep them in places and forms of its own (issue 554).
 
 mod chains;
 mod documents;
@@ -12,8 +12,8 @@ pub mod plugin;
 mod states;
 mod transcripts;
 
-pub use documents::JsonDocuments;
-pub use layout::{DocumentLayout, StateLayout};
+pub use documents::{DocumentFormat, FileDocuments, JsonFormat};
+pub use layout::{entries_in, id_named, DocumentLayout, StateLayout};
 pub use states::{JsonStates, DEFAULT_JOURNAL_FLOOR};
 
 use caelumora_domain::store::{EntityKind, StoreError, StoreResult};
@@ -55,14 +55,14 @@ impl JsonStoreConfig {
     }
 }
 
-/// One JSON file per document (`JsonDocuments`, in the layout `EntitiesLayout`), and the states as
+/// One JSON file per document (`FileDocuments`, in the layout `EntitiesLayout`), and the states as
 /// `JsonStates` keeps them, in the layout `RuntimeLayout`.
 #[derive(Debug)]
 pub struct JsonFileStore {
     root: PathBuf,
     states: Arc<JsonStates>,
     /// The storage of every kind asked for, by its name.
-    documents: RwLock<HashMap<EntityKind, Arc<JsonDocuments>>>,
+    documents: RwLock<HashMap<EntityKind, Arc<FileDocuments>>>,
 }
 
 impl JsonFileStore {
@@ -80,12 +80,17 @@ impl JsonFileStore {
     }
 }
 
-/// Writes `value` to `path` atomically: into a temporary file beside it,
+/// Writes `value` as JSON to `path`, as `write_atomic` writes.
+async fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> StoreResult<()> {
+    let payload = serde_json::to_vec_pretty(value).map_err(to_backend_error)?;
+    write_atomic(path, &payload).await
+}
+
+/// Writes `payload` to `path` atomically: into a temporary file beside it,
 /// then renamed over it. The temporary name is unique per write, so that two
 /// writers of the same file do not share one (issue 62): each rename
 /// succeeds, and the last one wins.
-async fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> StoreResult<()> {
-    let payload = serde_json::to_vec_pretty(value).map_err(to_backend_error)?;
+async fn write_atomic(path: &Path, payload: &[u8]) -> StoreResult<()> {
     let mut tmp_name: OsString = path
         .file_name()
         .ok_or_else(|| StoreError::Backend(format!("invalid path: {}", path.display())))?
@@ -147,10 +152,10 @@ impl PersistenceBackend for JsonFileStore {
     ) -> StoreResult<Arc<dyn DocumentStorage>> {
         let mut all = self.documents.write().unwrap_or_else(PoisonError::into_inner);
         if let Some(storage) = all.get(&kind) {
-            return Ok(Arc::<JsonDocuments>::clone(storage));
+            return Ok(Arc::<FileDocuments>::clone(storage));
         }
         let layout = Arc::new(EntitiesLayout::new(&self.root, kind)?);
-        let storage = Arc::new(JsonDocuments::new(kind, layout, document_of));
+        let storage = Arc::new(FileDocuments::new(kind, layout, Arc::new(JsonFormat), document_of));
         all.insert(kind, Arc::clone(&storage));
         Ok(storage)
     }
@@ -352,6 +357,25 @@ mod tests {
         let text = fs::read_to_string(path_of::<Session>(dir.path(), &session.id)).await.unwrap();
         assert!(!text.contains("deleted"), "{text}");
         assert!(sessions.get(&system, session.id).await.unwrap().deleted.is_none());
+    }
+
+    /// Writes of two processes are kept apart by the lock of the file system, as those of one are.
+    #[tokio::test]
+    async fn two_stores_of_one_directory_do_not_take_one_name() {
+        use caelumora_domain::agent::Personality;
+        let dir = tempdir().unwrap();
+        let system = SecurityContext::system();
+        for round in 0..8 {
+            let mut writes = JoinSet::new();
+            for _ in 0..2 {
+                let personalities = of_kind::<Personality>(dir.path());
+                let system = system.clone();
+                let mut personality = make_personality(&format!("taken-{round}"));
+                writes.spawn(async move { personalities.create(&system, &mut personality).await });
+            }
+            let answers = writes.join_all().await;
+            assert_eq!(answers.iter().filter(|answer| answer.is_ok()).count(), 1, "{answers:?}");
+        }
     }
 
     /// A file in the directory of a kind that is not named by a UUID is no

@@ -6,11 +6,12 @@ use caelumora_domain::channel::{Channel, ChannelId};
 use caelumora_domain::project::{Project, ProjectId};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::Session;
-use caelumora_domain::store::{EntityKind, StoreResult, Stored};
+use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
 use caelumora_domain::value::name::ScopedName;
-use caelumora_store_json::to_backend_error;
+use caelumora_store_json::{entries_in, id_named, to_backend_error};
+use futures::stream::{self, BoxStream};
+use futures::{Stream, StreamExt, TryStreamExt};
 use std::collections::{BTreeMap, HashMap};
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use tokio::fs;
@@ -83,10 +84,10 @@ impl Places {
         let channels = family_of(Channel::KIND.name());
         let projects = family_of(Project::KIND.name());
         let mut holders = vec![self.data_dir.clone()];
-        holders.extend(directories_of_ids(&self.data_dir.join(&projects)).await?.into_values());
-        for session in directories_of_ids(&self.sessions()).await?.into_values() {
-            holders.extend(directories_of_ids(&session.join(&channels)).await?.into_values());
-            holders.extend(directories_of_ids(&session.join(&projects)).await?.into_values());
+        holders.extend(paths_of_ids(self.data_dir.join(&projects)).await?);
+        for session in paths_of_ids(self.sessions()).await? {
+            holders.extend(paths_of_ids(session.join(&channels)).await?);
+            holders.extend(paths_of_ids(session.join(&projects)).await?);
             holders.push(session);
         }
         Ok(holders)
@@ -118,21 +119,21 @@ impl Places {
         Ok(None)
     }
 
-    /// Every document on `shelf`, each with its id and where it lies.
-    ///
-    /// # Errors
-    /// If a directory cannot be looked into.
-    pub(crate) async fn all(&self, shelf: &Shelf) -> StoreResult<Vec<(Uuid, PathBuf)>> {
-        let mut documents = Vec::new();
-        for holder in self.holders().await? {
-            for (id, dir) in directories_of_ids(&holder.join(&shelf.family)).await? {
+    /// Every document on `shelf`, each with its id and where it lies, as the directories are read.
+    pub(crate) fn all<'a>(
+        &'a self,
+        shelf: &'a Shelf,
+    ) -> BoxStream<'a, StoreResult<(Uuid, PathBuf)>> {
+        stream::once(self.holders())
+            .map_ok(|holders| stream::iter(holders.into_iter().map(Ok::<_, StoreError>)))
+            .try_flatten()
+            .map_ok(|holder: PathBuf| directories_of_ids(holder.join(&shelf.family)))
+            .try_flatten()
+            .try_filter_map(move |(id, dir)| async move {
                 let path = dir.join(&shelf.file);
-                if exists(&path).await? {
-                    documents.push((id, path));
-                }
-            }
-        }
-        Ok(documents)
+                Ok(exists(&path).await?.then_some((id, path)))
+            })
+            .boxed()
     }
 
     /// The directory of what lies in `scope`: the data directory for what no directory holds, as a
@@ -205,10 +206,9 @@ impl Places {
     /// If a directory cannot be looked into.
     pub(crate) async fn channels(&self) -> StoreResult<Vec<PathBuf>> {
         let channels = family_of(Channel::KIND.name());
-        let mut all: Vec<PathBuf> =
-            directories_of_ids(&self.data_dir.join(&channels)).await?.into_values().collect();
-        for session in directories_of_ids(&self.sessions()).await?.into_values() {
-            all.extend(directories_of_ids(&session.join(&channels)).await?.into_values());
+        let mut all = paths_of_ids(self.data_dir.join(&channels)).await?;
+        for session in paths_of_ids(self.sessions()).await? {
+            all.extend(paths_of_ids(session.join(&channels)).await?);
         }
         Ok(all)
     }
@@ -219,27 +219,17 @@ async fn exists(path: &Path) -> StoreResult<bool> {
     fs::try_exists(path).await.map_err(to_backend_error)
 }
 
-/// The directories in `dir` named by an id, none if it is not there. Named as they are written -
-/// hyphenated, in small letters -, so that what is listed is found by its id; a name beside the
-/// directory of what has one, a copy, are passed over, and a link is not followed.
-async fn directories_of_ids(dir: &Path) -> StoreResult<HashMap<Uuid, PathBuf>> {
-    let mut entries = match fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(HashMap::new()),
-        Err(err) => return Err(to_backend_error(err)),
-    };
-    let mut directories = HashMap::new();
-    while let Some(entry) = entries.next_entry().await.map_err(to_backend_error)? {
-        let name = entry.file_name();
-        let Some(id) = name
-            .to_str()
-            .and_then(|name| Uuid::parse_str(name).ok().filter(|id| id.to_string() == name))
-        else {
-            continue;
-        };
-        if entry.file_type().await.map_err(to_backend_error)?.is_dir() {
-            directories.insert(id, entry.path());
-        }
-    }
-    Ok(directories)
+/// The directories in `dir` named by an id, none if it is not there, as it is read. A name beside
+/// the directory of what has one, a copy, are passed over, and a link is not followed.
+fn directories_of_ids(dir: PathBuf) -> impl Stream<Item = StoreResult<(Uuid, PathBuf)>> + Send {
+    entries_in(dir).try_filter_map(|entry| async move {
+        let Some(id) = entry.file_name().to_str().and_then(id_named) else { return Ok(None) };
+        let is_dir = entry.file_type().await.map_err(to_backend_error)?.is_dir();
+        Ok(is_dir.then(|| (id, entry.path())))
+    })
+}
+
+/// The directories in `dir` named by an id.
+async fn paths_of_ids(dir: PathBuf) -> StoreResult<Vec<PathBuf>> {
+    directories_of_ids(dir).map_ok(|(_, path)| path).try_collect().await
 }

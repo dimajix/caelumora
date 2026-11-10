@@ -339,3 +339,12 @@ Each reviewed and committed on its own, on a branch of this issue.
   it, which the program links in step 6. Still to come: the symbolic links of names, which need the
   layout to hear of a write; and whether the session's lock of step 6 also keeps another program
   from purging a running session, whose channel would otherwise start a directory of its own.
+- **2026-11-10** — Before the second part of step 4, as a preparation: `JsonDocuments` is
+  `FileDocuments`, since how a document looks in its file is a `DocumentFormat` of its own, and a
+  `DocumentLayout` says only where it lies. It offers `all` as a stream, `named` to narrow what a
+  name is looked for among, `moved_to` and `written`; `lock` names the file a write holds the lock
+  of, in place of `writing`. One change of behaviour: the JSON store's writes are kept apart by a
+  lock of the file system, `entities/<kind>.lock`, also between processes. `scan` still takes every
+  id first: what does not meet a filter is passed over for what follows, so that how many are
+  needed cannot be told, and a bounded selection would list the directory anew within one scan.
+  A format is given the path, since a definition takes its name and its id from it.

@@ -51,11 +51,12 @@ keeps them in places of its own. The history and the transcript store read what 
 the same backend writes, so all three are taken from one backend. A storage keeps documents
 serialized, by id, and is not generic, so that a backend opens the storage of any kind, a plugin's
 too, without knowing its type: the memory store keeps them in a map, the JSON store one file per
-document in the kind's directory, `entities/<kind>/<id>.json`, as `JsonDocuments`, which keeps them
-where a `DocumentLayout` puts them, so that another backend over files keeps them in places of its
-own. What every kind's store does - read the document as its type, ask the policies, order the
-steps - is written once, in `caelumora-store` (`CheckedStore`, over `access`), for every backend
-alike.
+document in the kind's directory, `entities/<kind>/<id>.json`, as `FileDocuments`, which keeps them
+where a `DocumentLayout` puts them and as a `DocumentFormat` writes them, so that another backend
+over files keeps them in places and forms of its own; a write holds the lock of a file,
+`entities/<kind>.lock`, against every process. What every kind's store does - read the document as
+its type, ask the policies, order the steps - is written once, in `caelumora-store` (`CheckedStore`,
+over `access`), for every backend alike.
 
 A backend is made ready once, at start (`PersistenceBackend::open`, issue
 [447](../issues/447-store-seam-not-fit-for-a-database.md)): after every plugin registered, so after
@@ -164,7 +165,7 @@ its own. Without the variable they are skipped.
 
 The backend `home` (`HomeStore`, in `caelumora-store-home`) is that of a program of one person: what
 belongs to a session can be looked at, copied or removed as one directory. It keeps its documents
-and states as the JSON store does (`JsonDocuments`, `JsonStates`), in places of its own:
+and states as the JSON store does (`FileDocuments`, `JsonStates`), in places of its own:
 
 *   **A document** is the file `<kind>.json` in a directory named by its id, in `<kind>s` of the
     directory its scope says: `sessions/<id>` for a session's, `channels/<id>` within that for a

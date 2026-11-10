@@ -12,9 +12,10 @@ caelumora-store.workspace = true
 caelumora-store-json.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+futures.workspace = true
 serde.workspace = true
-# What lies where is looked up in the directories, and a write of a kind
-# waits for a lock of another program on a thread of its own.
+# What lies where is looked up in the directories, and what a removal left
+# empty is removed on a thread of its own.
 tokio = { workspace = true, features = ["fs", "rt"] }
 tracing.workspace = true
 uuid.workspace = true
