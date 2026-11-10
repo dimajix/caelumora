@@ -800,4 +800,25 @@ mod tests {
             assert!(HomeStore::new(&config).is_err(), "{wrong}");
         }
     }
+
+    /// An id put into a file stays in it, also one its name derives, where its file is moved:
+    /// deleted and restored.
+    #[tokio::test]
+    async fn an_id_once_in_a_file_stays() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        let id = derived_id(Personality::KIND, &global("plain"));
+        fs::write(personalities.join("plain.yaml"), format!("id: {id}\n")).unwrap();
+        let stores = stores(dir.path());
+        let system = SecurityContext::system();
+
+        stores.personalities.delete(&system, id.into(), &removal()).await.unwrap();
+        let deleted = personalities.join(format!(".deleted/{id}.yaml"));
+        assert!(text(&deleted).contains("id:"), "{}", text(&deleted));
+        stores.personalities.restore(&system, id.into()).await.unwrap();
+
+        let restored = text(&personalities.join("plain.yaml"));
+        assert!(restored.contains(&format!("id: {id}")), "{restored}");
+    }
 }

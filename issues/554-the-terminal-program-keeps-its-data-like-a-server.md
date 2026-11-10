@@ -359,3 +359,6 @@ Each reviewed and committed on its own, on a branch of this issue.
   name takes it from its file, whatever a field says. No link is made for what lies in a user's or
   a group's scope, whose names share a directory, nor under a name that is an id. What prints the
   id of a file goes public with `caelumora id`, in step 6.
+- **2026-11-10** — `DocumentFormat::render` is given the text of the file it takes the place of,
+  which `FileDocuments` read to judge the write: an `id` once in a definition's file stays when the
+  file moves - deleted, restored, renamed -, and a format reads no file itself.

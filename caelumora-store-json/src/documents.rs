@@ -32,11 +32,17 @@ pub trait DocumentFormat: Debug + Send + Sync {
     /// If `text` holds no document.
     fn parse(&self, path: &Path, text: &str) -> StoreResult<Value>;
 
-    /// The text of the file at `path` that holds `document`.
+    /// The text of the file at `path` that holds `document`, in place of the text `previous` of the
+    /// file of the document as it was, if it was there before.
     ///
     /// # Errors
     /// If the document cannot be written so.
-    fn render(&self, path: &Path, document: &Document) -> StoreResult<String>;
+    fn render(
+        &self,
+        path: &Path,
+        document: &Document,
+        previous: Option<&str>,
+    ) -> StoreResult<String>;
 }
 
 /// A document as the JSON of its body.
@@ -48,7 +54,12 @@ impl DocumentFormat for JsonFormat {
         serde_json::from_str(text).map_err(to_backend_error)
     }
 
-    fn render(&self, _path: &Path, document: &Document) -> StoreResult<String> {
+    fn render(
+        &self,
+        _path: &Path,
+        document: &Document,
+        _previous: Option<&str>,
+    ) -> StoreResult<String> {
         serde_json::to_string_pretty(&document.body).map_err(to_backend_error)
     }
 }
@@ -137,32 +148,42 @@ impl FileDocuments {
     /// If the file cannot be read.
     async fn body(&self, path: &Path) -> StoreResult<Option<Value>> {
         let Some(text) = text_of(path).await? else { return Ok(None) };
-        match self.format.parse(path, &text) {
-            Ok(body) => Ok(Some(body)),
+        Ok(self.parsed(path, &text))
+    }
+
+    /// The body `text`, of the file at `path`, holds; `None` if it holds none, which is logged.
+    fn parsed(&self, path: &Path, text: &str) -> Option<Value> {
+        match self.format.parse(path, text) {
+            Ok(body) => Some(body),
             Err(err) => {
                 warn!("Failed to read the file {:?}: {}", path, err);
-                Ok(None)
+                None
             }
         }
     }
 
-    /// The document at `path`; `None` if there is none, or it cannot be read
-    /// or told, which is logged.
-    async fn read(&self, path: &Path) -> Option<Document> {
-        let body = match self.body(path).await {
-            Ok(body) => body?,
+    /// The text of the file at `path` and the document it holds; `None` if there is none, or it
+    /// cannot be read or told, which is logged.
+    async fn stored(&self, path: &Path) -> Option<(String, Document)> {
+        let text = match text_of(path).await {
+            Ok(text) => text?,
             Err(err) => {
                 warn!("Failed to read the file {:?}: {}", path, err);
                 return None;
             }
         };
-        match (self.document_of)(body) {
-            Ok(document) => Some(document),
+        match (self.document_of)(self.parsed(path, &text)?) {
+            Ok(document) => Some((text, document)),
             Err(err) => {
                 warn!("Failed to read the document {:?}: {}", path, err);
                 None
             }
         }
+    }
+
+    /// The document at `path`, as `stored` reads it.
+    async fn read(&self, path: &Path) -> Option<Document> {
+        self.stored(path).await.map(|(_, document)| document)
     }
 
     /// Writes `text`, what `document` is rendered as, to `path`, and tells the layout, whose
@@ -180,10 +201,16 @@ impl FileDocuments {
         StoreError::Outdated { entity: self.kind.name(), id: id.to_string() }
     }
 
-    /// The document `id` at `path` as stored, if it is at the revision `read`:
-    /// `StoreError::Outdated` otherwise, also if it cannot be read. Called while writing.
-    async fn at_revision(&self, id: Uuid, path: &Path, read: Revision) -> StoreResult<Document> {
-        self.read(path).await.filter(|stored| stored.revision == read).ok_or(self.outdated(id))
+    /// The text of the file at `path` and the document `id` it holds, if it is at the revision
+    /// `read`: `StoreError::Outdated` otherwise, also if it cannot be read. Called while writing.
+    async fn at_revision(
+        &self,
+        id: Uuid,
+        path: &Path,
+        read: Revision,
+    ) -> StoreResult<(String, Document)> {
+        let stored = self.stored(path).await;
+        stored.filter(|(_, stored)| stored.revision == read).ok_or(self.outdated(id))
     }
 
     /// Refuses `document` if another document of the kind that is not deleted has its name (issue
@@ -264,7 +291,7 @@ impl DocumentStorage for FileDocuments {
         }
         self.name_free(&document).await?;
         let path = self.layout.place(&document).await?;
-        let text = self.format.render(&path, &document)?;
+        let text = self.format.render(&path, &document, None)?;
         make_parent(&path).await?;
         debug!("Writing {} {} to {}", self.kind, document.id, path.display());
         self.write(&path, &text, &document).await
@@ -277,12 +304,12 @@ impl DocumentStorage for FileDocuments {
     async fn replace(&self, document: Document, read: Revision) -> StoreResult<()> {
         let _writing = self.writing().await?;
         let path = self.layout.find(document.id).await?.ok_or(self.outdated(document.id))?;
-        let stored = self.at_revision(document.id, &path, read).await?;
+        let (previous, stored) = self.at_revision(document.id, &path, read).await?;
         if named(&document).is_some() && named(&stored) != named(&document) {
             self.name_free(&document).await?;
         }
         let target = self.layout.moved_to(&path, &document).await?;
-        let text = self.format.render(&target, &document)?;
+        let text = self.format.render(&target, &document, Some(&previous))?;
         if target != path {
             make_parent(&target).await?;
             fs::rename(&path, &target).await.map_err(to_backend_error)?;
@@ -358,8 +385,13 @@ mod tests {
             JsonFormat.parse(path, json)
         }
 
-        fn render(&self, path: &Path, document: &Document) -> StoreResult<String> {
-            Ok(format!("# headed\n{}", JsonFormat.render(path, document)?))
+        fn render(
+            &self,
+            path: &Path,
+            document: &Document,
+            previous: Option<&str>,
+        ) -> StoreResult<String> {
+            Ok(format!("# headed\n{}", JsonFormat.render(path, document, previous)?))
         }
     }
 

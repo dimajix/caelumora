@@ -15,7 +15,6 @@ use futures::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::fs as std_fs;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -310,9 +309,14 @@ impl DocumentFormat for Definitions {
         Ok(Value::Object(fields))
     }
 
-    /// An id the file held stays in it, also one its name derives (issue 554): it is what keeps a
-    /// definition when its file is moved.
-    fn render(&self, path: &Path, document: &Document) -> StoreResult<String> {
+    /// An id the file it takes the place of held (`previous`) stays in it, also one its name
+    /// derives (issue 554): it is what keeps a definition when its file is moved.
+    fn render(
+        &self,
+        path: &Path,
+        document: &Document,
+        previous: Option<&str>,
+    ) -> StoreResult<String> {
         let Value::Object(mut fields) = document.body.clone() else {
             return Err(StoreError::Backend("a definition is a mapping of its fields".to_string()));
         };
@@ -328,9 +332,8 @@ impl DocumentFormat for Definitions {
         if named_by_name(path) {
             fields.remove("name");
         }
-        let had_id = std_fs::read_to_string(path)
-            .ok()
-            .and_then(|text| self.written_fields(&text).ok())
+        let had_id = previous
+            .and_then(|text| self.written_fields(text).ok())
             .is_some_and(|written| written.contains_key("id"));
         if !had_id && derived_id(self.kind, name) == document.id {
             fields.remove("id");
