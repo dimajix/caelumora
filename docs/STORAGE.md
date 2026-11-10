@@ -224,6 +224,15 @@ scope. A workspace lies in a session's scope, its owner's or the global one - ne
 since a session's channels share one - and belongs to a user wherever it lies. An artifact belongs
 to a user too, and lies in a project's scope alone (issue 467).
 
+**A name is an address, an id an identity.** Definitions and configuration may address what they
+refer to by name; the address stays as written and is resolved when it is used. What is recorded of
+a resolution is the id: what is state - a session, a channel, an agent, a history, a transcript -
+refers by id alone. Who owns something, who may reach it and where it lies are identity, also
+within a definition. So a template names its agents and its personalities and a personality its
+bundles, and `Channel::components` and `Session::commands`, configuration held by state, stay as
+written; an agent keeps the id of its personality, and an owner, an access list and a scope are ids
+everywhere.
+
 **Of one kind, a name is unique in its name space**, and the store keeps it so: nothing is created,
 renamed, moved or restored under a name another of its kind has there, compared as names are
 (`StoreError::NameTaken`). A channel's name space is its session's scope, a user's the global one;

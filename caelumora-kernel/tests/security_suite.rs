@@ -66,7 +66,7 @@ use tokio::time;
 async fn a_session_cannot_be_made_with_a_personality_the_user_may_not_read() {
     let world = World::new().await;
     let bobs = world.personality("bobs-own", Some(world.bob), &[]).await;
-    let template = world.template(Some(world.alice), &[], "helper", bobs.id).await;
+    let template = world.template(Some(world.alice), &[], "helper", &bobs).await;
 
     let refused = world
         .manager

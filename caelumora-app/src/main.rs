@@ -459,10 +459,10 @@ mod tests {
         // Every personality a template names is part of the seed.
         for template in &seed.session_templates {
             for participant in &template.participants {
-                if let ParticipantTemplate::Agent { personality_id, .. } = participant {
-                    stores.personalities.get(&system, *personality_id).await.unwrap_or_else(|_| {
-                        panic!("template {} names a personality the seed has", template.name)
-                    });
+                if let ParticipantTemplate::Agent { personality, .. } = participant {
+                    stores.personalities.find_by_name(&system, personality).await.unwrap_or_else(
+                        |_| panic!("template {} names a personality the seed has", template.name),
+                    );
                 }
             }
         }

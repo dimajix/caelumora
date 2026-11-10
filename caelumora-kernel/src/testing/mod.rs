@@ -43,7 +43,7 @@ use caelumora_api::workspace::WorkspaceError;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::actor::{ActorEvent, Envelope};
 use caelumora_domain::agent::testing::make_personality;
-use caelumora_domain::agent::{Agent, AgentId, Personality, PersonalityId};
+use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalStrategy, Approver};
 use caelumora_domain::channel::{
     moderation_components, Channel, ChannelId, InternalActor, Participant,
@@ -573,7 +573,7 @@ impl World {
         owner: Option<UserId>,
         contributors: &[UserId],
         agent: &str,
-        personality: PersonalityId,
+        personality: &Personality,
     ) -> SessionTemplateId {
         let mut template = SessionTemplate {
             participants: vec![
@@ -581,7 +581,7 @@ impl World {
                 ParticipantTemplate::Agent {
                     name: Name::new(agent).unwrap(),
                     scope: ScopeTemplate::UserScope,
-                    personality_id: personality,
+                    personality: personality.name.clone(),
                 },
             ],
             channels: vec![ChannelTemplate {

@@ -8,11 +8,13 @@ session_templates:
   - Agent:
       name: Jonathan
       scope: UserScope
-      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+      personality:
+        name: jonathan-assistant
   - Agent:
       name: Sassy
       scope: SessionScope
-      personality_id: 9e11411a-0aa5-41c8-a17f-61bf7b0352ce
+      personality:
+        name: sassy-assistant
   channels:
   - name: quizz
     summary: Hier wird geraten - und gewusst!

@@ -304,3 +304,7 @@ Each reviewed and committed on its own, on a branch of this issue.
   written makes its directories. `JsonFileStore::new` takes the journal's floor in place of
   `with_journal_floor`. To be settled in the plan of step 4: the store suite puts states of channels
   that have no document, for which the layout of `home` knows no session.
+- **2026-11-10** — Step 2: a template names a personality by name, resolved as the session is made,
+  in the name of whoever makes it and before anything is stored; what an agent keeps is its id. The
+  rule of addresses and identities is in `docs/STORAGE.md`, and `docs/CRATES.md` allows a plugin
+  that builds a backend on another's. Stored data: the session templates, to be deleted.

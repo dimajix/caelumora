@@ -35,12 +35,13 @@ pub(crate) type TemplateParticipants =
 /// The users of `template` for the session `session_id` of
 /// `owner`, each with its name in the template, the users found in
 /// `stores` as `context`; and the agents it names, with their names in the
-/// template, which are found or made once the session is (`take_in_participants`).
+/// template, which are found or made once the session is (`take_in_participants`),
+/// each with the id of its personality, found in `stores` by its name in exactly its scope.
 ///
 /// # Errors
 /// A `TemplateError` if the template cannot be made into a session; a
-/// `StoreError` if a user it names does not exist, or the store refuses or
-/// fails.
+/// `StoreError` if a user or a personality it names does not exist, or the
+/// caller may not read the personality, or the store refuses or fails.
 pub(crate) async fn resolve_participants(
     stores: &EntityStores,
     context: &SecurityContext,
@@ -62,8 +63,9 @@ pub(crate) async fn resolve_participants(
                 stores.users.get(context, id).await?;
                 participants.push((name, Participant::User(id)));
             }
-            ParticipantRequest::Agent { name: agent_name, personality_id } => {
-                agents.push((name, agent_name, personality_id))
+            ParticipantRequest::Agent { name: agent_name, personality } => {
+                let personality = stores.personalities.find_by_name(context, &personality).await?;
+                agents.push((name, agent_name, personality.id))
             }
         }
     }
@@ -269,15 +271,15 @@ mod tests {
         SessionTemplate { participants, ..make_template("pairing") }
     }
 
-    fn helper(personality_id: PersonalityId) -> ParticipantTemplate {
+    fn helper(personality: &Personality) -> ParticipantTemplate {
         ParticipantTemplate::Agent {
             name: Name::new("helper").unwrap(),
             scope: ScopeTemplate::GlobalScope,
-            personality_id,
+            personality: personality.name.clone(),
         }
     }
 
-    async fn store_with_personality(store: Persistence) -> (Persistence, PersonalityId) {
+    async fn store_with_personality(store: Persistence) -> (Persistence, Personality) {
         let mut personality = make_personality("plain");
         EntityStores::open(&store, &Policies::permitting_all())
             .unwrap()
@@ -285,7 +287,7 @@ mod tests {
             .create(&SecurityContext::system(), &mut personality)
             .await
             .unwrap();
-        (store, personality.id)
+        (store, personality)
     }
 
     /// The participants of `template` as `create_from_template` finds them
@@ -340,7 +342,7 @@ mod tests {
         let policies = Policies::permitting_all();
         let owner = UserId::new();
         let (store, personality) = store_with_personality(Persistence::in_memory()).await;
-        let template = template(vec![helper(personality)]);
+        let template = template(vec![helper(&personality)]);
 
         // None there yet: one is made, owned by the creator, and found the next time.
         let first = resolve(&store, &policies, &as_user(owner), &template, SessionId::new(), owner)
@@ -360,7 +362,7 @@ mod tests {
             .get(&SecurityContext::system(), *first)
             .await
             .unwrap();
-        assert_eq!(agent.personality_id, personality);
+        assert_eq!(agent.personality_id, personality.id);
         assert_eq!(agent.security_attributes.owner_id, ActorId::User(owner));
 
         // A lookup that fails is an error, not a reason to make another.
@@ -370,7 +372,7 @@ mod tests {
             &store,
             &policies,
             &as_user(owner),
-            &self::template(vec![helper(personality)]),
+            &self::template(vec![helper(&personality)]),
             SessionId::new(),
             owner,
         )
@@ -383,14 +385,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_personality_is_found_by_its_name_in_exactly_the_scope_named() {
+        let policies = Policies::permitting_all();
+        let owner = UserId::new();
+        let system = SecurityContext::system();
+        let (store, global) = store_with_personality(Persistence::in_memory()).await;
+        let stores = EntityStores::open(&store, &policies).unwrap();
+        let mut own = Personality {
+            id: PersonalityId::new(),
+            name: ScopedName::new("plain", Scope::UserScope { user_id: owner }).unwrap(),
+            ..global.clone()
+        };
+        stores.personalities.create(&system, &mut own).await.unwrap();
+        let naming = |personality: ScopedName| {
+            template(vec![ParticipantTemplate::Agent {
+                name: Name::new("helper").unwrap(),
+                scope: ScopeTemplate::SessionScope,
+                personality,
+            }])
+        };
+        let context = as_user(owner);
+
+        for expected in [&global, &own] {
+            let session = SessionId::new();
+            let template = naming(expected.name.clone());
+            let made = resolve(&store, &policies, &context, &template, session, owner)
+                .await
+                .expect("the one of that name in the scope named");
+            let Participant::Agent(made) = made[0].1 else { panic!("an agent") };
+            let made = stores.agents.get(&system, made).await.unwrap();
+            assert_eq!(made.personality_id, expected.id, "what is kept of the name is the id");
+        }
+
+        let elsewhere =
+            ScopedName::new("plain", Scope::UserScope { user_id: UserId::new() }).unwrap();
+        let refused =
+            resolve(&store, &policies, &context, &naming(elsewhere), SessionId::new(), owner)
+                .await
+                .expect_err("none of that name lies in that scope");
+        assert!(
+            matches!(
+                refused.downcast_ref::<StoreError>(),
+                Some(StoreError::NotFound { entity: "personality", .. })
+            ),
+            "{refused}"
+        );
+    }
+
+    #[tokio::test]
     #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn an_agent_is_reused_only_in_the_scope_asked_for_and_of_its_personality() {
         let policies = Policies::permitting_all();
         let owner = UserId::new();
-        let (store, personality) = store_with_personality(Persistence::in_memory()).await;
+        let (store, plain) = store_with_personality(Persistence::in_memory()).await;
         let stores = EntityStores::open(&store, &policies).unwrap();
         let system = SecurityContext::system();
-        let plain = stores.personalities.get(&system, personality).await.unwrap();
         let mut other = Personality {
             id: PersonalityId::new(),
             name: ScopedName::new("other", Default::default()).unwrap(),
@@ -407,7 +456,7 @@ mod tests {
             template(vec![ParticipantTemplate::Agent {
                 name: Name::new("Helper").unwrap(),
                 scope,
-                personality_id: personality,
+                personality: plain.name.clone(),
             }])
         };
         let made = |participants: Vec<(String, Participant)>| match participants[0].1 {
@@ -476,7 +525,7 @@ mod tests {
         let taken = ParticipantTemplate::Agent {
             name: Name::new("helper").unwrap(),
             scope: ScopeTemplate::GlobalScope,
-            personality_id: other.id,
+            personality: other.name.clone(),
         };
         let refused = resolve(
             &store,
@@ -548,16 +597,13 @@ mod tests {
         let (store, personality) = store_with_personality(Persistence::over(memory).unwrap()).await;
         let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
-        manager
-            .personality
-            .set(stores.personalities.get(&system, personality).await.unwrap())
-            .unwrap();
+        manager.personality.set(personality.clone()).unwrap();
 
         let participants = resolve(
             &store,
             &policies,
             &as_user(owner),
-            &template(vec![helper(personality)]),
+            &template(vec![helper(&personality)]),
             SessionId::new(),
             owner,
         )
@@ -580,14 +626,13 @@ mod tests {
         let (store, personality) = store_with_personality(Persistence::in_memory()).await;
         let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
         let system = SecurityContext::system();
-        let plain = stores.personalities.get(&system, personality).await.unwrap();
         stores
             .agents
             .create(
                 &system,
                 &mut Agent::new(
                     ScopedName::new("helper", Scope::GlobalScope).unwrap(),
-                    plain.id,
+                    personality.id,
                     ActorId::User(other),
                 ),
             )
@@ -598,7 +643,7 @@ mod tests {
             &store,
             &policies,
             &as_user(owner),
-            &template(vec![helper(personality)]),
+            &template(vec![helper(&personality)]),
             SessionId::new(),
             owner,
         )
@@ -622,10 +667,9 @@ mod tests {
     async fn a_personality_of_a_session_makes_agents_only_within_it() {
         let policies = Policies::permitting_all();
         let owner = UserId::new();
-        let (store, personality) = store_with_personality(Persistence::in_memory()).await;
+        let (store, plain) = store_with_personality(Persistence::in_memory()).await;
         let stores = EntityStores::open(&store, &policies).unwrap();
         let system = SecurityContext::system();
-        let plain = stores.personalities.get(&system, personality).await.unwrap();
         let session_id = SessionId::new();
         let mut sessions = Personality {
             id: PersonalityId::new(),
@@ -637,7 +681,7 @@ mod tests {
             template(vec![ParticipantTemplate::Agent {
                 name: Name::new("planner").unwrap(),
                 scope,
-                personality_id: sessions.id,
+                personality: sessions.name.clone(),
             }])
         };
 

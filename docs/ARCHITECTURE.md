@@ -244,11 +244,11 @@ Sessions are made from **session templates**. A template names every participant
 users, and agents with their personality and scope - and the channels, which refer to the
 participants by name and name their internal actors, such as an approver. The domain builds the
 session and its channels from the users it is given, without touching a store
-(`SessionTemplate::build`); the kernel finds the owner, stores and starts the session, and then
-finds or makes the agents - an agent is the one of its name in exactly the scope the template asks
-for, made if there is none - and takes them in as anyone is taken into a running session; if that
-fails, the session is taken back (`SessionManager::create_from_template`). REST and the TUI both
-create sessions this way.
+(`SessionTemplate::build`); the kernel finds the owner and the personalities the template names,
+stores and starts the session, and then finds or makes the agents - an agent is the one of its name
+in exactly the scope the template asks for, made if there is none - and takes them in as anyone is
+taken into a running session; if that fails, the session is taken back
+(`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
 classification, used by the participants of those channels of the session where it and the channel

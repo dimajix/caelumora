@@ -8,11 +8,13 @@ session_templates:
   - Agent:
       name: Jonathan
       scope: UserScope
-      personality_id: 6c109a76-8e67-4e44-ac8d-f97d4be9d3fb
+      personality:
+        name: jonathan-assistant
   - Agent:
       name: Hermes
       scope: SessionScope
-      personality_id: ff9a5e56-e5ea-43f9-9114-2098a6f417a9
+      personality:
+        name: hermes-remote
   channels:
   # Only when @-mentioned: what the remote agent is given leaves the system,
   # and it is given only when asked to respond - and the two agents do not

@@ -124,8 +124,8 @@ The graph is not only what has grown, but holds rules of the design:
 *   Nothing but the programs depends on a plugin - but a plugin that brings a backend of another
     plugin's service, as `caelumora-model-ollama`, `caelumora-model-comfyui` and
     `caelumora-model-systemone` bring ones of the models of `caelumora-model` (issues 520, 525,
-    551), or asks that service, as `caelumora-decision` asks it for a decision model's client -,
-    and only the crates that are a plugin and a
+    551), or asks that service, as `caelumora-decision` asks it for a decision model's client, or
+    builds a backend on the one of another plugin -, and only the crates that are a plugin and a
     library at once, with `server`, on `caelumora-rest-server`.
 
 ## How a crate is named

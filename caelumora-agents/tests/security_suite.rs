@@ -101,7 +101,7 @@ async fn a_shared_personality_makes_an_agent_of_whoever_uses_it() {
     let global = world.personality("global", None, &[]).await;
     for personality in [&shared, &global] {
         let template = world
-            .template(Some(world.alice), &[], personality.name.name.as_str(), personality.id)
+            .template(Some(world.alice), &[], personality.name.name.as_str(), personality)
             .await;
         let session = world
             .manager
@@ -529,9 +529,9 @@ async fn the_components_a_personality_includes_are_read_in_its_agents_name() {
 async fn a_template_is_used_only_by_who_may_read_it() {
     let world = agent_testing::world().await;
     let global = world.personality("global", None, &[]).await;
-    let bobs = world.template(Some(world.bob), &[], "private", global.id).await;
-    let shared = world.template(Some(world.bob), &[world.alice], "shared", global.id).await;
-    let systems = world.template(None, &[], "public", global.id).await;
+    let bobs = world.template(Some(world.bob), &[], "private", &global).await;
+    let shared = world.template(Some(world.bob), &[world.alice], "shared", &global).await;
+    let systems = world.template(None, &[], "public", &global).await;
     let alice = World::as_user(world.alice);
 
     let refused = world
@@ -565,7 +565,7 @@ async fn a_template_is_used_only_by_who_may_read_it() {
 async fn joining_needs_an_entry_that_lets_one_join() {
     let world = agent_testing::world().await;
     let shared = world.personality("shared", None, &[]).await;
-    let template_id = world.template(Some(world.alice), &[], "helper", shared.id).await;
+    let template_id = world.template(Some(world.alice), &[], "helper", &shared).await;
     let mut template = world
         .kernel
         .entity_stores()
@@ -3127,7 +3127,8 @@ async fn lowering_a_channel_gives_up_an_external_agents_task_as_whoever_asked_be
 
 /// Making a session from a template: reading the template, then creating
 /// the session - before anything is found or made for it (issue 312) -,
-/// reading its owner and the store creating the session again and its
+/// reading its owner, finding the personalities it names by their names,
+/// and the store creating the session again and its
 /// channels, built empty; then, once it is made, finding or making the
 /// agents - creating each, the session read where it may lie, before its
 /// personality is read, and the store creating it again - and taking each
@@ -3142,7 +3143,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     let world = agent_testing::world().await;
     let shared = world.personality("shared", Some(world.bob), &[world.alice]).await;
     let bobs = world.personality("bobs", Some(world.bob), &[]).await;
-    let template = world.template(None, &[], "helper", shared.id).await;
+    let template = world.template(None, &[], "helper", &shared).await;
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
 
     let (made, asked) = world
@@ -3153,6 +3154,9 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(system's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
+        // The personality it names, found by its name before anything is made.
+        "alice: List(personality) yes",
+        "alice: GetPersonality(bob's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: CreateChannel(alice's) yes",
         // Its agent, found or made once the session is.
@@ -3173,17 +3177,20 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
     ]), "the agent's personality is asked for in its name twice: as it is taken into the session, and as its actor is built");
     world.manager.stop(&alice, session.id()).await.unwrap();
 
-    // Again: the agent is found, not made - its personality is not read
-    // for making it, only in its own name, to run.
+    // Again: the agent is found, not made - its personality is found by
+    // its name, and read otherwise only in the agent's name, to run.
     let (again, asked) = world
         .asked(world.manager.create_from_template(&alice, template, SessionSpec::default()))
         .await;
     assert!(again.is_ok());
     assert_eq!(asked.iter().filter(|line| line.contains("CreateAgent")).count(), 0, "{asked:?}");
+    assert!(asked.contains(&"alice: List(personality) yes".to_string()), "{asked:?}");
+    let her_reads = asked.iter().filter(|line| *line == "alice: GetPersonality(bob's) yes");
+    assert_eq!(her_reads.count(), 1, "in her name, only to find it by its name: {asked:?}");
     assert!(asked.contains(&"alice as helper: GetPersonality(bob's) yes".to_string()), "{asked:?}");
     world.manager.stop(&alice, again.unwrap().id()).await.unwrap();
 
-    let private = world.template(Some(world.bob), &[], "private", shared.id).await;
+    let private = world.template(Some(world.bob), &[], "private", &shared).await;
     let (refused, asked) = world
         .asked(world.manager.create_from_template(&carol, private, SessionSpec::default()))
         .await;
@@ -3194,7 +3201,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "a template one may not read: nothing more is asked"
     );
 
-    let unusable = world.template(Some(world.alice), &[], "unusable", bobs.id).await;
+    let unusable = world.template(Some(world.alice), &[], "unusable", &bobs).await;
     let sessions = || async {
         world
             .kernel
@@ -3214,13 +3221,10 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSessionTemplate(alice's) yes",
         "alice: CreateSession(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: CreateSession(alice's) yes",
-        "alice: CreateChannel(alice's) yes",
-        "alice: List(agent) yes",
-        "alice: CreateAgent(alice's) yes",
+        "alice: List(personality) yes",
         "alice: GetPersonality(bob's) no",
-    ]), "a personality one may not read: no agent - one of the name is looked for, and her agent of another name is not asked about (issue 447)");
-    assert_eq!(sessions().await, before, "and the session made for it is taken back");
+    ]), "a personality one may not read is not there: one of the name is looked for, and nothing more is asked (issue 447)");
+    assert_eq!(sessions().await, before, "and no session is made for it");
 }
 
 /// A session asked to be made in a shared project (issue 476) is put into it as any session is,
@@ -3230,7 +3234,7 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
 async fn a_session_is_made_in_a_project_as_it_is_put_into_one() {
     let world = agent_testing::world().await;
     let plain = world.personality("plain", Some(world.alice), &[]).await;
-    let template = world.template(Some(world.alice), &[], "helper", plain.id).await;
+    let template = world.template(Some(world.alice), &[], "helper", &plain).await;
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
     let project = world
         .projects
@@ -3456,7 +3460,7 @@ async fn template_with_workspace(
     storage: &str,
 ) -> SessionTemplateId {
     let global = world.personality(&format!("global-{storage}"), None, &[]).await;
-    let id = world.template(None, &[], &format!("helper-{storage}"), global.id).await;
+    let id = world.template(None, &[], &format!("helper-{storage}"), &global).await;
     let mut template =
         world.kernel.entity_stores().session_templates.get(&World::system(), id).await.unwrap();
     template.workspace = Some(WorkspaceTemplate {
