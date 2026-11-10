@@ -11,6 +11,12 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [549](549-kernel-takes-an-agents-word-on-a-content-reference.md) | open | medium | bug | `ActorRuntime::load_attachments` and `copy_attachment` take a `ContentRef` from the agent side and act on its key and its label, although a library of the agent side is trusted for nothing, so that it can read content of another channel or copy an attachment under a lower label. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
+## Persistence
+
+| No. | Status | Priority | Type | Issue |
+|---|---|---|---|---|
+| [554](554-the-terminal-program-keeps-its-data-like-a-server.md) | open | medium | feature | `caelumora-tui` keeps everything in directories it is configured with, in files named by UUID, and works in workspaces of its own, so that on one person's machine nothing it does can be told by the files in their home, and none of its sessions can be found or read there. |
+
 ## Sessions and channels
 
 | No. | Status | Priority | Type | Issue |
