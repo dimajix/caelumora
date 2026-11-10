@@ -114,6 +114,10 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-store-json`** - the stores in JSON files below a directory (`JsonFileStore`), a
     plugin that brings nothing but the backend `json` of the stores (issue 446). See
     [STORAGE.md](STORAGE.md#the-entity-store).
+*   **`caelumora-store-home`** - the stores of a program of one person below a data directory
+    (`HomeStore`), every session a directory of its own, a plugin that brings nothing but the
+    backend `home` of the stores, built on `caelumora-store-json` (issue 554). See
+    [STORAGE.md](STORAGE.md#in-a-home-directory).
 *   **`caelumora-store-postgres`** - the stores in Postgres (`PostgresStore`, with `sqlx`), a plugin
     that brings nothing but the backend `postgres` of the stores, which keeps the entities and the
     states (issues 03, 04). See [STORAGE.md](STORAGE.md#in-postgres).
@@ -156,8 +160,9 @@ the model; the kernel knows none. A plugin is one crate; one that brings a libra
 into layers by Cargo features rather than crates. The first is `caelumora-skills`
 ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
 the kernel's workspaces, the third `caelumora-memory`; `caelumora-decision` brings a component of a
-channel alone, and `caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres`
-bring backends alone. What runs an agent or serves its facets is no plugin but a **library** of the
+channel alone, and `caelumora-open-terminal`, `caelumora-store-json`, `caelumora-store-home` and
+`caelumora-store-postgres` bring backends alone. What runs an agent or serves its facets is no
+plugin but a **library** of the
 agent side (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered
 as a plugin is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`).
 The agents are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose

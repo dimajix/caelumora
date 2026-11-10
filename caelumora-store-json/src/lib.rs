@@ -133,7 +133,8 @@ async fn delete_if_exists(path: &Path) -> StoreResult<bool> {
     }
 }
 
-fn to_backend_error(err: impl Display) -> StoreError {
+/// `StoreError::Backend` for what a file system answered.
+pub fn to_backend_error(err: impl Display) -> StoreError {
     StoreError::Backend(err.to_string())
 }
 

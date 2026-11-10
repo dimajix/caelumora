@@ -29,6 +29,7 @@ flowchart TD
         model_systemone["caelumora-model-systemone"]
         open_terminal["caelumora-open-terminal"]
         store_json["caelumora-store-json"]
+        store_home["caelumora-store-home"]
         store_postgres["caelumora-store-postgres"]
     end
 
@@ -67,6 +68,7 @@ flowchart TD
     plugins --> kernel
     decision & model_comfyui & model_ollama & model_systemone --> model
     decision & kernel & model & model_systemone & open_terminal & rest_server & store & store_json & store_postgres --> security
+    store_home --> store_json
     a2a & compaction & tool_attachment & tool_image & tool_mcp & tool_web & tool_workspace --> agents
     libraries --> api
     tool_workspace --> compaction
@@ -75,7 +77,7 @@ flowchart TD
     agents -. "test-support" .-> store
     api & kernel & logging & rest_api & rest_server & security & store --> domain
     kernel & rest_server --> api
-    kernel & rest_server & store_json & store_postgres --> store
+    kernel & rest_server & store_home & store_json & store_postgres --> store
     rest_server --> kernel
 ```
 <!-- crate-graph.sh: end -->
@@ -90,8 +92,8 @@ those it takes with other features than their default ones.
 <!-- crate-graph.sh: programs -->
 | Program | Depends on |
 |---|---|
-| `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-security` and `caelumora-store` |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server`, `caelumora-security` and `caelumora-store`; `caelumora-artifacts`, `caelumora-memory` and `caelumora-skills` with `kernel` and `library` alone |
+| `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-security`, `caelumora-store` and `caelumora-store-home` |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server`, `caelumora-security`, `caelumora-store` and `caelumora-store-home`; `caelumora-artifacts`, `caelumora-memory` and `caelumora-skills` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
 Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` was named

@@ -160,6 +160,28 @@ Its tests run against a database: `test/docker-compose.yml` starts one, and the 
 `CAELUMORA_TEST_POSTGRES_URL` names it, read as a secret; each test keeps its tables in a schema of
 its own. Without the variable they are skipped.
 
+### In a home directory
+
+The backend `home` (`HomeStore`, in `caelumora-store-home`) is that of a program of one person: what
+belongs to a session can be looked at, copied or removed as one directory. It keeps its documents
+and states as the JSON store does (`JsonDocuments`, `JsonStates`), in places of its own:
+
+*   **A document** is the file `<kind>.json` in a directory named by its id, in `<kind>s` of the
+    directory its scope says: `sessions/<id>` for a session's, `channels/<id>` within that for a
+    channel's, the directory of the project for a project's, the data directory otherwise. A kind
+    the program names in `within` lies beside the document of its id of another kind: `memory`
+    beside its `agent`.
+*   **A document stays where it was made**, also if it is renamed or its scope changes.
+*   **The states of a channel** lie in `state/` of its directory, so that the document of a
+    channel comes before its states, and they go before it: otherwise they would lie elsewhere.
+    Removing a document removes what it leaves empty, never what is still in its directory.
+*   **What lies where is searched for**, by the names of the directories, and what is found is
+    remembered, never stored: the stores name a document by its id alone, and only this layout needs
+    what lies above it. A channel no document names keeps its states in `channels/<id>`.
+*   **Several programs may use one data directory at a time**: a lock of the file system per kind
+    keeps their writes apart (`locks/<kind>`), and what one wrote the other finds when it next
+    reads, though it hears of nothing.
+
 ### Content
 
 Binary content - the versions of artifacts, the attachments of messages - lies in the storages

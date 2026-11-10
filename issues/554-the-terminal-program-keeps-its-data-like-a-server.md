@@ -331,3 +331,11 @@ Each reviewed and committed on its own, on a branch of this issue.
   `DocumentLayout` out of `JsonFileStore`, as step 1 did with its states. Documents by id lie as
   JSON files in `home` too, so that it would otherwise repeat their revisions and names; what is
   written makes its directories.
+- **2026-11-10** — Step 4, its first part: the crate `caelumora-store-home`, its documents by id
+  and its states, a `flock` per kind, passing the store suite. A document is the file `<kind>.json`
+  in a directory named by its id, in `<kind>s` of whatever its scope says. The states of a channel
+  lie in `state/` of its directory, apart from what lies in the channel's scope. Removing a document
+  removes what it leaves empty, never what is still in its directory. `HomeStorePlugin` comes with
+  it, which the program links in step 6. Still to come: the symbolic links of names, which need the
+  layout to hear of a write; and whether the session's lock of step 6 also keeps another program
+  from purging a running session, whose channel would otherwise start a directory of its own.

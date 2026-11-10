@@ -850,6 +850,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-store-home"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "caelumora-api",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-security",
+ "caelumora-store",
+ "caelumora-store-json",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-store-json"
 version = "0.1.0"
 dependencies = [
