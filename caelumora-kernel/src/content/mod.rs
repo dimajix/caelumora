@@ -13,6 +13,8 @@
 
 mod local;
 
+pub use local::LocalContentStorage;
+
 use crate::backend::Backends;
 use async_trait::async_trait;
 use caelumora_api::error::ContentError;
@@ -103,7 +105,6 @@ mod tests {
     use bytes::Bytes;
     use caelumora_domain::digest;
     use futures::stream;
-    use local::LocalContentStorage;
 
     fn stream(content: &'static [u8]) -> ByteStream {
         Box::pin(stream::iter([Ok(Bytes::from_static(content))]))

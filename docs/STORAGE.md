@@ -199,6 +199,12 @@ and states as the JSON store does (`FileDocuments`, `JsonStates`), in places of 
 *   **Several programs may use one data directory at a time**: a lock of the file system per kind
     keeps their writes apart (`locks/<kind>`), and what one wrote the other finds when it next
     reads, though it hears of nothing.
+*   **Content lies with what it belongs to** (`HomeContent`, the storage of content `home`): a key
+    whose key space the program names in `spaces` lies in `content/` of the directory of what its
+    second segment names - `attachments/<channel>/…` in the channel's, `artifacts/<project>/…` in
+    the project's -, found as the stores find it; any other key in `content/` of the data
+    directory. Apart from the documents there, so that removing content never takes one along.
+    The files are written as `local` writes them (`LocalContentStorage`).
 
 ### Content
 

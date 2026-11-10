@@ -2,9 +2,9 @@
 //! ids, names and scopes: a kind's documents are found by looking through the directories things
 //! can lie in, and what is found is remembered.
 
-use caelumora_domain::channel::{Channel, ChannelId};
+use caelumora_domain::channel::Channel;
 use caelumora_domain::group::Group;
-use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::project::Project;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::Session;
 use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
@@ -85,7 +85,8 @@ pub(crate) fn name_of_file(text: &str) -> Option<String> {
 #[derive(Debug)]
 pub(crate) struct Places {
     data_dir: PathBuf,
-    config_dir: PathBuf,
+    /// Where the definitions of the global scope lie, if there are definitions.
+    config_dir: Option<PathBuf>,
     /// The kinds that lie beside the document of their id of another kind.
     within: BTreeMap<String, String>,
     found: Mutex<HashMap<(Shelf, Uuid), PathBuf>>,
@@ -93,13 +94,19 @@ pub(crate) struct Places {
 
 impl Places {
     /// The places below `data_dir` and `config_dir`, where the kinds named in `within` lie beside
-    /// the document of their id of the kind named with them.
+    /// the document of their id of the kind named with them; without `config_dir`, of what keeps no
+    /// definitions, as the content.
     pub(crate) fn new(
         data_dir: PathBuf,
-        config_dir: PathBuf,
+        config_dir: Option<PathBuf>,
         within: BTreeMap<String, String>,
     ) -> Self {
         Self { data_dir, config_dir, within, found: Mutex::default() }
+    }
+
+    /// The data directory.
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.data_dir
     }
 
     /// The directory of the locks of the kinds.
@@ -188,7 +195,7 @@ impl Places {
     /// # Errors
     /// If a directory cannot be looked into.
     pub(crate) async fn holders_of_definitions(&self) -> StoreResult<Vec<PathBuf>> {
-        let mut holders = vec![self.config_dir.clone()];
+        let mut holders: Vec<PathBuf> = self.config_dir.iter().cloned().collect();
         for holder in self.holders().await? {
             holders.extend(paths_of_ids(holder.join(family_of(User::KIND.name()))).await?);
             holders.extend(paths_of_ids(holder.join(family_of(Group::KIND.name()))).await?);
@@ -201,7 +208,7 @@ impl Places {
 
     /// The scope of what lies in the directory `holder`, one `holders_of_definitions` answers.
     pub(crate) fn scope_of(&self, holder: &Path) -> Option<Scope> {
-        if holder == self.config_dir {
+        if Some(holder) == self.config_dir.as_deref() {
             return Some(Scope::GlobalScope);
         }
         let parts: Vec<&str> = holder
@@ -240,7 +247,10 @@ impl Places {
     /// If a directory cannot be looked into.
     pub(crate) async fn holder_of_definitions(&self, scope: &Scope) -> StoreResult<PathBuf> {
         match scope {
-            Scope::GlobalScope => Ok(self.config_dir.clone()),
+            Scope::GlobalScope => self
+                .config_dir
+                .clone()
+                .ok_or(StoreError::Backend("there is no directory of definitions".to_string())),
             Scope::UserScope { user_id } => {
                 self.directory_of(&Shelf::of(User::KIND.name()), (*user_id).into()).await
             }
@@ -263,7 +273,9 @@ impl Places {
                 .join(session_id.to_string())
                 .join(family_of(Channel::KIND.name()))
                 .join(channel_id.to_string()),
-            Scope::ProjectScope { project_id } => self.project(*project_id).await?,
+            Scope::ProjectScope { project_id } => {
+                self.directory_of_kind(Project::KIND.name(), (*project_id).into()).await?
+            }
             Scope::UserScope { .. } | Scope::GroupScope { .. } | Scope::GlobalScope => {
                 self.data_dir.clone()
             }
@@ -294,18 +306,14 @@ impl Places {
         Ok(dir.join(&shelf.family).join(id.to_string()).join(&shelf.file))
     }
 
-    /// The directory of the channel `channel`: that of its document, or `channels/<id>` for a
-    /// channel without one, whose session nothing tells.
+    /// The directory of the document `id` of the kind of the name `kind`: that of its document, or
+    /// `<kind>s/<id>` below the data directory for one without, of which nothing tells where it
+    /// would lie - the states of a channel no document names.
     ///
     /// # Errors
     /// If a directory cannot be looked into.
-    pub(crate) async fn channel(&self, channel: ChannelId) -> StoreResult<PathBuf> {
-        self.directory_of(&Shelf::of(Channel::KIND.name()), channel.into()).await
-    }
-
-    /// The directory of the project `project`, as `channel` tells that of a channel.
-    async fn project(&self, project: ProjectId) -> StoreResult<PathBuf> {
-        self.directory_of(&Shelf::of(Project::KIND.name()), project.into()).await
+    pub(crate) async fn directory_of_kind(&self, kind: &str, id: Uuid) -> StoreResult<PathBuf> {
+        self.directory_of(&Shelf::of(kind), id).await
     }
 
     /// The directory of the document `id` on `shelf`, or the one below the data directory it would

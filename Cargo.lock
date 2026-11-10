@@ -855,6 +855,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "bytes",
  "caelumora-api",
  "caelumora-domain",
  "caelumora-kernel",

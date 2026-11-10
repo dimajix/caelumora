@@ -26,7 +26,9 @@ uuid = { workspace = true, features = ["v5"] }
 caelumora-domain = { workspace = true, features = ["test-support"] }
 caelumora-security = { workspace = true, features = ["test-support"] }
 caelumora-store = { workspace = true, features = ["test-support"] }
+bytes.workspace = true
 tempfile.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [lints]

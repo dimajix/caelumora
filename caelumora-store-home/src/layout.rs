@@ -3,9 +3,9 @@
 
 use crate::places::{file_name_of, Places, Shelf};
 use async_trait::async_trait;
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{Channel, ChannelId};
 use caelumora_domain::scope::Scope;
-use caelumora_domain::store::StoreResult;
+use caelumora_domain::store::{StoreResult, Stored};
 use caelumora_store::documents::Document;
 use caelumora_store_json::{id_named, to_backend_error, DocumentLayout, StateLayout};
 use futures::stream::BoxStream;
@@ -190,15 +190,30 @@ impl HomeStates {
 #[async_trait]
 impl StateLayout for HomeStates {
     async fn channel_state(&self, channel: ChannelId) -> StoreResult<PathBuf> {
-        Ok(self.0.channel(channel).await?.join(STATE).join("channel.json"))
+        Ok(self
+            .0
+            .directory_of_kind(Channel::KIND.name(), channel.into())
+            .await?
+            .join(STATE)
+            .join("channel.json"))
     }
 
     async fn agents_in(&self, channel: ChannelId) -> StoreResult<PathBuf> {
-        Ok(self.0.channel(channel).await?.join(STATE).join("agents"))
+        Ok(self
+            .0
+            .directory_of_kind(Channel::KIND.name(), channel.into())
+            .await?
+            .join(STATE)
+            .join("agents"))
     }
 
     async fn users_in(&self, channel: ChannelId) -> StoreResult<PathBuf> {
-        Ok(self.0.channel(channel).await?.join(STATE).join("users"))
+        Ok(self
+            .0
+            .directory_of_kind(Channel::KIND.name(), channel.into())
+            .await?
+            .join(STATE)
+            .join("users"))
     }
 
     async fn agents_of_every_channel(&self) -> StoreResult<Vec<PathBuf>> {

@@ -1,12 +1,15 @@
-//! The backend of the stores of a program of one person (issue 554): every session is a directory
-//! of its own below the data directory, and what lies in a scope lies in that scope's directory
-//! (`HomeStore`), registered as the backend `home` by its plugin (`HomeStorePlugin`).
+//! The backends of a program of one person (issue 554), each laying out what it keeps below one
+//! data directory: the stores (`HomeStore`), every session a directory of its own and what lies in
+//! a scope in that scope's directory, and the content (`HomeContent`), with what it belongs to;
+//! registered as the backends `home` by its plugin (`HomeStorePlugin`).
 
+mod content;
 mod definitions;
 mod layout;
 mod places;
 pub mod plugin;
 
+pub use content::{HomeContent, HomeContentConfig};
 pub use definitions::{DefinitionFiles, FileFormat};
 
 use caelumora_domain::store::{EntityKind, StoreResult};
@@ -67,7 +70,7 @@ impl HomeStore {
         }
         let places = Arc::new(Places::new(
             config.data_dir.clone(),
-            config.config_dir.clone(),
+            Some(config.config_dir.clone()),
             config.within.clone(),
         ));
         fs::create_dir_all(places.locks()).map_err(to_backend_error)?;

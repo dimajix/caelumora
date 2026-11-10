@@ -362,3 +362,12 @@ Each reviewed and committed on its own, on a branch of this issue.
 - **2026-11-10** — `DocumentFormat::render` is given the text of the file it takes the place of,
   which `FileDocuments` read to judge the write: an `id` once in a definition's file stays when the
   file moves - deleted, restored, renamed -, and a format reads no file itself.
+- **2026-11-10** — Step 4, its third part: the content `home` (`HomeContent`), registered by
+  `HomeStorePlugin`. A key lies in `content/` of the directory of what its second segment names,
+  apart from the documents there - the versions of an artifact would otherwise share the directory
+  of its document, which removing them would take along -, where the key space is named in
+  `spaces`, found by the same search as the stores' - decided with the
+  maintainer, who finds none of the ways satisfying; issue
+  [556](556-what-an-id-lies-in-is-found-by-searching.md) thinks it through. The files are written
+  by the kernel's `LocalContentStorage`, now public for it, below the data directory, so that a
+  copy between two channels is one of one storage.

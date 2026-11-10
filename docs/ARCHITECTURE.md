@@ -116,8 +116,8 @@ drawn in [CRATES.md](CRATES.md):
     [STORAGE.md](STORAGE.md#the-entity-store).
 *   **`caelumora-store-home`** - the stores of a program of one person below a data directory
     (`HomeStore`), every session a directory of its own, a plugin that brings nothing but the
-    backend `home` of the stores, built on `caelumora-store-json` (issue 554). See
-    [STORAGE.md](STORAGE.md#in-a-home-directory).
+    backends `home` of the stores and of the content, built on `caelumora-store-json` (issue 554).
+    See [STORAGE.md](STORAGE.md#in-a-home-directory).
 *   **`caelumora-store-postgres`** - the stores in Postgres (`PostgresStore`, with `sqlx`), a plugin
     that brings nothing but the backend `postgres` of the stores, which keeps the entities and the
     states (issues 03, 04). See [STORAGE.md](STORAGE.md#in-postgres).

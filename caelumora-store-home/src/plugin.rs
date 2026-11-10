@@ -1,16 +1,18 @@
-//! How the stores of a program of one person are joined to the kernel (issue 554): as a backend of
-//! the stores alone.
+//! How the stores and the content of a program of one person are joined to the kernel (issue 554):
+//! as backends alone.
 
-use crate::{HomeStore, HomeStoreConfig};
+use crate::{HomeContent, HomeContentConfig, HomeStore, HomeStoreConfig};
 use anyhow::Result;
 use caelumora_api::component::{ComponentError, Params};
 use caelumora_kernel::backend::Backends;
+use caelumora_kernel::content::ContentStorage;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
 use caelumora_store::PersistenceBackend;
 use std::sync::Arc;
 
-/// The backend `home` of the stores (`HomeStore`), as a plugin.
+/// The backends `home` of the stores (`HomeStore`) and of the content (`HomeContent`), as a plugin:
+/// each finds where things lie below the same data directory.
 #[derive(Debug, Default)]
 pub struct HomeStorePlugin;
 
@@ -30,6 +32,9 @@ impl Plugin for HomeStorePlugin {
                 Ok(Arc::new(store))
             },
         );
+        backends.register::<dyn ContentStorage, _, _>("home", |_, config: HomeContentConfig, _| {
+            Ok(Arc::new(HomeContent::new(&config)))
+        });
     }
 
     fn register(&self, _kernel: &mut KernelBuilder) -> Result<()> {
@@ -84,5 +89,10 @@ mod tests {
             refused.contains("the entity store (home)") && refused.contains("data"),
             "{refused}"
         );
+
+        let content = BackendConfig::new("home", json!({ "data_dir": dir.path() }));
+        backends
+            .make_one::<dyn ContentStorage>("content", "content", &content, &Services::empty())
+            .expect("its content too");
     }
 }

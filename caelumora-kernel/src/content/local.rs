@@ -39,14 +39,18 @@ pub(super) fn register_backend(backends: &mut Backends) {
     });
 }
 
+/// Content as a file per key under `root`, on Caelumora's host, the key's segments its
+/// directories: `local`, and what keeps its files below a directory of its own.
 #[derive(Debug)]
-pub(super) struct LocalContentStorage {
+pub struct LocalContentStorage {
     root: PathBuf,
     destination: Option<Classification>,
 }
 
 impl LocalContentStorage {
-    pub(super) fn new(root: PathBuf, destination: Option<Classification>) -> Self {
+    /// The storage of the files under `root`, holding what is classified as `destination` at
+    /// most, or anything for `None`.
+    pub fn new(root: PathBuf, destination: Option<Classification>) -> Self {
         Self { root, destination }
     }
 
