@@ -70,6 +70,12 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [378](378-resource-management-epic.md) | open | medium | epic | Epic for resource management: the bracket around 376, 379–383 and 218, which reduce what the server holds in memory, and their recommended order. |
 
+## Code structure
+
+| No. | Status | Priority | Type | Issue |
+|---|---|---|---|---|
+| [556](556-what-an-id-lies-in-is-found-by-searching.md) | open | medium | question | The stores, the state stores and the storages of content are told an entity by its id alone, so a backend whose layout follows what encloses an entity - `home` of issue 554 - has to search for it; the events answered the same question with `Address`, and whether an access path derived from an id should serve both is open. |
+
 ## Integrations
 
 | No. | Status | Priority | Type | Issue |
