@@ -165,6 +165,10 @@ pub enum ViewError {
     /// nothing in it that can be read from where the viewer reads.
     #[error("there is no channel named \"{0}\" that can be read from here")]
     NoChannelNamed(String),
+    /// Asked for by name, as a command does (issue 555): no such personality the viewer may read,
+    /// or none seen from where it was asked for.
+    #[error("there is no personality named \"{0}\" that can be used here")]
+    NoPersonalityNamed(String),
     #[error("Channel {channel} has no participant {actor}")]
     ParticipantNotFound { channel: ChannelId, actor: ActorId },
     /// Not in the history, or not in the part of it the viewer sees.

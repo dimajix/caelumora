@@ -1,6 +1,6 @@
 # 555 — No command brings an agent into a channel
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -148,9 +148,9 @@ or `Participation` rather than in the command.
 
 ## Done when
 
-- By command, in a channel, an existing agent - global, the issuer's, or of the session - can be
-  brought into that channel, also when it is not in the session yet.
-- By command, an agent can be made of a personality the issuer may read.
+- With `/add`, in a channel, an existing user or agent - an agent global, the issuer's, or of the
+  session - can be brought into that channel, also when not in the session yet.
+- With `/create-agent`, an agent can be made of a personality the issuer may read.
 - The commands ask nothing the operations do not ask, and a name that cannot be used is answered
   without telling what exists; the security suite covers it.
 - COMMANDS.md lists them, and describes how a name is looked up beyond those taking part.
@@ -162,3 +162,67 @@ or `Participation` rather than in the command.
   suggestion of two commands. Looked at what exists: every operation is there (221, 227), and what
   is missing is the commands, a lookup of a name beyond the channel, and a rule for two names in
   one line. Nothing is decided yet.
+- **2026-11-10** — Decided with the maintainer: option C, two commands. `/create-agent` makes an
+  agent of a personality, `/add` brings any participant - a user or an agent - into the channel it
+  is issued in. The other questions above are still open.
+- **2026-11-10** — Decided with the maintainer:
+  1. `/add` finds an agent from the channel as a place, the innermost first, and a user by their
+     exact name. A name that finds several is refused with their names; nobody is picked.
+  2. `/create-agent <personality> [as <name>]`; without `as`, the agent is named after the
+     personality.
+  3. A new agent lies in the session's scope, without an argument for now.
+  4. `/add` shares the whole history, without an argument for now, and its description says so.
+  5. `/add` is `add_participant` alone: `join` is left out for now.
+  6. Everyone who reads the channel sees both commands; who lacks the right is refused on running
+     them.
+- **2026-11-11** — Decided with the maintainer, refining decision 1:
+  1. `SessionView::candidates` takes a `NameMatch` instead of its `prefix`, an enum of the domain
+     with two variants, `Prefix` and `Exact`, both as names are compared - a pattern for other
+     searches as well. With `Prefix` it stays the search of the dialog: only for whoever may change
+     the session, from `MIN_PREFIX` characters on, at most `CANDIDATES` of each kind. With `Exact`
+     it is what `/add` asks: without that guard, since one whole name tells nothing the stores do
+     not let one read anyway, and without a limit, which must not cut off what was named.
+  2. A name that finds several is not refused as such, since a name is all one can type, and a
+     handle is derived from it: the nearest from the channel wins. The ranks are the channel's
+     scope; the session - its participants, wherever they lie, and the agents of its scope; the
+     issuer's own agents; the global scope, its agents and the users. An agent of another user's
+     scope that is not in the session is not found (issue 178). One that is shadowed is not
+     reached by the command; the dialog still lists it.
+  3. Several on the same rank - a user and an agent of one name in the global scope, two
+     participants of the session of one name - are refused with their names; the web UI is the
+     way to them. A word naming the kind (`user:`, `agent:`) is left for when it is needed.
+
+  Proposed and still open: `Exact` as a condition of `Filter` (`Filter::name_matching`, replacing
+  `name_prefix`), so that the stores are asked by it; how `/create-agent` reaches the
+  `AgentManager` (as a service of the kernel, held by its component); lifting `/wakeup`'s
+  `channel_error` into `command/mod.rs` as a step of its own; `as` split at its last occurrence;
+  how a found candidate's place reaches `/add` for the ranks.
+- **2026-11-11** — Decided with the maintainer, the points left open above, as the plan of three
+  steps:
+  1. Without a change of behaviour: `command::command_error` - a refusal of an operation a command
+     ran is the command refused, anything else a failure - out of `/wakeup`, for `/nudge` as well;
+     and `scope::innermost`, the choice of the innermost among what was found, out of
+     `find_by_name`, which is built on it.
+  2. `NameMatch` is a condition of `Filter` (`Filter::name_matching`, replacing `name_prefix`), and
+     `candidates` takes it; with `Exact` it ranks what it found as decided above, giving the
+     participants of the session the session's rank. The REST route passes `Prefix`.
+  3. The `AgentManager` is a service of the kernel, held by the component of `/create-agent`; the
+     personality is to be found by a new `Views::personality_named`, from the channel as a place;
+     `as` is split at its last occurrence; both commands join the default set.
+- **2026-11-11** — Step 1 done. Between it and step 2, as the maintainer decided: `found_from` is
+  built on `find_by_name`, so that the choice of the innermost is made in one place, and the test
+  helper `channel::testing::command_error` is called `as_command_error`, so that `command_error`
+  in the kernel means one thing.
+- **2026-11-11** — Step 2 done: `NameMatch` (`value::name`) with `Prefix(String)` and
+  `Exact(Name)`, a whole name being a `Name`; `Filter::Name` replaces `NamePrefix`, made by
+  `Filter::name_matching`. `SessionView::candidates` takes it, and with `Exact` answers whoever
+  asks, without a limit, the nearest as decided. The REST route passes `Prefix`.
+  Decided with the maintainer on the review: why a candidate could not be taken in is told only
+  to whoever may change the session, since it says whether they are cleared for the channel.
+- **2026-11-11** — Step 3 done: the `AgentManager` is a service of the kernel; `/add` and
+  `/create-agent` are built-in commands of the default set (`command/add.rs`,
+  `command/create_agent.rs`), the personality found by `Views::personality_named`
+  (`ViewError::NoPersonalityNamed`). The security suite covers both; COMMANDS.md describes them.
+  The issue is done.
+  Decided with the maintainer on the review, refining decision 3: an agent made of a personality
+  of the channel's scope - which makes agents only there - lies in the channel's scope.

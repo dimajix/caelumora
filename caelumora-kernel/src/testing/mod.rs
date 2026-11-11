@@ -609,13 +609,21 @@ impl World {
         template.id
     }
 
-    /// An agent of `owner` and `personality`, as made before.
+    /// A global agent of `owner` and `personality`, as made before.
     pub async fn agent(&self, name: &str, owner: UserId, personality: &Personality) -> AgentId {
-        let mut agent = Agent::new(
-            ScopedName::new(name, Scope::GlobalScope).unwrap(),
-            personality.id,
-            ActorId::User(owner),
-        );
+        self.agent_in(name, Scope::GlobalScope, owner, personality).await
+    }
+
+    /// An agent of `owner` and `personality` in `scope`, as made before.
+    pub async fn agent_in(
+        &self,
+        name: &str,
+        scope: Scope,
+        owner: UserId,
+        personality: &Personality,
+    ) -> AgentId {
+        let mut agent =
+            Agent::new(ScopedName::new(name, scope).unwrap(), personality.id, ActorId::User(owner));
         self.kernel.entity_stores().agents.create(&Self::system(), &mut agent).await.unwrap();
         self.access_policy.names.lock().unwrap().insert(ActorId::Agent(agent.id), name.to_string());
         agent.id

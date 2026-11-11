@@ -214,7 +214,7 @@ async fn a_command_of_an_agent_names_its_agent() {
 
     let unnamed = error(actor.execute_command("mark", "twice").await);
     assert!(
-        matches!(command_error(&unnamed), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")),
+        matches!(as_command_error(&unnamed), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")),
         "{unnamed}"
     );
     let named = actor
@@ -224,12 +224,12 @@ async fn a_command_of_an_agent_names_its_agent() {
     assert!(named.span_id.is_some(), "it is asked: {named:?}");
     let nobody = error(actor.execute_command("mark", "@nobody twice").await);
     assert!(
-        matches!(command_error(&nobody), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")),
+        matches!(as_command_error(&nobody), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")),
         "{nobody}"
     );
     let unknown = error(actor.execute_command("nonsense", "@helper").await);
     assert!(
-        matches!(command_error(&unknown), CommandError::Unknown(name) if name == "nonsense"),
+        matches!(as_command_error(&unknown), CommandError::Unknown(name) if name == "nonsense"),
         "{unknown}"
     );
     let all = actor.execute_command("mark", "@all").await.expect("every agent that carries it out");

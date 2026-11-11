@@ -351,9 +351,10 @@ Every list of the entity store takes a query (`caelumora_domain::query`) and ans
     an object that *has* its key with a matching value - containment, as `@>` in Postgres -, a
     variant alone (`FieldValue::variant`) an object that has its key or the string of a variant that
     holds nothing - as `?` in Postgres.
-*   **A name prefix** (`Filter::NamePrefix`) compares a name as names are compared - regardless of
-    case, accents and runs of whitespace -, for a search by what one has typed so far; **words in a
-    text** (`Filter::Contains`) are compared the same way, for a search of what was written.
+*   **A name** (`Filter::Name`) is sought as names are compared - regardless of case,
+    accents and runs of whitespace -, by the beginning one has typed so far or as a whole name
+    (`NameMatch`); **words in a text** (`Filter::Contains`) are compared the same way, for a search
+    of what was written.
 *   **A number** is compared with a bound (`Filter::AtLeast`, `Filter::Below`, together
     `Filter::within`) exactly, whatever its form - a negative one below every bound -, as `jsonb`
     compares numbers; what is no number meets no comparison. A position in a range of a history is
@@ -375,7 +376,7 @@ admitted to the caller, a batch at a time (`DocumentStorage::scan`), the filter 
 fields (`Filter::by_path`). A storage may hand out more than it is asked for, never less: the store
 judges every document against the whole filter again, reads it as its type and asks the policy, and
 reads the next batch until the page is full. So a database translates what it can of a filter and
-leaves the rest to the store - a name prefix and words in a text, which compare as names are
+leaves the rest to the store - a name and words in a text, which compare as names are
 folded -, and the JSON files judge the filter on each file and leave the mark of a deletion and the
 admission to the store. What follows a page's limit is read only as far as its batch. A page that
 stops at its limit hands out the cursor unless the storage showed that nothing follows. A document a

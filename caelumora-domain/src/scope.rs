@@ -18,7 +18,6 @@ use crate::session::SessionId;
 use crate::user::UserId;
 use crate::value::name::{Name, ScopedName};
 use serde::{Deserialize, Serialize};
-use std::cmp::Reverse;
 
 /// Where something lies that is found by name (issue 177): the name space of
 /// a personality, a session template, a component bundle, an agent, a
@@ -285,14 +284,40 @@ pub fn find_by_name<'a, D: Scoped>(
     place: &Scope,
     user: Option<UserId>,
 ) -> Option<&'a D> {
-    scoped
+    let named = scoped
         .into_iter()
         .map(|d| (d.scoped_name(), d))
-        .filter(|(scoped_name, _)| {
-            scoped_name.name == *name && scoped_name.scope.visible_from(place, user)
-        })
-        .min_by_key(|(scoped_name, _)| Reverse(scoped_name.scope.depth()))
-        .map(|(_, d)| d)
+        .filter(|(scoped_name, _)| scoped_name.name == *name)
+        .map(|(scoped_name, d)| (scoped_name.scope, d));
+    innermost(named, place, user).into_iter().next()
+}
+
+/// Of `found`, each with the scope it is found in, those that `user` sees from `place` and that
+/// lie innermost, in their order: several if they lie equally deep, none if none is seen from
+/// there - the choice `find_by_name` makes among those of one name.
+pub fn innermost<T>(
+    found: impl IntoIterator<Item = (Scope, T)>,
+    place: &Scope,
+    user: Option<UserId>,
+) -> Vec<T> {
+    let mut innermost = Vec::new();
+    let mut deepest = None;
+    for (scope, t) in found {
+        if !scope.visible_from(place, user) {
+            continue;
+        }
+        let depth = scope.depth();
+        match deepest {
+            Some(deepest) if depth < deepest => {}
+            Some(deepest) if depth == deepest => innermost.push(t),
+            _ => {
+                deepest = Some(depth);
+                innermost.clear();
+                innermost.push(t);
+            }
+        }
+    }
+    innermost
 }
 
 /// What `user` finds from `place` among `scoped`, by name: for every name
@@ -303,23 +328,20 @@ pub fn found_from<'a, D: Scoped>(
     place: &Scope,
     user: Option<UserId>,
 ) -> Vec<&'a D> {
-    let visible: Vec<(ScopedName, &D)> = scoped
-        .into_iter()
-        .map(|d| (d.scoped_name(), d))
-        .filter(|(scoped_name, _)| scoped_name.scope.visible_from(place, user))
-        .collect();
-    let mut found: Vec<(ScopedName, &D)> = Vec::new();
-    for (scoped_name, d) in visible {
-        match found.iter_mut().find(|(other, _)| other.name == scoped_name.name) {
-            Some(entry) if scoped_name.scope.depth() > entry.0.scope.depth() => {
-                *entry = (scoped_name, d)
-            }
-            Some(_) => {}
-            None => found.push((scoped_name, d)),
+    let scoped: Vec<&D> = scoped.into_iter().collect();
+    let mut names: Vec<Name> = Vec::new();
+    for d in &scoped {
+        let name = d.scoped_name().name;
+        if !names.contains(&name) {
+            names.push(name);
         }
     }
-    found.sort_by(|(l, _), (r, _)| l.name.as_str().cmp(r.name.as_str()));
-    found.into_iter().map(|(_, d)| d).collect()
+    let mut found: Vec<&D> = names
+        .iter()
+        .filter_map(|name| find_by_name(scoped.iter().copied(), name, place, user))
+        .collect();
+    found.sort_by(|l, r| l.scoped_name().name.as_str().cmp(r.scoped_name().name.as_str()));
+    found
 }
 
 #[cfg(test)]
@@ -494,6 +516,42 @@ mod tests {
             "names compare as names do"
         );
         assert_eq!(found(&items, "other", &channel, Some(alice)), None);
+    }
+
+    #[test]
+    fn the_innermost_are_those_seen_from_a_place_that_lie_deepest() {
+        let (alice, bob) = (UserId(Uuid::new_v4()), UserId(Uuid::new_v4()));
+        let session_id = SessionId::new();
+        let channel = Scope::ChannelScope { session_id, channel_id: ChannelId::new() };
+        let session = Scope::SessionScope { session_id };
+        let found = [
+            (Scope::GlobalScope, "global"),
+            (Scope::UserScope { user_id: alice }, "alice's"),
+            (session.clone(), "the session's"),
+            (session.clone(), "the session's too"),
+            (Scope::UserScope { user_id: bob }, "bob's"),
+        ];
+
+        assert_eq!(
+            innermost(found.clone(), &channel, Some(alice)),
+            vec!["the session's", "the session's too"],
+            "both of the deepest, in their order"
+        );
+        assert_eq!(
+            innermost(found.iter().rev().cloned(), &channel, Some(alice)),
+            vec!["the session's too", "the session's"],
+            "what lies shallower after them changes nothing"
+        );
+        assert_eq!(
+            innermost(found[..2].to_vec(), &channel, Some(alice)),
+            vec!["alice's"],
+            "her own before the global one"
+        );
+        assert_eq!(
+            innermost(found[4..].to_vec(), &channel, Some(alice)),
+            Vec::<&str>::new(),
+            "not seen from there"
+        );
     }
 
     #[test]

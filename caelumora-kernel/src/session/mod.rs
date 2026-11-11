@@ -367,8 +367,8 @@ impl SessionLoop {
         Ok(session_loop)
     }
 
-    /// The views of an agent in this session, as `viewer` (issue 163):
-    /// this session alone, reached through its loop.
+    /// The views of this session alone, as `viewer`, reached through its loop: an agent's in it
+    /// (issue 163), or those of whoever issued a command in one of its channels (issue 555).
     pub(crate) fn views(self: &Arc<Self>, viewer: Viewer) -> Views {
         Views::of_own_session(&self.kernel, Arc::clone(self), viewer)
     }

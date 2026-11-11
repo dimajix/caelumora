@@ -17,7 +17,7 @@ use caelumora_domain::note::Note;
 use caelumora_domain::privacy::SessionPrivacy;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{Filter, Query};
-use caelumora_domain::scope::ScopeField;
+use caelumora_domain::scope::{innermost, Scope, ScopeField, Scoped};
 use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::snapshot::{
     CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot,
@@ -26,6 +26,7 @@ use caelumora_domain::snapshot::{
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::user::UserField;
 use caelumora_domain::value::language::Language;
+use caelumora_domain::value::name::{NameMatch, ScopedName};
 use caelumora_domain::value::text::{Briefing, Summary};
 use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::{AccessQuestions, ActionType, SecurityContext};
@@ -153,45 +154,59 @@ impl SessionView {
             .await
     }
 
-    /// Whom the viewer could take into the session and, with `channel`,
-    /// into that channel of it (issue 221): the users and the agents they
-    /// may read whose names begin with `prefix` - as names are compared, at
-    /// least `MIN_PREFIX` characters of it, at most `CANDIDATES` of each -,
-    /// each with whether they take part already and why they could not be
-    /// taken in, as `SessionLoop::resolve_to_take_in` decides. Who may not
-    /// change the session searches nobody: the search tells who exists.
-    /// Nobody either for a session that does not run.
+    /// Whom the viewer could take into the session and, with `channel`, into that channel of it
+    /// (issue 221): the users and the agents they may read whose names `name` seeks, each with
+    /// whether they take part already and - for whoever may change the session, since it tells
+    /// whether someone is cleared for the channel - why they could not be taken in, as
+    /// `SessionLoop::resolve_to_take_in` decides. Nobody for a session that does not run.
+    ///
+    /// A search by a prefix is for whoever may change the session, since it tells who exists: of
+    /// at least `MIN_PREFIX` characters, and at most `CANDIDATES` of each. A whole name (issue
+    /// 555) tells nothing the stores do not let the viewer read anyway, and is answered whoever
+    /// asks, without a limit: those found nearest from the channel - or the session -, as
+    /// `scope::innermost` chooses, a participant of the session lying in it unless in the channel
+    /// itself; several if they lie equally near.
     ///
     /// # Errors
-    /// `NotPermitted` if the viewer may not change the session;
-    /// `ChannelNotFound` for a channel they may not read; `Failed` if the
-    /// stores cannot list them.
+    /// `NotPermitted` if the viewer searches by a prefix and may not change the session;
+    /// `ChannelNotFound` for a channel they may not read - by a prefix, one long enough to be
+    /// searched by; `Failed` if the stores cannot list them.
     pub async fn candidates(
         &self,
-        prefix: &str,
+        name: &NameMatch,
         channel: Option<ChannelId>,
     ) -> ViewResult<Vec<CandidateSnapshot>> {
-        if !self.may_change().await {
-            return Err(ViewError::NotPermitted(
-                ActionType::update(Session::KIND, &self.session.security_attributes).refused(),
-            ));
-        }
+        let may_change = self.may_change().await;
+        let limit = match name {
+            NameMatch::Prefix(prefix) => {
+                if !may_change {
+                    return Err(ViewError::NotPermitted(
+                        ActionType::update(Session::KIND, &self.session.security_attributes)
+                            .refused(),
+                    ));
+                }
+                if prefix.trim().chars().count() < MIN_PREFIX {
+                    return Ok(Vec::new());
+                }
+                Some(CANDIDATES)
+            }
+            NameMatch::Exact(_) => None,
+        };
         let channel = match channel {
             Some(id) => Some(self.channel(id).await?),
             None => None,
         };
         let Some(session_loop) = &self.running else { return Ok(Vec::new()) };
-        if prefix.trim().chars().count() < MIN_PREFIX {
-            return Ok(Vec::new());
-        }
         let context = self.views.context();
         let stores = self.views.stores();
         let users = stores
             .users
             .list(
                 context,
-                &Query::filtered(Filter::name_prefix(UserField::Username, prefix))
-                    .limited(CANDIDATES),
+                &Query {
+                    limit,
+                    ..Query::filtered(Filter::name_matching(UserField::Username, name.clone()))
+                },
             )
             .await
             .map_err(|e| ViewError::failed(e, "searching users"))?
@@ -200,36 +215,67 @@ impl SessionView {
             .agents
             .list(
                 context,
-                &Query::filtered(Filter::name_prefix(ScopeField::Name, prefix)).limited(CANDIDATES),
+                &Query {
+                    limit,
+                    ..Query::filtered(Filter::name_matching(ScopeField::Name, name.clone()))
+                },
             )
             .await
             .map_err(|e| ViewError::failed(e, "searching agents"))?
             .items;
         let found = users
-            .into_iter()
-            .map(|user| (Participant::User(user.id), user.username.to_string()))
-            .chain(
-                agents
-                    .into_iter()
-                    .map(|agent| (Participant::Agent(agent.id), agent.name.name.to_string())),
-            );
+            .iter()
+            .map(|user| (Participant::User(user.id), user.scoped_name()))
+            .chain(agents.iter().map(|agent| (Participant::Agent(agent.id), agent.scoped_name())));
+        let found: Vec<(Participant, ScopedName)> = match name {
+            NameMatch::Prefix(_) => found.collect(),
+            NameMatch::Exact(_) => self.nearest(found, channel.as_ref()),
+        };
         let running = channel.as_ref().and_then(|channel| channel.running().cloned());
         let mut candidates = Vec::new();
-        for (participant, name) in found {
+        for (participant, scoped_name) in found {
             let id = participant.actor_id();
-            let in_session = self.session.participants.iter().any(|p| p.actor_id() == id);
+            let in_session = self.session.takes_part(id);
             let in_channel = channel.as_ref().is_some_and(|channel| channel.lists(id));
-            let refusal = match in_channel {
-                true => None,
-                false => session_loop
+            let refusal = match may_change && !in_channel {
+                true => session_loop
                     .resolve_to_take_in(context, &participant, running.as_ref())
                     .await
                     .err()
                     .and_then(|error| refusal_of(&error)),
+                false => None,
             };
+            let name = scoped_name.name.to_string();
             candidates.push(CandidateSnapshot { id, name, in_session, in_channel, refusal });
         }
         Ok(candidates)
+    }
+
+    /// Of `found`, those nearest from `channel` - or from the session without one - for the
+    /// viewer, as `scope::innermost` chooses: a participant of the session lies in it, unless it
+    /// lies in the channel itself.
+    fn nearest(
+        &self,
+        found: impl IntoIterator<Item = (Participant, ScopedName)>,
+        channel: Option<&ChannelView>,
+    ) -> Vec<(Participant, ScopedName)> {
+        let session = Scope::SessionScope { session_id: self.id() };
+        let place = match channel {
+            Some(channel) => {
+                Scope::ChannelScope { session_id: self.id(), channel_id: channel.id() }
+            }
+            None => session.clone(),
+        };
+        let ranked = found.into_iter().map(|(participant, scoped_name)| {
+            let lies = match self.session.takes_part(participant.actor_id())
+                && scoped_name.scope != place
+            {
+                true => session.clone(),
+                false => scoped_name.scope.clone(),
+            };
+            (lies, (participant, scoped_name))
+        });
+        innermost(ranked, &place, self.views.context().principal_id.as_user_id())
     }
 
     /// The channels the viewer may read as a whole, in the order of the

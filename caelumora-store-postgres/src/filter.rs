@@ -10,7 +10,7 @@ use sqlx::Postgres;
 
 /// What a filter is translated into: a condition of SQL over a column of
 /// JSON - the body of a document, an item of a history - that holds for every document that meets
-/// the filter, and - where SQL cannot tell, as for names compared folded (`NamePrefix`,
+/// the filter, and - where SQL cannot tell, as for names compared folded (`Name`,
 /// `Contains`) - for others besides, which the store judges again. With it, what it binds,
 /// numbered after the parameters of the query before it.
 ///
@@ -137,7 +137,7 @@ impl Condition {
             }
             Filter::AtLeast(field, bound) => self.comparing(at, field, ">=", *bound),
             Filter::Below(field, bound) => self.comparing(at, field, "<", *bound),
-            Filter::NamePrefix(_, _) | Filter::Contains(_, _) => ("true".to_string(), false),
+            Filter::Name(_, _) | Filter::Contains(_, _) => ("true".to_string(), false),
         }
     }
 

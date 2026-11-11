@@ -1,9 +1,8 @@
 //! The built-in `/nudge` command (issue 278).
 
 use crate::channel::ChannelError;
-use crate::command::{named_participant, ChannelCommandProvider, CommandContext};
+use crate::command::{command_error, named_participant, ChannelCommandProvider, CommandContext};
 use crate::component::ComponentRegistry;
-use crate::error::user_message;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
@@ -57,12 +56,7 @@ impl ChannelCommandProvider for NudgeComponent {
                     command: NUDGE_COMMAND_NAME.to_string(),
                     reason: "you cannot nudge yourself".to_string(),
                 }),
-                _ => {
-                    tracing::warn!("/nudge failed: {:#}", e);
-                    let reason =
-                        user_message(&e).unwrap_or_else(|| "see the server log".to_string());
-                    Err(CommandError::Failed { command: NUDGE_COMMAND_NAME.to_string(), reason })
-                }
+                _ => Err(command_error(NUDGE_COMMAND_NAME, &e)),
             },
         }
     }

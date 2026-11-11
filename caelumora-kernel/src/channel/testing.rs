@@ -59,7 +59,7 @@ impl AccessPolicy for Policy {
 }
 
 /// The `CommandError` `error` is, which a test expects it to be.
-pub fn command_error(error: &Error) -> &CommandError {
+pub fn as_command_error(error: &Error) -> &CommandError {
     error.downcast_ref().unwrap_or_else(|| panic!("expected a CommandError, got {error:#}"))
 }
 

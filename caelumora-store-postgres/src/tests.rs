@@ -28,7 +28,7 @@ use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
 use caelumora_domain::store::{Revision, StoreError};
 use caelumora_domain::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
 use caelumora_domain::user::UserId;
-use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::work::Work;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::KernelBuilder;
@@ -684,7 +684,7 @@ async fn a_scan_hands_out_what_its_admission_admits() {
 /// and leaves to the store.
 fn folded(filter: &Filter<FieldPath>) -> bool {
     match filter {
-        Filter::NamePrefix(_, _) | Filter::Contains(_, _) => true,
+        Filter::Name(_, _) | Filter::Contains(_, _) => true,
         Filter::And(conditions) | Filter::Or(conditions) => conditions.iter().any(folded),
         Filter::Not(condition) | Filter::Any(_, condition) => folded(condition),
         Filter::Eq(_, _)
@@ -755,6 +755,7 @@ async fn a_scan_hands_out_what_a_filter_meets() {
     const ITSELF: FieldPath = &[];
     const NAME: FieldPath = &["name"];
     let x = || Filter::eq(A, "x");
+    let zoe = || Filter::name_matching(NAME, NameMatch::Prefix("zoe".to_string()));
     let filters = [
         x(),
         Filter::eq(A, true),
@@ -780,12 +781,14 @@ async fn a_scan_hands_out_what_a_filter_meets() {
         Filter::nothing(),
         Filter::all_of([x(), Filter::eq(A, "y")]),
         Filter::Or(vec![x(), Filter::IsNull(A)]),
-        Filter::name_prefix(NAME, "zoe"),
-        Filter::negated(Filter::name_prefix(NAME, "zoe")),
-        Filter::all_of([Filter::name_prefix(NAME, "zoe"), x()]),
+        zoe(),
+        Filter::negated(zoe()),
+        Filter::all_of([zoe(), x()]),
+        Filter::name_matching(NAME, NameMatch::Exact(Name::new("ZOE  smith").unwrap())),
+        Filter::name_matching(NAME, NameMatch::Exact(Name::new("Zoë").unwrap())),
         Filter::contains(NAME, "smith"),
-        Filter::any(LIST, Filter::name_prefix(B, "X")),
-        Filter::negated(Filter::all_of([Filter::name_prefix(NAME, "zoe"), x()])),
+        Filter::any(LIST, Filter::name_matching(B, NameMatch::Prefix("X".to_string()))),
+        Filter::negated(Filter::all_of([zoe(), x()])),
         Filter::any(LIST, Filter::is_in(ITSELF, ["y", "z"])),
         Filter::within(A, 3..5),
         Filter::within(A, 4..u64::MAX),

@@ -13,6 +13,8 @@
 //! are made of - `ProvidesCommands`, the `CommandSet`, the `CommandError` - is the API's
 //! (`caelumora_api::command`, issue 516).
 
+pub mod add;
+pub mod create_agent;
 pub mod help;
 pub mod nudge;
 pub mod wakeup;
@@ -20,6 +22,8 @@ pub mod wakeup;
 use crate::actor::user::UserActor;
 use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::ComponentRegistry;
+use crate::error::{refusal, user_message};
+use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
 use caelumora_api::component::{ComponentImpl, ComponentResult};
@@ -219,6 +223,18 @@ pub(crate) fn named_participant(
     }
 }
 
+/// What `error` of an operation the command `command` ran means for its issuer: a refusal is the
+/// command refused (`Forbidden`); anything else is a failure, logged, and described only as far as
+/// `user_message` allows (`Failed`).
+pub(crate) fn command_error(command: &str, error: &Error) -> CommandError {
+    if let Some(refused) = refusal(error) {
+        return CommandError::Forbidden { name: command.to_string(), refused: refused.clone() };
+    }
+    tracing::warn!("/{} failed: {:#}", command, error);
+    let reason = user_message(error).unwrap_or_else(|| "see the server log".to_string());
+    CommandError::Failed { command: command.to_string(), reason }
+}
+
 /// `names` joined as a sentence: "A, B and C".
 pub(crate) fn names(names: &[String]) -> String {
     match names {
@@ -230,6 +246,8 @@ pub(crate) fn names(names: &[String]) -> String {
 
 /// Registers the command kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
+    add::register(registry);
+    create_agent::register(registry);
     help::register(registry);
     nudge::register(registry);
     wakeup::register(registry);

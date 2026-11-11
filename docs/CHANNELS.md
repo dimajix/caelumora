@@ -566,9 +566,15 @@ themselves or their own agent, never someone else.
     with.
 
 Whom one could take in is the session view's to answer (`SessionView::candidates`): the users and
-agents whose names begin with what was typed, each with whether they take part already and why they
-could not be taken in - coarsely, never which clearance is missing. Only whoever may change the
-session searches: a search tells who exists.
+agents whose names are sought (`NameMatch`), each with whether they take part already and why they
+could not be taken in - coarsely, never which clearance is missing. By the beginning of a name, for
+the dialog, only whoever may change the session searches: a search tells who exists. A whole name
+(issue [555](../issues/555-no-command-brings-an-agent-into-a-channel.md)) tells nothing the stores
+do not let one read anyway, and is answered for everyone: of those of that name, the nearest from
+the channel - the channel's scope, the session with its participants wherever they lie, one's own,
+the global scope -, several if they are equally near; one of another user's scope that does not
+take part is not found. Why someone could not be taken in is told only to whoever may change the
+session, since it says whether they are cleared for the channel.
 
 A removed participant is kept as a former one, with who removed it and when, not among those who
 take part now - so nothing that reads them changes. The views reach former participants, so what an

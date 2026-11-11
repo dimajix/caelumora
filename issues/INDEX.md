@@ -349,7 +349,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [488](488-the-sidebar-offers-to-rename-any-session.md) | done | A session's menu in the sidebar offers "Rename" also to who may not change the session, who types a name and only then sees it refused; "Language" and "Time zone" beside it are offered only under `can_change`. |
 | [509](509-channel-attachments-panel.md) | done | The files said in a channel - uploaded by users, attached by agents, given by tools - are shown only at the message that carried them, so finding one again means scrolling through the history, and nothing lists them together. |
 | [536](536-message-cards-take-the-channel-through-props.md) | done | `MessageView` takes eight props of the channel only to hand them on to `ToolCallView`, which hands most of them on to the handler of a presentation, so that whatever a card needs to know of the channel adds a prop to three components. |
-| [555](555-no-command-brings-an-agent-into-a-channel.md) | open | Someone writing in a channel cannot make an agent of a personality or bring an agent - a global one, their own, or one not yet in the session - into the channel by a command; both can be done only through the REST API, as the web UI's dialogs do. |
+| [555](555-no-command-brings-an-agent-into-a-channel.md) | done | Someone writing in a channel cannot make an agent of a personality or bring an agent - a global one, their own, or one not yet in the session - into the channel by a command; both can be done only through the REST API, as the web UI's dialogs do. |
 
 ## Context and knowledge
 
