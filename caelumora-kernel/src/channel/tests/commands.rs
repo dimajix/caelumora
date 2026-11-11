@@ -1,14 +1,18 @@
-//! The user commands in a running channel - `/help`, `/wakeup`, `/nudge` -
-//! and the nudges they ask for. The commands an agent carries out itself
+//! The user commands in a running channel - `/help`, `/wakeup`, `/nudge`, `/add`,
+//! `/create-agent` - and the nudges they ask for. The commands an agent carries out itself
 //! are the agents' (`agent_commands`).
 
 use super::*;
 use crate::command::CommandContext;
 use crate::error::is_forbidden;
+use crate::testing::{attributes, World};
 use caelumora_api::command::{CommandError, CommandResult};
-use caelumora_domain::agent::AgentId;
+use caelumora_domain::agent::{AgentId, Personality};
 use caelumora_domain::command::{CommandOutput, CommandVisibility};
+use caelumora_domain::query::Query;
+use caelumora_domain::scope::Scope;
 use caelumora_domain::user::testing::make_user;
+use caelumora_domain::value::name::ScopedName;
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 use tokio::time;
@@ -306,4 +310,76 @@ async fn a_nudged_user_is_shown_who_asks_them_to_respond() {
     assert_eq!(asked.context.sender_id, ActorId::User(alice.id), "by her");
     assert!(channel.history().await.is_empty(), "the history keeps nothing of it");
     running.abort();
+}
+
+/// `/add` and `/create-agent` (issue 555) refuse what they cannot use before they look anything
+/// up: nothing named, a text that is no name, nothing after `as`.
+#[tokio::test]
+async fn add_and_create_agent_refuse_what_they_cannot_use() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let actor = session.channels()[0].user_actor(world.alice).unwrap();
+    let too_long = "x".repeat(101);
+    let named_too_long = format!("plain as {too_long}");
+    for (command, args) in [
+        ("add", ""),
+        ("add", too_long.as_str()),
+        ("create-agent", ""),
+        ("create-agent", "plain as "),
+        ("create-agent", too_long.as_str()),
+        ("create-agent", named_too_long.as_str()),
+    ] {
+        let error = actor.execute_command(command, args).await.expect_err("unusable");
+        assert!(
+            matches!(as_command_error(&error), CommandError::InvalidArguments { .. }),
+            "/{command} {args}: {error}"
+        );
+    }
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/create-agent` names the agent after the personality, unless the last `as` names it - so
+/// that a personality's name may hold one (issue 555).
+#[tokio::test]
+async fn create_agent_names_the_agent_after_the_personality_or_after_the_last_as() {
+    let world = World::new().await;
+    world.personality("plain", Some(world.alice), &[]).await;
+    world.personality("Writer as Editor", Some(world.alice), &[]).await;
+    let session = world.shared_session(&[], &[]).await;
+    let alice = session.channels()[0].user_actor(world.alice).unwrap();
+    let made = |args: &'static str| {
+        let alice = Arc::clone(&alice);
+        async move { alice.execute_command("create-agent", args).await.unwrap().output.unwrap() }
+    };
+    let plain = made("plain").await;
+    assert!(plain.starts_with("Made the agent plain of plain"), "{plain}");
+    let bob = made("Writer as Editor as Bob").await;
+    assert!(bob.starts_with("Made the agent Bob of Writer as Editor"), "{bob}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/create-agent` finds a personality from the channel, the innermost first, and makes an agent
+/// of one of the channel's scope there - the only place it makes agents (issue 555).
+#[tokio::test]
+async fn create_agent_makes_the_agent_of_a_personality_of_the_channel_in_the_channel() {
+    let world = World::new().await;
+    world.personality("plain", Some(world.alice), &[]).await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let in_main = Scope::ChannelScope { session_id: session.id(), channel_id: main.id() };
+    let mut own = Personality {
+        name: ScopedName::new("plain", in_main.clone()).unwrap(),
+        security_attributes: attributes(Some(world.alice), &[]),
+        ..make_personality("plain")
+    };
+    world.kernel.entity_stores().personalities.create(&World::system(), &mut own).await.unwrap();
+
+    let alice = main.user_actor(world.alice).unwrap();
+    alice.execute_command("create-agent", "plain as Scout").await.expect("made");
+    let stores = world.kernel.entity_stores();
+    let agents = stores.agents.list(&World::system(), &Query::all()).await.unwrap().items;
+    let scout = agents.into_iter().find(|agent| agent.name.name == "scout").unwrap();
+    assert_eq!(scout.personality_id, own.id, "the channel's, nearer than the global one");
+    assert_eq!(scout.name.scope, in_main, "in the channel's scope");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

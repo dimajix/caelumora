@@ -1,6 +1,6 @@
 # 555 — No command brings an agent into a channel
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -219,3 +219,10 @@ or `Participation` rather than in the command.
   asks, without a limit, the nearest as decided. The REST route passes `Prefix`.
   Decided with the maintainer on the review: why a candidate could not be taken in is told only
   to whoever may change the session, since it says whether they are cleared for the channel.
+- **2026-11-11** — Step 3 done: the `AgentManager` is a service of the kernel; `/add` and
+  `/create-agent` are built-in commands of the default set (`command/add.rs`,
+  `command/create_agent.rs`), the personality found by `Views::personality_named`
+  (`ViewError::NoPersonalityNamed`). The security suite covers both; COMMANDS.md describes them.
+  The issue is done.
+  Decided with the maintainer on the review, refining decision 3: an agent made of a personality
+  of the channel's scope - which makes agents only there - lies in the channel's scope.

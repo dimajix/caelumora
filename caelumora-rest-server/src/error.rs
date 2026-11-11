@@ -258,6 +258,7 @@ impl From<ViewError> for ApiError {
             ViewError::ProjectNotFound(_) => Self::not_found("project_not_found", detail),
             ViewError::GroupNotFound(_) => Self::not_found("group_not_found", detail),
             ViewError::AgentNotFound(_) => Self::not_found("agent_not_found", detail),
+            ViewError::NoPersonalityNamed(_) => Self::not_found("personality_not_found", detail),
             ViewError::NoContext { .. } => Self::not_found("context_not_recorded", detail),
             ViewError::Forbidden { ref refused, .. } | ViewError::NotPermitted(ref refused) => {
                 Self::refused(refused, detail)

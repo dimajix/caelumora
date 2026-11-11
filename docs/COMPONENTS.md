@@ -320,11 +320,12 @@ between them they hold:
     is given the `Acting` as a service and keeps it, a handle that builds the context of each of its
     calls when the call is made - one no library can name, since it does not link the kernel;
 *   the services of the kernel its kind declares it uses - for a component of the kernel the
-    policies, the `SecretManager`; the prompt catalogue - by type, not as fields of the context, so
-    that a new service needs no new field and no component is given one it does not declare. They
-    are the kernel's `Services`, which the views and a plugin's routes reach as well. A component of
-    a library declares no policy and no manager of the kernel: what it needs decided, or a secret,
-    it asks of the kernel through the `Turn` and the `Situation` it is called with (issue 516, see
+    policies, the `SecretManager`, the `AgentManager`; the prompt catalogue - by type, not as fields
+    of the context, so that a new service needs no new field and no component is given one it does
+    not declare. They are the kernel's `Services`, which the views and a plugin's routes reach as
+    well. A component of a library declares no policy and no manager of the kernel: what it needs
+    decided, or a secret, it asks of the kernel through the `Turn` and the `Situation` it is called
+    with (issue 516, see
     [PLUGINS.md](PLUGINS.md#what-a-component-kind-outside-the-kernel-may-use));
 *   nothing of the session: what a component reads of it - other channels, their notes and
     histories, what its agent may recall - it reads through the `Turn` it is called with (see

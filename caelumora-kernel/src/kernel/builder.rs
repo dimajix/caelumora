@@ -686,10 +686,11 @@ impl KernelBuilder {
             &self.entity_stores,
             Arc::clone(&self.scope_holders),
             self.persistence.state_store(),
-            self.agent_members,
+            mem::take(&mut self.agent_members),
             Arc::clone(&self.event_bus),
             Arc::clone(self.policies.access_policy()),
         ));
+        self.provide(Arc::clone(&agents))?;
         let kernel_members: [Arc<dyn ScopedKind>; 5] = [
             Arc::new(Unowned(Arc::clone(&self.entity_stores.personalities))),
             Arc::new(Unowned(Arc::clone(&self.entity_stores.session_templates))),

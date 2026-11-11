@@ -13,6 +13,8 @@
 //! are made of - `ProvidesCommands`, the `CommandSet`, the `CommandError` - is the API's
 //! (`caelumora_api::command`, issue 516).
 
+pub mod add;
+pub mod create_agent;
 pub mod help;
 pub mod nudge;
 pub mod wakeup;
@@ -244,6 +246,8 @@ pub(crate) fn names(names: &[String]) -> String {
 
 /// Registers the command kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
+    add::register(registry);
+    create_agent::register(registry);
     help::register(registry);
     nudge::register(registry);
     wakeup::register(registry);

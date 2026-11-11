@@ -19,6 +19,10 @@ pub const HELP_KIND: &str = "help";
 pub const WAKEUP_KIND: &str = "wakeup";
 /// Component kind of the built-in `/nudge` command (issue 278).
 pub const NUDGE_KIND: &str = "nudge";
+/// Component kind of the built-in `/add` command (issue 555).
+pub const ADD_KIND: &str = "add";
+/// Component kind of the built-in `/create-agent` command (issue 555).
+pub const CREATE_AGENT_KIND: &str = "create-agent";
 
 /// A command as users see it: in `/help` and in the frontends' completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,13 +94,15 @@ pub fn parse_input(input: &str) -> UserInput {
 }
 
 /// The commands a deployment has unless its configuration says otherwise:
-/// `/help`, `/wakeup` and `/nudge`.
+/// `/help`, `/wakeup`, `/nudge`, `/add` and `/create-agent`.
 pub fn default_commands() -> ComponentConfig {
     ComponentConfig {
         component_nodes: vec![
             ComponentDescriptor::new("help", HELP_KIND),
             ComponentDescriptor::new("wakeup", WAKEUP_KIND),
             ComponentDescriptor::new("nudge", NUDGE_KIND),
+            ComponentDescriptor::new("add", ADD_KIND),
+            ComponentDescriptor::new("create-agent", CREATE_AGENT_KIND),
         ],
     }
 }
@@ -139,9 +145,9 @@ mod tests {
     }
 
     #[test]
-    fn the_default_commands_are_help_wakeup_and_nudge() {
+    fn the_default_commands_are_the_built_in_ones() {
         let kinds: Vec<String> =
             default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
-        assert_eq!(kinds, vec![HELP_KIND, WAKEUP_KIND, NUDGE_KIND]);
+        assert_eq!(kinds, vec![HELP_KIND, WAKEUP_KIND, NUDGE_KIND, ADD_KIND, CREATE_AGENT_KIND]);
     }
 }

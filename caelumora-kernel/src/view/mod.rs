@@ -66,13 +66,14 @@ use caelumora_domain::project::ProjectId;
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
-use caelumora_domain::scope::Scope;
+use caelumora_domain::scope::{find_by_name, Scope, ScopeField};
 use caelumora_domain::security::{AclEntry, SecurityAttributes, Subject};
 use caelumora_domain::session::{SessionField, SessionId};
 use caelumora_domain::snapshot::{
     AccessSnapshot, DeletedSnapshot, PersonalitySnapshot, ScopeSnapshot,
 };
 use caelumora_domain::store::{StoreResult, StoreResultExt, Stored};
+use caelumora_domain::value::name::{Name, NameMatch};
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
 use caelumora_security::{AccessPolicy, AccessQuestions, Policies, SecurityContext};
@@ -117,8 +118,8 @@ impl Viewer {
 }
 
 /// Where the running sessions are: a root of views reaches a session
-/// through its loop if it runs. The `SessionManager` knows them all; an
-/// agent knows its own.
+/// through its loop if it runs. The `SessionManager` knows them all; the
+/// views of one session alone know that one.
 pub(crate) trait RunningSessions: Send + Sync {
     fn running(&self, id: SessionId) -> Option<Arc<SessionLoop>>;
 }
@@ -129,7 +130,7 @@ impl RunningSessions for SessionManager {
     }
 }
 
-/// The one session an agent is in.
+/// The one session views reach alone: an agent's, a command's issuer's.
 struct OwnSession(Arc<SessionLoop>);
 
 impl RunningSessions for OwnSession {
@@ -193,8 +194,8 @@ impl Views {
         &self.viewer
     }
 
-    /// The views of an agent in `session`, which it reaches alone (issue
-    /// 229): what `SessionLoop::views` gives.
+    /// The views that reach `session` alone - an agent's in it (issue 229), a command's issuer's -:
+    /// what `SessionLoop::views` gives.
     pub(crate) fn of_own_session(
         kernel: &Kernel,
         session: Arc<SessionLoop>,
@@ -478,6 +479,35 @@ impl Views {
         }
         listed.sort_by(|l, r| l.name.cmp(&r.name));
         Ok(listed)
+    }
+
+    /// The personality named `name` that the viewer finds from `place` (issue 178): of those of
+    /// that name they may read (`GetPersonality`), the innermost seen from there - what an agent
+    /// is made of by name (issue 555).
+    ///
+    /// # Errors
+    /// `NoPersonalityNamed` if there is none they may read seen from there; `Failed` if the store
+    /// cannot list them.
+    pub(crate) async fn personality_named(
+        &self,
+        name: &Name,
+        place: &Scope,
+    ) -> ViewResult<Personality> {
+        let user = self.viewer.context().principal_id.as_user_id();
+        let named = Filter::all_of([
+            Filter::seen_from(place, user),
+            Filter::name_matching(ScopeField::Name, NameMatch::Exact(name.clone())),
+        ]);
+        let personalities = self
+            .stores
+            .personalities
+            .list(self.viewer.context(), &Query::filtered(named))
+            .await
+            .map_err(|e| ViewError::failed(e, "finding a personality"))?
+            .items;
+        find_by_name(&personalities, name, place, user)
+            .cloned()
+            .ok_or_else(|| ViewError::NoPersonalityNamed(name.to_string()))
     }
 
     /// The agents the viewer deleted and may read as such (issue 164). An
