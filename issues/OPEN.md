@@ -24,6 +24,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [381](381-inactive-channels-held-in-memory.md) | open | medium | feature | A channel nobody has spoken in for days keeps its loop, its actors and their states in memory until its session is stopped, and nothing notices that it is idle. Part of epic [378](378-resource-management-epic.md). |
 | [382](382-agents-held-without-a-session.md) | open | medium | feature | An agent stays loaded with its memory while nothing uses it, and what still holds it once its sessions are unloaded has not been checked. Part of epic [378](378-resource-management-epic.md). |
 | [557](557-a-conversation-cannot-go-on-two-ways-at-once.md) | open | medium | question | A channel's conversation has one line, so whoever wants to follow a second direction from where it stands - with the same participants and what they know so far - can only say it in the same line, where both directions mix, or start a channel that knows nothing of what was said. |
+| [558](558-no-agent-hands-a-task-to-a-sub-agent.md) | open | medium | feature | An agent cannot hand a task to another agent that works on it apart, in a context of its own, and gives back only its result, nor can a user start such a sub-agent by command; the agent either does all of it itself, filling its transcript with every step, or asks another agent of the channel, where everyone hears every step. |
 
 ## Identity and access management
 

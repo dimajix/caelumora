@@ -144,6 +144,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [495](495-a-lock-per-id-leaves-its-table-while-held.md) | done | `SessionManager::delete` takes a session's lock out of its table while it holds it, so that a caller who comes afterwards is given a new lock while another still waits on the old one, and both tables of locks by id keep an entry for every id ever asked. |
 | [502](502-bus-subscribers-lose-events-silently.md) | done | The `ControllerManager`'s follower and the `ApproverActor` receive the bus through `EventSubscription::recv`, which logs lost events and goes on, so a controller keeps an outdated value and pending approvals are not checked again after a join or a leave that was lost. |
 | [557](557-a-conversation-cannot-go-on-two-ways-at-once.md) | open | A channel's conversation has one line, so whoever wants to follow a second direction from where it stands - with the same participants and what they know so far - can only say it in the same line, where both directions mix, or start a channel that knows nothing of what was said. |
+| [558](558-no-agent-hands-a-task-to-a-sub-agent.md) | open | An agent cannot hand a task to another agent that works on it apart, in a context of its own, and gives back only its result, nor can a user start such a sub-agent by command; the agent either does all of it itself, filling its transcript with every step, or asks another agent of the channel, where everyone hears every step. |
 
 ## Identity and access management
 
