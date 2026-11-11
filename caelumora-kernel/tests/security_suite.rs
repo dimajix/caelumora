@@ -2001,6 +2001,33 @@ async fn a_project_is_its_owners_and_read_by_its_members() {
     world.projects.restore(&alice, project.id).await.expect("she restores it");
 }
 
+/// A project is found by its name or made (`ProjectManager::find_or_create`) as the caller reads
+/// it: one of the name they may not read is not theirs to find, nor to shadow - its name is taken,
+/// and no second is made (issue 250). Only where a shared project lies is it looked for.
+#[tokio::test]
+async fn a_project_another_may_not_read_keeps_its_name_from_being_found_or_made() {
+    let world = World::new().await;
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let spec = ProjectSpec::new("handbook", Scope::GlobalScope);
+    let (hers, made) = world.projects.find_or_create(&alice, &spec).await.unwrap();
+    assert!(made, "made where there was none");
+    let (again, made) = world.projects.find_or_create(&alice, &spec).await.unwrap();
+    assert_eq!((again.id, made), (hers.id, false), "found again by its maker");
+
+    let refused = world.projects.find_or_create(&bob, &spec).await;
+    assert!(
+        matches!(refused, Err(ProjectError::Store(StoreError::NameTaken { .. }))),
+        "hers, which he may not read: {refused:?}"
+    );
+    let stores = world.kernel.entity_stores();
+    let found = stores.projects.find_by_name(&World::system(), &hers.name).await.unwrap();
+    assert_eq!(found.id, hers.id, "and no second");
+
+    let own = ProjectSpec::new(Project::OWN, Scope::SessionScope { session_id: SessionId::new() });
+    let refused = world.projects.find_or_create(&alice, &own).await;
+    assert!(matches!(refused, Err(ProjectError::InvalidScope)), "not a session's: {refused:?}");
+}
+
 /// The views show a project to who reads it (issue 467): the shared ones in the list of
 /// projects, a session's own with the session. Its members are named; its access list only its
 /// owner sees, the group of an own project's members named by its session, as every own is
@@ -3269,6 +3296,38 @@ async fn a_workspace_is_its_owners_alone() {
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "and the files stay");
     assert!(workspaces.purge(&World::system(), docs.id).await.unwrap(), "the system does");
     assert!(!world.files.path().join(docs.id.to_string()).exists(), "with the files");
+}
+
+/// A workspace is found by its name or made (`WorkspaceManager::find_or_create`) as the caller
+/// reads it: one of the name they may not read is not theirs to find, nor to shadow - its name is
+/// taken, and no second is made (issue 250); one of the name in another storage is neither reused
+/// nor replaced.
+#[tokio::test]
+async fn a_workspace_another_may_not_read_keeps_its_name_from_being_found_or_made() {
+    let world = World::new().await;
+    let workspaces = world.kernel.workspace_manager();
+    let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
+    let spec = WorkspaceSpec::new("shared", Scope::GlobalScope, "main");
+    let (hers, made) = workspaces.find_or_create(&alice, &spec).await.unwrap();
+    assert!(made, "made where there was none");
+    let (again, made) = workspaces.find_or_create(&alice, &spec).await.unwrap();
+    assert_eq!((again.id, made), (hers.id, false), "found again by its maker");
+
+    let refused = workspaces.find_or_create(&bob, &spec).await;
+    assert!(
+        matches!(refused, Err(WorkspaceError::Store(StoreError::NameTaken { .. }))),
+        "hers, which he may not read: {refused:?}"
+    );
+    let stores = world.kernel.entity_stores();
+    let found = stores.workspaces.find_by_name(&World::system(), &hers.name).await.unwrap();
+    assert_eq!(found.id, hers.id, "and no second");
+
+    let elsewhere = WorkspaceSpec::new("shared", Scope::GlobalScope, "nowhere");
+    let refused = workspaces.find_or_create(&alice, &elsewhere).await;
+    assert!(
+        matches!(refused, Err(WorkspaceError::InAnotherStorage(ref name)) if *name == "shared"),
+        "hers lies in another storage: {refused:?}"
+    );
 }
 
 /// A workspace is reached as the views reach it (issue 304): read and

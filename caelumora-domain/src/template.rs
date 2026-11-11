@@ -41,18 +41,6 @@ pub enum TemplateError {
     /// A scope that cannot be made yet.
     #[error("the scope '{0}' is not supported yet")]
     UnsupportedScope(&'static str),
-    /// The agent the template names exists in the scope it asks for, but
-    /// with another personality (issue 178): neither reused nor replaced.
-    #[error(
-        "the agent '{0}' already exists where the template asks for it, with another personality"
-    )]
-    AgentNameTaken(Name),
-    /// The workspace the template names exists in the scope it asks for,
-    /// but in another storage (issue 251): neither reused nor replaced.
-    #[error(
-        "the workspace '{0}' already exists where the template asks for it, in another storage"
-    )]
-    WorkspaceNameTaken(Name),
 }
 
 pub type TemplateResult<T> = Result<T, TemplateError>;
@@ -289,19 +277,6 @@ pub struct WorkspaceTemplate {
     /// What it holds, when it is made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<Description>,
-}
-
-impl WorkspaceTemplate {
-    /// Its name where it lies for the session `session_id` of `owner`.
-    ///
-    /// # Errors
-    /// `TemplateError::UnsupportedScope` for a group scope.
-    pub fn scoped_name(&self, session_id: SessionId, owner: UserId) -> TemplateResult<ScopedName> {
-        Ok(ScopedName {
-            name: self.name.clone(),
-            scope: self.scope.instantiate(session_id, owner)?,
-        })
-    }
 }
 
 /// A template lies in a user's scope or everywhere (issue 178): one of a

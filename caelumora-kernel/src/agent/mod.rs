@@ -30,6 +30,10 @@ pub enum AgentError {
         "the personality '{0}' cannot make an agent outside the session or channel it lies in"
     )]
     PersonalityOutOfScope(Name),
+    /// The agent of a name asked for lies where it is asked for, but with another personality than
+    /// the one asked for (issue 178): neither reused nor replaced.
+    #[error("the agent '{0}' already exists where it is asked for, with another personality")]
+    OfAnotherPersonality(Name),
     /// What a value was given as does not fit it: the name of an agent to
     /// make.
     #[error(transparent)]

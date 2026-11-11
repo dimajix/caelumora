@@ -5,7 +5,7 @@
 use super::{require_classification, store_error, WorkspaceSpec};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
-use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};
+use crate::scoped::{found_or_made, purge_for_good, ScopeHolders, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
@@ -13,7 +13,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::store::{StoreError, StoreResult, Stored};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
@@ -138,6 +138,35 @@ impl WorkspaceManager {
         Ok(workspace)
     }
 
+    /// The workspace of the name `spec` asks for in exactly its scope, among those `ctx` may read
+    /// and is cleared for, if it lies in the storage `spec` names; else a new one, made as `create`
+    /// makes it - with whether it was made. One made by another meanwhile is looked up once more
+    /// (`found_or_made`, issue 250).
+    ///
+    /// # Errors
+    /// `InAnotherStorage` if the one of its name lies in another storage, `Invalid` for a name
+    /// that does not fit; what `create` reports - `NameTaken` if the one of its name lies where
+    /// `ctx` may not read it -; whatever else the store reports.
+    pub async fn find_or_create(
+        &self,
+        ctx: &SecurityContext,
+        spec: &WorkspaceSpec,
+    ) -> WorkspaceResult<(Workspace, bool)> {
+        let name = ScopedName::new(&spec.name, spec.scope.clone())?;
+        found_or_made(
+            || async {
+                match self.workspaces.find_by_name(ctx, &name).await.optional()? {
+                    Some(found) if found.storage == spec.storage => Ok(Some(found)),
+                    Some(_) => Err(WorkspaceError::InAnotherStorage(name.name.clone())),
+                    None => Ok(None),
+                }
+            },
+            || self.create(ctx, spec.clone()),
+            |e| matches!(e, WorkspaceError::Store(StoreError::NameTaken { .. })),
+        )
+        .await
+    }
+
     /// Deletes workspace `id` (`DeleteWorkspace`): marked, its files kept.
     /// A session it is attached to reads it as absent. `false` if there was
     /// none the caller could reach, as the views reach it.
@@ -204,21 +233,6 @@ impl WorkspaceManager {
     async fn remove_place(&self, workspace: &Workspace) -> WorkspaceResult<()> {
         self.storages.kept_in(&workspace.storage)?.remove(workspace.id).await?;
         Ok(())
-    }
-
-    /// The workspace of `name`, in exactly that scope, among those `ctx`
-    /// may read and is cleared for - as a template looks for the one it
-    /// names.
-    ///
-    /// # Errors
-    /// `StoreError::NotFound` if there is none; whatever else the store
-    /// reports.
-    pub(crate) async fn find_by_name(
-        &self,
-        ctx: &SecurityContext,
-        name: &ScopedName,
-    ) -> StoreResult<Workspace> {
-        self.workspaces.find_by_name(ctx, name).await
     }
 
     /// Workspace `id` as `ctx` reaches it, as the views reach it: by the

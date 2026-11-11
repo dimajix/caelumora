@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::security::Refused;
 use caelumora_domain::store::StoreError;
+use caelumora_domain::value::name::Name;
 use caelumora_domain::value::text::Description;
 use caelumora_domain::value::ValueError;
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
@@ -47,6 +48,10 @@ pub enum WorkspaceError {
     /// that nothing can be probed (issue 296).
     #[error("there is no workspace you can use in this channel")]
     NotUsableInChannel,
+    /// The workspace of a name asked for lies where it is asked for, but in another storage than
+    /// the one asked for (issue 251): neither reused nor replaced.
+    #[error("the workspace '{0}' already exists where it is asked for, in another storage")]
+    InAnotherStorage(Name),
     /// Its storage may not hold what is so classified (issue 251): a place
     /// with a shell or a remote side is cleared for so much.
     #[error("the storage '{0}' may not hold a workspace so classified")]

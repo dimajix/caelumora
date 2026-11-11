@@ -63,9 +63,7 @@ use caelumora_domain::security::{AclEntry, Grant, Secured, Subject};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::PersonalitySnapshot;
 use caelumora_domain::store::StoreError;
-use caelumora_domain::template::{
-    ScopeTemplate, SessionTemplateId, TemplateError, WorkspaceTemplate,
-};
+use caelumora_domain::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
 use caelumora_domain::tool::{Tool, ToolParameters};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
@@ -3563,8 +3561,8 @@ async fn a_workspace_of_the_user_s_scope_is_found_by_every_session_of_theirs() {
         .unwrap_err();
     assert!(
         matches!(
-            refused.downcast_ref::<TemplateError>(),
-            Some(TemplateError::WorkspaceNameTaken(_))
+            refused.downcast_ref::<WorkspaceError>(),
+            Some(WorkspaceError::InAnotherStorage(_))
         ),
         "{refused}"
     );

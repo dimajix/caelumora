@@ -337,16 +337,7 @@ impl SessionManager {
                 session.attach_workspace(context, Some(workspace)).await?;
             }
             let (users, agents) = participants;
-            take_in_participants(
-                self.stores.agents.as_ref(),
-                &self.agents,
-                context,
-                template,
-                session,
-                users,
-                agents,
-            )
-            .await?;
+            take_in_participants(&self.agents, context, template, session, users, agents).await?;
             // Shared once the session it is shared with exists (issue 23).
             if let Some(WorkspaceChoice::Existing { id, share: Some(grant) }) = &spec.workspace {
                 let controller = self.controllers.workspace_controller(*id).await?;

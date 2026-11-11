@@ -400,3 +400,9 @@ Each reviewed and committed on its own, on a branch of this issue.
   step of their own without a change of behaviour: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec` and
   `GroupSpec`, and `ChannelSpec` with a `new` and its defaults in place of `None`; each in the
   `spec.rs` of its module, `SessionSpec` and `ChannelSpec` in that of `session`.
+- **2026-11-11** — Finding or making: `WorkspaceManager`, `ProjectManager` and `AgentManager` find
+  one by the name a spec asks for, or make it, and look once more for one made by another meanwhile
+  (`find_or_create`, the steps shared as `found_or_made`); a workspace of that name in another
+  storage and an agent of another personality are refused by their managers' errors, which take the
+  place of the template's. Templates and the terminal program use them: three programs started at
+  once in a new directory get one project and one workspace.

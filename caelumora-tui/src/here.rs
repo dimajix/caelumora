@@ -5,9 +5,8 @@
 use anyhow::Result;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::store::StoreResultExt;
 use caelumora_domain::user::UserId;
-use caelumora_domain::value::name::{Name, ScopedName};
+use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::kernel::Kernel;
 use caelumora_kernel::project::{ProjectManager, ProjectSpec};
@@ -42,10 +41,12 @@ pub(crate) fn name_of(dir: &Path) -> Result<Name> {
 
 /// The project and the workspace of the directory `here`, in the own scope of `owner`, for whom
 /// `context` acts: found by the directory's name (`name_of`), or made - the project by `projects`,
-/// the workspace in the storage `HERE`, which keeps every workspace in that directory.
+/// the workspace in the storage `HERE`, which keeps every workspace in that directory. Two programs
+/// started at once in a new directory find what the first made.
 ///
 /// # Errors
-/// Whatever finding or making them reports.
+/// What finding or making them reports - `InAnotherStorage` if the workspace of the directory's
+/// name lies in another storage.
 pub(crate) async fn place_of(
     kernel: &Kernel,
     projects: &ProjectManager,
@@ -53,29 +54,19 @@ pub(crate) async fn place_of(
     owner: UserId,
     here: &Path,
 ) -> Result<(ProjectId, WorkspaceId)> {
-    let name = ScopedName { name: name_of(here)?, scope: Scope::UserScope { user_id: owner } };
-    let stores = kernel.entity_stores();
-    let project = match stores.projects.find_by_name(context, &name).await.optional()? {
-        Some(project) => project.id,
-        None => {
-            let spec = ProjectSpec {
-                description: Some(WHAT.to_string()),
-                ..ProjectSpec::new(name.as_str(), name.scope.clone())
-            };
-            projects.create(context, spec).await?.id
-        }
+    let name = name_of(here)?;
+    let scope = Scope::UserScope { user_id: owner };
+    let project = ProjectSpec {
+        description: Some(WHAT.to_string()),
+        ..ProjectSpec::new(name.as_str(), scope.clone())
     };
-    let workspace = match stores.workspaces.find_by_name(context, &name).await.optional()? {
-        Some(workspace) => workspace.id,
-        None => {
-            let spec = WorkspaceSpec {
-                description: Some(WHAT.to_string()),
-                ..WorkspaceSpec::new(name.as_str(), name.scope.clone(), HERE)
-            };
-            kernel.workspace_manager().create(context, spec).await?.id
-        }
+    let (project, _) = projects.find_or_create(context, &project).await?;
+    let workspace = WorkspaceSpec {
+        description: Some(WHAT.to_string()),
+        ..WorkspaceSpec::new(name.as_str(), scope, HERE)
     };
-    Ok((project, workspace))
+    let (workspace, _) = kernel.workspace_manager().find_or_create(context, &workspace).await?;
+    Ok((project.id, workspace.id))
 }
 
 #[cfg(test)]

@@ -217,13 +217,13 @@ participants:
 Client errors state their cause. A text of the request that does not fit the field it is for - too
 long, of whitespace alone, of several lines where one is asked for - is `400 invalid_value`, naming
 the field (`ValueError`), wherever it is found out. A name that another of its kind has in its name
-space - a channel's in its session, an agent's in its scope - is `409 name_taken`, for every kind
-alike; a change refused because what it changes was changed meanwhile is `409 changed_meanwhile`
-(issue 492). Something the user may not read is answered as absent (`404`), like something that
-does not exist. A request that cannot be read at all is answered so too, by the extractors `Json`,
-`Path` and `Query` of `error.rs` in place of axum's: a malformed body is `invalid_request_body`, a
-malformed path `invalid_path`, a malformed query string - `?limit=abc` - `400 invalid_query` (issue
-384).
+space - a channel's in its session, an agent's in its scope, also one found where a template asks
+for it but of another personality or storage - is `409 name_taken`, for every kind alike; a change
+refused because what it changes was changed meanwhile is `409 changed_meanwhile` (issue 492).
+Something the user may not read is answered as absent (`404`), like something that does not exist. A
+request that cannot be read at all is answered so too, by the extractors `Json`, `Path` and `Query`
+of `error.rs` in place of axum's: a malformed body is `invalid_request_body`, a malformed path
+`invalid_path`, a malformed query string - `?limit=abc` - `400 invalid_query` (issue 384).
 
 Every error answers itself, by its type and its variant, not by what the handler was doing (issue
 323): each error type that reaches a handler implements `From<…> for ApiError` in `error.rs` - or,

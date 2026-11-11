@@ -16,7 +16,7 @@
 
 use super::{store_error, AgentError, AgentMember, AgentResult, AgentSpec};
 use crate::event::EventBus;
-use crate::scoped::{ScopeHolders, ScopeMember};
+use crate::scoped::{found_or_made, ScopeHolders, ScopeMember};
 use async_trait::async_trait;
 use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
@@ -110,6 +110,36 @@ impl AgentManager {
         self.events.announce(GlobalEvent::created::<Agent>(&agent.id), &agent);
         info!(agent = %agent.id, by = %context.caller_id, "Agent created");
         Ok(agent)
+    }
+
+    /// The agent of the name `spec` asks for in exactly its scope (issue 178), among those
+    /// `context` may read, if it has the personality `spec` names; else a new one, made as `create`
+    /// makes it - with whether it was made. One of that name in another scope is not it: from where
+    /// it is asked for, the new one shadows it. One made by another meanwhile is looked up once
+    /// more (`found_or_made`, issue 250).
+    ///
+    /// # Errors
+    /// `OfAnotherPersonality` if the one of its name has another personality, `Invalid` for a name
+    /// that does not fit; what `create` reports - `NameTaken` if the one of its name lies where
+    /// `context` may not read it -; whatever else the store reports.
+    pub async fn find_or_create(
+        &self,
+        context: &SecurityContext,
+        spec: &AgentSpec,
+    ) -> AgentResult<(Agent, bool)> {
+        let name = ScopedName::new(&spec.name, spec.scope.clone())?;
+        found_or_made(
+            || async {
+                match self.agents.find_by_name(context, &name).await.optional()? {
+                    Some(found) if found.personality_id == spec.personality_id => Ok(Some(found)),
+                    Some(_) => Err(AgentError::OfAnotherPersonality(name.name.clone())),
+                    None => Ok(None),
+                }
+            },
+            || self.create(context, spec.clone()),
+            |e| matches!(e, AgentError::Store(StoreError::NameTaken { .. })),
+        )
+        .await
     }
 
     /// Deletes agent `id` on behalf of `context` (issues 164, 314): marked

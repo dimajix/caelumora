@@ -2,41 +2,36 @@
 //! says what each participant is for a session (`ParticipantTemplate::
 //! request`); this resolves the requests against the store, on behalf of
 //! whoever creates the session. `SessionManager::create_from_template` is
-//! its caller. What is made is made by its owner - an agent by the
-//! `AgentManager`, a workspace by the `WorkspaceManager`; finding the one a
-//! template names is the template's. Its agents are found or made once the
-//! session is, and taken into it as anyone is taken into a running session.
+//! its caller. What is found or made is found or made by its owner - an agent by the
+//! `AgentManager`, a workspace by the `WorkspaceManager` (`find_or_create`). Its agents are found
+//! or made once the session is, and taken into it as anyone is taken into a running session.
 
-use crate::agent::{AgentError, AgentManager, AgentSpec};
+use crate::agent::{AgentManager, AgentSpec};
 use crate::session::{SessionError, SessionLoop};
 use crate::workspace::{WorkspaceManager, WorkspaceSpec};
 use anyhow::Result;
-use caelumora_api::workspace::WorkspaceError;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{Agent, AgentId, PersonalityId};
 use caelumora_domain::channel::Participant;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::store::{StoreError, StoreResultExt};
 use caelumora_domain::template::{
-    ParticipantRequest, SessionTemplate, TemplateError, TemplateResult, WorkspaceTemplate,
+    ParticipantRequest, SessionTemplate, TemplateResult, WorkspaceTemplate,
 };
 use caelumora_domain::user::UserId;
-use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::SecurityContext;
-use caelumora_store::{EntityStore, EntityStores};
+use caelumora_store::EntityStores;
 
 /// The participants of a session template as they are found for a session
 /// (`resolve_participants`): its users, each with its name in the template,
 /// and the agents it names, to be found or made once the session is.
-pub(crate) type TemplateParticipants =
-    (Vec<(String, Participant)>, Vec<(String, ScopedName, PersonalityId)>);
+pub(crate) type TemplateParticipants = (Vec<(String, Participant)>, Vec<(String, AgentSpec)>);
 
 /// The users of `template` for the session `session_id` of
 /// `owner`, each with its name in the template, the users found in
 /// `stores` as `context`; and the agents it names, with their names in the
 /// template, which are found or made once the session is (`take_in_participants`),
-/// each with the id of its personality, found in `stores` by its name in exactly its scope.
+/// each asked for with the id of its personality, found in `stores` by its name in exactly its
+/// scope.
 ///
 /// # Errors
 /// A `TemplateError` if the template cannot be made into a session; a
@@ -65,7 +60,9 @@ pub(crate) async fn resolve_participants(
             }
             ParticipantRequest::Agent { name: agent_name, personality } => {
                 let personality = stores.personalities.find_by_name(context, &personality).await?;
-                agents.push((name, agent_name, personality.id))
+                let spec =
+                    AgentSpec::new(agent_name.name.as_str(), agent_name.scope, personality.id);
+                agents.push((name, spec))
             }
         }
     }
@@ -76,28 +73,27 @@ pub(crate) async fn resolve_participants(
 /// already, and its `agents`, as `resolve_participants` gives them - into
 /// the channels of `session`, made from it, that name them, as their
 /// founders (`ChannelLoop::found`, issue 420), on behalf of `context`, who
-/// made it. An agent is found in `store` or made by `agent_manager`
-/// (`agent`) once the session is, so that one of its scope is made where
+/// made it. An agent is found or made by `agent_manager`
+/// (`AgentManager::find_or_create`) once the session is, so that one of its scope is made where
 /// `context` may put it, and taken into the session first.
 ///
 /// # Errors
-/// As `agent`, `SessionLoop::add_participant` and `ChannelLoop::found`;
+/// As `AgentManager::find_or_create`, `SessionLoop::add_participant` and `ChannelLoop::found`;
 /// who took part before stays.
 pub(crate) async fn take_in_participants(
-    store: &dyn EntityStore<Agent>,
     agent_manager: &AgentManager,
     context: &SecurityContext,
     template: &SessionTemplate,
     session: &SessionLoop,
     users: Vec<(String, Participant)>,
-    agents: Vec<(String, ScopedName, PersonalityId)>,
+    agents: Vec<(String, AgentSpec)>,
 ) -> Result<()> {
     let channels = session.session().channels.clone();
     let mut founders: Vec<(String, ActorId)> =
         users.into_iter().map(|(name, user)| (name, user.actor_id())).collect();
-    for (name, agent_name, personality_id) in agents {
-        let participant =
-            ActorId::Agent(agent(store, agent_manager, context, agent_name, personality_id).await?);
+    for (name, spec) in agents {
+        let (agent, _) = agent_manager.find_or_create(context, &spec).await?;
+        let participant = ActorId::Agent(agent.id);
         session.add_participant(context, participant, None).await?;
         founders.push((name, participant));
     }
@@ -112,74 +108,12 @@ pub(crate) async fn take_in_participants(
     Ok(())
 }
 
-/// The agent of `name` - in exactly its scope (issue 178) - if it is of
-/// `personality_id`, or a new one of it there, made by `agents` and owned
-/// by whoever `context` acts for. One of that name in another scope is not
-/// it: from the session, the new one shadows it. If another makes it
-/// meanwhile, the store refuses the second (issue 250) and the agent is
-/// looked up once more.
+/// The workspace `template` names for the session `session_id` of `owner` (issue 251, decision
+/// 13), found or made as `context` (`WorkspaceManager::find_or_create`) - with whether it was made.
 ///
 /// # Errors
-/// `TemplateError::AgentNameTaken` if the agent of `name` is of another
-/// personality; an `AgentError` of making it - `PersonalityOutOfScope` if
-/// the personality lies in a session's or a channel's scope the agent would
-/// not, `StoreError::NameTaken` if the agent of `name` lies where `context`
-/// may not read it; whatever else the store reports.
-async fn agent(
-    store: &dyn EntityStore<Agent>,
-    agents: &AgentManager,
-    context: &SecurityContext,
-    name: ScopedName,
-    personality_id: PersonalityId,
-) -> Result<AgentId> {
-    if let Some(found) = existing_agent(store, context, &name, personality_id).await? {
-        return Ok(found);
-    }
-    let spec = AgentSpec::new(name.name.as_str(), name.scope.clone(), personality_id);
-    match agents.create(context, spec).await {
-        Ok(agent) => Ok(agent.id),
-        Err(taken @ AgentError::Store(StoreError::NameTaken { .. })) => {
-            match existing_agent(store, context, &name, personality_id).await? {
-                Some(found) => Ok(found),
-                None => Err(taken.into()),
-            }
-        }
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// The agent of `name` if there is one the caller may read and it is of
-/// `personality_id`; `None` if there is none.
-///
-/// # Errors
-/// `TemplateError::AgentNameTaken` if it is of another personality;
-/// whatever the store reports. Only "there is none" means "make one": a
-/// lookup that failed or was refused is an error, not a reason for a second
-/// agent of that name (issue 77).
-async fn existing_agent(
-    store: &dyn EntityStore<Agent>,
-    context: &SecurityContext,
-    name: &ScopedName,
-    personality_id: PersonalityId,
-) -> Result<Option<AgentId>> {
-    match store.find_by_name(context, name).await.optional()? {
-        Some(agent) if agent.personality_id == personality_id => Ok(Some(agent.id)),
-        Some(_) => Err(TemplateError::AgentNameTaken(name.name.clone()).into()),
-        None => Ok(None),
-    }
-}
-
-/// The workspace `template` names for the session `session_id` of
-/// `owner` (issue 251, decision 13): the one of its name in exactly its
-/// scope, if it is in the storage the template names, or a new one there,
-/// made as `context` - with whether it was made. As an agent is found or
-/// made: if another makes it meanwhile, it is looked up once more.
-///
-/// # Errors
-/// `TemplateError::WorkspaceNameTaken` if the one of its name is in
-/// another storage, `UnsupportedScope` for a group scope; a
-/// `WorkspaceError` of making it - `NameTaken` if the one of its name lies
-/// where `context` may not read it; whatever else the store reports.
+/// `TemplateError::UnsupportedScope` for a group scope; what `WorkspaceManager::find_or_create`
+/// reports - `InAnotherStorage` if the one of its name is in another storage.
 pub(crate) async fn resolve_workspace(
     workspaces: &WorkspaceManager,
     context: &SecurityContext,
@@ -187,59 +121,33 @@ pub(crate) async fn resolve_workspace(
     session_id: SessionId,
     owner: UserId,
 ) -> Result<(WorkspaceId, bool)> {
-    let name = template.scoped_name(session_id, owner)?;
-    if let Some(found) = existing_workspace(workspaces, context, &name, template).await? {
-        return Ok((found, false));
-    }
     let spec = WorkspaceSpec {
         description: template.description.as_ref().map(|d| d.as_str().to_string()),
         classification: template.classification.clone(),
-        ..WorkspaceSpec::new(name.name.as_str(), name.scope.clone(), &template.storage)
+        ..WorkspaceSpec::new(
+            template.name.as_str(),
+            template.scope.instantiate(session_id, owner)?,
+            &template.storage,
+        )
     };
-    match workspaces.create(context, spec).await {
-        Ok(made) => Ok((made.id, true)),
-        Err(taken @ WorkspaceError::Store(StoreError::NameTaken { .. })) => {
-            match existing_workspace(workspaces, context, &name, template).await? {
-                Some(found) => Ok((found, false)),
-                None => Err(taken.into()),
-            }
-        }
-        Err(e) => Err(e.into()),
-    }
-}
-
-/// The workspace of `name` if there is one the caller may read and it is
-/// in the storage `template` names; `None` if there is none.
-///
-/// # Errors
-/// `TemplateError::WorkspaceNameTaken` if it is in another storage;
-/// whatever the store reports - never "none" for a lookup that failed.
-async fn existing_workspace(
-    workspaces: &WorkspaceManager,
-    context: &SecurityContext,
-    name: &ScopedName,
-    template: &WorkspaceTemplate,
-) -> Result<Option<WorkspaceId>> {
-    match workspaces.find_by_name(context, name).await.optional()? {
-        Some(workspace) if workspace.storage == template.storage => Ok(Some(workspace.id)),
-        Some(_) => Err(TemplateError::WorkspaceNameTaken(name.name.clone()).into()),
-        None => Ok(None),
-    }
+    let (workspace, made) = workspaces.find_or_create(context, &spec).await?;
+    Ok((workspace.id, made))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentError;
     use crate::event::EventBus;
     use crate::scoped::ScopeHolders;
     use caelumora_domain::agent::testing::make_personality;
-    use caelumora_domain::agent::Personality;
+    use caelumora_domain::agent::{Agent, Personality, PersonalityId};
     use caelumora_domain::query::Query;
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::Session;
-    use caelumora_domain::store::Stored;
+    use caelumora_domain::store::{StoreError, Stored};
     use caelumora_domain::template::testing::make_template;
     use caelumora_domain::template::{ParticipantTemplate, ScopeTemplate, TemplateError};
     use caelumora_domain::user::testing::make_user;
@@ -287,7 +195,7 @@ mod tests {
 
     /// The participants of `template` as `create_from_template` finds them
     /// in `store`, checked by `policies`, or makes them there: its users and approvers, then - once
-    /// the session is stored, owned by `owner` - its agents (`agent`).
+    /// the session is stored, owned by `owner` - its agents (`AgentManager::find_or_create`).
     async fn resolve(
         store: &Persistence,
         policies: &Policies,
@@ -320,10 +228,9 @@ mod tests {
             };
             sessions.create(&system, &mut session).await.unwrap();
         }
-        for (name, agent_name, personality_id) in named {
-            let made =
-                agent(stores.agents.as_ref(), &agents, context, agent_name, personality_id).await?;
-            participants.push((name, Participant::Agent(made)));
+        for (name, spec) in named {
+            let (made, _) = agents.find_or_create(context, &spec).await?;
+            participants.push((name, Participant::Agent(made.id)));
         }
         Ok(participants)
     }
@@ -374,7 +281,10 @@ mod tests {
         .await
         .expect_err("the lookup is refused");
         assert!(
-            matches!(refused.downcast_ref::<StoreError>(), Some(StoreError::PermissionDenied(_))),
+            matches!(
+                refused.downcast_ref::<AgentError>(),
+                Some(AgentError::Store(StoreError::PermissionDenied(_)))
+            ),
             "{refused}"
         );
     }
@@ -533,7 +443,7 @@ mod tests {
         .await
         .expect_err("the global one is of another personality");
         assert!(
-            matches!(refused.downcast_ref::<TemplateError>(), Some(TemplateError::AgentNameTaken(name)) if *name == "helper"),
+            matches!(refused.downcast_ref::<AgentError>(), Some(AgentError::OfAnotherPersonality(name)) if *name == "helper"),
             "{refused}"
         );
         assert_eq!(

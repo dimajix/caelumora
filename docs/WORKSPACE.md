@@ -25,9 +25,11 @@ one outlives every session that uses it.
 The `WorkspaceManager` makes, deletes, restores and purges workspaces, and is the only code that
 makes and removes their places in the storages; what a workspace is - its name, description,
 classification and access list - its `WorkspaceController` changes (see
-[STORAGE.md](STORAGE.md#controllers)). A workspace is made with its place in the storage and purged
-with it, the place first, so that a place that cannot be removed leaves the document for the next
-purge.
+[STORAGE.md](STORAGE.md#controllers)). It also finds one by its name or makes it (`find_or_create`),
+for a template and for the terminal program: one made by another meanwhile is looked up once more,
+and one of that name in another storage is neither reused nor replaced (`InAnotherStorage`). A
+workspace is made with its place in the storage and purged with it, the place first, so that a place
+that cannot be removed leaves the document for the next purge.
 
 ## In a session
 
