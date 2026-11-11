@@ -20,6 +20,8 @@ pub mod wakeup;
 use crate::actor::user::UserActor;
 use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::ComponentRegistry;
+use crate::error::{refusal, user_message};
+use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
 use caelumora_api::component::{ComponentImpl, ComponentResult};
@@ -217,6 +219,18 @@ pub(crate) fn named_participant(
             Err(invalid(format!("'{}' names several participants: {}", wanted, names(&several))))
         }
     }
+}
+
+/// What `error` of an operation the command `command` ran means for its issuer: a refusal is the
+/// command refused (`Forbidden`); anything else is a failure, logged, and described only as far as
+/// `user_message` allows (`Failed`).
+pub(crate) fn command_error(command: &str, error: &Error) -> CommandError {
+    if let Some(refused) = refusal(error) {
+        return CommandError::Forbidden { name: command.to_string(), refused: refused.clone() };
+    }
+    tracing::warn!("/{} failed: {:#}", command, error);
+    let reason = user_message(error).unwrap_or_else(|| "see the server log".to_string());
+    CommandError::Failed { command: command.to_string(), reason }
 }
 
 /// `names` joined as a sentence: "A, B and C".
