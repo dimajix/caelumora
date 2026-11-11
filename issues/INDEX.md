@@ -143,6 +143,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [494](494-a-session-put-into-a-project-being-deleted.md) | rejected | `SessionLoop::update_project` reads the project it puts the session into and stores the session afterwards, with nothing against the project being deleted in between: the session then lies in a deleted project, not deleted with it and not restored with it. |
 | [495](495-a-lock-per-id-leaves-its-table-while-held.md) | done | `SessionManager::delete` takes a session's lock out of its table while it holds it, so that a caller who comes afterwards is given a new lock while another still waits on the old one, and both tables of locks by id keep an entry for every id ever asked. |
 | [502](502-bus-subscribers-lose-events-silently.md) | done | The `ControllerManager`'s follower and the `ApproverActor` receive the bus through `EventSubscription::recv`, which logs lost events and goes on, so a controller keeps an outdated value and pending approvals are not checked again after a join or a leave that was lost. |
+| [557](557-a-conversation-cannot-go-on-two-ways-at-once.md) | open | A channel's conversation has one line, so whoever wants to follow a second direction from where it stands - with the same participants and what they know so far - can only say it in the same line, where both directions mix, or start a channel that knows nothing of what was said. |
 
 ## Identity and access management
 
