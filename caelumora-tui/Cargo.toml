@@ -4,6 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# The program of one person is called `caelumora` (issue 554); the crate keeps its name.
+[[bin]]
+name = "caelumora"
+path = "src/main.rs"
+
 [dependencies]
 caelumora-domain.workspace = true
 caelumora-api.workspace = true

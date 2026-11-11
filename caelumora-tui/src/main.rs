@@ -1,6 +1,6 @@
 //! The terminal frontend: a user talks, line by line, in a channel of a session of the directory
 //! the program was started in (issue 554) - one started from a template, or one of the directory
-//! continued or resumed.
+//! continued or resumed -; or it is asked what a definition's file is to its store (`id`).
 
 mod here;
 mod home;
@@ -10,6 +10,7 @@ use anyhow::Context;
 use anyhow::Result;
 use caelumora_a2a::library::A2aLibrary;
 use caelumora_agents::library::AgentsLibrary;
+use caelumora_api::component::Params;
 use caelumora_api::library::Library;
 use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
@@ -51,6 +52,7 @@ use caelumora_security::SecurityContext;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_home::plugin::HomeStorePlugin;
+use caelumora_store_home::{HomeStore, HomeStoreConfig, HOME};
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_tool_attachment::library::AttachmentToolLibrary;
@@ -58,18 +60,19 @@ use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
 use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use here::{place_of, HERE};
 use home::Home;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::Editor;
+use serde_json::Value;
 use sessions::Asked;
 use std::collections::HashMap;
 use std::env;
 use std::future;
 use std::io::Error;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use tokio::signal::unix::{signal, SignalKind};
@@ -563,6 +566,20 @@ struct Args {
     /// Lists the sessions of this directory, the one spoken in last first, and ends.
     #[arg(long)]
     sessions: bool,
+
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// What the program does in place of a session.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Prints the id the program keeps a definition's file by - a skill, a personality, a bundle,
+    /// a template -, and whether it is derived from its name or the file's own.
+    Id {
+        /// The file, in a directory of definitions of the configuration directory.
+        file: PathBuf,
+    },
 }
 
 impl Args {
@@ -630,6 +647,10 @@ async fn main() -> Result<()> {
             home.config(&here)?
         }
     });
+
+    if let Some(Command::Id { file }) = &args.command {
+        return print_identity(&config, &here.join(file)).await;
+    }
 
     // Into a file by default: log lines on the terminal would break the prompt.
     init(&config.logging, LogTarget::File(home.log()), "info")?;
@@ -730,6 +751,40 @@ async fn main() -> Result<()> {
     ran
 }
 
+/// Prints the identity of the definition in `file`, as the stores of `config` read it: its kind,
+/// its name and its id, and whether its name derives the id - which a file renamed loses.
+///
+/// # Errors
+/// If the configuration keeps its entities in another store than `home`, or `file` is no
+/// definition of it.
+#[expect(clippy::print_stdout, reason = "the TUI writes to the terminal")]
+async fn print_identity(config: &AppConfig, file: &Path) -> Result<()> {
+    let stores = &config.persistence.entity_store;
+    if stores.kind != HOME {
+        anyhow::bail!(
+            "The configuration keeps its entities in the store `{}`, which keeps no definitions as \
+             files; `id` asks the store `{HOME}`",
+            stores.kind
+        );
+    }
+    let params = HomeStoreConfig::read(&Value::Object(stores.params.clone()))
+        .context("the parameters of the store of the entities")?;
+    let identity = HomeStore::new(&params)?
+        .identity_of(file)
+        .await
+        .with_context(|| format!("{} is no definition", file.display()))?;
+    let id = identity.id;
+    let whence = match identity.derived {
+        true => "derived from its name",
+        false => "its own",
+    };
+    println!("{} {}: {id}  {whence}", identity.kind, identity.name);
+    if identity.derived {
+        println!("Write `id: {id}` into the file to keep it when the file is renamed.");
+    }
+    Ok(())
+}
+
 /// A new session of `owner`, for whom `security` acts, made by `session_manager` from the template
 /// named `template` - among those `owner` may use -, in `place`, the project and the workspace of
 /// the directory the program was started in, if it works there.
@@ -805,6 +860,11 @@ mod tests {
         assert!(matches!(Args::try_parse_from(["caelumora"]).unwrap().asked(), Asked::Start));
         assert!(Args::try_parse_from(["caelumora", "--continue", "--sessions"]).is_err());
         assert!(Args::try_parse_from(["caelumora", "--resume", "0a1b", "--sessions"]).is_err());
+        let id = Args::try_parse_from(["caelumora", "id", "personalities/a.yaml"]).unwrap();
+        assert!(matches!(
+            id.command,
+            Some(Command::Id { file }) if file == Path::new("personalities/a.yaml")
+        ));
     }
 
     fn question(choices: &[&str], multi_select: bool) -> Question {

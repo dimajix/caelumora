@@ -14,7 +14,7 @@ use futures::stream::{self, BoxStream};
 use futures::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -68,6 +68,19 @@ pub enum FileFormat {
 }
 
 impl FileFormat {
+    /// The fields a file of this form holds as it is written, without what is given back.
+    fn written_fields(&self, text: &str) -> StoreResult<Map<String, Value>> {
+        match self {
+            FileFormat::Yaml => fields_of(text),
+            FileFormat::Markdown { body } => {
+                let (front, after) = front_matter(text);
+                let mut fields = fields_of(front)?;
+                fields.insert(body.clone(), Value::String(after.to_string()));
+                Ok(fields)
+            }
+        }
+    }
+
     fn extension(&self) -> &'static str {
         match self {
             FileFormat::Yaml => "yaml",
@@ -78,8 +91,57 @@ impl FileFormat {
 
 /// The id of the definition of `kind` named `name`, unless its file names another (issue 554): the
 /// same for one name always, so that a pinned id shows a change of how names are folded.
-pub(crate) fn derived_id(kind: EntityKind, name: &ScopedName) -> Uuid {
+pub(crate) fn derived_id(kind: &str, name: &ScopedName) -> Uuid {
     Uuid::new_v5(&NAMESPACE, format!("{kind}\n{}", name.key()).as_bytes())
+}
+
+/// What the store reads a definition's file as (issue 554), as `caelumora id` shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Identity {
+    /// The kind of the definition, by its name.
+    pub kind: String,
+    /// Its name, as the store reads it from the file's name.
+    pub name: ScopedName,
+    /// The id the store keeps it by.
+    pub id: Uuid,
+    /// Whether the id is derived from its name, the file naming none.
+    pub derived: bool,
+}
+
+/// The identity of the definition in the file at `path`, of one of the kinds `definitions` names,
+/// as the store below `places` reads it.
+///
+/// # Errors
+/// `StoreError::Validation` if the file lies in no directory of definitions, or is not of the form
+/// the definitions of its directory are written in; `StoreError::Backend` if it cannot be read, or
+/// is no definition of its kind.
+pub(crate) async fn identity_in(
+    places: &Places,
+    definitions: &BTreeMap<String, DefinitionFiles>,
+    path: &Path,
+) -> StoreResult<Identity> {
+    let path = places.as_own(path).await;
+    let outside = || StoreError::Validation("it lies in no directory of definitions".to_string());
+    let dir = kind_dir(&path).ok_or_else(outside)?;
+    let holder = dir.parent().ok_or_else(outside)?;
+    if !places.holders_of_definitions().await?.iter().any(|known| known == holder) {
+        return Err(outside());
+    }
+    let mut of_dir = definitions
+        .iter()
+        .filter(|(_, files)| dir.file_name().is_some_and(|name| *name == *files.dir))
+        .peekable();
+    of_dir.peek().ok_or_else(outside)?;
+    let (kind, files) = of_dir
+        .find(|(_, files)| path.extension().is_some_and(|found| found == files.format.extension()))
+        .ok_or(StoreError::Validation(
+            "it is not of the form the definitions of its directory are written in".to_string(),
+        ))?;
+    let text = fs::read_to_string(&path).await.map_err(to_backend_error)?;
+    let derived = !files.format.written_fields(&text)?.contains_key("id");
+    let body = read(places, kind, &files.format, &path, &text)?;
+    let head: Head = serde_json::from_value(body).map_err(to_backend_error)?;
+    Ok(Identity { kind: kind.clone(), name: head.name, id: head.id, derived })
 }
 
 /// What a definition's file is to the backend: its id, and its name unless it is deleted.
@@ -100,6 +162,51 @@ fn kind_dir(path: &Path) -> Option<&Path> {
         Some(name) if name == DELETED => dir.parent(),
         _ => Some(dir),
     }
+}
+
+/// The definition of `kind` in the file at `path`, of the form `format`, holding `text`, as the
+/// store reads it: what the file holds, and what its place tells - its scope where it names none,
+/// its name if it is named by it, whatever a field says, its id derived from its name where it
+/// names none.
+///
+/// # Errors
+/// If it lies in no directory of definitions, or is no mapping of fields of a name.
+fn read(
+    places: &Places,
+    kind: &str,
+    format: &FileFormat,
+    path: &Path,
+    text: &str,
+) -> StoreResult<Value> {
+    let mut fields = format.written_fields(text)?;
+    let dir = kind_dir(path).ok_or(StoreError::Backend("a file of no directory".to_string()))?;
+    if !fields.contains_key("scope") {
+        let scope = serde_json::to_value(scope_in(places, kind, dir)?).map_err(to_backend_error)?;
+        fields.insert("scope".to_string(), scope);
+    }
+    if named_by_name(path) {
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        let name = stem.and_then(name_of_file);
+        let name = name.ok_or(StoreError::Backend("no name of a definition".to_string()))?;
+        fields.insert("name".to_string(), Value::String(name));
+    }
+    if !fields.contains_key("id") {
+        let name: ScopedName =
+            serde_json::from_value(Value::Object(fields.clone())).map_err(to_backend_error)?;
+        let id = derived_id(kind, &name);
+        fields.insert("id".to_string(), Value::String(id.to_string()));
+    }
+    Ok(Value::Object(fields))
+}
+
+/// The scope of the definitions of `kind` in the directory of their kind at `dir`.
+///
+/// # Errors
+/// If it lies in no directory of definitions.
+fn scope_in(places: &Places, kind: &str, dir: &Path) -> StoreResult<Scope> {
+    dir.parent()
+        .and_then(|holder| places.scope_of(holder))
+        .ok_or(StoreError::Backend(format!("no {kind} lies in this directory")))
 }
 
 /// Whether the file at `path` is named by the name of its definition, not by its id.
@@ -179,26 +286,6 @@ impl Definitions {
     ) -> Self {
         let (dir, format) = (files.dir.clone(), files.format.clone());
         Self { places, kind, dir, format, document_of, lock }
-    }
-
-    /// The fields the file holds as it is written, without what is given back.
-    fn written_fields(&self, text: &str) -> StoreResult<Map<String, Value>> {
-        match &self.format {
-            FileFormat::Yaml => fields_of(text),
-            FileFormat::Markdown { body } => {
-                let (front, after) = front_matter(text);
-                let mut fields = fields_of(front)?;
-                fields.insert(body.clone(), Value::String(after.to_string()));
-                Ok(fields)
-            }
-        }
-    }
-
-    /// The scope of the definitions in the directory of the kind at `dir`.
-    fn scope_in(&self, dir: &Path) -> StoreResult<Scope> {
-        dir.parent()
-            .and_then(|holder| self.places.scope_of(holder))
-            .ok_or(StoreError::Backend(format!("no {} lies in this directory", self.kind)))
     }
 
     /// The id and the name of the definition in the file at `path`; `None` for a file that is
@@ -285,28 +372,9 @@ impl Definitions {
 }
 
 impl DocumentFormat for Definitions {
-    /// The name of a file named by it is the file's, whatever a field says.
+    /// As `read`.
     fn parse(&self, path: &Path, text: &str) -> StoreResult<Value> {
-        let mut fields = self.written_fields(text)?;
-        let dir =
-            kind_dir(path).ok_or(StoreError::Backend("a file of no directory".to_string()))?;
-        if !fields.contains_key("scope") {
-            let scope = serde_json::to_value(self.scope_in(dir)?).map_err(to_backend_error)?;
-            fields.insert("scope".to_string(), scope);
-        }
-        if named_by_name(path) {
-            let stem = path.file_stem().and_then(|stem| stem.to_str());
-            let name = stem.and_then(name_of_file);
-            let name = name.ok_or(StoreError::Backend("no name of a definition".to_string()))?;
-            fields.insert("name".to_string(), Value::String(name));
-        }
-        if !fields.contains_key("id") {
-            let name: ScopedName =
-                serde_json::from_value(Value::Object(fields.clone())).map_err(to_backend_error)?;
-            let id = derived_id(self.kind, &name);
-            fields.insert("id".to_string(), Value::String(id.to_string()));
-        }
-        Ok(Value::Object(fields))
+        read(&self.places, self.kind.name(), &self.format, path, text)
     }
 
     /// An id the file it takes the place of held (`previous`) stays in it, also one its name
@@ -322,7 +390,8 @@ impl DocumentFormat for Definitions {
         };
         let dir =
             kind_dir(path).ok_or(StoreError::Backend("a file of no directory".to_string()))?;
-        let scope = serde_json::to_value(self.scope_in(dir)?).map_err(to_backend_error)?;
+        let scope = serde_json::to_value(scope_in(&self.places, self.kind.name(), dir)?)
+            .map_err(to_backend_error)?;
         if fields.get("scope") == Some(&scope) {
             fields.remove("scope");
         }
@@ -333,9 +402,9 @@ impl DocumentFormat for Definitions {
             fields.remove("name");
         }
         let had_id = previous
-            .and_then(|text| self.written_fields(text).ok())
+            .and_then(|text| self.format.written_fields(text).ok())
             .is_some_and(|written| written.contains_key("id"));
-        if !had_id && derived_id(self.kind, name) == document.id {
+        if !had_id && derived_id(self.kind.name(), name) == document.id {
             fields.remove("id");
         }
         for (field, same) in LEFT_OUT {

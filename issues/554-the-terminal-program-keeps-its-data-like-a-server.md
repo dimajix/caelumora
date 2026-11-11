@@ -1,6 +1,6 @@
 # 554 — The terminal program keeps its data as a server does, out of reach of its user
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Persistence
@@ -420,3 +420,10 @@ Each reviewed and committed on its own, on a branch of this issue.
   when it was made -, `--continue` opens the one spoken in last, or starts one, and `--resume <id>`
   the one whose id begins so. Started for real: two sessions listed in their order, one resumed and
   spoken in comes first, and resuming it again while it is open in another terminal is refused.
+- **2026-11-11** — Step 6, its third part: the program is called `caelumora`, its crate still
+  `caelumora-tui`, and `caelumora id <file>` prints the id the store keeps a definition's file by -
+  derived from its name where the file names none, else its own -, as `HomeStore::identity_of`
+  reads it, by the same reading the store does; with a hint to write a derived id into the file.
+  It asks the store `home` of the configuration, without a kernel.
+- **2026-11-11** — Done: every step is in. Not tried for real: a turn of a model in the terminal
+  program, since no model was at hand; what it does is its components', as in the server.

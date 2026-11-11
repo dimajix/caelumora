@@ -109,6 +109,29 @@ impl Places {
         &self.data_dir
     }
 
+    /// The path of the file at `path` as the store names it: below its own directories as it names
+    /// them, where it lies below them by another way - a symbolic link on the way to either, a
+    /// path relative to another directory -, else `path` as it is.
+    /// The file itself is named as it is, also where it is a link: the store names it so.
+    pub(crate) async fn as_own(&self, path: &Path) -> PathBuf {
+        let (Some(dir), Some(file)) = (path.parent(), path.file_name()) else {
+            return path.to_path_buf();
+        };
+        let Ok(real) =
+            fs::canonicalize(if dir.as_os_str().is_empty() { Path::new(".") } else { dir }).await
+        else {
+            return path.to_path_buf();
+        };
+        for own in self.config_dir.iter().chain([&self.data_dir]) {
+            if let Ok(canonical) = fs::canonicalize(own).await {
+                if let Ok(below) = real.strip_prefix(&canonical) {
+                    return own.join(below).join(file);
+                }
+            }
+        }
+        path.to_path_buf()
+    }
+
     /// The directory of the locks of the kinds.
     pub(crate) fn locks(&self) -> PathBuf {
         self.data_dir.join("locks")

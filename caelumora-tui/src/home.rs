@@ -5,6 +5,7 @@
 use crate::here::HERE;
 use anyhow::{Context, Result};
 use caelumora_domain::config::{parse_yaml, AppConfig};
+use caelumora_store_home::HOME;
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
@@ -94,7 +95,7 @@ impl Home {
     fn defaults(&self, here: &Path) -> Result<Value> {
         let (config, data) = (text_of(&self.config)?, text_of(&self.data)?);
         let home = json!({
-            "type": "home",
+            "type": HOME,
             "config_dir": config,
             "data_dir": data,
             "definitions": {
@@ -123,7 +124,7 @@ impl Home {
             ] },
             "persistence": { "entity_store": home, "state_store": home },
             "content": { "storage": { "home": {
-                "type": "home",
+                "type": HOME,
                 "data_dir": data,
                 "spaces": { "attachments": "channel", "artifacts": "project" },
             } } },

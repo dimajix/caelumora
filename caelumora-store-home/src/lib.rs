@@ -10,7 +10,11 @@ mod places;
 pub mod plugin;
 
 pub use content::{HomeContent, HomeContentConfig};
-pub use definitions::{DefinitionFiles, FileFormat};
+pub use definitions::{DefinitionFiles, FileFormat, Identity};
+
+/// The name of the backends of this crate, of the stores (`HomeStore`) and of the content
+/// (`HomeContent`), as a configuration names them.
+pub const HOME: &str = "home";
 
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{EntityKind, StoreResult};
@@ -22,14 +26,14 @@ use caelumora_store::{PersistenceBackend, StateStore};
 use caelumora_store_json::{
     lock_file, to_backend_error, FileDocuments, JsonFormat, JsonStates, DEFAULT_JOURNAL_FLOOR,
 };
-use definitions::Definitions;
+use definitions::{identity_in, Definitions};
 use layout::{HomeDocuments, HomeStates};
 use places::Places;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, TryLockError};
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
 
 /// The parameters of the backend `home`.
@@ -85,6 +89,18 @@ impl HomeStore {
             states: Arc::new(states),
             documents: RwLock::default(),
         })
+    }
+}
+
+impl HomeStore {
+    /// The identity of the definition in the file at `path`, as the store reads it (issue 554).
+    ///
+    /// # Errors
+    /// `StoreError::Validation` if the file lies in no directory of definitions, or is not of the
+    /// form the definitions of its directory are written in; `StoreError::Backend` if it cannot be
+    /// read, or is no definition of its kind.
+    pub async fn identity_of(&self, path: &Path) -> StoreResult<Identity> {
+        identity_in(&self.places, &self.definitions, path).await
     }
 }
 
@@ -185,6 +201,7 @@ mod tests {
     use caelumora_security::{OwnershipPolicy, Policies, SecurityContext};
     use caelumora_store::{suite, EntityStores, Persistence};
     use definitions::derived_id;
+    use std::os::unix::fs::symlink;
     use std::path::Path;
     use tempfile::tempdir;
     use tokio::task::JoinSet;
@@ -541,7 +558,7 @@ mod tests {
     #[test]
     fn the_id_of_a_name_stays_the_same() {
         assert_eq!(
-            derived_id(Personality::KIND, &global("plain")).to_string(),
+            derived_id(Personality::KIND.name(), &global("plain")).to_string(),
             "345476c2-4f68-5832-8e80-c61710dd286a"
         );
     }
@@ -558,7 +575,7 @@ mod tests {
 
         let found = stores.personalities.find_by_name(&system, &global("plain")).await.unwrap();
 
-        assert_eq!(found.id.0, derived_id(Personality::KIND, &global("plain")));
+        assert_eq!(found.id.0, derived_id(Personality::KIND.name(), &global("plain")));
         assert_eq!(found.description.unwrap().as_str(), "A plain one");
         assert!(stores.personalities.get(&system, found.id).await.is_ok(), "and by its id");
     }
@@ -569,7 +586,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let stores = stores(dir.path());
         let system = SecurityContext::system();
-        let id = derived_id(Personality::KIND, &global("plain"));
+        let id = derived_id(Personality::KIND.name(), &global("plain"));
         let mut personality = Personality { id: id.into(), ..make_personality("plain") };
         stores.personalities.create(&system, &mut personality).await.unwrap();
 
@@ -600,16 +617,101 @@ mod tests {
         fs::write(personalities.join("kept.yaml"), format!("id: {kept}\n")).unwrap();
         let stores = stores(dir.path());
         let system = SecurityContext::system();
-        let plain = derived_id(Personality::KIND, &global("plain"));
+        let plain = derived_id(Personality::KIND.name(), &global("plain"));
 
         fs::rename(personalities.join("plain.yaml"), personalities.join("moved.yaml")).unwrap();
         fs::rename(personalities.join("kept.yaml"), personalities.join("still.yaml")).unwrap();
 
         assert!(stores.personalities.get(&system, plain.into()).await.is_err(), "a new identity");
         let moved = stores.personalities.find_by_name(&system, &global("moved")).await.unwrap();
-        assert_eq!(moved.id.0, derived_id(Personality::KIND, &global("moved")));
+        assert_eq!(moved.id.0, derived_id(Personality::KIND.name(), &global("moved")));
         let still = stores.personalities.get(&system, kept.into()).await.expect("found by its id");
         assert_eq!(still.name, global("still"));
+    }
+
+    /// What `caelumora id` shows (issue 554): the id of a definition's file, derived from its name
+    /// where the file names none, its own where it does - also the derived one written into it -,
+    /// and of a deleted one; found by any way to it, and refused for a file of no definitions.
+    #[tokio::test]
+    async fn the_identity_of_a_file_is_its_id_and_whether_its_name_derives_it() {
+        let dir = tempdir().unwrap();
+        let personalities = dir.path().join("config/personalities");
+        fs::create_dir_all(&personalities).unwrap();
+        let derived = derived_id(Personality::KIND.name(), &global("plain"));
+        let own = Uuid::new_v4();
+        fs::write(personalities.join("plain.yaml"), "{}\n").unwrap();
+        fs::write(personalities.join("kept.yaml"), format!("id: {own}\n")).unwrap();
+        fs::write(personalities.join("written.yaml"), format!("id: {derived}\n")).unwrap();
+        let store = store(dir.path());
+
+        let plain = store.identity_of(&personalities.join("plain.yaml")).await.unwrap();
+        let expected = Identity {
+            kind: "personality".to_string(),
+            name: global("plain"),
+            id: derived,
+            derived: true,
+        };
+        assert_eq!(plain, expected);
+        let kept = store.identity_of(&personalities.join("kept.yaml")).await.unwrap();
+        assert_eq!((kept.id, kept.derived), (own, false), "its own");
+        let written = store.identity_of(&personalities.join("written.yaml")).await.unwrap();
+        assert!(!written.derived, "an id in the file is its own, whatever it is");
+
+        let stores = opened(&store);
+        let system = SecurityContext::system();
+        let id = PersonalityId::from(own);
+        stores.personalities.delete(&system, id, &Removal::now(ActorId::System)).await.unwrap();
+        let deleted = personalities.join(".deleted").join(format!("{own}.yaml"));
+        let gone = store.identity_of(&deleted).await.expect("of a deleted one too");
+        assert_eq!((gone.id, gone.name), (own, global("kept")));
+
+        let link = dir.path().join("elsewhere");
+        symlink(&personalities, &link).unwrap();
+        let by_link = store.identity_of(&link.join("plain.yaml")).await.unwrap();
+        assert_eq!(by_link, expected, "by a link on the way");
+        let outside = dir.path().join("plain.yaml");
+        fs::write(&outside, "{}\n").unwrap();
+        let refused = store.identity_of(&outside).await;
+        assert!(matches!(refused, Err(StoreError::Validation(_))), "{refused:?}");
+        let unknown = dir.path().join("config/others");
+        fs::create_dir_all(&unknown).unwrap();
+        fs::write(unknown.join("plain.yaml"), "{}\n").unwrap();
+        let refused = store.identity_of(&unknown.join("plain.yaml")).await;
+        assert!(matches!(refused, Err(StoreError::Validation(_))), "{refused:?}");
+        fs::write(personalities.join("plain.md"), "plain\n").unwrap();
+        let refused = store.identity_of(&personalities.join("plain.md")).await;
+        assert!(
+            matches!(&refused, Err(StoreError::Validation(why)) if why.contains("form")),
+            "of another form: {refused:?}"
+        );
+    }
+
+    /// A file of a user's scope is read in it, below the data directory; a file below a directory
+    /// that only looks like one is no definition the store reads; a file that is a link is named
+    /// by its own name, as the store names it.
+    #[tokio::test]
+    async fn the_identity_of_a_file_is_told_as_the_store_reads_it() {
+        let dir = tempdir().unwrap();
+        let user = UserId::new();
+        let mine = dir.path().join(format!("users/{user}/personalities"));
+        let stray = dir.path().join(format!("stray/users/{user}/personalities"));
+        let personalities = dir.path().join("config/personalities");
+        for each in [&mine, &stray, &personalities] {
+            fs::create_dir_all(each).unwrap();
+            fs::write(each.join("plain.yaml"), "{}\n").unwrap();
+        }
+        symlink(personalities.join("plain.yaml"), personalities.join("alias.yaml")).unwrap();
+        let store = store(dir.path());
+
+        let own = store.identity_of(&mine.join("plain.yaml")).await.unwrap();
+        let scoped = ScopedName::new("plain", Scope::UserScope { user_id: user }).unwrap();
+        assert_eq!(own.id, derived_id(Personality::KIND.name(), &scoped));
+        assert_eq!(own.name, scoped, "in the user's scope");
+        let refused = store.identity_of(&stray.join("plain.yaml")).await;
+        assert!(matches!(refused, Err(StoreError::Validation(_))), "{refused:?}");
+        let alias = store.identity_of(&personalities.join("alias.yaml")).await.unwrap();
+        assert_eq!(alias.name, global("alias"), "named as the store names it");
+        assert_eq!(alias.id, derived_id(Personality::KIND.name(), &global("alias")));
     }
 
     /// Two files of one id, or of one name as names compare, are both left out.
@@ -839,7 +941,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let personalities = dir.path().join("config/personalities");
         fs::create_dir_all(&personalities).unwrap();
-        let id = derived_id(Personality::KIND, &global("plain"));
+        let id = derived_id(Personality::KIND.name(), &global("plain"));
         fs::write(personalities.join("plain.yaml"), format!("id: {id}\n")).unwrap();
         let stores = stores(dir.path());
         let system = SecurityContext::system();

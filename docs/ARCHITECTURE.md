@@ -511,18 +511,18 @@ The design repeats a few decisions; new code follows them.
     trusted as the kernel; what runs an agent or serves its facets is a **library** of the **agent
     side**, trusted for nothing: `caelumora-agents`, and the crates that bring components for an
     agent (which crate stands where is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). A
-    library is not a program: the binaries (`caelumora-app`, `caelumora-tui`) link the kernel, its
-    plugins and the libraries, and choose which are in. A library sees the kernel through the
-    kernel's API alone - an actor its `ActorRuntime`, a component its `ComponentContext` and the
-    `Turn` it is called with -, and the kernel checks every call through it in the name of the actor
-    it gave it to. A library builds no `SecurityContext`, asks no policy and holds no manager, no
-    store and no controller of the kernel: what it needs decided, it asks the kernel to decide. What
-    the kernel cannot enforce it does not pretend to: a tool whose effect lies outside the system
-    runs if the library runs it, and an agent's own record - its transcript - is the agent side's;
-    the kernel's record of a conversation is the channel's history, taken at its door. A library
-    registers with a `LibraryBuilder`, which offers nothing of the kernel, and the kernel is not
-    built where a component kind of a library provides a facet the kernel builds in its own name or
-    uses a service of the kernel but the texts (issue
+    library is not a program: the programs (`caelumora-app`, `caelumora` of `caelumora-tui`) link
+    the kernel, its plugins and the libraries, and choose which are in. A library sees the kernel
+    through the kernel's API alone - an actor its `ActorRuntime`, a component its `ComponentContext`
+    and the `Turn` it is called with -, and the kernel checks every call through it in the name of
+    the actor it gave it to. A library builds no `SecurityContext`, asks no policy and holds no
+    manager, no store and no controller of the kernel: what it needs decided, it asks the kernel to
+    decide. What the kernel cannot enforce it does not pretend to: a tool whose effect lies outside
+    the system runs if the library runs it, and an agent's own record - its transcript - is the
+    agent side's; the kernel's record of a conversation is the channel's history, taken at its door.
+    A library registers with a `LibraryBuilder`, which offers nothing of the kernel, and the kernel
+    is not built where a component kind of a library provides a facet the kernel builds in its own
+    name or uses a service of the kernel but the texts (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A library links the API,
     the domain and other libraries, never the kernel, `caelumora-security` or `caelumora-store` -
     `scripts/library-deps.sh` checks its dependencies, run by the pre-commit hook -, so the compiler

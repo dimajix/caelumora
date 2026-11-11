@@ -1,7 +1,7 @@
 //! How the stores and the content of a program of one person are joined to the kernel (issue 554):
 //! as backends alone.
 
-use crate::{HomeContent, HomeContentConfig, HomeStore, HomeStoreConfig};
+use crate::{HomeContent, HomeContentConfig, HomeStore, HomeStoreConfig, HOME};
 use anyhow::Result;
 use caelumora_api::component::{ComponentError, Params};
 use caelumora_kernel::backend::Backends;
@@ -24,15 +24,12 @@ impl Plugin for HomeStorePlugin {
     }
 
     fn backends(&self, backends: &mut Backends) {
-        backends.register::<dyn PersistenceBackend, _, _>(
-            "home",
-            |_, config: HomeStoreConfig, _| {
-                let store = HomeStore::new(&config)
-                    .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
-                Ok(Arc::new(store))
-            },
-        );
-        backends.register::<dyn ContentStorage, _, _>("home", |_, config: HomeContentConfig, _| {
+        backends.register::<dyn PersistenceBackend, _, _>(HOME, |_, config: HomeStoreConfig, _| {
+            let store = HomeStore::new(&config)
+                .map_err(|e| ComponentError::InvalidConfig(e.to_string()))?;
+            Ok(Arc::new(store))
+        });
+        backends.register::<dyn ContentStorage, _, _>(HOME, |_, config: HomeContentConfig, _| {
             Ok(Arc::new(HomeContent::new(&config)))
         });
     }
