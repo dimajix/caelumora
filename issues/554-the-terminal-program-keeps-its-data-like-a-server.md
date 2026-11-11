@@ -415,3 +415,8 @@ Each reviewed and committed on its own, on a branch of this issue.
   answers the question of the first part of step 4. `home` holds a session by a `flock` of
   `locks/sessions/<id>`, not of `sessions/<id>/lock`, which would keep the session's directory from
   being removed with it; the file goes as the session is purged.
+- **2026-11-11** — Step 6, its second part done: `--sessions` lists the sessions of the project of
+  the directory, by the last message said in a channel the person reads - a session without one by
+  when it was made -, `--continue` opens the one spoken in last, or starts one, and `--resume <id>`
+  the one whose id begins so. Started for real: two sessions listed in their order, one resumed and
+  spoken in comes first, and resuming it again while it is open in another terminal is refused.

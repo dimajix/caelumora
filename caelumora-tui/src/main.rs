@@ -1,8 +1,10 @@
-//! The terminal frontend: a user talks, line by line, in a channel of a session started from a
-//! template, in the directory the program was started in (issue 554).
+//! The terminal frontend: a user talks, line by line, in a channel of a session of the directory
+//! the program was started in (issue 554) - one started from a template, or one of the directory
+//! continued or resumed.
 
 mod here;
 mod home;
+mod sessions;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -20,6 +22,7 @@ use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::config::AppConfig;
 use caelumora_domain::mention::{is_group_handle, mention_spans};
 use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::Query;
 use caelumora_domain::question::{Question, QuestionId, QuestionRequest, Response};
 use caelumora_domain::store::StoreResultExt;
@@ -27,13 +30,13 @@ use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::work::TurnId;
-use caelumora_domain::workspace::WorkspaceChoice;
+use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::user_message;
-use caelumora_kernel::kernel::KernelBuilder;
+use caelumora_kernel::kernel::{Kernel, KernelBuilder};
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
-use caelumora_kernel::session::{SessionManager, SessionSpec};
+use caelumora_kernel::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
 use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
@@ -44,6 +47,7 @@ use caelumora_model_comfyui::plugin::ComfyUiModelPlugin;
 use caelumora_model_ollama::plugin::{with_local_model, OllamaModelPlugin};
 use caelumora_model_systemone::plugin::SystemOneModelPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
+use caelumora_security::SecurityContext;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
 use caelumora_store_home::plugin::HomeStorePlugin;
@@ -60,6 +64,7 @@ use home::Home;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::Editor;
+use sessions::Asked;
 use std::collections::HashMap;
 use std::env;
 use std::future;
@@ -545,6 +550,32 @@ struct Args {
     /// (`Credential::Trusted`). The user of the system unless named.
     #[arg(short, long)]
     user: Option<String>,
+
+    /// Continues the session of this directory spoken in last, instead of starting one; starts
+    /// one if there is none.
+    #[arg(long = "continue", conflicts_with_all = ["resume", "sessions"])]
+    continues: bool,
+
+    /// Resumes the session of this directory whose id begins so, as `--sessions` shows it.
+    #[arg(short, long, value_name = "ID", conflicts_with = "sessions")]
+    resume: Option<String>,
+
+    /// Lists the sessions of this directory, the one spoken in last first, and ends.
+    #[arg(long)]
+    sessions: bool,
+}
+
+impl Args {
+    /// What the program is asked to do with the sessions of its directory - one thing at most, as
+    /// the options exclude each other.
+    fn asked(&self) -> Asked {
+        match (&self.resume, self.continues, self.sessions) {
+            (Some(prefix), _, _) => Asked::Resume(prefix.clone()),
+            (None, true, _) => Asked::Continue,
+            (None, false, true) => Asked::List,
+            (None, false, false) => Asked::Start,
+        }
+    }
 }
 
 /// The plugins the terminal builds its kernel with (issue 323).
@@ -591,8 +622,8 @@ async fn main() -> Result<()> {
         .and_then(|dir| dir.canonicalize())
         .context("the directory the program was started in cannot be told")?;
     let home = Home::of_user()?;
-    let config = with_local_model(match args.config {
-        Some(given) => AppConfig::load(&given)
+    let config = with_local_model(match &args.config {
+        Some(given) => AppConfig::load(given)
             .with_context(|| format!("cannot read the configuration {}", given.display()))?,
         None => {
             home.first_start()?;
@@ -611,7 +642,6 @@ async fn main() -> Result<()> {
     }
     let kernel = Arc::new(builder.build()?);
     kernel.seed(&config.seed).await?;
-    let entity_stores = kernel.entity_stores();
 
     // Whom the terminal acts for: the user the providers know by that name,
     // recorded with their roles as a login records them (issue 306).
@@ -619,7 +649,8 @@ async fn main() -> Result<()> {
     if users.is_empty() {
         anyhow::bail!("No user providers are configured (`users` section), so the terminal can act for nobody. See examples/config.yaml.");
     }
-    let user = args.user.or_else(|| env::var("USER").ok()).unwrap_or_else(|| "user".to_string());
+    let user =
+        args.user.clone().or_else(|| env::var("USER").ok()).unwrap_or_else(|| "user".to_string());
     let owner = users
         .authenticate(&user, &Credential::Trusted)
         .await
@@ -633,57 +664,57 @@ async fn main() -> Result<()> {
         .await?
         .security_context(Default::default(), Default::default());
 
-    // By name, among those this user may use.
-    let template = entity_stores.session_templates.list(&security, &Query::all()).await.map(|page| page.items)?.into_iter()
-        .find(|t| t.name.name == args.template.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates lie in `templates` of the configuration directory, or come from the `seed` of the configuration", args.template))?;
-
-    // Held in the language the user prefers where the template names none:
-    // the frontend's to offer, not the server's (issues 331, 425).
-    let preferred = entity_stores
-        .user_profiles
-        .get(&security, owner)
-        .await
-        .optional()?
-        .and_then(|profile| profile.preferred_language);
-    let language = preferred.filter(|_| template.language.is_none());
-
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
     let projects = ProjectManager::new(Arc::clone(&session_manager));
     // Where the program was started, its project and workspace, if it works there.
-    let (project, workspace) = if config.workspaces.storage.contains_key(HERE) {
-        let (project, workspace) = place_of(&kernel, &projects, &security, owner, &here).await?;
-        (Some(project), Some(WorkspaceChoice::Existing { id: workspace, share: None }))
-    } else {
-        (None, None)
+    let place = match config.workspaces.storage.contains_key(HERE) {
+        true => Some(place_of(&kernel, &projects, &security, owner, &here).await?),
+        false => None,
     };
-    let session_loop = session_manager
-        .create_from_template(
-            &security,
-            template.id,
-            SessionSpec {
-                language: language.as_ref().map(Language::to_string),
-                workspace,
-                project,
-                ..SessionSpec::default()
-            },
-        )
-        .await?;
+    let views = session_manager.views(Viewer::new(security.clone()));
+    let asked = args.asked();
+    let project = match (place, &asked) {
+        (Some((project, _)), _) => Some(project),
+        (None, Asked::Start) => None,
+        (None, _) => anyhow::bail!(
+            "Sessions are listed, continued and resumed by the directory they were started in, \
+             which the configuration does not work in (it names no storage `{HERE}`)"
+        ),
+    };
+    if let (Asked::List, Some(project)) = (&asked, project) {
+        let listed = sessions::listed(&views, project).await?;
+        if listed.is_empty() {
+            println!("No session was started in this directory yet.");
+        }
+        for session in &listed {
+            println!("{}", session.line());
+        }
+        return Ok(());
+    }
+    let chosen = match project {
+        Some(project) => sessions::chosen(&views, project, &asked).await?,
+        None => None,
+    };
+    let session_loop = match chosen {
+        Some(id) => match session_manager.open(&security, id).await {
+            Err(e) if matches!(e.downcast_ref(), Some(SessionError::RunsElsewhere(_))) => {
+                anyhow::bail!("The session {id} is open in another terminal")
+            }
+            opened => opened.with_context(|| format!("The session {id} cannot be resumed"))?,
+        },
+        None => start(&kernel, &session_manager, &security, owner, &args.template, place).await?,
+    };
     let session_id = session_loop.id();
 
     // The template's first channel, whatever it is called.
-    let channel =
-        session_loop.channels().into_iter().next().ok_or_else(|| {
-            anyhow::anyhow!("Session template '{}' has no channel", args.template)
-        })?;
+    let channel = session_loop
+        .channels()
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("The session {session_id} has no channel"))?;
 
     // Who answers, as the views tell it (issue 174).
-    let view = session_manager
-        .views(Viewer::new(security.clone()))
-        .session(session_id)
-        .await?
-        .channel(channel.id())
-        .await?;
+    let view = views.session(session_id).await?.channel(channel.id()).await?;
     let unknown = || "from a bundle".to_string();
     println!(
         "Moderator: {}, responders: {}",
@@ -697,6 +728,43 @@ async fn main() -> Result<()> {
     let ran = run_repl(channel, owner).await;
     session_manager.shutdown().await;
     ran
+}
+
+/// A new session of `owner`, for whom `security` acts, made by `session_manager` from the template
+/// named `template` - among those `owner` may use -, in `place`, the project and the workspace of
+/// the directory the program was started in, if it works there.
+///
+/// # Errors
+/// If there is no such template, or making the session fails.
+async fn start(
+    kernel: &Kernel,
+    session_manager: &SessionManager,
+    security: &SecurityContext,
+    owner: UserId,
+    template: &str,
+    place: Option<(ProjectId, WorkspaceId)>,
+) -> Result<Arc<SessionLoop>> {
+    let stores = kernel.entity_stores();
+    let templates = stores.session_templates.list(security, &Query::all()).await?.items;
+    let template = templates.into_iter().find(|t| t.name.name == template).ok_or_else(|| {
+        anyhow::anyhow!("Session template '{template}' not found: templates lie in `templates` of the configuration directory, or come from the `seed` of the configuration")
+    })?;
+    // Held in the language the user prefers where the template names none:
+    // the frontend's to offer, not the server's (issues 331, 425).
+    let preferred = stores
+        .user_profiles
+        .get(security, owner)
+        .await
+        .optional()?
+        .and_then(|profile| profile.preferred_language);
+    let language = preferred.filter(|_| template.language.is_none());
+    let spec = SessionSpec {
+        language: language.as_ref().map(Language::to_string),
+        workspace: place.map(|(_, id)| WorkspaceChoice::Existing { id, share: None }),
+        project: place.map(|(project, _)| project),
+        ..SessionSpec::default()
+    };
+    session_manager.create_from_template(security, template.id, spec).await
 }
 
 /// Completes on SIGINT, SIGTERM or SIGHUP - the terminal closed -, or
@@ -726,6 +794,18 @@ async fn signalled() {
 mod tests {
     use super::*;
     use caelumora_domain::question::Choice;
+    use clap::CommandFactory;
+
+    /// The options of the program fit together: no name taken twice, and one thing asked at most.
+    #[test]
+    fn the_options_fit_together() {
+        Args::command().debug_assert();
+        let resumed = Args::try_parse_from(["caelumora", "--resume", "0a1b"]).unwrap();
+        assert!(matches!(resumed.asked(), Asked::Resume(prefix) if prefix == "0a1b"));
+        assert!(matches!(Args::try_parse_from(["caelumora"]).unwrap().asked(), Asked::Start));
+        assert!(Args::try_parse_from(["caelumora", "--continue", "--sessions"]).is_err());
+        assert!(Args::try_parse_from(["caelumora", "--resume", "0a1b", "--sessions"]).is_err());
+    }
 
     fn question(choices: &[&str], multi_select: bool) -> Question {
         Question {

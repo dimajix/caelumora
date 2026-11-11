@@ -79,10 +79,15 @@ start it writes there a template `default` and the personality of its assistant.
 was started in is the workspace of its session, and its commands run there with the person's own
 environment; every session of one directory lies in that directory's project. It acts for the user
 of the system, or for the one `--user <name>` names, and starts a session from the template
-`default`, or from the one `--template <name>` names. What `~/.config/caelumora/config.yaml` says
-lies over these defaults, key by key (see `docs/CONFIGURATION.md`); `--config <file>` replaces
-them, as `--config examples/config.yaml --template sassy-session` does with the demo data of
-`examples/seed`. The TUI writes its log to `~/.local/state/caelumora/tui.log`.
+`default`, or from the one `--template <name>` names. `--sessions` lists the sessions of the
+directory, the one spoken in last first - one nobody spoke in by when it was started -; `--continue`
+continues that one instead of starting a session, or starts one if there is none, and
+`--resume <id>` the one whose id begins so. A session runs in one terminal at a time: one open in
+another is not resumed. All three need the directory the program works in, which a configuration
+given by `--config` may not name. What `~/.config/caelumora/config.yaml` says lies over these
+defaults, key by key (see `docs/CONFIGURATION.md`); `--config <file>` replaces them, as
+`--config examples/config.yaml --template sassy-session` does with the demo data of `examples/seed`.
+The TUI writes its log to `~/.local/state/caelumora/tui.log`.
 
 ### Running the Program
 
