@@ -1,7 +1,7 @@
 //! `ProjectManager`: making, deleting, restoring and purging shared projects (issue 467), with
 //! the sessions that lie in them and what lies in their scope.
 
-use super::{store_error, ProjectError, ProjectResult};
+use super::{store_error, ProjectError, ProjectResult, ProjectSpec};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
@@ -66,29 +66,24 @@ impl ProjectManager {
         }
     }
 
-    /// Makes a shared project of the user `ctx` acts for, of `name` in `scope` - the global one or
-    /// their own -, described by `description`, with nobody among its members yet (`CreateProject`,
-    /// asked by the store), and the group of its members in the kernel's name.
+    /// Makes the shared project `spec` asks for, of the user `ctx` acts for - in the global scope
+    /// or their own -, with nobody among its members yet (`CreateProject`, asked by the store), and
+    /// the group of its members in the kernel's name.
     ///
     /// # Errors
     /// `OwnerNotAUser`, `InvalidScope` for another scope, `Invalid` for a name or a description
     /// that does not fit, or a `StoreError` - `NameTaken`, `PermissionDenied`, and `Validation` for
     /// the name `own` or another user's scope.
-    pub async fn create(
-        &self,
-        ctx: &SecurityContext,
-        name: &str,
-        scope: Scope,
-        description: Option<&str>,
-    ) -> ProjectResult<Project> {
+    pub async fn create(&self, ctx: &SecurityContext, spec: ProjectSpec) -> ProjectResult<Project> {
+        let ProjectSpec { name, scope, description } = spec;
         let ActorId::User(owner) = ctx.principal_id else {
             return Err(ProjectError::OwnerNotAUser);
         };
         if !matches!(scope, Scope::GlobalScope | Scope::UserScope { .. }) {
             return Err(ProjectError::InvalidScope);
         }
-        let mut project = Project::new(ScopedName::new(name, scope)?, owner);
-        project.description = Description::optional(description)?;
+        let mut project = Project::new(ScopedName::new(&name, scope)?, owner);
+        project.description = Description::optional(description.as_deref())?;
         self.stores.projects.create(ctx, &mut project).await?;
         if let Err(e) =
             keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await
@@ -332,7 +327,7 @@ mod tests {
         let system = SecurityContext::system();
         let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
-            .create(&ctx, "report", Scope::UserScope { user_id: owner }, None)
+            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
         session.update_project(&ctx, Some(project.id)).await.unwrap();
@@ -381,7 +376,7 @@ mod tests {
         let system = SecurityContext::system();
         let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
-            .create(&ctx, "report", Scope::UserScope { user_id: owner }, None)
+            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
         session.update_project(&ctx, Some(project.id)).await.unwrap();

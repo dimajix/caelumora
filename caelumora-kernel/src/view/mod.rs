@@ -1182,18 +1182,7 @@ mod tests {
             manager.create(as_user(alice.id).context(), session, vec![main]).await.unwrap();
         // Alice's alone: bob takes part in the session, not in this channel.
         let hers = running
-            .create_channel(
-                as_user(alice.id).context(),
-                ChannelSpec {
-                    name: "private".to_string(),
-                    components: Default::default(),
-                    classification: None,
-                    language: None,
-                    uses_workspace: None,
-                    participants: vec![],
-                    internal_actors: Vec::new(),
-                },
-            )
+            .create_channel(as_user(alice.id).context(), ChannelSpec::new("private"))
             .await
             .unwrap()
             .id();
@@ -2767,7 +2756,7 @@ mod tests {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
         };
         let with = |name: &str, classification, participants| ChannelSpec {
-            classification: Some(classification),
+            classification,
             ..spec(name, participants)
         };
         let public = session
@@ -2916,10 +2905,8 @@ mod tests {
         let classified = |level, compartments: &[&str]| {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
         };
-        let with = |name: &str, classification| ChannelSpec {
-            classification: Some(classification),
-            ..spec(name, vec![])
-        };
+        let with =
+            |name: &str, classification| ChannelSpec { classification, ..spec(name, vec![]) };
         let hr = session
             .create_channel(&alice_ctx, with("hr", classified(Confidentiality::Internal, &["hr"])))
             .await

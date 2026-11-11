@@ -7,8 +7,10 @@
 //!   removes as it purges the agent.
 
 mod manager;
+mod spec;
 
 pub use manager::AgentManager;
+pub use spec::AgentSpec;
 
 use async_trait::async_trait;
 use caelumora_domain::agent::{Agent, AgentId};

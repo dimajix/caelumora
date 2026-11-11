@@ -491,7 +491,7 @@ mod tests {
         }));
         let session = create(&manager, &alice_ctx, session).await.unwrap();
         let with = |name: &str, participants| ChannelSpec {
-            classification: Some(hr.clone()),
+            classification: hr.clone(),
             ..spec(name, participants)
         };
         let refused = session

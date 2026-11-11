@@ -225,7 +225,7 @@ mod tests {
             Classification::new(level, compartments.iter().map(|c| Compartment::new(*c))).unwrap()
         };
         let spec = ChannelSpec {
-            classification: Some(classified(Confidentiality::Confidential, &["hr"])),
+            classification: classified(Confidentiality::Confidential, &["hr"]),
             ..spec("hr", vec![bob_id])
         };
         let hr = session.create_channel(&alice_ctx, spec).await.unwrap();

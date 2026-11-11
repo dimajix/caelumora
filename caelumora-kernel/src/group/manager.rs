@@ -2,7 +2,7 @@
 //! restoring the groups of participants and members with their session, channel or project
 //! (issues 286, 348, 467).
 
-use super::{store_error, GroupError, GroupResult};
+use super::{store_error, GroupError, GroupResult, GroupSpec};
 use crate::event::EventBus;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::event::{Announcing, GlobalEvent};
@@ -52,21 +52,17 @@ impl GroupManager {
         }
     }
 
-    /// Makes a team of the user `ctx` acts for, of `name` in `scope` - the
-    /// global one or their own -, with nobody in it yet (`CreateGroup`).
+    /// Makes the team `spec` asks for, of the user `ctx` acts for - in the global scope or their
+    /// own -, with nobody in it yet (`CreateGroup`).
     ///
     /// # Errors
     /// `OwnerNotAUser`, `Invalid` for a name that does not fit, or a
     /// `StoreError` - `NameTaken` among them, and `Validation` for a scope a
     /// team does not lie in.
-    pub async fn create(
-        &self,
-        ctx: &SecurityContext,
-        name: &str,
-        scope: Scope,
-    ) -> GroupResult<Group> {
+    pub async fn create(&self, ctx: &SecurityContext, spec: GroupSpec) -> GroupResult<Group> {
         let ActorId::User(owner) = ctx.principal_id else { return Err(GroupError::OwnerNotAUser) };
-        let mut group = Group::team(ScopedName::new(name, scope)?, owner);
+        let GroupSpec { name, scope } = spec;
+        let mut group = Group::team(ScopedName::new(&name, scope)?, owner);
         self.groups.create(ctx, &mut group).await?;
         self.events.announce(GlobalEvent::created::<Group>(&group.id), &group);
         info!(group = %group.id, by = %ctx.caller_id, "Group created");

@@ -2,7 +2,7 @@
 //! stored first, then announced -, each with its place in its storage, and reaching them for the
 //! kernel's other operations.
 
-use super::{require_classification, store_error};
+use super::{require_classification, store_error, WorkspaceSpec};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
 use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};
@@ -10,7 +10,6 @@ use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
@@ -70,12 +69,10 @@ impl WorkspaceManager {
         self.storages.iter().map(|(name, provider)| (name, provider.has_shell()))
     }
 
-    /// Makes a workspace of the user `ctx` acts for, of `name` in `scope`,
-    /// in `storage`: the document, then its place there. A place that
-    /// cannot be made leaves no document. What was asked for is validated,
-    /// then its flow asked; creating it (`CreateWorkspace`) is the store's
-    /// to ask, since nothing is changed and nothing of others asked before
-    /// (issue 312).
+    /// Makes the workspace `spec` asks for, of the user `ctx` acts for: the document, then its
+    /// place in its storage. A place that cannot be made leaves no document. What was asked for is
+    /// validated, then its flow asked; creating it (`CreateWorkspace`) is the store's to ask, since
+    /// nothing is changed and nothing of others asked before (issue 312).
     ///
     /// A workspace of a session's scope goes with the session: what lies
     /// there and cannot be deleted by who deletes the session keeps the
@@ -95,26 +92,23 @@ impl WorkspaceManager {
     pub async fn create(
         &self,
         ctx: &SecurityContext,
-        name: &str,
-        scope: Scope,
-        storage: &str,
-        description: Option<&str>,
-        classification: Classification,
+        spec: WorkspaceSpec,
     ) -> WorkspaceResult<Workspace> {
+        let WorkspaceSpec { name, scope, storage, description, classification } = spec;
         let ActorId::User(owner) = ctx.principal_id else {
             return Err(WorkspaceError::OwnerNotAUser);
         };
         let provider = self
             .storages
-            .get(storage)
-            .ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
+            .get(&storage)
+            .ok_or_else(|| WorkspaceError::UnknownStorage(storage.clone()))?;
         let mut workspace =
-            Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
-        workspace.description = Description::optional(description)?;
+            Workspace::new(ScopedName::new(&name, scope)?, &storage, classification, owner);
+        workspace.description = Description::optional(description.as_deref())?;
         require_classification(
             self.policies.confidentiality().as_ref(),
             ctx,
-            storage,
+            &storage,
             provider.as_ref(),
             &workspace.classification,
         )?;

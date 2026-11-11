@@ -43,6 +43,7 @@ use caelumora_kernel::testing::{
     Discard, World,
 };
 use caelumora_kernel::workspace::testing::WithWorkspace;
+use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_store::Persistence;
 use futures::stream;
 use futures::stream::BoxStream;
@@ -131,11 +132,7 @@ pub async fn asked_for_a_call(
         .workspace_manager()
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "shell",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell"),
         )
         .await
         .unwrap();

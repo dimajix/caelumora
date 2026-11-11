@@ -14,14 +14,13 @@
 //! `ChannelLoop::follow_agent`), a channel that starts leaves it out, and
 //! the views show it as a former participant, removed as its mark says.
 
-use super::{store_error, AgentError, AgentMember, AgentResult};
+use super::{store_error, AgentError, AgentMember, AgentResult, AgentSpec};
 use crate::event::EventBus;
 use crate::scoped::{ScopeHolders, ScopeMember};
 use async_trait::async_trait;
-use caelumora_domain::agent::{Agent, AgentId, Personality, PersonalityId};
+use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
-use caelumora_domain::scope::Scope;
 use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
@@ -69,11 +68,10 @@ impl AgentManager {
         }
     }
 
-    /// Makes an agent of the personality `personality_id`, of `name` in
-    /// `scope`, on behalf of `context`, whose principal owns it (`CreateAgent`),
-    /// and announces it. Making it is asked before anything is read, in
-    /// `context`'s name: who may not make the agent learns nothing of the
-    /// session or the personality.
+    /// Makes the agent `spec` asks for on behalf of `context`, whose principal owns it
+    /// (`CreateAgent`), and announces it. Making it is asked before anything is read, in
+    /// `context`'s name: who may not make the agent learns nothing of the session or the
+    /// personality.
     ///
     /// An agent of a session's or a channel's scope goes with it: what lies
     /// there and cannot be deleted by who deletes the session keeps the
@@ -88,18 +86,13 @@ impl AgentManager {
     /// would not; a `StoreError` - `PermissionDenied` if they may not make
     /// it or not read the personality, `NotFound` if there is no such
     /// session, channel, project or personality they may read, `NameTaken`
-    /// if an agent of `name` lies in its scope already (issue 250),
+    /// if an agent of its name lies in its scope already (issue 250),
     /// `Validation` for a scope no agent lies in - a project's they may
     /// read -, or for the system as its owner (issue 477).
-    pub async fn create(
-        &self,
-        context: &SecurityContext,
-        name: &str,
-        scope: Scope,
-        personality_id: PersonalityId,
-    ) -> AgentResult<Agent> {
+    pub async fn create(&self, context: &SecurityContext, spec: AgentSpec) -> AgentResult<Agent> {
+        let AgentSpec { name, scope, personality_id } = spec;
         let mut agent =
-            Agent::new(ScopedName::new(name, scope)?, personality_id, context.principal_id);
+            Agent::new(ScopedName::new(&name, scope)?, personality_id, context.principal_id);
         self.access_policy
             .require(
                 context,

@@ -4,12 +4,13 @@ mod channels;
 mod manager;
 mod participants;
 mod settings;
+mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
-pub use channels::ChannelSpec;
 pub(crate) use manager::Found;
-pub use manager::{SessionManager, SessionSpec};
+pub use manager::SessionManager;
+pub use spec::{ChannelSpec, SessionSpec};
 
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;

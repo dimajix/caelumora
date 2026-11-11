@@ -98,17 +98,22 @@ pub(super) async fn create_channel(
     let session = ensure_session(&state, &user, session_id).await?;
     let context = user.security_context();
 
-    let components =
-        moderation_components(payload.moderator.as_deref(), payload.responder_policy.as_deref());
-    let spec = ChannelSpec {
-        name: payload.name,
-        components,
+    let mut spec = ChannelSpec {
+        components: moderation_components(
+            payload.moderator.as_deref(),
+            payload.responder_policy.as_deref(),
+        ),
         participants: payload.participants,
-        classification: payload.classification,
         language: payload.language,
-        uses_workspace: payload.uses_workspace,
         internal_actors: payload.internal_actors,
+        ..ChannelSpec::new(payload.name)
     };
+    if let Some(classification) = payload.classification {
+        spec.classification = classification;
+    }
+    if let Some(uses) = payload.uses_workspace {
+        spec.uses_workspace = uses;
+    }
     let channel = session.create_channel(&context, spec).await?;
     Ok(Json(channel_response(&state, &user, session_id, channel.id()).await?))
 }

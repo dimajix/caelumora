@@ -145,15 +145,7 @@ pub async fn running_session_of_a_user(
 }
 
 pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
-    ChannelSpec {
-        name: name.to_string(),
-        components: Default::default(),
-        participants,
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
-    }
+    ChannelSpec { participants, ..ChannelSpec::new(name) }
 }
 
 /// The message and the reason of the next `MessageRejected` `events`

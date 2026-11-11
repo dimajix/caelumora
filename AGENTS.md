@@ -100,9 +100,12 @@ under `## History`), and numbers are never reused.
     extend the owner rather than computing it at the caller.
 *   **Few generic types, not many helpers.** A new type or trait needs a responsibility of its own.
     One that only bundles parameters, wraps a single call, or serves a single call site is a sign
-    that the responsibility belongs to an existing type. Before adding a trait, check whether an
-    existing one can be generalised to cover the case; before adding a family of near-identical
-    types, check whether one generic type would do.
+    that the responsibility belongs to an existing type; a `…Spec` - what a caller chooses of a new
+    entity, before it is validated - is no such bundle: it is the entity as asked for, and a new
+    optional part changes no caller (see
+    [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#a-modules-manager)). Before adding a trait,
+    check whether an existing one can be generalised to cover the case; before adding a family of
+    near-identical types, check whether one generic type would do.
 *   **A clear and consistent public API.** The same concept has the same name everywhere (the
     `…_id` of what it identifies, `load_…` for loading, `…Provider` for a facet). Similar things
     are constructed, configured and fail the same way. Make visible only what is used from outside

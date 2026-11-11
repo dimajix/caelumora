@@ -11,13 +11,13 @@ use caelumora_agents::testing::{
 use caelumora_domain::actor::{ActorEvent, ActorId};
 use caelumora_domain::agent::Personality;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
-use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::Grant;
 use caelumora_domain::tool::ToolResultStatus;
 use caelumora_domain::user::UserId;
 use caelumora_kernel::testing::World;
 use caelumora_kernel::view::Viewer;
+use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_tool_workspace::component::WORKSPACE_KIND;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use serde_json::Value;
@@ -155,11 +155,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         .workspace_manager()
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "shell",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell"),
         )
         .await
         .unwrap();

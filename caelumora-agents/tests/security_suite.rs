@@ -75,11 +75,13 @@ use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
 use caelumora_kernel::component::BUNDLE_REF_KIND;
+use caelumora_kernel::project::ProjectSpec;
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_kernel::testing::{
     asked_for, attributes, checks, denied, not_found, quiet, shown, workspace, World, STAFF,
 };
 use caelumora_kernel::view::{ChannelView, Viewer};
+use caelumora_kernel::workspace::WorkspaceSpec;
 use futures::stream;
 use futures::stream::BoxStream;
 use futures::StreamExt;
@@ -2169,15 +2171,7 @@ async fn with_a_reader_of(
     let side = session
         .create_channel(
             &World::as_user(world.alice),
-            ChannelSpec {
-                name: "side".to_string(),
-                components: quiet(),
-                participants,
-                classification: None,
-                language: None,
-                uses_workspace: None,
-                internal_actors: Vec::new(),
-            },
+            ChannelSpec { components: quiet(), participants, ..ChannelSpec::new("side") },
         )
         .await
         .expect("hers");
@@ -3238,12 +3232,12 @@ async fn a_session_is_made_in_a_project_as_it_is_put_into_one() {
     let (alice, carol) = (World::as_user(world.alice), World::as_user(world.carol));
     let project = world
         .projects
-        .create(&alice, "report", Scope::UserScope { user_id: world.alice }, None)
+        .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     let carols = world
         .projects
-        .create(&carol, "hers", Scope::UserScope { user_id: world.carol }, None)
+        .create(&carol, ProjectSpec::new("hers", Scope::UserScope { user_id: world.carol }))
         .await
         .unwrap();
     let lying_in = |project| SessionSpec { project: Some(project), ..SessionSpec::default() };
@@ -3598,23 +3592,12 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
     let hers = workspaces
         .create(
             &alice,
-            "hers",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            internal.clone(),
+            WorkspaceSpec::new("hers", Scope::UserScope { user_id: world.alice }, "main"),
         )
         .await
         .unwrap();
     let his = workspaces
-        .create(
-            &bob,
-            "his",
-            Scope::UserScope { user_id: world.bob },
-            "main",
-            None,
-            internal.clone(),
-        )
+        .create(&bob, WorkspaceSpec::new("his", Scope::UserScope { user_id: world.bob }, "main"))
         .await
         .unwrap();
     let views = || world.manager.views(Viewer::new(alice.clone()));

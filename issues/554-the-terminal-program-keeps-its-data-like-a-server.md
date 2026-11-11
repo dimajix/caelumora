@@ -394,3 +394,9 @@ Each reviewed and committed on its own, on a branch of this issue.
   gets its files, a second start in one directory finds its project, workspace and agent again, and
   another directory gets its own. The links of `directory` lie in `links`, since `workspaces` of the
   data directory holds the documents of the workspaces, and a link there met one.
+- **2026-11-11** — Decided before the second part of step 6: finding or making a workspace and a
+  project is their managers' (`find_or_create`), shared by templates and the terminal program, and
+  what a caller chooses of a new entity is a `…Spec` that `create` takes. The specs come first, as a
+  step of their own without a change of behaviour: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec` and
+  `GroupSpec`, and `ChannelSpec` with a `new` and its defaults in place of `None`; each in the
+  `spec.rs` of its module, `SessionSpec` and `ChannelSpec` in that of `session`.

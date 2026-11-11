@@ -470,7 +470,7 @@ mod tests {
             let participants =
                 session.session().participants.iter().map(Participant::actor_id).collect();
             let spec = ChannelSpec {
-                classification: Some(classification.clone()),
+                classification: classification.clone(),
                 ..spec(&format!("c{}", session.channels().len()), participants)
             };
             let channel = session.create_channel(&owner_of(session), spec).await.unwrap();

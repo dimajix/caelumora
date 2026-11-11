@@ -221,11 +221,11 @@ mod tests {
     use caelumora_agents::testing as agent_testing;
     use caelumora_agents::testing::workspace_turn;
     use caelumora_domain::agent::AgentChannelState;
-    use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::Grant;
     use caelumora_kernel::testing::World;
     use caelumora_kernel::workspace::testing::session_with_workspace;
+    use caelumora_kernel::workspace::WorkspaceSpec;
     use caelumora_security::SecurityContext;
     use serde_json::json;
     use std::fs;
@@ -244,11 +244,7 @@ mod tests {
             .workspace_manager()
             .create(
                 &alice,
-                "docs",
-                Scope::UserScope { user_id: world.alice },
-                "shell",
-                None,
-                Classification::general(Confidentiality::Internal),
+                WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell"),
             )
             .await
             .unwrap();

@@ -3,7 +3,7 @@
 
 use super::{
     load_own, make_own, purge_channel_document, require_attachable, require_classification,
-    SessionError, SessionLoop,
+    SessionError, SessionLoop, SessionSpec,
 };
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
@@ -26,7 +26,7 @@ use caelumora_domain::channel::Participant;
 use caelumora_domain::channel::{Channel, ChannelField, ChannelId};
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::{Group, GroupId};
-use caelumora_domain::project::{Project, ProjectId};
+use caelumora_domain::project::Project;
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::{Scope, ScopeField};
@@ -64,25 +64,6 @@ use tracing::{info, warn};
 /// the ten seconds Docker leaves between SIGTERM and SIGKILL, with the
 /// actors' `STOP_GRACE` and the time a command's kill waits.
 const SHUTDOWN_BOUND: Duration = Duration::from_secs(8);
-
-/// What a new session made from a template should be (issues 266, 424, 425, 467), as it was asked:
-/// its name, language and time zone are made from it by `create_from_template`. What it leaves out
-/// is the template's; without a project named, the session's results go to a project of its own.
-#[derive(Debug, Clone, Default)]
-pub struct SessionSpec {
-    /// Its name; the template's if `None`.
-    pub name: Option<String>,
-    /// The language its channels are held in where they hold none of their own, a BCP 47 tag; the
-    /// template's if `None`.
-    pub language: Option<String>,
-    /// The time zone it is held in, an IANA name such as `Europe/Berlin`; the template's if `None`,
-    /// else UTC.
-    pub time_zone: Option<String>,
-    /// Its workspace in place of the template's; the template's if `None`.
-    pub workspace: Option<WorkspaceChoice>,
-    /// The shared project its results go to; a project of its own if `None`.
-    pub project: Option<ProjectId>,
-}
 
 pub struct SessionManager {
     sessions: DashMap<SessionId, Arc<SessionLoop>>,
@@ -1128,7 +1109,7 @@ mod tests {
     use crate::component::BUNDLE_REF_KIND;
     use crate::error::is_forbidden;
     use crate::kernel::Kernel;
-    use crate::project::ProjectManager;
+    use crate::project::{ProjectManager, ProjectSpec};
     use crate::session::testing::*;
     use crate::session::SessionLoop;
     use crate::session::{SessionError, SessionManager, SessionSpec};
@@ -1982,7 +1963,7 @@ mod tests {
         let session = create(&manager, &ctx, make_session("moving", owner)).await.unwrap();
         let own = session.session().project;
         let project = ProjectManager::new(Arc::clone(&manager))
-            .create(&ctx, "report", Scope::UserScope { user_id: owner }, None)
+            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
 

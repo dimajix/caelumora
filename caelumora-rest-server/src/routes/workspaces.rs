@@ -27,6 +27,7 @@ use caelumora_domain::security::Grant;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::controller::WorkspaceController;
+use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::channel::ChannelResponse;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
@@ -90,19 +91,14 @@ pub(super) async fn create_workspace(
             "A workspace of a session's scope is made with the session",
         )
     })?;
-    let classification = request.classification.unwrap_or(Classification::CHANNEL_DEFAULT);
-    let made = state
-        .kernel
-        .workspace_manager()
-        .create(
-            &user.security_context(),
-            &request.name,
-            scope,
-            &request.storage,
-            request.description.as_deref(),
-            classification,
-        )
-        .await?;
+    let mut spec = WorkspaceSpec {
+        description: request.description,
+        ..WorkspaceSpec::new(request.name, scope, request.storage)
+    };
+    if let Some(classification) = request.classification {
+        spec.classification = classification;
+    }
+    let made = state.kernel.workspace_manager().create(&user.security_context(), spec).await?;
     Ok((StatusCode::CREATED, Json(owned(&state, &user, made.id).await?)))
 }
 

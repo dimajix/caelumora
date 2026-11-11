@@ -3,7 +3,6 @@
 //! the directory, found by its name.
 
 use anyhow::Result;
-use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::store::StoreResultExt;
@@ -11,7 +10,8 @@ use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_kernel::kernel::Kernel;
-use caelumora_kernel::project::ProjectManager;
+use caelumora_kernel::project::{ProjectManager, ProjectSpec};
+use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_security::SecurityContext;
 use std::path::Path;
 use uuid::Uuid;
@@ -57,20 +57,22 @@ pub(crate) async fn place_of(
     let stores = kernel.entity_stores();
     let project = match stores.projects.find_by_name(context, &name).await.optional()? {
         Some(project) => project.id,
-        None => projects.create(context, name.as_str(), name.scope.clone(), Some(WHAT)).await?.id,
+        None => {
+            let spec = ProjectSpec {
+                description: Some(WHAT.to_string()),
+                ..ProjectSpec::new(name.as_str(), name.scope.clone())
+            };
+            projects.create(context, spec).await?.id
+        }
     };
     let workspace = match stores.workspaces.find_by_name(context, &name).await.optional()? {
         Some(workspace) => workspace.id,
         None => {
-            // As a channel of a template that names none is classified, so that the two flow
-            // both ways.
-            let classification = Classification::CHANNEL_DEFAULT;
-            let scope = name.scope.clone();
-            let workspaces = kernel.workspace_manager();
-            workspaces
-                .create(context, name.as_str(), scope, HERE, Some(WHAT), classification)
-                .await?
-                .id
+            let spec = WorkspaceSpec {
+                description: Some(WHAT.to_string()),
+                ..WorkspaceSpec::new(name.as_str(), name.scope.clone(), HERE)
+            };
+            kernel.workspace_manager().create(context, spec).await?.id
         }
     };
     Ok((project, workspace))

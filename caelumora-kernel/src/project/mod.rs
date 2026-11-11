@@ -7,8 +7,10 @@
 //! `SessionLoop::update_project`, which makes it a new own where its own was lifted.
 
 mod manager;
+mod spec;
 
 pub use manager::ProjectManager;
+pub use spec::ProjectSpec;
 
 use crate::scoped::ScopeNotEmpty;
 use caelumora_domain::project::ProjectId;

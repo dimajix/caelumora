@@ -11,6 +11,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_domain::agent::AgentId;
+use caelumora_kernel::agent::AgentSpec;
 use caelumora_rest_api::agent::{
     AgentChannelResponse, AgentResponse, CreateAgentRequest, PersonalityResponse,
     RenameAgentRequest,
@@ -52,7 +53,10 @@ pub(super) async fn create_agent(
     let made = state
         .kernel
         .agent_manager()
-        .create(&user.security_context(), &request.name, scope, request.personality_id)
+        .create(
+            &user.security_context(),
+            AgentSpec::new(request.name, scope, request.personality_id),
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(readable(&state, &user, made.id).await?)))
 }

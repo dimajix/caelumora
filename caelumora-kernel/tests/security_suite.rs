@@ -38,12 +38,12 @@ use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::{Description, Introduction};
 use caelumora_domain::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_kernel::actor::Shown;
-use caelumora_kernel::agent::AgentError;
+use caelumora_kernel::agent::{AgentError, AgentSpec};
 use caelumora_kernel::channel::ChannelError;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
-use caelumora_kernel::group::GroupError;
-use caelumora_kernel::project::ProjectError;
+use caelumora_kernel::group::{GroupError, GroupSpec};
+use caelumora_kernel::project::{ProjectError, ProjectSpec};
 use caelumora_kernel::scoped::ScopeNotEmpty;
 use caelumora_kernel::session::testing::create;
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
@@ -52,6 +52,7 @@ use caelumora_kernel::testing::{
 };
 use caelumora_kernel::view::Viewer;
 use caelumora_kernel::workspace::testing::{reader_in, shell_in, terminal_in};
+use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_security::SecurityContext;
 use caelumora_store::testing::record_users;
 use serde_json::json;
@@ -291,18 +292,7 @@ async fn a_participant_takes_part_but_changes_nothing() {
     );
     assert!(
         session
-            .create_channel(
-                &bob,
-                ChannelSpec {
-                    name: "side".to_string(),
-                    components: quiet(),
-                    participants: vec![],
-                    classification: None,
-                    language: None,
-                    uses_workspace: None,
-                    internal_actors: Vec::new()
-                }
-            )
+            .create_channel(&bob, ChannelSpec { components: quiet(), ..ChannelSpec::new("side") })
             .await
             .is_err(),
         "nor to add channels"
@@ -406,18 +396,7 @@ async fn the_owner_changes_and_ends_the_session() {
         .await
         .expect("and each of its channels");
     let side = session
-        .create_channel(
-            &alice,
-            ChannelSpec {
-                name: "side".to_string(),
-                components: quiet(),
-                participants: vec![],
-                classification: None,
-                language: None,
-                uses_workspace: None,
-                internal_actors: Vec::new(),
-            },
-        )
+        .create_channel(&alice, ChannelSpec { components: quiet(), ..ChannelSpec::new("side") })
         .await
         .expect("and to add channels");
     side.add_participant(&alice, ActorId::User(world.bob), HistoryAccess::All)
@@ -436,25 +415,13 @@ async fn the_owner_changes_and_ends_the_session() {
 /// 417); carol, a stranger, does not reach the channel. Asked as reaching
 /// the channel is.
 #[tokio::test]
-#[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_goes() {
     use caelumora_domain::history::HistoryEntry;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let side = session
-        .create_channel(
-            &alice,
-            ChannelSpec {
-                name: "side".to_string(),
-                components: quiet(),
-                participants: vec![],
-                classification: None,
-                language: None,
-                uses_workspace: None,
-                internal_actors: Vec::new(),
-            },
-        )
+        .create_channel(&alice, ChannelSpec { components: quiet(), ..ChannelSpec::new("side") })
         .await
         .unwrap();
     let before = side.say_as(world.alice, "before bob", Vec::new()).await;
@@ -560,18 +527,7 @@ async fn the_messages_carrying_attachments_are_read_as_far_as_the_readers_view_g
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let side = session
-        .create_channel(
-            &alice,
-            ChannelSpec {
-                name: "side".to_string(),
-                components: quiet(),
-                participants: vec![],
-                classification: None,
-                language: None,
-                uses_workspace: None,
-                internal_actors: Vec::new(),
-            },
-        )
+        .create_channel(&alice, ChannelSpec { components: quiet(), ..ChannelSpec::new("side") })
         .await
         .unwrap();
     let attachments = world.kernel.attachment_manager();
@@ -642,18 +598,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let side = session
-        .create_channel(
-            &alice,
-            ChannelSpec {
-                name: "side".to_string(),
-                components: quiet(),
-                participants: vec![],
-                classification: None,
-                language: None,
-                uses_workspace: None,
-                internal_actors: Vec::new(),
-            },
-        )
+        .create_channel(&alice, ChannelSpec { components: quiet(), ..ChannelSpec::new("side") })
         .await
         .unwrap();
     let before = side.say_as(world.alice, "before bob", Vec::new()).await;
@@ -1530,7 +1475,8 @@ async fn making_an_agent_needs_creating_it_then_its_personality() {
     let alice = World::as_user(world.alice);
     let hers = Scope::UserScope { user_id: world.alice };
 
-    let (made, asked) = world.asked(agents.create(&alice, "helper", hers.clone(), shared.id)).await;
+    let (made, asked) =
+        world.asked(agents.create(&alice, AgentSpec::new("helper", hers.clone(), shared.id))).await;
     let made = made.expect("hers to make");
     assert_eq!(
         (made.personality_id, made.security_attributes.owner_id),
@@ -1545,7 +1491,8 @@ async fn making_an_agent_needs_creating_it_then_its_personality() {
         ])
     );
 
-    let (refused, asked) = world.asked(agents.create(&alice, "other", hers, bobs.id)).await;
+    let (refused, asked) =
+        world.asked(agents.create(&alice, AgentSpec::new("other", hers, bobs.id))).await;
     assert!(
         matches!(refused, Err(AgentError::Store(StoreError::NotFound { .. }))),
         "answered as not there: {refused:?}"
@@ -1578,7 +1525,9 @@ async fn no_agent_is_made_in_the_systems_name() {
     let world = World::new().await;
     let plain = world.personality("plain", None, &[]).await;
     let agents = world.kernel.agent_manager();
-    let made = agents.create(&World::system(), "helper", Scope::GlobalScope, plain.id).await;
+    let made = agents
+        .create(&World::system(), AgentSpec::new("helper", Scope::GlobalScope, plain.id))
+        .await;
     assert!(matches!(made, Err(AgentError::Store(StoreError::Validation(_)))), "{made:?}");
 }
 
@@ -1598,7 +1547,10 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
     let in_session = Scope::SessionScope { session_id: session.id() };
 
     let (refused, asked) = world
-        .asked(agents.create(&World::as_user(world.carol), "spy", in_session.clone(), plain.id))
+        .asked(agents.create(
+            &World::as_user(world.carol),
+            AgentSpec::new("spy", in_session.clone(), plain.id),
+        ))
         .await;
     assert!(
         matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "session", .. }))),
@@ -1611,7 +1563,10 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
     );
 
     let (made, asked) = world
-        .asked(agents.create(&World::as_user(world.bob), "helper", in_session, plain.id))
+        .asked(
+            agents
+                .create(&World::as_user(world.bob), AgentSpec::new("helper", in_session, plain.id)),
+        )
         .await;
     made.expect("he takes part");
     assert_eq!(
@@ -1626,13 +1581,19 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
 
     let in_main = Scope::ChannelScope { session_id: session.id(), channel_id: main };
     let (made, asked) = world
-        .asked(agents.create(&World::as_user(world.bob), "minder", in_main.clone(), plain.id))
+        .asked(agents.create(
+            &World::as_user(world.bob),
+            AgentSpec::new("minder", in_main.clone(), plain.id),
+        ))
         .await;
     let minder = made.expect("he is in the channel");
     assert_eq!(asked[1], "bob: GetChannel(alice's) yes");
     let forged = Scope::ChannelScope { session_id: other.id(), channel_id: main };
-    let (refused, _) =
-        world.asked(agents.create(&World::as_user(world.bob), "forged", forged, plain.id)).await;
+    let (refused, _) = world
+        .asked(
+            agents.create(&World::as_user(world.bob), AgentSpec::new("forged", forged, plain.id)),
+        )
+        .await;
     assert!(
         matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "channel", .. }))),
         "a channel of another session: {refused:?}"
@@ -1651,7 +1612,8 @@ async fn making_an_agent_in_a_session_needs_reading_it() {
     // after the channel - its owner reads the channel still, and learns that the session is gone.
     let alice = World::as_user(world.alice);
     assert!(world.manager.delete(&World::system(), session.id()).await.expect("with his agents"));
-    let (refused, asked) = world.asked(agents.create(&alice, "late", in_main, plain.id)).await;
+    let (refused, asked) =
+        world.asked(agents.create(&alice, AgentSpec::new("late", in_main, plain.id))).await;
     assert!(
         matches!(refused, Err(AgentError::Store(StoreError::NotFound { entity: "session", .. }))),
         "a channel of a deleted session: {refused:?}"
@@ -1676,9 +1638,8 @@ async fn a_workspace_is_not_put_into_a_deleted_session() {
     let session = world.session_of(&[], &[], &[]).await;
     let in_session = Scope::SessionScope { session_id: session.id() };
     let workspaces = world.kernel.workspace_manager();
-    let internal = Classification::general(Confidentiality::Internal);
     let docs = workspaces
-        .create(&alice, "docs", in_session.clone(), "main", None, internal.clone())
+        .create(&alice, WorkspaceSpec::new("docs", in_session.clone(), "main"))
         .await
         .expect("hers, in her session");
     assert!(workspaces.delete(&alice, docs.id).await.unwrap(), "deleted alone first");
@@ -1687,7 +1648,7 @@ async fn a_workspace_is_not_put_into_a_deleted_session() {
 
     let refused = workspaces.restore(&alice, docs.id).await;
     assert!(matches!(refused, Err(WorkspaceError::NotFound(_))), "not restored: {refused:?}");
-    let refused = workspaces.create(&alice, "late", in_session, "main", None, internal).await;
+    let refused = workspaces.create(&alice, WorkspaceSpec::new("late", in_session, "main")).await;
     assert!(
         matches!(refused, Err(WorkspaceError::Store(StoreError::NotFound { .. }))),
         "not made: {refused:?}"
@@ -1923,23 +1884,36 @@ async fn a_project_is_its_owners_and_read_by_its_members() {
     let projects = &world.projects;
     let mine = Scope::UserScope { user_id: world.alice };
     let project = projects
-        .create(&alice, "report", mine.clone(), Some("The yearly report"))
+        .create(
+            &alice,
+            ProjectSpec {
+                description: Some("The yearly report".to_string()),
+                ..ProjectSpec::new("report", mine.clone())
+            },
+        )
         .await
         .expect("in her own scope");
-    projects.create(&alice, "handbook", Scope::GlobalScope, None).await.expect("or everywhere");
-    let refused =
-        projects.create(&alice, "theirs", Scope::UserScope { user_id: world.bob }, None).await;
+    projects
+        .create(&alice, ProjectSpec::new("handbook", Scope::GlobalScope))
+        .await
+        .expect("or everywhere");
+    let refused = projects
+        .create(&alice, ProjectSpec::new("theirs", Scope::UserScope { user_id: world.bob }))
+        .await;
     assert!(
         matches!(refused, Err(ProjectError::Store(StoreError::Validation(_)))),
         "not in another's scope: {refused:?}"
     );
-    let refused = projects.create(&alice, Project::OWN, mine.clone(), None).await;
+    let refused = projects.create(&alice, ProjectSpec::new(Project::OWN, mine.clone())).await;
     assert!(
         matches!(refused, Err(ProjectError::Store(StoreError::Validation(_)))),
         "not under a session's own name: {refused:?}"
     );
     let refused = projects
-        .create(&alice, "results", Scope::SessionScope { session_id: SessionId::new() }, None)
+        .create(
+            &alice,
+            ProjectSpec::new("results", Scope::SessionScope { session_id: SessionId::new() }),
+        )
         .await;
     assert!(
         matches!(refused, Err(ProjectError::InvalidScope)),
@@ -2041,7 +2015,7 @@ async fn a_project_is_seen_by_who_reads_it() {
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
     let project = world
         .projects
-        .create(&alice, "report", Scope::UserScope { user_id: world.alice }, None)
+        .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     world
@@ -2147,16 +2121,14 @@ async fn a_session_is_put_into_a_project_by_who_may_change_it_and_read_the_proje
     let own = session.session().project;
     let project = world
         .projects
-        .create(&alice, "report", Scope::UserScope { user_id: world.alice }, None)
+        .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     let carols = world
         .projects
         .create(
             &World::as_user(world.carol),
-            "hers",
-            Scope::UserScope { user_id: world.carol },
-            None,
+            ProjectSpec::new("hers", Scope::UserScope { user_id: world.carol }),
         )
         .await
         .unwrap();
@@ -2273,7 +2245,7 @@ async fn deleting_a_project_deletes_its_sessions_and_what_lies_in_it_as_far_as_t
     );
     let project = world
         .projects
-        .create(&alice, "report", Scope::UserScope { user_id: world.alice }, None)
+        .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     session.update_project(&alice, Some(project.id)).await.unwrap();
@@ -2378,18 +2350,7 @@ async fn a_channel_is_kept_with_what_of_its_scope_is_not_the_deleters() {
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let side = session
-        .create_channel(
-            &alice,
-            ChannelSpec {
-                name: "side".to_string(),
-                components: quiet(),
-                participants: vec![],
-                classification: None,
-                language: None,
-                uses_workspace: None,
-                internal_actors: Vec::new(),
-            },
-        )
+        .create_channel(&alice, ChannelSpec { components: quiet(), ..ChannelSpec::new("side") })
         .await
         .unwrap()
         .id();
@@ -2500,13 +2461,9 @@ async fn creating_a_channel_needs_owning_its_session() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let spec = |participants| ChannelSpec {
-        name: "side".to_string(),
         components: quiet(),
         participants,
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
+        ..ChannelSpec::new("side")
     };
     let (created, asked) = world
         .asked(
@@ -2547,13 +2504,9 @@ async fn a_founder_who_is_not_cleared_leaves_no_channel() {
         .await
         .expect("dave takes part in the session");
     let spec = ChannelSpec {
-        name: "side".to_string(),
         components: quiet(),
         participants: vec![ActorId::User(dave.id)],
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
+        ..ChannelSpec::new("side")
     };
 
     let (refused, asked) = world.asked(session.create_channel(&alice, spec)).await;
@@ -2585,13 +2538,9 @@ async fn who_may_not_create_a_channel_is_refused_before_the_others_are_looked_at
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let spec = ChannelSpec {
-        name: "his".to_string(),
         components: quiet(),
         participants: vec![ActorId::User(world.alice)],
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
+        ..ChannelSpec::new("his")
     };
     let (refused, asked) =
         world.asked(session.create_channel(&World::as_user(world.bob), spec)).await;
@@ -2624,18 +2573,13 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         .expect("bob keeps his policy");
     let session = world.shared_session(&[], &[]).await;
     let spec = |name: &str| ChannelSpec {
-        name: name.to_string(),
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: json!({ "name": "bobs-policy" }),
                 ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND)
             }],
         },
-        participants: vec![],
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
+        ..ChannelSpec::new(name)
     };
 
     let (created, asked) =
@@ -2684,7 +2628,6 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
 /// refused with why, its owner may delete it, and it runs again once the
 /// session is opened after the share came back.
 #[tokio::test]
-#[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
     let world = World::new().await;
     let mut shared = ComponentBundle::new(
@@ -2699,18 +2642,13 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
     let session = world.shared_session(&[], &[]).await;
     let alice = World::as_user(world.alice);
     let spec = ChannelSpec {
-        name: "side".to_string(),
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: json!({ "name": "bobs-policy" }),
                 ..ComponentDescriptor::new("policy", BUNDLE_REF_KIND)
             }],
         },
-        participants: vec![],
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
+        ..ChannelSpec::new("side")
     };
     let side = session.create_channel(&alice, spec).await.expect("shared with her").id();
     let main = session.channel_named("main").expect("runs").id();
@@ -2818,18 +2756,13 @@ async fn a_channel_is_refused_a_tool_before_anything_is_built() {
         .expect("bob keeps his tools");
     let session = world.shared_session(&[], &[]).await;
     let spec = ChannelSpec {
-        name: "tooled".to_string(),
         components: ComponentConfig {
             component_nodes: vec![ComponentDescriptor {
                 params: json!({ "name": "bobs-tools" }),
                 ..ComponentDescriptor::new("tools", BUNDLE_REF_KIND)
             }],
         },
-        participants: vec![],
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
+        ..ChannelSpec::new("tooled")
     };
 
     let (refused, asked) =
@@ -2959,7 +2892,7 @@ async fn purging_a_project_is_not_its_owners() {
     let session = world.shared_session(&[], &[]).await;
     let project = world
         .projects
-        .create(&alice, "report", Scope::UserScope { user_id: world.alice }, None)
+        .create(&alice, ProjectSpec::new("report", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     session.update_project(&alice, Some(project.id)).await.unwrap();
@@ -3227,11 +3160,11 @@ async fn a_workspace_is_its_owners_alone() {
     let (made, asked) = world
         .asked(workspaces.create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            Some("Drafts"),
-            internal.clone(),
+            WorkspaceSpec {
+                description: Some("Drafts".to_string()),
+                classification: internal.clone(),
+                ..WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main")
+            },
         ))
         .await;
     let docs = made.expect("alice makes one");
@@ -3244,11 +3177,10 @@ async fn a_workspace_is_its_owners_alone() {
     let above = workspaces
         .create(
             &alice,
-            "secrets",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            Classification::general(Confidentiality::Confidential),
+            WorkspaceSpec {
+                classification: Classification::general(Confidentiality::Confidential),
+                ..WorkspaceSpec::new("secrets", Scope::UserScope { user_id: world.alice }, "main")
+            },
         )
         .await;
     assert!(
@@ -3258,11 +3190,10 @@ async fn a_workspace_is_its_owners_alone() {
     let elsewhere = workspaces
         .create(
             &alice,
-            "other",
-            Scope::UserScope { user_id: world.alice },
-            "nowhere",
-            None,
-            internal.clone(),
+            WorkspaceSpec {
+                classification: internal.clone(),
+                ..WorkspaceSpec::new("other", Scope::UserScope { user_id: world.alice }, "nowhere")
+            },
         )
         .await;
     assert!(
@@ -3353,11 +3284,10 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     let docs = workspaces
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec {
+                classification: Classification::general(Confidentiality::Internal),
+                ..WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main")
+            },
         )
         .await
         .expect("hers");
@@ -3440,11 +3370,10 @@ async fn a_storage_holds_no_workspace_above_its_destination() {
     let (above, asked) = world
         .asked(workspaces.create(
             &alice,
-            "secrets",
-            mine.clone(),
-            "shell",
-            None,
-            Classification::general(Confidentiality::Confidential),
+            WorkspaceSpec {
+                classification: Classification::general(Confidentiality::Confidential),
+                ..WorkspaceSpec::new("secrets", mine.clone(), "shell")
+            },
         ))
         .await;
     assert!(
@@ -3456,11 +3385,10 @@ async fn a_storage_holds_no_workspace_above_its_destination() {
     let (made, asked) = world
         .asked(workspaces.create(
             &alice,
-            "docs",
-            mine,
-            "shell",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec {
+                classification: Classification::general(Confidentiality::Internal),
+                ..WorkspaceSpec::new("docs", mine, "shell")
+            },
         ))
         .await;
     let docs = made.expect("up to it");
@@ -3489,20 +3417,15 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
     let world = World::new().await;
     let workspaces = world.kernel.workspace_manager();
     let (alice, bob) = (World::as_user(world.alice), World::as_user(world.bob));
-    let internal = Classification::general(Confidentiality::Internal);
     let hers = workspaces
         .create(
             &alice,
-            "hers",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            internal.clone(),
+            WorkspaceSpec::new("hers", Scope::UserScope { user_id: world.alice }, "main"),
         )
         .await
         .unwrap();
     let his = workspaces
-        .create(&bob, "his", Scope::UserScope { user_id: world.bob }, "main", None, internal)
+        .create(&bob, WorkspaceSpec::new("his", Scope::UserScope { user_id: world.bob }, "main"))
         .await
         .unwrap();
     let session = world.shared_session(&[], &[]).await;
@@ -3634,11 +3557,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
     let docs = workspaces
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main"),
         )
         .await
         .unwrap();
@@ -3730,11 +3649,7 @@ async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_cha
     let docs = workspaces
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "shell",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell"),
         )
         .await
         .unwrap();
@@ -3834,11 +3749,7 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     let docs = workspaces
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "shell",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell"),
         )
         .await
         .unwrap();
@@ -3850,18 +3761,7 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     let started = shell.expect("a shell").start("sleep 30").await.unwrap();
     // In the shell of another channel that uses the workspace.
     let side = session
-        .create_channel(
-            &alice,
-            ChannelSpec {
-                name: "side".to_string(),
-                components: quiet(),
-                participants: vec![],
-                classification: None,
-                language: None,
-                uses_workspace: Some(true),
-                internal_actors: Vec::new(),
-            },
-        )
+        .create_channel(&alice, ChannelSpec { components: quiet(), ..ChannelSpec::new("side") })
         .await
         .unwrap();
     let (_, other) = shell_in(&session, side.id(), &alice).await.unwrap();
@@ -3916,11 +3816,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     let docs = workspaces
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main"),
         )
         .await
         .unwrap();
@@ -4022,7 +3918,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
     let views = |ctx: &SecurityContext| world.manager.views(Viewer::new(ctx.clone()));
 
     let project = groups
-        .create(&alice, "project", Scope::UserScope { user_id: world.alice })
+        .create(&alice, GroupSpec::new("project", Scope::UserScope { user_id: world.alice }))
         .await
         .expect("alice makes a team");
     let (made, asked) = world.asked(groups.set_members(&alice, project.id, vec![world.bob])).await;
@@ -4045,7 +3941,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
         "a stranger does not find it"
     );
     groups
-        .create(&carol, "hers", Scope::UserScope { user_id: world.carol })
+        .create(&carol, GroupSpec::new("hers", Scope::UserScope { user_id: world.carol }))
         .await
         .expect("carol makes one of her own");
     let (listed, asked) = world.asked(views(&bob).groups()).await;
@@ -4060,11 +3956,7 @@ async fn what_is_shared_with_a_team_is_read_by_its_members_while_they_are_member
     let docs = workspaces
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main"),
         )
         .await
         .unwrap();
@@ -4122,18 +4014,14 @@ async fn a_group_is_named_in_an_access_list_only_by_who_reads_it() {
     let project = world
         .kernel
         .group_manager()
-        .create(&alice, "project", Scope::UserScope { user_id: world.alice })
+        .create(&alice, GroupSpec::new("project", Scope::UserScope { user_id: world.alice }))
         .await
         .unwrap();
     let workspaces = world.kernel.workspace_manager();
     let hers = workspaces
         .create(
             &carol,
-            "notes",
-            Scope::UserScope { user_id: world.carol },
-            "main",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("notes", Scope::UserScope { user_id: world.carol }, "main"),
         )
         .await
         .unwrap();
@@ -4225,11 +4113,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
         .workspace_manager()
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main"),
         )
         .await
         .unwrap();
@@ -4356,16 +4240,14 @@ async fn an_entry_naming_a_group_that_is_gone_is_dropped_as_the_list_is_stored()
     let groups = world.kernel.group_manager();
     let workspaces = world.kernel.workspace_manager();
     let session_id = world.shared_session(&[], &[]).await.id();
-    let project =
-        groups.create(&alice, "project", Scope::UserScope { user_id: world.alice }).await.unwrap();
+    let project = groups
+        .create(&alice, GroupSpec::new("project", Scope::UserScope { user_id: world.alice }))
+        .await
+        .unwrap();
     let docs = workspaces
         .create(
             &alice,
-            "docs",
-            Scope::UserScope { user_id: world.alice },
-            "main",
-            None,
-            Classification::general(Confidentiality::Internal),
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "main"),
         )
         .await
         .unwrap();
@@ -4434,11 +4316,10 @@ async fn a_workspace_is_made_in_a_session_s_scope_only_by_who_may_read_the_sessi
     let (refused, asked) = world
         .asked(workspaces.create(
             &carol,
-            "files",
-            scope.clone(),
-            "main",
-            None,
-            Classification::PUBLIC,
+            WorkspaceSpec {
+                classification: Classification::PUBLIC,
+                ..WorkspaceSpec::new("files", scope.clone(), "main")
+            },
         ))
         .await;
     assert!(
@@ -4468,11 +4349,10 @@ async fn a_workspace_is_made_in_a_session_s_scope_only_by_who_may_read_the_sessi
     let (made, asked) = world
         .asked(workspaces.create(
             &bob,
-            "files",
-            scope.clone(),
-            "main",
-            None,
-            Classification::PUBLIC,
+            WorkspaceSpec {
+                classification: Classification::PUBLIC,
+                ..WorkspaceSpec::new("files", scope.clone(), "main")
+            },
         ))
         .await;
     assert_eq!(made.expect("by a member, who reads it").name.scope, scope);

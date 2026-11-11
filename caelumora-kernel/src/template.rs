@@ -7,9 +7,9 @@
 //! template names is the template's. Its agents are found or made once the
 //! session is, and taken into it as anyone is taken into a running session.
 
-use crate::agent::{AgentError, AgentManager};
+use crate::agent::{AgentError, AgentManager, AgentSpec};
 use crate::session::{SessionError, SessionLoop};
-use crate::workspace::WorkspaceManager;
+use crate::workspace::{WorkspaceManager, WorkspaceSpec};
 use anyhow::Result;
 use caelumora_api::workspace::WorkspaceError;
 use caelumora_domain::actor::ActorId;
@@ -135,7 +135,8 @@ async fn agent(
     if let Some(found) = existing_agent(store, context, &name, personality_id).await? {
         return Ok(found);
     }
-    match agents.create(context, name.name.as_str(), name.scope.clone(), personality_id).await {
+    let spec = AgentSpec::new(name.name.as_str(), name.scope.clone(), personality_id);
+    match agents.create(context, spec).await {
         Ok(agent) => Ok(agent.id),
         Err(taken @ AgentError::Store(StoreError::NameTaken { .. })) => {
             match existing_agent(store, context, &name, personality_id).await? {
@@ -190,18 +191,12 @@ pub(crate) async fn resolve_workspace(
     if let Some(found) = existing_workspace(workspaces, context, &name, template).await? {
         return Ok((found, false));
     }
-    let description = template.description.as_ref().map(|d| d.as_str());
-    match workspaces
-        .create(
-            context,
-            name.name.as_str(),
-            name.scope.clone(),
-            &template.storage,
-            description,
-            template.classification.clone(),
-        )
-        .await
-    {
+    let spec = WorkspaceSpec {
+        description: template.description.as_ref().map(|d| d.as_str().to_string()),
+        classification: template.classification.clone(),
+        ..WorkspaceSpec::new(name.name.as_str(), name.scope.clone(), &template.storage)
+    };
+    match workspaces.create(context, spec).await {
         Ok(made) => Ok((made.id, true)),
         Err(taken @ WorkspaceError::Store(StoreError::NameTaken { .. })) => {
             match existing_workspace(workspaces, context, &name, template).await? {

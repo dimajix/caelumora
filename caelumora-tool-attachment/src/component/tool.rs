@@ -310,7 +310,6 @@ mod tests {
     use caelumora_api::terminal::ByteStream;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
-    use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::context::ModelProfile;
     use caelumora_domain::history::HistoryEntry;
@@ -323,6 +322,7 @@ mod tests {
     use caelumora_kernel::session::SessionLoop;
     use caelumora_kernel::testing::{checks, participant_runtime_in, World};
     use caelumora_kernel::view::Viewer;
+    use caelumora_kernel::workspace::WorkspaceSpec;
     use futures::stream;
     use std::fs;
     use std::sync::Arc;
@@ -345,11 +345,7 @@ mod tests {
             .workspace_manager()
             .create(
                 &alice,
-                "docs",
-                Scope::UserScope { user_id: world.alice },
-                "shell",
-                None,
-                Classification::general(Confidentiality::Internal),
+                WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell"),
             )
             .await
             .unwrap();
