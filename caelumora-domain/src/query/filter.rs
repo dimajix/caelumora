@@ -3,7 +3,7 @@
 
 use super::{Field, FieldPath, FieldValue};
 use crate::store::{StoreError, StoreResult};
-use crate::value::name::fold;
+use crate::value::name::{fold, NameMatch};
 use serde::Serialize;
 use serde_json::Value;
 use std::cmp::Ordering;
@@ -24,11 +24,11 @@ pub enum Filter<F: Field> {
     /// Some element of the collection `F` meets the condition, whose fields
     /// lie within the element.
     Any(F, Box<Filter<F>>),
-    /// The field, a name, begins with the text as names are compared -
-    /// regardless of case, accents and runs of whitespace (`Name`): a search
-    /// by what one has typed so far (issue 221). A database compares the
-    /// folded forms with `LIKE`.
-    NamePrefix(F, String),
+    /// The field, a name, is sought as `NameMatch` seeks it - regardless of
+    /// case, accents and runs of whitespace (`Name`): begun by what one has
+    /// typed so far (issue 221), or the whole name (issue 555). A database
+    /// that cannot compare names so leaves it to the store.
+    Name(F, NameMatch),
     /// The field, a text, contains the words as names are compared -
     /// regardless of case, accents and runs of whitespace: a search of what
     /// was written (issue 421). A database compares the folded forms with
@@ -58,9 +58,9 @@ impl<F: Field> Filter<F> {
         Filter::Any(collection, Box::new(condition))
     }
 
-    /// `field`, a name, begins with `prefix` as names are compared.
-    pub fn name_prefix(field: F, prefix: &str) -> Self {
-        Filter::NamePrefix(field, prefix.to_string())
+    /// `field`, a name, is sought as `matching` seeks it.
+    pub fn name_matching(field: F, matching: NameMatch) -> Self {
+        Filter::Name(field, matching)
     }
 
     /// `field`, a text, contains `words` as names are compared.
@@ -112,7 +112,7 @@ impl<F: Field> Filter<F> {
             Filter::Any(collection, condition) => {
                 Filter::Any(collection.path(), Box::new(condition.by_path()))
             }
-            Filter::NamePrefix(field, prefix) => Filter::NamePrefix(field.path(), prefix.clone()),
+            Filter::Name(field, matching) => Filter::Name(field.path(), matching.clone()),
             Filter::Contains(field, words) => Filter::Contains(field.path(), words.clone()),
             Filter::AtLeast(field, bound) => Filter::AtLeast(field.path(), *bound),
             Filter::Below(field, bound) => Filter::Below(field.path(), *bound),
@@ -138,9 +138,9 @@ impl<F: Field> Filter<F> {
                 }
                 _ => false,
             },
-            Filter::NamePrefix(field, prefix) => lookup(document, *field)
+            Filter::Name(field, matching) => lookup(document, *field)
                 .and_then(Value::as_str)
-                .is_some_and(|name| fold(name).starts_with(&fold(prefix))),
+                .is_some_and(|n| matching.matches(n)),
             Filter::Contains(field, words) => lookup(document, *field)
                 .and_then(Value::as_str)
                 .is_some_and(|text| fold(text).contains(&fold(words))),
@@ -195,6 +195,7 @@ fn json<T: Serialize + ?Sized>(value: &T) -> StoreResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::name::Name;
     use serde_json::json;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,14 +220,22 @@ mod tests {
     }
 
     #[test]
-    fn a_name_prefix_is_compared_as_names_are() {
+    fn a_name_is_sought_as_names_are_compared() {
         let named = |name: &str| json!({ "owner": { "id": name } });
-        let starting = |prefix: &str| Filter::name_prefix(Doc::Owner, prefix);
+        let starting =
+            |prefix: &str| Filter::name_matching(Doc::Owner, NameMatch::Prefix(prefix.to_string()));
         assert!(starting("zo").matches(&named("Zoë Smith")), "regardless of case and accents");
         assert!(starting("ZOE  S").matches(&named("Zoë Smith")), "and of runs of whitespace");
         assert!(!starting("smith").matches(&named("Zoë Smith")), "from its beginning");
         assert!(!starting("zo").matches(&json!({ "owner": { "id": 1 } })), "a name only");
-        assert!(!Filter::name_prefix(Doc::Missing, "").matches(&named("x")), "where there is one");
+        let nowhere = Filter::name_matching(Doc::Missing, NameMatch::Prefix(String::new()));
+        assert!(!nowhere.matches(&named("x")), "where there is one");
+
+        let exactly = |name: &str| {
+            Filter::name_matching(Doc::Owner, NameMatch::Exact(Name::new(name).unwrap()))
+        };
+        assert!(exactly("ZOE  smith").matches(&named("Zoë Smith")), "the whole name, as compared");
+        assert!(!exactly("Zoë").matches(&named("Zoë Smith")), "not a part of it");
     }
 
     #[test]

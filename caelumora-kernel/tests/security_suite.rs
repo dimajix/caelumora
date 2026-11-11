@@ -34,7 +34,7 @@ use caelumora_domain::snapshot::Detail;
 use caelumora_domain::store::{EntityKind, StoreError, Stored};
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::user::{UserId, UserProfile};
-use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::value::text::{Description, Introduction};
 use caelumora_domain::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_kernel::actor::Shown;
@@ -891,7 +891,7 @@ async fn who_is_not_cleared_for_the_channel_is_not_taken_in() {
 /// Searching whom to take in is for whoever may change the session: the
 /// search tells who exists. It shows who is found with whether they take
 /// part, and why they cannot be taken in - coarsely, never which clearance
-/// is missing.
+/// is missing, and to nobody else, who may name someone (issue 555).
 #[tokio::test]
 async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
     use caelumora_domain::snapshot::CandidateRefusal;
@@ -904,18 +904,18 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
 
     let his = views(world.bob).session(session.id()).await.unwrap();
     assert!(
-        matches!(his.candidates("ca", Some(main)).await, Err(ViewError::NotPermitted(_))),
+        matches!(his.candidates(&prefix("ca"), Some(main)).await, Err(ViewError::NotPermitted(_))),
         "bob may not change the session"
     );
 
     let hers = views(world.alice).session(session.id()).await.unwrap();
     assert!(
-        hers.candidates("c", Some(main)).await.unwrap().is_empty(),
+        hers.candidates(&prefix("c"), Some(main)).await.unwrap().is_empty(),
         "a single character finds nobody"
     );
-    let found = |prefix: &'static str| {
+    let found = |typed: &'static str| {
         let hers = hers.clone();
-        async move { hers.candidates(prefix, Some(main)).await.unwrap() }
+        async move { hers.candidates(&prefix(typed), Some(main)).await.unwrap() }
     };
     let carol = found("CA").await;
     assert!(
@@ -932,6 +932,96 @@ async fn searching_whom_to_take_in_is_for_whoever_may_change_the_session() {
         matches!(dave_found.as_slice(), [d] if d.id == ActorId::User(dave.id) && d.refusal == Some(CandidateRefusal::NotCleared)),
         "dave exists, but is not cleared: {dave_found:?}"
     );
+    let named = NameMatch::Exact(Name::new("dave").unwrap());
+    let dave_named = his.candidates(&named, Some(main)).await.unwrap();
+    assert!(
+        matches!(dave_named.as_slice(), [d] if d.id == ActorId::User(dave.id) && d.refusal.is_none()),
+        "named by bob, who may not change the session: not whether dave is cleared"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A search by a prefix, as the dialog types it.
+fn prefix(typed: &str) -> NameMatch {
+    NameMatch::Prefix(typed.to_string())
+}
+
+/// Whom a whole name finds (issue 555) is answered whoever asks: it tells nothing the stores do
+/// not let them read anyway. It finds those nearest from the channel - its scope, the session with
+/// its participants, the viewer's own, the global scope -, several if they are equally near, and
+/// nothing in another user's scope that does not take part, even if the viewer may read it.
+#[tokio::test]
+async fn a_whole_name_finds_the_nearest_whoever_asks() {
+    let world = World::new().await;
+    let plain = world.personality("plain", None, &[]).await;
+    let waiting = world.agent("helper", world.alice, &plain).await;
+    let session = world.shared_session(&[], &[waiting]).await;
+    let main = session.channels()[0].id();
+    let in_main = Scope::ChannelScope { session_id: session.id(), channel_id: main };
+    let in_session = Scope::SessionScope { session_id: session.id() };
+    let hers = Scope::UserScope { user_id: world.alice };
+    let bobs = Scope::UserScope { user_id: world.bob };
+    let agent = |name: &'static str, scope: Scope, owner: UserId| {
+        let (world, plain) = (&world, &plain);
+        async move { ActorId::Agent(world.agent_in(name, scope, owner, plain).await) }
+    };
+    let take_in = |agent: ActorId| {
+        let alice = World::as_user(world.alice);
+        let session = Arc::clone(&session);
+        async move { session.add_participant(&alice, agent, None).await.unwrap() }
+    };
+    let views = |user| world.manager.views(Viewer::new(World::as_user(user)));
+    let (alice, bob) = (world.alice, world.bob);
+    let session_id = session.id();
+    let found_from = |user: UserId, name: &'static str, channel: Option<ChannelId>| {
+        let views = views(user);
+        async move {
+            let session = views.session(session_id).await.unwrap();
+            let exact = NameMatch::Exact(Name::new(name).unwrap());
+            let found = session.candidates(&exact, channel).await.unwrap();
+            found.into_iter().map(|c| c.id).collect::<Vec<_>>()
+        }
+    };
+    let found = |user: UserId, name: &'static str| found_from(user, name, Some(main));
+
+    agent("helper", hers.clone(), alice).await;
+    assert_eq!(found(alice, "HELPER").await, [ActorId::Agent(waiting)], "a participant first");
+
+    agent("deploy", Scope::GlobalScope, alice).await;
+    let her_deploy = agent("deploy", hers, alice).await;
+    assert_eq!(found(alice, "deploy").await, [her_deploy], "her own before the global one");
+    let main_deploy = agent("deploy", in_main.clone(), alice).await;
+    assert_eq!(found(alice, "deploy").await, [main_deploy], "the channel's before all");
+
+    let carol = agent("carol", Scope::GlobalScope, alice).await;
+    let both = found(alice, "carol").await;
+    assert!(
+        both.len() == 2 && both.contains(&ActorId::User(world.carol)) && both.contains(&carol),
+        "a user and an agent equally near: {both:?}"
+    );
+    let session_carol = agent("carol", in_session.clone(), alice).await;
+    assert_eq!(found(alice, "carol").await, [session_carol], "the session's before the global");
+
+    let in_his = agent("reviewer", bobs, alice).await;
+    let listed = views(alice).session(session_id).await.unwrap();
+    let listed = listed.candidates(&prefix("reviewer"), Some(main)).await.unwrap();
+    assert!(listed.iter().any(|c| c.id == in_his), "hers to read, so the dialog lists it");
+    assert!(found(alice, "reviewer").await.is_empty(), "but not in another user's scope");
+    take_in(in_his).await;
+    assert_eq!(found(alice, "reviewer").await, [in_his], "unless it takes part: in the session");
+
+    let in_session_scout = agent("scout", in_session, alice).await;
+    let main_scout = agent("scout", in_main, alice).await;
+    take_in(main_scout).await;
+    assert_eq!(found(alice, "scout").await, [main_scout], "a participant in the channel's scope");
+    let from_session = found_from(alice, "scout", None).await;
+    assert!(
+        from_session.len() == 2
+            && from_session.contains(&in_session_scout)
+            && from_session.contains(&main_scout),
+        "from the session, a participant lies in it, as one of its scope: {from_session:?}"
+    );
+    assert_eq!(found(bob, "bob").await, [ActorId::User(bob)], "who may not change it asks, too");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

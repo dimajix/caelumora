@@ -113,6 +113,26 @@ impl PartialEq<&str> for Name {
     }
 }
 
+/// How a name is sought by what someone typed, as names are compared (`Name`): the pattern of a
+/// search by name (issue 555).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NameMatch {
+    /// The name begins with the text: a search by what one has typed so far (issue 221).
+    Prefix(String),
+    /// The name is this one: whom one names.
+    Exact(Name),
+}
+
+impl NameMatch {
+    /// Whether `name` is sought.
+    pub(crate) fn matches(&self, name: &str) -> bool {
+        match self {
+            NameMatch::Prefix(prefix) => fold(name).starts_with(&fold(prefix)),
+            NameMatch::Exact(exact) => fold(name) == exact.key,
+        }
+    }
+}
+
 impl_value!([] Name, "name");
 
 /// The name of a definition and the scope it lies in (issue 177): what it

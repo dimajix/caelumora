@@ -13,6 +13,7 @@ use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::template::SessionTemplateId;
+use caelumora_domain::value::name::NameMatch;
 use caelumora_kernel::session::SessionSpec;
 use caelumora_kernel::view::SessionView;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
@@ -287,7 +288,7 @@ pub(super) async fn candidates(
     let session_id = SessionId(id);
     ensure_session(&state, &user, session_id).await?;
     let session = views(&state, &user).session(session_id).await?;
-    let found = session.candidates(&query.prefix, query.channel).await?;
+    let found = session.candidates(&NameMatch::Prefix(query.prefix), query.channel).await?;
     Ok(Json(found.into_iter().filter_map(CandidateResponse::of).collect()))
 }
 

@@ -213,3 +213,9 @@ or `Participation` rather than in the command.
   built on `find_by_name`, so that the choice of the innermost is made in one place, and the test
   helper `channel::testing::command_error` is called `as_command_error`, so that `command_error`
   in the kernel means one thing.
+- **2026-11-11** — Step 2 done: `NameMatch` (`value::name`) with `Prefix(String)` and
+  `Exact(Name)`, a whole name being a `Name`; `Filter::Name` replaces `NamePrefix`, made by
+  `Filter::name_matching`. `SessionView::candidates` takes it, and with `Exact` answers whoever
+  asks, without a limit, the nearest as decided. The REST route passes `Prefix`.
+  Decided with the maintainer on the review: why a candidate could not be taken in is told only
+  to whoever may change the session, since it says whether they are cleared for the channel.
