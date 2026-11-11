@@ -167,6 +167,31 @@ question underneath - an alternative shown instead of the other, or a conversati
 - **Agent memory** across channels and sessions does not branch
   ([MEMORY.md](../docs/MEMORY.md#common-rules)); notes branch with the conversation in every option.
 
+### How Claude Code does it
+
+For comparison, as its documentation describes it on 2026-11-11
+([checkpointing](https://code.claude.com/docs/en/checkpointing.md),
+[sessions](https://code.claude.com/docs/en/sessions.md),
+[sub-agents](https://code.claude.com/docs/en/sub-agents.md)):
+
+- **Rewinding** (`/rewind`) goes back to an earlier prompt: the conversation, the files Claude
+  edited since, or both. What was rewound is not kept as an alternative to return to - the
+  counterpart of 234, not of 08.
+- **`/branch`**, and `--fork-session` on resuming, copy the conversation up to that point into a
+  new session with an id of its own and switch into it; the original stays unchanged and can be
+  resumed. **`/fork`** copies it into a new session that runs in the background while one goes on
+  working in the original; nothing that one of them does reaches the other.
+- **A forked subagent** inherits the whole conversation, works on one task and returns only its
+  result to the conversation it came from: a branch that is merged back, by its result.
+- **No session has two live branches.** Branches side by side are sessions side by side, with a
+  copied beginning and no connection afterwards.
+
+That is B with a copy, in a system with one agent per conversation, whose whole state is its
+transcript: a copy of the transcript is a copy of everything. Here the same needs a copy of every
+agent's `AgentChannelState`. The world does not branch there either: for code, `/fork` has the
+copy make a git worktree of its own before it changes anything. For a session's workspace here
+nothing comparable exists.
+
 ### The author's assessment
 
 Not a decision, and not the maintainer's: the maintainer named B as a consideration only.
@@ -202,3 +227,5 @@ plan is the closer starting point, with the reasons it was rejected still standi
   every participant answering on any branch, and the consideration - not a decision - of modelling
   a branch as a channel. Takes up the part of [08](08-retry-and-edit-past-answers.md) that its
   rejection left without an issue.
+- **2026-11-11** — How Claude Code branches added for comparison (*How Claude Code does it*), from
+  its documentation: a branch there is a new session with a copied beginning, option B with a copy.
