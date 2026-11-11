@@ -709,6 +709,7 @@ impl KernelBuilder {
             state_store: self.persistence.state_store(),
             history_store: self.persistence.history_store(),
             transcript_store: self.persistence.transcript_store(),
+            session_locks: self.persistence.session_locks(),
             entity_stores: self.entity_stores,
             secret_manager: self.secret_manager,
             user_manager: self.user_manager,

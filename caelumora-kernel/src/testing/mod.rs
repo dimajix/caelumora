@@ -31,6 +31,7 @@ use crate::error::refusal;
 use crate::kernel::{Kernel, KernelBuilder, ParticipantRuntime};
 use crate::plugin::Plugin;
 use crate::project::{ProjectError, ProjectManager};
+use crate::session::testing::{shared_store, SharedLocks};
 use crate::session::{SessionError, SessionLoop, SessionManager};
 use crate::view::Viewer;
 use anyhow::{Error, Result};
@@ -345,6 +346,8 @@ pub struct World {
     pub alice: UserId,
     pub bob: UserId,
     pub carol: UserId,
+    /// What holds the sessions against another process that shares the stores (issue 554).
+    pub locks: Arc<SharedLocks>,
     /// Where the storage "main" keeps the workspaces' files, the storage
     /// "shell" in `shell` below it, and the storage of content "kept" what
     /// it keeps in `content` below it (issue 282).
@@ -412,7 +415,8 @@ impl World {
             names: Mutex::new(HashMap::new()),
         });
         let access_policy: Arc<dyn AccessPolicy> = Arc::<Recorder>::clone(&recorder);
-        let store = Persistence::in_memory();
+        // Shared with another process, as far as its sessions go (issue 554).
+        let (store, locks) = shared_store();
         let files = tempfile::tempdir().unwrap();
         let shell = BackendConfig::new(
             "local",
@@ -456,6 +460,7 @@ impl World {
             alice: UserId::new(),
             bob: UserId::new(),
             carol: UserId::new(),
+            locks,
             files,
         };
         world.alice = world.user("alice").await;

@@ -11,6 +11,7 @@ pub mod history;
 pub mod kept_chain;
 pub mod memberships;
 pub mod memory;
+pub mod sessions;
 #[cfg(any(test, feature = "test-support"))]
 pub mod suite;
 #[cfg(any(test, feature = "test-support"))]
@@ -20,6 +21,7 @@ pub mod transcript;
 use crate::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
 use crate::history::HistoryStore;
 use crate::memory::MemoryStore;
+use crate::sessions::SessionLocks;
 use crate::transcript::TranscriptStore;
 use async_trait::async_trait;
 use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality};
@@ -297,6 +299,12 @@ pub trait PersistenceBackend: Debug + Send + Sync {
     async fn open(&self) -> StoreResult<()> {
         Ok(())
     }
+
+    /// What holds its sessions against the other processes that share it (issue 554); `None`, by
+    /// default: it holds none, and a session is held within its process alone.
+    fn session_locks(self: Arc<Self>) -> Option<Arc<dyn SessionLocks>> {
+        None
+    }
 }
 
 /// The stores (issues 323, 446, 448, 449): of the entities of every kind and of the states, over
@@ -315,6 +323,8 @@ pub struct Persistence {
     state_store: Arc<dyn StateStore>,
     history_store: Arc<dyn HistoryStore>,
     transcript_store: Arc<dyn TranscriptStore>,
+    /// What holds the sessions, kept with the entities, against other processes.
+    session_locks: Option<Arc<dyn SessionLocks>>,
     /// The type of each kind opened, by its name.
     kinds: Arc<Mutex<HashMap<EntityKind, TypeKey>>>,
 }
@@ -332,6 +342,7 @@ impl Persistence {
             state_store: Arc::clone(&states).state_store()?,
             history_store: Arc::clone(&states).history_store()?,
             transcript_store: Arc::clone(&states).transcript_store()?,
+            session_locks: Arc::clone(&entities).session_locks(),
             entities,
             states,
             kinds: Default::default(),
@@ -356,6 +367,7 @@ impl Persistence {
             state_store: Arc::<MemoryStore>::clone(&memory),
             history_store: Arc::<MemoryStore>::clone(&memory),
             transcript_store: memory,
+            session_locks: None,
             kinds: Default::default(),
         }
     }
@@ -372,6 +384,12 @@ impl Persistence {
             self.entities.open().await?;
         }
         Ok(())
+    }
+
+    /// What holds the sessions against other processes (`PersistenceBackend::session_locks`), if
+    /// the backend of the entities is shared by several.
+    pub fn session_locks(&self) -> Option<Arc<dyn SessionLocks>> {
+        self.session_locks.as_ref().map(Arc::clone)
     }
 
     /// The store of the states.

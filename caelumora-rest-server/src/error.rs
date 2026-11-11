@@ -487,6 +487,7 @@ impl From<SessionError> for ApiError {
             SessionError::ProjectDeleted(_) => Self::conflict("project_deleted", detail),
             SessionError::ScopeNotEmpty(e) => e.into(),
             SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
+            SessionError::RunsElsewhere(_) => Self::conflict("session_runs_elsewhere", detail),
             SessionError::AlreadyParticipant { .. } => {
                 Self::conflict("already_participant", detail)
             }
@@ -1003,6 +1004,10 @@ mod tests {
         assert_eq!(
             answer(SessionError::CannotTakeIn(ActorId::System)),
             (400, "invalid_participant".to_string())
+        );
+        assert_eq!(
+            answer(SessionError::RunsElsewhere(SessionId::new())),
+            (409, "session_runs_elsewhere".to_string())
         );
         assert_eq!(
             answer(SessionError::ShuttingDown),

@@ -121,6 +121,10 @@ pub enum SessionError {
     /// started any more.
     #[error("Caelumora is shutting down: no session is started")]
     ShuttingDown,
+    /// The session runs in another process that shares the stores (issue 554): it is not started,
+    /// deleted, restored or purged here meanwhile.
+    #[error("The session {0} runs in another process")]
+    RunsElsewhere(SessionId),
 }
 
 /// Nothing if a channel may be given `classification` at all - it names

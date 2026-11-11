@@ -57,6 +57,7 @@ use caelumora_security::confidentiality::ConfidentialityPolicy;
 use caelumora_security::secret::SecretManager;
 use caelumora_security::{AccessPolicy, Policies};
 use caelumora_store::history::HistoryStore;
+use caelumora_store::sessions::SessionLocks;
 use caelumora_store::transcript::TranscriptStore;
 use caelumora_store::{EntityStores, StateStore};
 use extension::Extensions;
@@ -76,6 +77,9 @@ pub struct Kernel {
     history_store: Arc<dyn HistoryStore>,
     /// The read side of the agents' transcripts the states hold (issue 380).
     transcript_store: Arc<dyn TranscriptStore>,
+    /// What holds a session for the process it runs in, where several share the stores (issue
+    /// 554).
+    session_locks: Option<Arc<dyn SessionLocks>>,
     entity_stores: EntityStores,
     secret_manager: Arc<SecretManager>,
     /// The one writer of user records, asked at a login (issue 306).
@@ -189,6 +193,11 @@ impl Kernel {
     /// The read side of the agents' transcripts the states hold (issue 380).
     pub fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
         &self.transcript_store
+    }
+
+    /// What holds a session for the process it runs in, if several share the stores (issue 554).
+    pub(crate) fn session_locks(&self) -> Option<&Arc<dyn SessionLocks>> {
+        self.session_locks.as_ref()
     }
 
     /// The stores of the entities, one per kind (issue 323).

@@ -198,7 +198,9 @@ and states as the JSON store does (`FileDocuments`, `JsonStates`), in places of 
     and logged, since which of them won would depend on the order of a directory.
 *   **Several programs may use one data directory at a time**: a lock of the file system per kind
     keeps their writes apart (`locks/<kind>`), and what one wrote the other finds when it next
-    reads, though it hears of nothing.
+    reads, though it hears of nothing. A session runs in one of them, held by the lock of its file
+    `locks/sessions/<id>` (`SessionLocks`, see [Several instances](#several-instances)), which stays
+    until the session is purged.
 *   **Content lies with what it belongs to** (`HomeContent`, the storage of content `home`): a key
     whose key space the program names in `spaces` lies in `content/` of the directory of what its
     second segment names - `attachments/<channel>/…` in the channel's, `artifacts/<project>/…` in
@@ -455,13 +457,15 @@ lock in one process could. A channel is restored only through its running sessio
 purge begun keeps its channels too; and nothing that lies in a project - its sessions, what lies in
 its scope - is restored while the project is deleted, so the project's purge begun keeps them.
 Deleting, restoring and purging a session are serialised by the `SessionManager`, under the lock it
-also starts a session with, so that a purge never meets it half deleted or half restored. Deleting,
-restoring and purging a project are serialised by the `ProjectManager`, under one lock per project
-id, since each goes through the project's sessions, its scope and its group. Both tables of locks by
-id are a `LocksById`, which keeps an id's lock only while somebody holds it or waits for it. What
-the kernel removes for good that is not marked - the channels of a session being purged, a document
-whose creation failed - it marks first, in its own name. The state of what was deleted stays in the
-`StateStore` until it is purged (see [Deleting state](#deleting-state)).
+also starts a session with, so that a purge never meets it half deleted or half restored - within
+one process, and against the others that share the store by the session's hold (`SessionLocks`, see
+[Several instances](#several-instances)). Deleting, restoring and purging a project are serialised
+by the `ProjectManager`, under one lock per project id, since each goes through the project's
+sessions, its scope and its group. Both tables of locks by id are a `LocksById`, which keeps an id's
+lock only while somebody holds it or waits for it. What the kernel removes for good that is not
+marked - the channels of a session being purged, a document whose creation failed - it marks first,
+in its own name. The state of what was deleted stays in the `StateStore` until it is purged (see
+[Deleting state](#deleting-state)).
 
 ### Demo data
 
@@ -700,7 +704,9 @@ each holding the state under a lock of its own while it changes and stores it.
 
 This holds because a session starts only once, however many requests ask for it at the same time:
 starting, stopping, deleting, restoring and purging a session take one lock per session id, so a
-stop cannot miss a start under way, and a deleted session cannot be started again meanwhile.
+stop cannot miss a start under way, and a deleted session cannot be started again meanwhile. Where
+several processes share the store, the session's hold keeps it so between them (`SessionLocks`, see
+[Several instances](#several-instances)).
 
 Entities have no such rule: two requests may change one at the same time, and the second is refused
 as outdated, for its writer to make again (see [The entity store](#the-entity-store)). The JSON
@@ -806,7 +812,15 @@ The server is meant to run in several instances one day ([122](../issues/122-sev
 The kernel is cut so that this stays possible:
 
 *   **A session runs in exactly one instance**, with its channels, their actors and their
-    controllers. Requests for a session go to the instance that runs it.
+    controllers. Requests for a session go to the instance that runs it. Where several processes
+    share one store - the terminal program, started in two terminals (issue
+    [554](../issues/554-the-terminal-program-keeps-its-data-like-a-server.md)) -, the store holds a
+    session for the process that runs it (`SessionLocks`, offered by its backend): the
+    `SessionManager` holds it as it starts the session and lets go as it stops, and neither starts,
+    deletes, restores nor purges one another process holds (`SessionError::RunsElsewhere`). The
+    backend `home` holds a session by the lock of a file of the file system, which the end of a
+    process lets go of; `json` and `postgres` hold none, though `json` keeps its writes apart
+    between processes: a session of theirs is held within its process alone.
 *   **Agents and users run in several instances at once**, with an actor and a controller in each.
     Between instances they are kept in step through the global events, carried by an event bus the
     instances share.

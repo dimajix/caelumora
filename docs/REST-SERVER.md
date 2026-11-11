@@ -133,7 +133,9 @@ Some rules hold across the endpoints:
     `409 name_taken` if the name was taken meanwhile. Deleting a session, channel or project answers
     `409 scope_not_empty` if something of its scope - of a project, its sessions among it - is left
     that the user may not delete; what they may is deleted. Purging is as the policy allows, by
-    default the system's alone. A channel is purged only with its session.
+    default the system's alone. A channel is purged only with its session. A session that runs in
+    another process sharing the store is neither opened, deleted, restored nor purged:
+    `409 session_runs_elsewhere`.
 *   **A channel can be unavailable.** One whose components cannot be read does not run, though its
     session does (see [CHANNELS.md](CHANNELS.md#running-channels)): it is listed, read and deleted
     as any other, says why in `unavailable`, and whatever is to be done in it answers

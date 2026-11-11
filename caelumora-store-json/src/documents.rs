@@ -79,12 +79,21 @@ async fn text_of(path: &Path) -> StoreResult<Option<String>> {
 /// Opens the file at `path`, made with its directory if it is not there, and waits for its lock,
 /// which closing it lets go.
 fn locked(path: &Path) -> io::Result<File> {
+    let file = lock_file(path)?;
+    file.lock()?;
+    Ok(file)
+}
+
+/// The file at `path` to be locked by the file system (`File::lock`, `try_lock`), which every
+/// process asks: opened, and made with its directory if it is not there, never emptied.
+///
+/// # Errors
+/// If it cannot be made or opened.
+pub fn lock_file(path: &Path) -> io::Result<File> {
     if let Some(parent) = path.parent() {
         std_fs::create_dir_all(parent)?;
     }
-    let file = OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
-    file.lock()?;
-    Ok(file)
+    OpenOptions::new().create(true).truncate(false).write(true).open(path)
 }
 
 /// The documents of one kind as files, one per document, where its layout puts them and as its

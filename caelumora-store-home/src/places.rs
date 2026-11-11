@@ -6,7 +6,7 @@ use caelumora_domain::channel::Channel;
 use caelumora_domain::group::Group;
 use caelumora_domain::project::Project;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::session::Session;
+use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{EntityKind, StoreError, StoreResult, Stored};
 use caelumora_domain::user::User;
 use caelumora_domain::value::name::ScopedName;
@@ -112,6 +112,13 @@ impl Places {
     /// The directory of the locks of the kinds.
     pub(crate) fn locks(&self) -> PathBuf {
         self.data_dir.join("locks")
+    }
+
+    /// The file whose lock holds session `id` for the process it runs in (issue 554): beside the
+    /// locks of the kinds, apart from the session's directory, which the lock would keep from being
+    /// removed with the session.
+    pub(crate) fn session_lock(&self, id: SessionId) -> PathBuf {
+        self.locks().join("sessions").join(id.to_string())
     }
 
     /// The directory of the index of the work under way.

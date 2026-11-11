@@ -406,3 +406,12 @@ Each reviewed and committed on its own, on a branch of this issue.
   storage and an agent of another personality are refused by their managers' errors, which take the
   place of the template's. Templates and the terminal program use them: three programs started at
   once in a new directory get one project and one workspace.
+- **2026-11-11** — Step 6, its second part, decided with the maintainer: first the session's lock,
+  as a step of its own, then `--continue`, `--resume` and `--sessions`, the sessions of a directory
+  ordered by their last message. The lock is the store's to offer and the `SessionManager`'s to
+  take (`SessionLocks`, `PersistenceBackend::session_locks`): held as a session starts and let go as
+  it stops, and taken for its deletion, restoring and purge where it does not run, so that another
+  program neither starts, deletes, restores nor purges a running session (`RunsElsewhere`) - which
+  answers the question of the first part of step 4. `home` holds a session by a `flock` of
+  `locks/sessions/<id>`, not of `sessions/<id>/lock`, which would keep the session's directory from
+  being removed with it; the file goes as the session is purged.

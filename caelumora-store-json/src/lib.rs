@@ -12,7 +12,7 @@ pub mod plugin;
 mod states;
 mod transcripts;
 
-pub use documents::{DocumentFormat, FileDocuments, JsonFormat};
+pub use documents::{lock_file, DocumentFormat, FileDocuments, JsonFormat};
 pub use layout::{entries_in, id_named, DocumentLayout, StateLayout};
 pub use states::{JsonStates, DEFAULT_JOURNAL_FLOOR};
 

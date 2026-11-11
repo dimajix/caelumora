@@ -12,20 +12,23 @@ pub mod plugin;
 pub use content::{HomeContent, HomeContentConfig};
 pub use definitions::{DefinitionFiles, FileFormat};
 
+use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{EntityKind, StoreResult};
 use caelumora_store::documents::{DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
+use caelumora_store::sessions::{SessionHold, SessionLocks};
 use caelumora_store::transcript::TranscriptStore;
 use caelumora_store::{PersistenceBackend, StateStore};
 use caelumora_store_json::{
-    to_backend_error, FileDocuments, JsonFormat, JsonStates, DEFAULT_JOURNAL_FLOOR,
+    lock_file, to_backend_error, FileDocuments, JsonFormat, JsonStates, DEFAULT_JOURNAL_FLOOR,
 };
 use definitions::Definitions;
 use layout::{HomeDocuments, HomeStates};
 use places::Places;
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
+use std::fs::{self, TryLockError};
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::{Arc, PoisonError, RwLock};
 
@@ -128,6 +131,31 @@ impl PersistenceBackend for HomeStore {
 
     fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
         Ok(Arc::<JsonStates>::clone(&self.states))
+    }
+
+    fn session_locks(self: Arc<Self>) -> Option<Arc<dyn SessionLocks>> {
+        Some(self)
+    }
+}
+
+/// A session is held by the lock of its file of the file system (`Places::session_lock`), which
+/// every program over the same data directory asks, and the end of the process lets go of - also
+/// one that crashed. The file stays until the session is purged.
+impl SessionLocks for HomeStore {
+    fn try_hold(&self, id: SessionId) -> StoreResult<Option<SessionHold>> {
+        let file = lock_file(&self.places.session_lock(id)).map_err(to_backend_error)?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(SessionHold::new(file))),
+            Err(TryLockError::WouldBlock) => Ok(None),
+            Err(TryLockError::Error(e)) => Err(to_backend_error(e)),
+        }
+    }
+
+    fn forget(&self, id: SessionId) -> StoreResult<()> {
+        match fs::remove_file(self.places.session_lock(id)) {
+            Err(e) if e.kind() != ErrorKind::NotFound => Err(to_backend_error(e)),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -823,5 +851,27 @@ mod tests {
 
         let restored = text(&personalities.join("plain.yaml"));
         assert!(restored.contains(&format!("id: {id}")), "{restored}");
+    }
+
+    /// Issue 554: a session is held by one process - here, by one hold, as a second process asks
+    /// with a file of its own -, let go as the hold is dropped; what held a session purged goes.
+    #[test]
+    fn a_session_is_held_once_until_it_is_let_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let locks = store(dir.path()).session_locks().expect("shared by processes");
+        let (one, other) = (SessionId::new(), SessionId::new());
+
+        let held = locks.try_hold(one).unwrap().expect("held");
+        assert!(locks.try_hold(one).unwrap().is_none(), "not twice");
+        let beside = locks.try_hold(other).unwrap().expect("another session beside it");
+        drop(held);
+        let again = locks.try_hold(one).unwrap().expect("held again once let go");
+
+        let file = dir.path().join("locks/sessions").join(one.to_string());
+        assert!(file.is_file(), "{}", file.display());
+        locks.forget(one).unwrap();
+        assert!(!file.exists(), "nothing of it stays once it is purged");
+        locks.forget(one).unwrap();
+        drop((again, beside));
     }
 }

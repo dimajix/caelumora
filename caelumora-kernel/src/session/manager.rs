@@ -45,6 +45,7 @@ use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_security::{
     AccessQuestions, ActionType, Enforcement, Policies, SecurityContext, JOIN,
 };
+use caelumora_store::sessions::{SessionHold, SessionLocks};
 use caelumora_store::{purge_behind, Deleted, EntityStores, StateStore};
 use dashmap::DashMap;
 use futures::future::join_all;
@@ -73,6 +74,10 @@ pub struct SessionManager {
     /// time (issue 62): two loops of one session would run two actors per agent and channel, which
     /// overwrite each other's state.
     lifecycles: LocksById<SessionId>,
+    /// What holds a session for this process against the others that share the stores (issue
+    /// 554), if any do; and the holds of the sessions that run here, let go as they stop.
+    locks: Option<Arc<dyn SessionLocks>>,
+    holds: DashMap<SessionId, SessionHold>,
     /// Set once the sessions are shut down (`shutdown`): none is started
     /// any more.
     shutting_down: AtomicBool,
@@ -135,6 +140,8 @@ impl SessionManager {
             sessions: DashMap::new(),
             handles: DashMap::new(),
             lifecycles: LocksById::new(),
+            locks: kernel.session_locks().map(Arc::clone),
+            holds: DashMap::new(),
             shutting_down: AtomicBool::new(false),
             policies: kernel.policies().clone(),
             stores: kernel.entity_stores().clone(),
@@ -153,16 +160,22 @@ impl SessionManager {
 
     /// Build the runtime loop for an (already-persisted) session, register it, spawn its
     /// run task, and announce that the session has started running. Called
-    /// with the session's lifecycle lock held.
+    /// with the session's lifecycle lock held, and with `hold`, the session held for this process
+    /// where others share the stores (`hold`, issue 554), which it keeps as long as the session
+    /// runs.
     async fn spawn_session(
         &self,
         session: Session,
         channels: Vec<Channel>,
+        hold: Option<SessionHold>,
     ) -> Result<Arc<SessionLoop>> {
         self.refuse_while_shutting_down()?;
         let id = session.id;
         let session_loop = SessionLoop::new(session, channels, Arc::clone(&self.kernel)).await?;
         self.sessions.insert(id, Arc::clone(&session_loop));
+        if let Some(hold) = hold {
+            self.holds.insert(id, hold);
+        }
 
         let loop_for_task = Arc::clone(&session_loop);
         let handle = tokio::spawn(async move {
@@ -177,6 +190,23 @@ impl SessionManager {
             &*session_loop.session(),
         );
         Ok(session_loop)
+    }
+
+    /// Session `id` held for this process against the others that share the stores (issue 554),
+    /// for what is done with it under its lifecycle lock: `None` where it needs no hold of its
+    /// own - it runs here, held as long as it runs, or no other process shares the stores.
+    ///
+    /// # Errors
+    /// `SessionError::RunsElsewhere` if another process holds it; whatever asking reports.
+    fn hold(&self, id: SessionId) -> Result<Option<SessionHold>> {
+        let Some(locks) = &self.locks else { return Ok(None) };
+        if self.holds.contains_key(&id) {
+            return Ok(None);
+        }
+        match locks.try_hold(id)? {
+            Some(hold) => Ok(Some(hold)),
+            None => Err(SessionError::RunsElsewhere(id).into()),
+        }
     }
 
     /// Session `id` as `context` may read it: its loop if it runs, its
@@ -439,6 +469,8 @@ impl SessionManager {
     ) -> Result<Arc<SessionLoop>> {
         let id = session.id;
         let _starting = self.lifecycles.lock(id).await;
+        // Held before anything is stored, so that what cannot hold it leaves nothing behind.
+        let hold = self.hold(id)?;
         self.persist(context, &mut session, &mut own, &mut channels).await?;
 
         let event_bus = &self.events;
@@ -448,7 +480,7 @@ impl SessionManager {
             event_bus.announce(GlobalEvent::created::<Channel>(&(id, channel.id)), channel);
         }
 
-        self.spawn_session(session, channels).await
+        self.spawn_session(session, channels, hold).await
     }
 
     /// Stores the brand-new `session` with its own project `own` and its `channels`, whose creation
@@ -526,14 +558,16 @@ impl SessionManager {
     ///
     /// # Errors
     /// `StoreError::NotFound` if there is no such session or `context` may
-    /// not read it; whatever loading or starting it reports otherwise.
+    /// not read it, `SessionError::RunsElsewhere` if another process that shares the stores runs
+    /// it (issue 554); whatever loading or starting it reports otherwise.
     pub async fn open(&self, context: &SecurityContext, id: SessionId) -> Result<Arc<SessionLoop>> {
         let starting = self.lifecycles.lock(id).await;
         let session_loop = match self.find(context, id).await? {
             Found::Running(session_loop) => session_loop,
             Found::Stored(session) => {
+                let hold = self.hold(id)?;
                 let channels = self.load_channels(&session).await?;
-                return self.spawn_session(session, channels).await;
+                return self.spawn_session(session, channels, hold).await;
             }
         };
         // Not under the lock: building a channel takes its time, and the
@@ -719,6 +753,7 @@ impl SessionManager {
         if let Some(handle) = handle {
             handle.abort();
         }
+        self.holds.remove(&id);
         if let Some(session_loop) = &removed {
             let session = session_loop.session();
             self.events
@@ -742,6 +777,7 @@ impl SessionManager {
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if they may read but not delete it,
+    /// `SessionError::RunsElsewhere` if another process that shares the stores runs it (issue 554),
     /// `SessionError::ScopeNotEmpty` if something of its scope or its own project's is left that
     /// they may not delete - what they may is deleted, the session is kept; whatever else the store
     /// reports, the groups of its participants or its own project failing to go among it, which
@@ -779,6 +815,7 @@ impl SessionManager {
                 StoreError::PermissionDenied,
             )
             .await?;
+        let _held = self.hold(id)?;
         // Captured before the runtime loop is torn down.
         // The events carry the attributes as they were: once deleted, the
         // session is nowhere to look them up (issue 39).
@@ -849,7 +886,8 @@ impl SessionManager {
     /// `SessionError::NotFound` if there is no such deleted session, `context` may not see it
     /// (`ReadDeleted`, asked first, issue 304) or its purge is begun (issue 496),
     /// `SessionError::ProjectDeleted` if the shared
-    /// project it lies in is deleted, `StoreError::PermissionDenied` if they may but not restore
+    /// project it lies in is deleted, `SessionError::RunsElsewhere` if another process that shares
+    /// the stores holds it (issue 554), `StoreError::PermissionDenied` if they may but not restore
     /// it, or whatever the store reports as the groups of its participants or its own project are
     /// restored - the session stays deleted then.
     pub async fn restore(&self, context: &SecurityContext, id: SessionId) -> Result<Session> {
@@ -867,6 +905,7 @@ impl SessionManager {
         if deleted.purging() {
             return Err(SessionError::NotFound(id).into());
         }
+        let _held = self.hold(id)?;
         let own = self
             .stores
             .projects
@@ -997,14 +1036,27 @@ impl SessionManager {
     /// deleted the caller could see, as every purge answers (issue 510).
     ///
     /// # Errors
-    /// `StoreError::PermissionDenied` if they may see it but not purge it, or whatever the stores
-    /// report.
+    /// `StoreError::PermissionDenied` if they may see it but not purge it,
+    /// `SessionError::RunsElsewhere` if another process that shares the stores holds it (issue
+    /// 554), or whatever the stores report.
     pub async fn purge(&self, context: &SecurityContext, id: SessionId) -> Result<bool> {
         let _lifecycle = self.lifecycles.lock(id).await;
+        // What the caller may not see, or what is not deleted, is not there to purge: asked before
+        // whether another process holds it, which they learn of only for what they see.
+        if self.stores.sessions.get_deleted(context, id).await.optional()?.is_none() {
+            return Ok(false);
+        }
+        let held = self.hold(id)?;
         let purged = purge_behind(self.stores.sessions.as_ref(), context, id, async |session| {
             self.remove_behind(session).await
         })
         .await?;
+        if let (true, Some(locks)) = (purged, &self.locks) {
+            if let Err(e) = locks.forget(id) {
+                warn!(session = %id, "What held a session purged is left: {e}");
+            }
+        }
+        drop(held);
         if purged {
             info!(session = %id, by = %context.caller_id, "Session purged");
         }
@@ -1303,7 +1355,7 @@ mod tests {
 
         // ... and registers the session before it lets go: the stop then
         // finds it, and nothing keeps running.
-        manager.spawn_session(session, channels.to_vec()).await.unwrap();
+        manager.spawn_session(session, channels.to_vec(), None).await.unwrap();
         drop(starting);
         assert!(stopping.await.unwrap(), "the stop stopped what the start started");
         assert!(!manager.sessions.contains_key(&session_id));
@@ -1977,6 +2029,43 @@ mod tests {
                 .any(|entry| entry.subject == Subject::Group(GroupId::of_session(session.id()))),
             "the share is taken back: {shared:?}"
         );
+    }
+
+    /// Issue 554: a session runs in one process of those that share the stores - held while it
+    /// runs here, let go as it stops -, and is neither started, deleted, restored nor purged while
+    /// another holds it; what held a session purged is forgotten.
+    #[tokio::test]
+    async fn a_session_another_process_holds_is_left_to_it() {
+        let (kernel, locks) = shared_kernel();
+        let manager = SessionManager::new(kernel);
+        let ctx = SecurityContext::default();
+        let session = make_session("shared", UserId::new());
+        let id = session.id;
+        let runs_elsewhere = |result: Result<_>| {
+            let error = result.expect_err("refused");
+            matches!(error.downcast_ref(), Some(SessionError::RunsElsewhere(it)) if *it == id)
+        };
+
+        create(&manager, &ctx, session).await.unwrap();
+        assert!(locks.holds(id), "held while it runs here");
+        assert!(manager.stop(&ctx, id).await.unwrap());
+        assert!(!locks.holds(id), "let go as it stops");
+
+        locks.elsewhere.lock().unwrap().insert(id);
+        assert!(runs_elsewhere(manager.open(&ctx, id).await.map(|_| ())), "not started");
+        assert!(runs_elsewhere(manager.delete(&ctx, id).await.map(|_| ())), "not deleted");
+        locks.elsewhere.lock().unwrap().remove(&id);
+        manager.open(&ctx, id).await.expect("started once let go");
+        assert!(manager.delete(&ctx, id).await.unwrap(), "deleted while it runs here");
+        assert!(!locks.holds(id), "stopped with it");
+
+        locks.elsewhere.lock().unwrap().insert(id);
+        assert!(runs_elsewhere(manager.restore(&ctx, id).await.map(|_| ())), "not restored");
+        assert!(runs_elsewhere(manager.purge(&ctx, id).await.map(|_| ())), "not purged");
+        locks.elsewhere.lock().unwrap().remove(&id);
+        assert!(manager.purge(&ctx, id).await.unwrap());
+        assert_eq!(*locks.forgotten.lock().unwrap(), vec![id], "nothing of it stays");
+        assert!(!locks.holds(id), "and nothing holds it");
     }
 
     /// Issue 496: a purge that fails part of the way - here as the document of its channel is

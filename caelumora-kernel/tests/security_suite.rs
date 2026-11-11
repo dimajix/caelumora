@@ -2903,8 +2903,37 @@ async fn purging_a_session_is_not_its_owners() {
     assert!(refused.is_err());
     assert_eq!(
         asked,
-        checks(&["alice: ReadDeletedSession(alice's) yes", "alice: PurgeSession(alice's) no"]),
-        "only what was deleted, asked by the store as it begins the purge, before anything goes"
+        checks(&[
+            "alice: ReadDeletedSession(alice's) yes",
+            "alice: ReadDeletedSession(alice's) yes",
+            "alice: PurgeSession(alice's) no",
+        ]),
+        "only what was deleted - read as deleted by the manager, before it asks whether another \
+         process holds it (issue 554), then asked by the store as it begins the purge -, before \
+         anything goes"
+    );
+}
+
+/// A session another process holds (issue 554) is told of only to whoever sees it: whoever may not
+/// learns nothing of it as they delete or purge it; its owner is refused deleting it.
+#[tokio::test]
+async fn a_session_another_process_holds_is_told_of_only_to_who_sees_it() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let id = session.id();
+    assert!(world.manager.stop(&World::system(), id).await.unwrap());
+    world.locks.elsewhere.lock().unwrap().insert(id);
+    let carol = World::as_user(world.carol);
+
+    assert!(!world.manager.delete(&carol, id).await.unwrap(), "nothing she could see");
+    assert!(!world.manager.purge(&carol, id).await.unwrap(), "nor to purge");
+    let refused = world.manager.delete(&World::as_user(world.alice), id).await;
+    assert!(
+        matches!(
+            refused.as_ref().map_err(|e| e.downcast_ref::<SessionError>()),
+            Err(Some(SessionError::RunsElsewhere(it))) if *it == id
+        ),
+        "hers, running elsewhere: {refused:?}"
     );
 }
 

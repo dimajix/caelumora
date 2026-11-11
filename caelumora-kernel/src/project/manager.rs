@@ -129,8 +129,9 @@ impl ProjectManager {
     ///
     /// # Errors
     /// `InvalidScope` for a session's own, which goes with the session; `ScopeNotEmpty` with how
-    /// many sessions and what else are left; `Session` if deleting a session failed otherwise; or
-    /// whatever the store reports, `PermissionDenied` included.
+    /// many sessions and what else are left; `Session` if deleting a session failed otherwise -
+    /// `SessionError::RunsElsewhere` for one another process runs (issue 554), which keeps the
+    /// project as it is; or whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
         let _lifecycle = self.lifecycles.lock(id).await;
         let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else {
