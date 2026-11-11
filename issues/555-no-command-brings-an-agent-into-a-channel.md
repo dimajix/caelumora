@@ -209,3 +209,7 @@ or `Participation` rather than in the command.
   3. The `AgentManager` is a service of the kernel, held by the component of `/create-agent`; the
      personality is to be found by a new `Views::personality_named`, from the channel as a place;
      `as` is split at its last occurrence; both commands join the default set.
+- **2026-11-11** — Step 1 done. Between it and step 2, as the maintainer decided: `found_from` is
+  built on `find_by_name`, so that the choice of the innermost is made in one place, and the test
+  helper `channel::testing::command_error` is called `as_command_error`, so that `command_error`
+  in the kernel means one thing.

@@ -38,12 +38,12 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
 
     let error = actor.execute_command("wakeup", "").await.expect_err("hidden");
     assert!(
-        matches!(command_error(&error), CommandError::Unknown(_)),
+        matches!(as_command_error(&error), CommandError::Unknown(_)),
         "a hidden command looks unknown: {error}"
     );
     let error = actor.execute_command("help", "wakeup").await.expect_err("hidden");
     assert!(
-        matches!(command_error(&error), CommandError::Unknown(_)),
+        matches!(as_command_error(&error), CommandError::Unknown(_)),
         "/help does not describe it either: {error}"
     );
 
@@ -104,7 +104,7 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     let channel = channel_with(&[&alice], Arc::new(refuse_waking)).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "").await.expect_err("waking is refused");
-    assert!(matches!(command_error(&error), CommandError::Forbidden { .. }), "{error}");
+    assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert!(is_forbidden(&error), "{error}");
 
     let refuse_running = Policy(
@@ -114,18 +114,18 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");
     assert!(
-        matches!(command_error(&error), CommandError::Forbidden { .. }),
+        matches!(as_command_error(&error), CommandError::Forbidden { .. }),
         "visible but not runnable: {error}"
     );
 
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
     let error = actor.execute_command("wakeup", "@nobody").await.expect_err("no such agent");
-    assert!(matches!(command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
+    assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
     let error = actor.execute_command("", "").await.expect_err("empty");
-    assert!(matches!(command_error(&error), CommandError::Empty), "{error}");
+    assert!(matches!(as_command_error(&error), CommandError::Empty), "{error}");
     let error = actor.execute_command("nonsense", "").await.expect_err("unknown");
-    assert!(matches!(command_error(&error), CommandError::Unknown(_)), "{error}");
+    assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
 }
 
 #[tokio::test]
@@ -142,7 +142,7 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 
     let error = actor.execute_command("wakeup", "@dr-who").await.expect_err("ambiguous");
     assert!(
-        matches!(command_error(&error), CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")),
+        matches!(as_command_error(&error), CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")),
         "{error}"
     );
     assert!(!sleepers[2].woken(), "nobody is picked");

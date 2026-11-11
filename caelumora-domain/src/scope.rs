@@ -328,23 +328,20 @@ pub fn found_from<'a, D: Scoped>(
     place: &Scope,
     user: Option<UserId>,
 ) -> Vec<&'a D> {
-    let visible: Vec<(ScopedName, &D)> = scoped
-        .into_iter()
-        .map(|d| (d.scoped_name(), d))
-        .filter(|(scoped_name, _)| scoped_name.scope.visible_from(place, user))
-        .collect();
-    let mut found: Vec<(ScopedName, &D)> = Vec::new();
-    for (scoped_name, d) in visible {
-        match found.iter_mut().find(|(other, _)| other.name == scoped_name.name) {
-            Some(entry) if scoped_name.scope.depth() > entry.0.scope.depth() => {
-                *entry = (scoped_name, d)
-            }
-            Some(_) => {}
-            None => found.push((scoped_name, d)),
+    let scoped: Vec<&D> = scoped.into_iter().collect();
+    let mut names: Vec<Name> = Vec::new();
+    for d in &scoped {
+        let name = d.scoped_name().name;
+        if !names.contains(&name) {
+            names.push(name);
         }
     }
-    found.sort_by(|(l, _), (r, _)| l.name.as_str().cmp(r.name.as_str()));
-    found.into_iter().map(|(_, d)| d).collect()
+    let mut found: Vec<&D> = names
+        .iter()
+        .filter_map(|name| find_by_name(scoped.iter().copied(), name, place, user))
+        .collect();
+    found.sort_by(|l, r| l.scoped_name().name.as_str().cmp(r.scoped_name().name.as_str()));
+    found
 }
 
 #[cfg(test)]
