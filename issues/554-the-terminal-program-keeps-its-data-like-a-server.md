@@ -371,3 +371,12 @@ Each reviewed and committed on its own, on a branch of this issue.
   [556](556-what-an-id-lies-in-is-found-by-searching.md) thinks it through. The files are written
   by the kernel's `LocalContentStorage`, now public for it, below the data directory, so that a
   copy between two channels is one of one storage.
+- **2026-11-10** — Step 5, decided with the maintainer and done: the storage of workspaces
+  `directory`, `LocalProvider` whose workspaces all lie in one directory (`dir`), each named by a
+  link `<root>/<id>` to it, made by `create` and removed by `remove`, the directory never. What
+  works in a workspace - its terminal, a command and its environment - is handed the directory
+  itself, never the link, so that `pwd` and the paths a model is shown are where it works. Its
+  `destination` has to be given. `environment: inherit` hands a command the program's environment,
+  its `HOME` too, so that the person's tools, configuration and keys are there; `isolated`, the
+  default, is `local`'s. A workspace is found by a name made from its directory's path, which
+  step 6 settles.

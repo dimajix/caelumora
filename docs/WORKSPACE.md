@@ -18,8 +18,9 @@ files lie in; the files are no part of it.
 
 It lies in a session's scope, its owner's or the global one - never a channel's, since a session's
 channels share one. Its scope decides its life: one in a session's scope is made for that session,
-used within it alone, and deleted, restored and purged with it, its files too; one in its owner's
-scope or the global one outlives every session that uses it.
+used within it alone, and deleted, restored and purged with it, its files too - but those of a
+storage `directory`, which are the person's own and stay -; one in its owner's scope or the global
+one outlives every session that uses it.
 
 The `WorkspaceManager` makes, deletes, restores and purges workspaces, and is the only code that
 makes and removes their places in the storages; what a workspace is - its name, description,
@@ -80,20 +81,25 @@ out for a scope (`shell_for`), which the workspace's controller alone asks for, 
 channel. A path a caller writes is made a `WorkspacePath` - relative, without `..` - before any
 provider sees it.
 
-The providers - `local`, `open_terminal_shared` (one Open Terminal instance started outside
+The providers - `local`, `directory` (every workspace in the one directory a program of one person
+was started in, issue 554), `open_terminal_shared` (one Open Terminal instance started outside
 Caelumora) and `open_terminal_docker` (a volume and a container per workspace, started by
 Caelumora) - differ in what their backend does; how each meets the rules of this document is in
-their module docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal). A storage's key is
-resolved through the secret chain in the system's name, since the storage is the operator's.
+their module docs (`caelumora-open-terminal/src/terminal.rs` for Open Terminal). A workspace of
+`directory` is named by a link to that directory, so that it is found there after the program was
+started elsewhere; what works in it - its terminal, a command, the environment of one - is handed
+the directory itself, never the link, so that a path a model is shown is the one it works in. A
+storage's key is resolved through the secret chain in the system's name, since the storage is the
+operator's.
 
 A storage is a backend (issue 324, see [ARCHITECTURE.md](ARCHITECTURE.md#backends)): its provider is
 made by the factory registered for its `type`, which reads and checks its parameters. The kernel
-brings `local` alone, registered by `terminal::register_backends` beside its provider in
-`caelumora-kernel/src/terminal/`, which tests and development need. The two Open Terminal storages
-are the plugin `caelumora-open-terminal` (issue 327), which the programs list; the Docker one, with
-`bollard`, is behind its feature `docker`, on by default, so that a deployment with one shared
-instance builds without it. Another sandbox - a pod, a remote machine - is added the same way, by a
-plugin that registers a `TerminalProvider` of its own.
+brings `local` and `directory`, registered by `terminal::register_backends` beside their provider
+in `caelumora-kernel/src/terminal/`, which tests, development and the terminal program need. The
+two Open Terminal storages are the plugin `caelumora-open-terminal` (issue 327), which the programs
+list; the Docker one, with `bollard`, is behind its feature `docker`, on by default, so that a
+deployment with one shared instance builds without it. Another sandbox - a pod, a remote machine -
+is added the same way, by a plugin that registers a `TerminalProvider` of its own.
 
 What a provider has to offer is the public API of `caelumora_kernel::terminal`, with the handles of
 `caelumora_api::terminal` it hands out:
@@ -115,7 +121,7 @@ may have at most - where its files go, and for a storage with a shell where what
 go, since a command reaches whatever its host or container reaches; making or raising a workspace
 there is checked against it (see [CONFIDENTIALITY.md](CONFIDENTIALITY.md#workspaces)). A `local`
 storage with a shell is bounded to public unless it names its own; one without a shell, and without
-a `destination`, is not bounded.
+a `destination`, is not bounded. A `directory` storage has to name its own.
 
 The isolation between workspaces is the storage's, not the classification's. A `local` shell runs on
 Caelumora's host as its user, and reaches every workspace of every storage there, and Caelumora's
@@ -125,7 +131,10 @@ blanks in what it starts, can still be read from the server's process and opens 
 file of the instance. So: one classification per such storage, and a storage per classification
 where there are several. An `open_terminal_docker` storage gives every workspace a container of its
 own: a command reaches its workspace and the container's network, and its key opens that container
-alone. A classification says who may read a workspace; it does not keep a command in it.
+alone. A `directory` storage keeps all its workspaces in the same files, reached by the terminal of
+each, a shell or none; with `environment: inherit` a command is handed the program's environment as
+well, and what a secret provider `env` reads there. A classification says who may read a workspace;
+it does not keep a command in it.
 
 ## Commands
 

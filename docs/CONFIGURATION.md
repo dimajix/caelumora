@@ -74,11 +74,13 @@ far each provider keeps its workspaces apart).
 | `type` | Workspaces | Parameters |
 |---|---|---|
 | `local` | a directory per workspace under `root` on Caelumora's host | `shell` (default `false`); `destination` public by default where `shell` is on, else none |
+| `directory` | every workspace in `dir`, the directory a program of one person was started in, named by a link under `root` - removing one removes the link, never `dir` | `dir`; `shell` (default `false`); `destination`, which has to be given; `environment` (`isolated` by default, as `local`'s shell; `inherit` hands a command the program's environment, its `HOME` too) |
 | `open_terminal_shared` | every workspace in one Open Terminal instance started outside Caelumora (see `examples/docker-compose.yml`) | `endpoint` (as a component's, see [COMPONENTS.md](COMPONENTS.md#remote-endpoints); timeout 10 s by default), `mount` (an absolute path in the instance); `destination` public by default |
 | `open_terminal_docker` | a volume and an Open Terminal container per workspace, started by Caelumora | `image` (pin it: the API is 0.x), `network` (`bridge` by default: the Docker network the containers run in and are reached at - it reaches what the agents are meant to reach, not Caelumora's own API), `idle_stop_secs` (900); `destination` public by default |
 
 **`shell: true` runs what an agent's model writes on Caelumora's host, as its user, with nothing
-between but the directory, approval and the rules of a place - for development only.**
+between but the directory, approval and the rules of a place - for development, or for a program of
+one person, whose commands are its user's.** A `directory` storage takes a `root` of its own.
 The two Open Terminal storages are the plugin `caelumora-open-terminal`, which `caelumora-app` and
 `caelumora-tui` list; `open_terminal_docker` needs its feature `docker` (on by default). The stores
 in JSON files, `type: json` under `persistence`, are the plugin `caelumora-store-json`, the stores
