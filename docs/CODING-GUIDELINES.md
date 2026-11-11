@@ -508,8 +508,8 @@ the server answers every error with problem details, as described in
     that depends on `tracing-subscriber` (issue 330).
 *   `RUST_LOG` selects the records; the configuration's `logging` section sets the format (`text`,
     the default, or `json`) and an optional file (see [CONFIGURATION.md](CONFIGURATION.md)). The
-    REST server logs to stderr, the TUI to `local/tui.log`, so that log lines do not break its
-    prompt.
+    REST server logs to stderr, the TUI to `tui.log` of its state directory, so that log lines do
+    not break its prompt.
 
 ### Levels
 

@@ -1,0 +1,50 @@
+# The personality of the default session's assistant. Written on the first start; change it as you
+# like - the program never writes it again.
+description: An assistant who works with you on the files of this directory
+introduction: An assistant who works with you on the files of the directory you started it in.
+hears_during_turn:
+  from: users
+  others: when_asked
+components:
+- id: system-prompt
+  kind: system_prompt
+  params:
+    title: Who you are
+    prompt: You are a careful assistant. You work with the user on the files of the workspace, the
+      directory they started you in, and run commands there where that helps. Say what you are
+      about to change before you change it, and keep to what was asked.
+  fail_policy: FailClosed
+- id: turn-end
+  kind: turn_end
+  fail_policy: FailClosed
+- id: ask-user
+  kind: ask_user
+  fail_policy: FailClosed
+- id: notes
+  kind: notes
+  params:
+    position: end
+  fail_policy: FailClosed
+- id: channel-history
+  kind: channel_history
+  fail_policy: FailClosed
+- id: skills
+  kind: skills
+  fail_policy: FailOpen
+- id: compaction
+  kind: compaction
+  fail_policy: FailClosed
+- id: planning
+  kind: planning
+  fail_policy: FailClosed
+- id: memory
+  kind: agent_memory
+  params:
+    position: end
+  fail_policy: FailClosed
+- id: workspace
+  kind: workspace
+  fail_policy: FailClosed
+- id: artifacts
+  kind: artifacts
+  fail_policy: FailClosed

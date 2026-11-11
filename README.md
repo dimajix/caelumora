@@ -68,14 +68,21 @@ cargo test
 ### Running the TUI
 
 ```bash
-cargo run -p caelumora-tui -- --config examples/config.yaml
+cargo run -p caelumora-tui
 ```
 
-The TUI starts a session from the template `sassy-session`; `--template <name>`
-picks another. It talks in the template's first channel, as the user `--user <name>` names - `user`
-unless given -, whom the configured user providers know under that name, with their roles. The
-templates and personalities come from the demo data that `examples/config.yaml` seeds
-(`examples/seed`) - without a configuration there are none. The TUI writes its log to `local/tui.log`.
+The TUI is a program of one person, in the directory it is started in (issue 554). Without a
+configuration it keeps what the person writes in `~/.config/caelumora` - skills, personalities,
+bundles and templates, each a file by its name - and what it writes itself in
+`~/.local/share/caelumora`, a directory per session; the directories of XDG move them. On the first
+start it writes there a template `default` and the personality of its assistant. The directory it
+was started in is the workspace of its session, and its commands run there with the person's own
+environment; every session of one directory lies in that directory's project. It acts for the user
+of the system, or for the one `--user <name>` names, and starts a session from the template
+`default`, or from the one `--template <name>` names. What `~/.config/caelumora/config.yaml` says
+lies over these defaults, key by key (see `docs/CONFIGURATION.md`); `--config <file>` replaces
+them, as `--config examples/config.yaml --template sassy-session` does with the demo data of
+`examples/seed`. The TUI writes its log to `~/.local/state/caelumora/tui.log`.
 
 ### Running the Program
 

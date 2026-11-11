@@ -380,3 +380,17 @@ Each reviewed and committed on its own, on a branch of this issue.
   its `HOME` too, so that the person's tools, configuration and keys are there; `isolated`, the
   default, is `local`'s. A workspace is found by a name made from its directory's path, which
   step 6 settles.
+- **2026-11-11** — Step 6, decided with the maintainer: in three parts - the program starting
+  without a configuration in its directory; the sessions of a directory (`--continue`, `--resume`,
+  `--sessions`) under the session's lock; `id <file>`, with the program named `caelumora`.
+  `~/.config/caelumora/config.yaml` lies over the defaults, section by section; `--config`
+  replaces them. A first start writes a template `default` and its assistant's personality into the
+  configuration directory, so that they are the person's to change.
+- **2026-11-11** — Step 6, its first part: the program's directories of XDG, its defaults
+  (`allow_all`, `accept_any` with the system's user, `home` for the stores and the content, the
+  storage `here` of the directory it was started in, with a shell and the person's environment),
+  the files of a first start, and the project and the workspace of the directory, found by its name
+  and a part of an id of its path, or made in the user's scope. Started for real: an empty home
+  gets its files, a second start in one directory finds its project, workspace and agent again, and
+  another directory gets its own. The links of `directory` lie in `links`, since `workspaces` of the
+  data directory holds the documents of the workspaces, and a link there met one.

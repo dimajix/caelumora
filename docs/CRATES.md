@@ -93,7 +93,7 @@ those it takes with other features than their default ones.
 | Program | Depends on |
 |---|---|
 | `caelumora-app` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-security`, `caelumora-store` and `caelumora-store-home` |
-| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server`, `caelumora-security`, `caelumora-store` and `caelumora-store-home`; `caelumora-artifacts`, `caelumora-memory` and `caelumora-skills` with `kernel` and `library` alone |
+| `caelumora-tui` | every crate of the graph but `caelumora-rest-api`, `caelumora-rest-client`, `caelumora-rest-server` and `caelumora-store`; `caelumora-artifacts`, `caelumora-memory` and `caelumora-skills` with `kernel` and `library` alone |
 <!-- crate-graph.sh: end -->
 
 Until issue [522](../issues/522-two-crates-named-model.md), `caelumora-domain` was named

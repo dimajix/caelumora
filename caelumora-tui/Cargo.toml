@@ -8,6 +8,7 @@ license.workspace = true
 caelumora-domain.workspace = true
 caelumora-api.workspace = true
 caelumora-kernel.workspace = true
+caelumora-security.workspace = true
 caelumora-agents.workspace = true
 caelumora-logging.workspace = true
 caelumora-skills = { workspace = true, features = ["kernel", "library"] }
@@ -16,6 +17,7 @@ caelumora-memory = { workspace = true, features = ["kernel", "library"] }
 caelumora-tool-mcp.workspace = true
 caelumora-a2a.workspace = true
 caelumora-open-terminal.workspace = true
+caelumora-store-home.workspace = true
 caelumora-store-json.workspace = true
 caelumora-store-postgres.workspace = true
 caelumora-tool-workspace.workspace = true
@@ -33,12 +35,13 @@ tokio = { workspace = true, features = ["full"] }
 rustyline.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v5"] }
 serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 caelumora-domain = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 
 [lints]
 workspace = true

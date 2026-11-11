@@ -1,6 +1,10 @@
 //! The terminal frontend: a user talks, line by line, in a channel of a session started from a
-//! template.
+//! template, in the directory the program was started in (issue 554).
 
+mod here;
+mod home;
+
+use anyhow::Context;
 use anyhow::Result;
 use caelumora_a2a::library::A2aLibrary;
 use caelumora_agents::library::AgentsLibrary;
@@ -23,10 +27,12 @@ use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::work::TurnId;
+use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
+use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::{SessionManager, SessionSpec};
 use caelumora_kernel::user_provider::Credential;
 use caelumora_kernel::view::Viewer;
@@ -40,6 +46,7 @@ use caelumora_model_systemone::plugin::SystemOneModelPlugin;
 use caelumora_open_terminal::plugin::OpenTerminalPlugin;
 use caelumora_skills::library::SkillsLibrary;
 use caelumora_skills::plugin::SkillsPlugin;
+use caelumora_store_home::plugin::HomeStorePlugin;
 use caelumora_store_json::plugin::JsonStorePlugin;
 use caelumora_store_postgres::plugin::PostgresStorePlugin;
 use caelumora_tool_attachment::library::AttachmentToolLibrary;
@@ -48,10 +55,13 @@ use caelumora_tool_mcp::library::McpToolLibrary;
 use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use clap::Parser;
+use here::{place_of, HERE};
+use home::Home;
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::Editor;
 use std::collections::HashMap;
+use std::env;
 use std::future;
 use std::io::Error;
 use std::path::PathBuf;
@@ -461,7 +471,7 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                                     Err(e) => {
                                         tracing::warn!("Command /{} failed: {:#}", name, e);
                                         let message = user_message(&e)
-                                            .unwrap_or_else(|| format!("/{} failed; the details are in local/tui.log", name));
+                                            .unwrap_or_else(|| format!("/{} failed; the details are in the log", name));
                                         println!("[error] {}", message);
                                     }
                                 }
@@ -525,16 +535,16 @@ struct Args {
     #[arg(short, long)]
     config: Option<PathBuf>,
 
-    /// The session template to start a session from, by name - one the
-    /// configuration's `seed` provides, e.g. `examples/config.yaml`.
-    #[arg(short, long, default_value = "sassy-session")]
+    /// The session template to start a session from, by name - one of `templates` in the
+    /// configuration directory, or of the configuration's `seed`.
+    #[arg(short, long, default_value = "default")]
     template: String,
 
     /// Whom the terminal acts for, by name: the user the configured user providers know under it,
     /// with their roles - without a password, as the terminal runs in the kernel's own process
-    /// (`Credential::Trusted`).
-    #[arg(short, long, default_value = "user")]
-    user: String,
+    /// (`Credential::Trusted`). The user of the system unless named.
+    #[arg(short, long)]
+    user: Option<String>,
 }
 
 /// The plugins the terminal builds its kernel with (issue 323).
@@ -549,6 +559,7 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
         Box::new(ComfyUiModelPlugin),
         Box::new(SystemOneModelPlugin),
         Box::new(DecisionPlugin),
+        Box::new(HomeStorePlugin),
         Box::new(JsonStorePlugin),
         Box::new(PostgresStorePlugin),
     ]
@@ -576,15 +587,21 @@ fn libraries() -> Vec<Box<dyn Library>> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-
-    let config = with_local_model(if let Some(config_path) = args.config {
-        AppConfig::load(config_path)?
-    } else {
-        AppConfig::default()
+    let here = env::current_dir()
+        .and_then(|dir| dir.canonicalize())
+        .context("the directory the program was started in cannot be told")?;
+    let home = Home::of_user()?;
+    let config = with_local_model(match args.config {
+        Some(given) => AppConfig::load(&given)
+            .with_context(|| format!("cannot read the configuration {}", given.display()))?,
+        None => {
+            home.first_start()?;
+            home.config(&here)?
+        }
     });
 
     // Into a file by default: log lines on the terminal would break the prompt.
-    init(&config.logging, LogTarget::File(PathBuf::from("local/tui.log")), "info")?;
+    init(&config.logging, LogTarget::File(home.log()), "info")?;
 
     let plugins = plugins();
     let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
@@ -602,10 +619,11 @@ async fn main() -> Result<()> {
     if users.is_empty() {
         anyhow::bail!("No user providers are configured (`users` section), so the terminal can act for nobody. See examples/config.yaml.");
     }
+    let user = args.user.or_else(|| env::var("USER").ok()).unwrap_or_else(|| "user".to_string());
     let owner = users
-        .authenticate(&args.user, &Credential::Trusted)
+        .authenticate(&user, &Credential::Trusted)
         .await
-        .map_err(|e| anyhow::anyhow!("The terminal cannot act for '{}': {e}", args.user))?
+        .map_err(|e| anyhow::anyhow!("The terminal cannot act for '{user}': {e}"))?
         .id;
     // The session is this terminal user's own; their context, with their
     // roles, is their controller's (issue 304).
@@ -618,7 +636,7 @@ async fn main() -> Result<()> {
     // By name, among those this user may use.
     let template = entity_stores.session_templates.list(&security, &Query::all()).await.map(|page| page.items)?.into_iter()
         .find(|t| t.name.name == args.template.as_str())
-        .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates come from the `seed` of the configuration - `--config examples/config.yaml` seeds the demo ones", args.template))?;
+        .ok_or_else(|| anyhow::anyhow!("Session template '{}' not found: templates lie in `templates` of the configuration directory, or come from the `seed` of the configuration", args.template))?;
 
     // Held in the language the user prefers where the template names none:
     // the frontend's to offer, not the server's (issues 331, 425).
@@ -631,13 +649,22 @@ async fn main() -> Result<()> {
     let language = preferred.filter(|_| template.language.is_none());
 
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+    let projects = ProjectManager::new(Arc::clone(&session_manager));
+    // Where the program was started, its project and workspace, if it works there.
+    let (project, workspace) = if config.workspaces.storage.contains_key(HERE) {
+        let (project, workspace) = place_of(&kernel, &projects, &security, owner, &here).await?;
+        (Some(project), Some(WorkspaceChoice::Existing { id: workspace, share: None }))
+    } else {
+        (None, None)
+    };
     let session_loop = session_manager
         .create_from_template(
             &security,
             template.id,
             SessionSpec {
-                name: Some("default-session".to_string()),
                 language: language.as_ref().map(Language::to_string),
+                workspace,
+                project,
                 ..SessionSpec::default()
             },
         )
