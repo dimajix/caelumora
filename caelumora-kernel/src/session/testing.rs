@@ -25,7 +25,7 @@ use caelumora_domain::channel::Channel;
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{FieldPath, Filter};
 use caelumora_domain::session::testing::make_session;
-use caelumora_domain::session::Session;
+use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{EntityKind, Revision, StoreError, StoreResult};
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::value::name::ScopedName;
@@ -36,13 +36,15 @@ use caelumora_store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::memberships::StoreMemberships;
 use caelumora_store::memory::MemoryStore;
+use caelumora_store::sessions::{SessionHold, SessionLocks};
 use caelumora_store::testing::record_users;
 use caelumora_store::transcript::TranscriptStore;
 use caelumora_store::Persistence;
 use caelumora_store::{PersistenceBackend, Presence, StateStore};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time;
 use uuid::Uuid;
@@ -145,15 +147,7 @@ pub async fn running_session_of_a_user(
 }
 
 pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
-    ChannelSpec {
-        name: name.to_string(),
-        components: Default::default(),
-        participants,
-        classification: None,
-        language: None,
-        uses_workspace: None,
-        internal_actors: Vec::new(),
-    }
+    ChannelSpec { participants, ..ChannelSpec::new(name) }
 }
 
 /// The message and the reason of the next `MessageRejected` `events`
@@ -193,6 +187,97 @@ pub fn failing_kernel(kind: EntityKind) -> (Arc<Kernel>, Arc<AtomicUsize>) {
         Arc::new(FailingBackend { inner: MemoryStore::new(), kind, passing: Arc::clone(&passing) });
     let store = Persistence::new(entities, Arc::new(MemoryStore::new())).unwrap();
     (TestKernel { store, ..Default::default() }.build(), passing)
+}
+
+/// A kernel whose stores another process shares (issue 554), as `shared_store` makes them.
+pub fn shared_kernel() -> (Arc<Kernel>, Arc<SharedLocks>) {
+    let (store, locks) = shared_store();
+    (TestKernel { store, ..Default::default() }.build(), locks)
+}
+
+/// Stores in memory another process shares (issue 554), whose holds of sessions are
+/// `SharedLocks`: what tests tell them the other holds, and what they held and let go of.
+pub fn shared_store() -> (Persistence, Arc<SharedLocks>) {
+    let locks = Arc::new(SharedLocks::default());
+    let entities = Arc::new(SharedBackend { inner: MemoryStore::new(), locks: Arc::clone(&locks) });
+    (Persistence::new(entities, Arc::new(MemoryStore::new())).unwrap(), locks)
+}
+
+/// The holds of sessions of a `shared_kernel`, as the lock of a file would keep them.
+#[derive(Debug, Default)]
+pub struct SharedLocks {
+    /// The sessions the other process holds.
+    pub elsewhere: Mutex<HashSet<SessionId>>,
+    /// The sessions held here, until their holds are dropped.
+    here: Arc<Mutex<HashSet<SessionId>>>,
+    /// The sessions whose holds were forgotten, as they were purged.
+    pub forgotten: Mutex<Vec<SessionId>>,
+}
+
+impl SharedLocks {
+    /// Whether session `id` is held here.
+    pub fn holds(&self, id: SessionId) -> bool {
+        self.here.lock().unwrap().contains(&id)
+    }
+}
+
+impl SessionLocks for SharedLocks {
+    fn try_hold(&self, id: SessionId) -> StoreResult<Option<SessionHold>> {
+        if self.elsewhere.lock().unwrap().contains(&id) || !self.here.lock().unwrap().insert(id) {
+            return Ok(None);
+        }
+        Ok(Some(SessionHold::new(HeldHere { here: Arc::clone(&self.here), id })))
+    }
+
+    fn forget(&self, id: SessionId) -> StoreResult<()> {
+        self.forgotten.lock().unwrap().push(id);
+        Ok(())
+    }
+}
+
+/// A session held by `SharedLocks`, let go as it is dropped.
+struct HeldHere {
+    here: Arc<Mutex<HashSet<SessionId>>>,
+    id: SessionId,
+}
+
+impl Drop for HeldHere {
+    fn drop(&mut self) {
+        self.here.lock().unwrap().remove(&self.id);
+    }
+}
+
+/// A backend of the entities in memory that holds sessions by `SharedLocks`.
+#[derive(Debug)]
+struct SharedBackend {
+    inner: MemoryStore,
+    locks: Arc<SharedLocks>,
+}
+
+impl PersistenceBackend for SharedBackend {
+    fn documents(
+        &self,
+        kind: EntityKind,
+        document_of: DocumentOf,
+    ) -> StoreResult<Arc<dyn DocumentStorage>> {
+        self.inner.documents(kind, document_of)
+    }
+
+    fn state_store(self: Arc<Self>) -> StoreResult<Arc<dyn StateStore>> {
+        Err(StoreError::Backend("the entities alone".to_string()))
+    }
+
+    fn history_store(self: Arc<Self>) -> StoreResult<Arc<dyn HistoryStore>> {
+        Err(StoreError::Backend("the entities alone".to_string()))
+    }
+
+    fn transcript_store(self: Arc<Self>) -> StoreResult<Arc<dyn TranscriptStore>> {
+        Err(StoreError::Backend("the entities alone".to_string()))
+    }
+
+    fn session_locks(self: Arc<Self>) -> Option<Arc<dyn SessionLocks>> {
+        Some(Arc::<SharedLocks>::clone(&self.locks))
+    }
 }
 
 /// A backend of the entities in memory whose documents of `kind` are not

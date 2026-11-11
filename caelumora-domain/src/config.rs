@@ -182,8 +182,8 @@ pub enum LogFormat {
 pub struct LoggingConfig {
     pub format: LogFormat,
     /// Log file to append to. Without one, each binary uses its own default:
-    /// the REST server writes to stderr, the TUI to `local/tui.log` so the
-    /// log does not interfere with its prompt.
+    /// the REST server writes to stderr, the TUI to `tui.log` of its state
+    /// directory, so the log does not interfere with its prompt.
     pub file: Option<PathBuf>,
 }
 

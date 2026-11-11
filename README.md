@@ -68,14 +68,28 @@ cargo test
 ### Running the TUI
 
 ```bash
-cargo run -p caelumora-tui -- --config examples/config.yaml
+cargo run -p caelumora-tui
 ```
 
-The TUI starts a session from the template `sassy-session`; `--template <name>`
-picks another. It talks in the template's first channel, as the user `--user <name>` names - `user`
-unless given -, whom the configured user providers know under that name, with their roles. The
-templates and personalities come from the demo data that `examples/config.yaml` seeds
-(`examples/seed`) - without a configuration there are none. The TUI writes its log to `local/tui.log`.
+The TUI is a program of one person, called `caelumora`, in the directory it is started in (issue
+554). Without a configuration it keeps what the person writes in `~/.config/caelumora` - skills,
+personalities, bundles and templates, each a file by its name - and what it writes itself in
+`~/.local/share/caelumora`, a directory per session; the directories of XDG move them. On the first
+start it writes there a template `default` and the personality of its assistant. The directory it
+was started in is the workspace of its session, and its commands run there with the person's own
+environment; every session of one directory lies in that directory's project. It acts for the user
+of the system, or for the one `--user <name>` names, and starts a session from the template
+`default`, or from the one `--template <name>` names. `--sessions` lists the sessions of the
+directory, the one spoken in last first - one nobody spoke in by when it was started -; `--continue`
+continues that one instead of starting a session, or starts one if there is none, and
+`--resume <id>` the one whose id begins so. A session runs in one terminal at a time: one open in
+another is not resumed. All three need the directory the program works in, which a configuration
+given by `--config` may not name. `caelumora id <file>` prints the id a skill, a personality, a
+bundle or a template is kept by, and whether its name derives it - a file renamed then loses it,
+unless the id is written into it. What `~/.config/caelumora/config.yaml` says lies over these
+defaults, key by key (see `docs/CONFIGURATION.md`); `--config <file>` replaces them, as
+`--config examples/config.yaml --template sassy-session` does with the demo data of `examples/seed`.
+The TUI writes its log to `~/.local/state/caelumora/tui.log`.
 
 ### Running the Program
 

@@ -709,6 +709,7 @@ impl KernelBuilder {
             state_store: self.persistence.state_store(),
             history_store: self.persistence.history_store(),
             transcript_store: self.persistence.transcript_store(),
+            session_locks: self.persistence.session_locks(),
             entity_stores: self.entity_stores,
             secret_manager: self.secret_manager,
             user_manager: self.user_manager,
@@ -769,7 +770,7 @@ mod tests {
         assert_eq!(alice.username, "alice");
 
         for (yaml, names) in [
-            ("workspaces:\n  storage:\n    main:\n      type: nfs\n", ["the storage of workspaces 'main' (nfs)", "known are: local"]),
+            ("workspaces:\n  storage:\n    main:\n      type: nfs\n", ["the storage of workspaces 'main' (nfs)", "known are: directory, local"]),
             ("workspaces:\n  storage:\n    dev:\n      type: local\n      root: x\n      max_run_secs: 0\n", ["'dev'", "max_run_secs"]),
             ("content:\n  storage:\n    kept:\n      type: s3\n", ["the storage of content 'kept' (s3)", "known are: local"]),
             ("content:\n  storage:\n    kept:\n      type: local\n", ["the storage of content 'kept' (local)", "root"]),

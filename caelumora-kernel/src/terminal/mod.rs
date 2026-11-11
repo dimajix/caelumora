@@ -17,13 +17,13 @@
 //! may still run and ends one when told, and none runs longer than the storage's `max_run`.
 //!
 //! A storage is a backend (issue 324): its provider is made by the factory registered for its
-//! type - `local` here (`register_backends`), others by a plugin, such as the Open Terminal
-//! storages of `caelumora-open-terminal` (issue 327) -, from its parameters, which that factory
-//! reads and checks. What a provider outside the kernel has to offer is this module's public API: a
-//! `TerminalProvider` with its `Terminal`, `TerminalReader` and `Shell` - the handles it hands out,
-//! which are the API's (`caelumora_api::terminal`, issue 516) -, the commands of its storage kept
-//! in `Commands`, and its `max_run_secs` and `max_file_bytes` checked as `check_max_run_secs` and
-//! `check_max_file_bytes` check them.
+//! type - `local` and `directory` here (`register_backends`), others by a plugin, such as the Open
+//! Terminal storages of `caelumora-open-terminal` (issue 327) -, from its parameters, which that
+//! factory reads and checks. What a provider outside the kernel has to offer is this module's
+//! public API: a `TerminalProvider` with its `Terminal`, `TerminalReader` and `Shell` - the handles
+//! it hands out, which are the API's (`caelumora_api::terminal`, issue 516) -, the commands of its
+//! storage kept in `Commands`, and its `max_run_secs` and `max_file_bytes` checked as
+//! `check_max_run_secs` and `check_max_file_bytes` check them.
 
 mod commands;
 mod local;
@@ -47,11 +47,12 @@ use std::sync::Arc;
 /// of (issue 324).
 #[async_trait]
 pub trait TerminalProvider: Send + Sync + Debug {
-    /// Makes the place of the workspace `id`: empty.
+    /// Makes the place of the workspace `id`: empty, but where a storage keeps its workspaces in
+    /// a directory there already (`directory`).
     async fn create(&self, id: WorkspaceId) -> TerminalResult<()>;
-    /// Removes the place of the workspace `id`, with everything in it - the
-    /// commands running there ended first (issue 254); nothing there is no
-    /// error.
+    /// Removes the place of the workspace `id`, with everything in it - the commands running there
+    /// ended first (issue 254) -, but where a storage keeps its workspaces in a directory there
+    /// already, which stays; nothing there is no error.
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()>;
     /// The terminal of the workspace `id`, which writes no file larger than the storage takes.
     async fn terminal_for(&self, id: WorkspaceId) -> TerminalResult<Arc<dyn Terminal>>;
@@ -138,7 +139,8 @@ pub fn check_max_run_secs(secs: u64) -> ComponentResult<()> {
     Ok(())
 }
 
-/// Registers the storage of workspaces the kernel brings with `backends`: `local`.
+/// Registers the storages of workspaces the kernel brings with `backends`: `local` and
+/// `directory`.
 pub(crate) fn register_backends(backends: &mut Backends) {
-    local::register_backend(backends);
+    local::register_backends(backends);
 }

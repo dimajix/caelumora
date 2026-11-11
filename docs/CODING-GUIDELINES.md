@@ -246,6 +246,16 @@ handler answers that is in [REST-SERVER.md](REST-SERVER.md#errors)); `restore` f
 `NotFound` of its kind, since it needs what it restores. This holds for whoever offers a kind's
 lifecycle, the running session for its channels too (`SessionLoop::delete_channel`).
 
+What a caller chooses of a new entity is a `…Spec`, which the operation making the entity takes -
+`create`, `SessionManager::create_from_template`, `SessionLoop::create_channel` -, in the `spec.rs`
+of its module and exported from it: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec`, `GroupSpec`,
+`SessionSpec` and `ChannelSpec`. It holds only what the caller may choose, never what the manager
+sets (its id, owner, access list, times); free text as a `String`, validated as the entity is made.
+Its required parts are given to its `new`, the others are public fields with their defaults, so that
+a new optional part changes no caller:
+`WorkspaceSpec { description, ..WorkspaceSpec::new(name, scope, storage) }`. A spec with required
+parts has no `Default`; one without has nothing but `Default` (`SessionSpec`).
+
 ### Small return values
 
 A function that returns two values, called from a few places close to it - inside its module or
@@ -508,8 +518,8 @@ the server answers every error with problem details, as described in
     that depends on `tracing-subscriber` (issue 330).
 *   `RUST_LOG` selects the records; the configuration's `logging` section sets the format (`text`,
     the default, or `json`) and an optional file (see [CONFIGURATION.md](CONFIGURATION.md)). The
-    REST server logs to stderr, the TUI to `local/tui.log`, so that log lines do not break its
-    prompt.
+    REST server logs to stderr, the TUI to `tui.log` of its state directory, so that log lines do
+    not break its prompt.
 
 ### Levels
 

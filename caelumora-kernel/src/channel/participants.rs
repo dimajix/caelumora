@@ -656,7 +656,7 @@ mod tests {
         let hr_confidential =
             Classification::new(Confidentiality::Confidential, [Compartment::new("hr")]).unwrap();
         let with = |name: &str, classification: &Classification, participants| ChannelSpec {
-            classification: Some(classification.clone()),
+            classification: classification.clone(),
             ..spec(name, participants)
         };
         let refused = session

@@ -738,7 +738,10 @@ Built in are a JSON key/value file, re-read on every lookup so that secrets can 
 restart, and the process environment; the `secrets` section sets the chain, each provider a backend
 that a plugin may add (see [ARCHITECTURE.md](ARCHITECTURE.md#backends)).
 
-Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted. A
+Every lookup is checked with the `AccessPolicy` (`ReadSecret`) before any provider is consulted -
+but a command of a workspace storage that hands on the program's environment (`environment:
+inherit`, for a program of one person, see [WORKSPACE.md](WORKSPACE.md#storages)) reads it without
+asking, what the provider `env` reads among it. A
 component of a library holds no `SecretManager`: it is handed the secrets that may be read in the
 name of the work it serves (`Secrets`, bound by the kernel, `ActorRuntime::secrets`, issue 516), and
 each read is checked in that name. The ownership policy allows every one: a secret is a key and a

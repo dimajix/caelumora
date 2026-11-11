@@ -13,6 +13,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use caelumora_domain::group::GroupId;
 use caelumora_domain::user::UserId;
+use caelumora_kernel::group::GroupSpec;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::group::{CreateGroupRequest, GroupResponse, RenameGroupRequest};
 use std::sync::Arc;
@@ -52,8 +53,11 @@ pub(super) async fn create_group(
             "A group of a session's scope is its participants, made with it",
         )
     })?;
-    let made =
-        state.kernel.group_manager().create(&user.security_context(), &request.name, scope).await?;
+    let made = state
+        .kernel
+        .group_manager()
+        .create(&user.security_context(), GroupSpec::new(request.name, scope))
+        .await?;
     Ok((StatusCode::CREATED, Json(readable(&state, &user, made.id).await?)))
 }
 

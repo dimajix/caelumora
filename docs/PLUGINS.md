@@ -110,10 +110,10 @@ the `AppState`; the API serves them behind the same login as the kernel's (`rout
 that brings a component of a channel alone, such as `caelumora-decision` (issue 403), registers its
 kind in `register`. One that brings backends alone, such as `caelumora-open-terminal` (issue 327) or
 `caelumora-store-json` (issue 446), registers them in `backends` and nothing in `register`. A plugin
-may depend on another plugin to bring a backend of that plugin's service -
-`caelumora-model-ollama` on `caelumora-model` (issue 520) -, as it depends on the kernel to bring
-one of the kernel's; what a plugin's service offers is its own API, as the faces of
-`caelumora-skills` are. A backend of the stores runs the store suite in its own tests
+may depend on another plugin to bring a backend of that plugin's service - `caelumora-model-ollama`
+on `caelumora-model` (issue 520) - or to build a backend on one of that plugin's, as it depends on
+the kernel to bring one of the kernel's; what a plugin's service offers is its own API, as the faces
+of `caelumora-skills` are. A backend of the stores runs the store suite in its own tests
 (`caelumora_store::suite`, feature `test-support`). A plugin's tests use the world of the security
 suite - the kernel with the recording ownership policy and three users -,
 `caelumora_kernel::testing`, as a dev-dependency with the feature `test-support`. That world runs no

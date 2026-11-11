@@ -24,6 +24,9 @@
 //! is refused; what was put there before is deleted with it, and what was put there meanwhile -
 //! after the scope was gone through - is taken back (`keep_made`, `restore`).
 //!
+//! Whatever is put into a scope by its name is found there or made (`found_or_made`, issue 250):
+//! looked up once more if making it finds the name taken, by one made meanwhile.
+//!
 //! What lies in the scope is listed in the kernel's name, so that all of it is found, whatever the
 //! caller may read; nothing of the list reaches the caller. It is deleted and restored in the
 //! caller's name (issue 320): the store asks each as it asks of anything deleted or restored alone,
@@ -51,6 +54,7 @@ use caelumora_domain::store::{
 use caelumora_security::SecurityContext;
 use caelumora_store::{purge_behind, Deleted, EntityStore, EntityStores};
 use std::fmt;
+use std::future::Future;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -524,6 +528,36 @@ fn restored_unless_refused<D: Stored, T>(
     }
 }
 
+/// What `find` finds, or else what `make` makes - with whether it was made (issue 250). If another
+/// made one of its name meanwhile, the store refused the second - `taken` says whether `make`
+/// failed so - and what `find` finds then is the one. Only "there is none" means "make one": a
+/// lookup that failed is an error, not a reason for a second of that name (issue 77).
+///
+/// # Errors
+/// Whatever `find` reports, and whatever `make` reports - a name taken too, if `find` finds nothing
+/// afterwards: the one of that name lies where the caller may not read it.
+pub(crate) async fn found_or_made<T, E, Found, Made>(
+    find: impl Fn() -> Found,
+    make: impl FnOnce() -> Made,
+    taken: impl Fn(&E) -> bool,
+) -> Result<(T, bool), E>
+where
+    Found: Future<Output = Result<Option<T>, E>>,
+    Made: Future<Output = Result<T, E>>,
+{
+    if let Some(found) = find().await? {
+        return Ok((found, false));
+    }
+    match make().await {
+        Ok(made) => Ok((made, true)),
+        Err(refused) if taken(&refused) => match find().await? {
+            Some(found) => Ok((found, false)),
+            None => Err(refused),
+        },
+        Err(e) => Err(e),
+    }
+}
+
 /// Removes `id` of `store` for good, in the kernel's name: marked deleted first if it is not, since
 /// only what was deleted is purged (issue 164) - for what goes with something purged, or was made
 /// for something whose making failed. `false` if there is none.
@@ -541,7 +575,7 @@ pub async fn purge_for_good<T: Stored>(store: &dyn EntityStore<T>, id: T::Id) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{ScopeHolders, Unowned};
+    use super::{found_or_made, ScopeHolders, Unowned};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::channel::testing::make_channel;
     use caelumora_domain::component::ComponentBundle;
@@ -556,7 +590,44 @@ mod tests {
     use caelumora_domain::value::name::ScopedName;
     use caelumora_security::{Policies, SecurityContext};
     use caelumora_store::{EntityStores, Persistence};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    /// What `found_or_made` answers when nothing is found at first and making fails with `made`,
+    /// while the second lookup finds `then`; and how often it looked.
+    async fn found_or_made_with(
+        then: Option<&'static str>,
+        made: StoreError,
+    ) -> (Result<(&'static str, bool), StoreError>, usize) {
+        let looked = AtomicUsize::new(0);
+        let answer = found_or_made(
+            || async {
+                let first = looked.fetch_add(1, Ordering::SeqCst) == 0;
+                Ok(if first { None } else { then })
+            },
+            || async { Err(made) },
+            |e| matches!(e, StoreError::NameTaken { .. }),
+        )
+        .await;
+        (answer, looked.load(Ordering::SeqCst))
+    }
+
+    /// Issue 250: one made by another meanwhile is found by a second look; a name taken that a
+    /// second look does not find is the caller's to learn; another failure is no reason to look.
+    #[tokio::test]
+    async fn found_or_made_looks_again_only_for_a_name_taken_meanwhile() {
+        let taken = || StoreError::NameTaken { entity: "project" };
+        let (answer, looked) = found_or_made_with(Some("theirs"), taken()).await;
+        assert!(matches!(answer, Ok(("theirs", false))), "made meanwhile, not here: {answer:?}");
+        assert_eq!(looked, 2);
+        let (answer, looked) = found_or_made_with(None, taken()).await;
+        assert!(matches!(answer, Err(StoreError::NameTaken { .. })), "{answer:?}");
+        assert_eq!(looked, 2, "looked again, found none it may read");
+        let (answer, looked) =
+            found_or_made_with(Some("theirs"), StoreError::Validation("no".into())).await;
+        assert!(matches!(answer, Err(StoreError::Validation(_))), "{answer:?}");
+        assert_eq!(looked, 1, "not looked again");
+    }
 
     /// Whether `holders` refuse `scope` for want of its holder.
     async fn refused(holders: &ScopeHolders, scope: &Scope) -> bool {

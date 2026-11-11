@@ -114,6 +114,10 @@ drawn in [CRATES.md](CRATES.md):
 *   **`caelumora-store-json`** - the stores in JSON files below a directory (`JsonFileStore`), a
     plugin that brings nothing but the backend `json` of the stores (issue 446). See
     [STORAGE.md](STORAGE.md#the-entity-store).
+*   **`caelumora-store-home`** - the stores of a program of one person below a data directory
+    (`HomeStore`), every session a directory of its own, a plugin that brings nothing but the
+    backends `home` of the stores and of the content, built on `caelumora-store-json` (issue 554).
+    See [STORAGE.md](STORAGE.md#in-a-home-directory).
 *   **`caelumora-store-postgres`** - the stores in Postgres (`PostgresStore`, with `sqlx`), a plugin
     that brings nothing but the backend `postgres` of the stores, which keeps the entities and the
     states (issues 03, 04). See [STORAGE.md](STORAGE.md#in-postgres).
@@ -156,8 +160,9 @@ the model; the kernel knows none. A plugin is one crate; one that brings a libra
 into layers by Cargo features rather than crates. The first is `caelumora-skills`
 ([SKILLS.md](SKILLS.md#where-the-code-lives)), the second `caelumora-artifacts`, which depends on
 the kernel's workspaces, the third `caelumora-memory`; `caelumora-decision` brings a component of a
-channel alone, and `caelumora-open-terminal`, `caelumora-store-json` and `caelumora-store-postgres`
-bring backends alone. What runs an agent or serves its facets is no plugin but a **library** of the
+channel alone, and `caelumora-open-terminal`, `caelumora-store-json`, `caelumora-store-home` and
+`caelumora-store-postgres` bring backends alone. What runs an agent or serves its facets is no
+plugin but a **library** of the
 agent side (issue [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)), registered
 as a plugin is, but with a builder that offers nothing of the kernel (`Library`, `LibraryBuilder`).
 The agents are the essential one (issue 370): `caelumora-agents` registers the kinds of agent, whose
@@ -244,11 +249,11 @@ Sessions are made from **session templates**. A template names every participant
 users, and agents with their personality and scope - and the channels, which refer to the
 participants by name and name their internal actors, such as an approver. The domain builds the
 session and its channels from the users it is given, without touching a store
-(`SessionTemplate::build`); the kernel finds the owner, stores and starts the session, and then
-finds or makes the agents - an agent is the one of its name in exactly the scope the template asks
-for, made if there is none - and takes them in as anyone is taken into a running session; if that
-fails, the session is taken back (`SessionManager::create_from_template`). REST and the TUI both
-create sessions this way.
+(`SessionTemplate::build`); the kernel finds the owner and the personalities the template names,
+stores and starts the session, and then finds or makes the agents - an agent is the one of its name
+in exactly the scope the template asks for, made if there is none - and takes them in as anyone is
+taken into a running session; if that fails, the session is taken back
+(`SessionManager::create_from_template`). REST and the TUI both create sessions this way.
 
 A session may have a **workspace** attached: a tree of files that belongs to a user, with one
 classification, used by the participants of those channels of the session where it and the channel
@@ -270,11 +275,11 @@ leaves out a participant whose record no longer exists, and runs without it. A d
 in its channels so: they keep it, show it as a former participant and run it again once it is
 restored. What of an actor outlives its run - the outbox a user follows a channel through, while the
 channel is stopped too - is the `ActorManager`'s (issue 386). Making, deleting, restoring and
-purging an agent are the `AgentManager`'s - a template's agents too, which the template only
-finds -, renaming it its `AgentController`'s. What lies in a session's or a channel's scope goes
-with it, deleted, restored and purged by the manager of its kind; so an agent is made there only by
-whoever may read the session or the channel. An approver has no record of its own: it is held
-whole by its channel, as an internal actor of it, no participant (issue 420).
+purging an agent are the `AgentManager`'s - finding one by its name or making it too
+(`find_or_create`), for a template -, renaming it its `AgentController`'s. What lies in a session's
+or a channel's scope goes with it, deleted, restored and purged by the manager of its kind; so an
+agent is made there only by whoever may read the session or the channel. An approver has no record
+of its own: it is held whole by its channel, as an internal actor of it, no participant (issue 420).
 
 Details: [CHANNELS.md](CHANNELS.md).
 
@@ -506,18 +511,18 @@ The design repeats a few decisions; new code follows them.
     trusted as the kernel; what runs an agent or serves its facets is a **library** of the **agent
     side**, trusted for nothing: `caelumora-agents`, and the crates that bring components for an
     agent (which crate stands where is listed in [PLUGINS.md](PLUGINS.md#what-a-plugin-is)). A
-    library is not a program: the binaries (`caelumora-app`, `caelumora-tui`) link the kernel, its
-    plugins and the libraries, and choose which are in. A library sees the kernel through the
-    kernel's API alone - an actor its `ActorRuntime`, a component its `ComponentContext` and the
-    `Turn` it is called with -, and the kernel checks every call through it in the name of the actor
-    it gave it to. A library builds no `SecurityContext`, asks no policy and holds no manager, no
-    store and no controller of the kernel: what it needs decided, it asks the kernel to decide. What
-    the kernel cannot enforce it does not pretend to: a tool whose effect lies outside the system
-    runs if the library runs it, and an agent's own record - its transcript - is the agent side's;
-    the kernel's record of a conversation is the channel's history, taken at its door. A library
-    registers with a `LibraryBuilder`, which offers nothing of the kernel, and the kernel is not
-    built where a component kind of a library provides a facet the kernel builds in its own name or
-    uses a service of the kernel but the texts (issue
+    library is not a program: the programs (`caelumora-app`, `caelumora` of `caelumora-tui`) link
+    the kernel, its plugins and the libraries, and choose which are in. A library sees the kernel
+    through the kernel's API alone - an actor its `ActorRuntime`, a component its `ComponentContext`
+    and the `Turn` it is called with -, and the kernel checks every call through it in the name of
+    the actor it gave it to. A library builds no `SecurityContext`, asks no policy and holds no
+    manager, no store and no controller of the kernel: what it needs decided, it asks the kernel to
+    decide. What the kernel cannot enforce it does not pretend to: a tool whose effect lies outside
+    the system runs if the library runs it, and an agent's own record - its transcript - is the
+    agent side's; the kernel's record of a conversation is the channel's history, taken at its door.
+    A library registers with a `LibraryBuilder`, which offers nothing of the kernel, and the kernel
+    is not built where a component kind of a library provides a facet the kernel builds in its own
+    name or uses a service of the kernel but the texts (issue
     [516](../issues/516-the-runtime-trusts-the-agents-linked-into-it.md)). A library links the API,
     the domain and other libraries, never the kernel, `caelumora-security` or `caelumora-store` -
     `scripts/library-deps.sh` checks its dependencies, run by the pre-commit hook -, so the compiler

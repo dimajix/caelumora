@@ -133,7 +133,9 @@ Some rules hold across the endpoints:
     `409 name_taken` if the name was taken meanwhile. Deleting a session, channel or project answers
     `409 scope_not_empty` if something of its scope - of a project, its sessions among it - is left
     that the user may not delete; what they may is deleted. Purging is as the policy allows, by
-    default the system's alone. A channel is purged only with its session.
+    default the system's alone. A channel is purged only with its session. A session that runs in
+    another process sharing the store is neither opened, deleted, restored nor purged:
+    `409 session_runs_elsewhere`.
 *   **A channel can be unavailable.** One whose components cannot be read does not run, though its
     session does (see [CHANNELS.md](CHANNELS.md#running-channels)): it is listed, read and deleted
     as any other, says why in `unavailable`, and whatever is to be done in it answers
@@ -217,13 +219,13 @@ participants:
 Client errors state their cause. A text of the request that does not fit the field it is for - too
 long, of whitespace alone, of several lines where one is asked for - is `400 invalid_value`, naming
 the field (`ValueError`), wherever it is found out. A name that another of its kind has in its name
-space - a channel's in its session, an agent's in its scope - is `409 name_taken`, for every kind
-alike; a change refused because what it changes was changed meanwhile is `409 changed_meanwhile`
-(issue 492). Something the user may not read is answered as absent (`404`), like something that
-does not exist. A request that cannot be read at all is answered so too, by the extractors `Json`,
-`Path` and `Query` of `error.rs` in place of axum's: a malformed body is `invalid_request_body`, a
-malformed path `invalid_path`, a malformed query string - `?limit=abc` - `400 invalid_query` (issue
-384).
+space - a channel's in its session, an agent's in its scope, also one found where a template asks
+for it but of another personality or storage - is `409 name_taken`, for every kind alike; a change
+refused because what it changes was changed meanwhile is `409 changed_meanwhile` (issue 492).
+Something the user may not read is answered as absent (`404`), like something that does not exist. A
+request that cannot be read at all is answered so too, by the extractors `Json`, `Path` and `Query`
+of `error.rs` in place of axum's: a malformed body is `invalid_request_body`, a malformed path
+`invalid_path`, a malformed query string - `?limit=abc` - `400 invalid_query` (issue 384).
 
 Every error answers itself, by its type and its variant, not by what the handler was doing (issue
 323): each error type that reaches a handler implements `From<…> for ApiError` in `error.rs` - or,

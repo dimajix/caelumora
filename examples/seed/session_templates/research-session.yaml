@@ -27,7 +27,8 @@ session_templates:
   - Agent:
       name: Nora
       scope: SessionScope
-      personality_id: 11dd49c3-adaf-4555-a5c4-c73b0c6afddc
+      personality:
+        name: nora-researcher
   channels:
   - name: main
     classification:

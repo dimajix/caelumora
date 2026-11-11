@@ -80,7 +80,7 @@ pub const SAID: &str = "said";
 
 /// Whether a channel uses its session's workspace unless it says
 /// otherwise: it does (issue 251, decision 11).
-pub(crate) fn uses_workspace_by_default() -> bool {
+pub fn uses_workspace_by_default() -> bool {
     true
 }
 

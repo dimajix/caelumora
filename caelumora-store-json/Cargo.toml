@@ -12,11 +12,12 @@ caelumora-api.workspace = true
 caelumora-kernel.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # The files are read and written asynchronously, and names kept unique
-# under a lock per kind (issue 250).
-tokio = { workspace = true, features = ["fs", "io-util", "sync"] }
+# under a lock per kind (issue 250), waited for on a thread of its own.
+tokio = { workspace = true, features = ["fs", "io-util", "rt", "sync"] }
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 

@@ -850,6 +850,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "caelumora-store-home"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "caelumora-api",
+ "caelumora-domain",
+ "caelumora-kernel",
+ "caelumora-security",
+ "caelumora-store",
+ "caelumora-store-json",
+ "futures",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "caelumora-store-json"
 version = "0.1.0"
 dependencies = [
@@ -861,6 +884,7 @@ dependencies = [
  "caelumora-security",
  "caelumora-store",
  "chrono",
+ "futures",
  "serde",
  "serde_json",
  "tempfile",
@@ -1013,7 +1037,9 @@ dependencies = [
  "caelumora-model-ollama",
  "caelumora-model-systemone",
  "caelumora-open-terminal",
+ "caelumora-security",
  "caelumora-skills",
+ "caelumora-store-home",
  "caelumora-store-json",
  "caelumora-store-postgres",
  "caelumora-tool-attachment",
@@ -1025,6 +1051,7 @@ dependencies = [
  "clap",
  "rustyline",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "uuid",
@@ -2508,6 +2535,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nohash-hasher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bf50223579dc7cdcfb3bfcacf7069ff68243f8c363f62ffa99cf000a6b9c451"
+
+[[package]]
 name = "nom"
 version = "1.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3315,11 +3348,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8050abb251097357e24aff63ba2c52a6309ecb7d23a5474023df960a02694d8"
 dependencies = [
  "annotate-snippets",
+ "base64 0.22.1",
  "encoding_rs_io",
  "granit-parser",
+ "nohash-hasher",
  "num-traits",
  "serde_core",
  "smallvec",
+ "zmij",
 ]
 
 [[package]]
@@ -3410,6 +3446,12 @@ dependencies = [
  "cpufeatures 0.3.1",
  "digest 0.11.3",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"
@@ -4175,6 +4217,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 

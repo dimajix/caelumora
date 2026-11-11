@@ -278,6 +278,8 @@ impl From<WorkspaceError> for ApiError {
                 Self::not_found("workspace_not_found", detail)
             }
             WorkspaceError::UnknownStorage(_) => Self::bad_request("unknown_storage", detail),
+            // Its name is another's, as `NameTaken` says.
+            WorkspaceError::InAnotherStorage(_) => Self::conflict("name_taken", detail),
             WorkspaceError::StorageGone(e) => e.into(),
             WorkspaceError::StorageNotCleared(_) => {
                 Self::bad_request("storage_not_cleared", detail)
@@ -374,6 +376,8 @@ impl From<AgentError> for ApiError {
             AgentError::PersonalityOutOfScope(_) => {
                 Self::bad_request("personality_out_of_scope", detail)
             }
+            // Its name is another's, as `NameTaken` says.
+            AgentError::OfAnotherPersonality(_) => Self::conflict("name_taken", detail),
             AgentError::Invalid(e) => e.into(),
             AgentError::Store(e) => e.into(),
         }
@@ -483,6 +487,7 @@ impl From<SessionError> for ApiError {
             SessionError::ProjectDeleted(_) => Self::conflict("project_deleted", detail),
             SessionError::ScopeNotEmpty(e) => e.into(),
             SessionError::ShuttingDown => Self::unavailable("shutting_down", detail),
+            SessionError::RunsElsewhere(_) => Self::conflict("session_runs_elsewhere", detail),
             SessionError::AlreadyParticipant { .. } => {
                 Self::conflict("already_participant", detail)
             }
@@ -711,6 +716,7 @@ mod tests {
     use caelumora_domain::store::Stored;
     use caelumora_domain::template::SessionTemplateId;
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::Name;
     use caelumora_domain::work::TurnId;
     use caelumora_domain::workspace::WorkspaceId;
     use serde::Deserialize;
@@ -1000,6 +1006,10 @@ mod tests {
             (400, "invalid_participant".to_string())
         );
         assert_eq!(
+            answer(SessionError::RunsElsewhere(SessionId::new())),
+            (409, "session_runs_elsewhere".to_string())
+        );
+        assert_eq!(
             answer(SessionError::ShuttingDown),
             (503, "shutting_down".to_string()),
             "for now, not for good (issue 297)"
@@ -1206,6 +1216,17 @@ mod tests {
             answer(WorkspaceError::Store(StoreError::NameTaken { entity: "workspace" })),
             (409, "name_taken".to_string()),
             "a store error inside, though transparent"
+        );
+        let shared = Name::new("shared").unwrap();
+        assert_eq!(
+            answer(WorkspaceError::InAnotherStorage(shared.clone())),
+            (409, "name_taken".to_string()),
+            "its name is another's"
+        );
+        assert_eq!(
+            answer(AgentError::OfAnotherPersonality(shared)),
+            (409, "name_taken".to_string()),
+            "its name is another's"
         );
         assert_eq!(
             answer(WorkspaceError::Store(StoreError::PermissionDenied(refused("workspace")))),

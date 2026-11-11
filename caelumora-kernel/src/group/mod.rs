@@ -28,8 +28,10 @@
 //! (`prune_gone_groups`, issue 347).
 
 mod manager;
+mod spec;
 
 pub use manager::GroupManager;
+pub use spec::GroupSpec;
 
 use caelumora_domain::group::{Group, GroupId};
 use caelumora_domain::security::{AclEntry, Subject};
@@ -385,8 +387,10 @@ mod tests {
         let alice = UserId::new();
         let hers =
             SecurityContext::new(ActorId::User(alice), Default::default(), Default::default());
-        let team =
-            manager.create(&hers, "Helpers", Scope::UserScope { user_id: alice }).await.unwrap();
+        let team = manager
+            .create(&hers, GroupSpec::new("Helpers", Scope::UserScope { user_id: alice }))
+            .await
+            .unwrap();
 
         refusals.store(1, Ordering::SeqCst);
         let renamed = manager.rename(&hers, team.id, "Experts").await.expect("changed once more");

@@ -22,15 +22,18 @@ session_templates:
   - Agent:
       name: Coder
       scope: SessionScope
-      personality_id: ee3b010f-b0fc-462b-98b7-25b1342021fb
+      personality:
+        name: team-coder
   - Agent:
       name: Reviewer
       scope: SessionScope
-      personality_id: c0bb5f0c-d731-4cf6-bef0-aabe69ea44d5
+      personality:
+        name: team-reviewer
   - Agent:
       name: Planner
       scope: SessionScope
-      personality_id: 92576955-d5fb-4bad-9b46-e856b92f49db
+      personality:
+        name: team-planner
   channels:
   - name: main
     components:

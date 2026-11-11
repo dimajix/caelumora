@@ -1,12 +1,12 @@
 //! `ProjectManager`: making, deleting, restoring and purging shared projects (issue 467), with
 //! the sessions that lie in them and what lies in their scope.
 
-use super::{store_error, ProjectError, ProjectResult};
+use super::{store_error, ProjectError, ProjectResult, ProjectSpec};
 use crate::error::is_forbidden;
 use crate::event::EventBus;
 use crate::group::{keep_participants, GroupManager};
 use crate::lock::LocksById;
-use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
+use crate::scoped::{found_or_made, purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::session::{SessionError, SessionManager};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::event::{Announcing, GlobalEvent};
@@ -16,7 +16,7 @@ use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::{Session, SessionField};
-use caelumora_domain::store::{StoreResultExt, Stored};
+use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_security::SecurityContext;
@@ -66,29 +66,22 @@ impl ProjectManager {
         }
     }
 
-    /// Makes a shared project of the user `ctx` acts for, of `name` in `scope` - the global one or
-    /// their own -, described by `description`, with nobody among its members yet (`CreateProject`,
-    /// asked by the store), and the group of its members in the kernel's name.
+    /// Makes the shared project `spec` asks for, of the user `ctx` acts for - in the global scope
+    /// or their own -, with nobody among its members yet (`CreateProject`, asked by the store), and
+    /// the group of its members in the kernel's name.
     ///
     /// # Errors
     /// `OwnerNotAUser`, `InvalidScope` for another scope, `Invalid` for a name or a description
     /// that does not fit, or a `StoreError` - `NameTaken`, `PermissionDenied`, and `Validation` for
     /// the name `own` or another user's scope.
-    pub async fn create(
-        &self,
-        ctx: &SecurityContext,
-        name: &str,
-        scope: Scope,
-        description: Option<&str>,
-    ) -> ProjectResult<Project> {
+    pub async fn create(&self, ctx: &SecurityContext, spec: ProjectSpec) -> ProjectResult<Project> {
+        let ProjectSpec { name, scope, description } = spec;
         let ActorId::User(owner) = ctx.principal_id else {
             return Err(ProjectError::OwnerNotAUser);
         };
-        if !matches!(scope, Scope::GlobalScope | Scope::UserScope { .. }) {
-            return Err(ProjectError::InvalidScope);
-        }
-        let mut project = Project::new(ScopedName::new(name, scope)?, owner);
-        project.description = Description::optional(description)?;
+        require_shared(&scope)?;
+        let mut project = Project::new(ScopedName::new(&name, scope)?, owner);
+        project.description = Description::optional(description.as_deref())?;
         self.stores.projects.create(ctx, &mut project).await?;
         if let Err(e) =
             keep_participants(self.stores.groups.as_ref(), Group::of_project(&project)).await
@@ -103,6 +96,29 @@ impl ProjectManager {
         Ok(project)
     }
 
+    /// The project of the name `spec` asks for in exactly its scope, among those `ctx` may read;
+    /// else a new one, made as `create` makes it - with whether it was made. One made by another
+    /// meanwhile is looked up once more (`found_or_made`, issue 250).
+    ///
+    /// # Errors
+    /// `InvalidScope` for a scope no shared project lies in, `Invalid` for a name that does not
+    /// fit; what `create` reports - `NameTaken` if the one of its name lies where `ctx` may not
+    /// read it -; whatever else the store reports.
+    pub async fn find_or_create(
+        &self,
+        ctx: &SecurityContext,
+        spec: &ProjectSpec,
+    ) -> ProjectResult<(Project, bool)> {
+        require_shared(&spec.scope)?;
+        let name = ScopedName::new(&spec.name, spec.scope.clone())?;
+        found_or_made(
+            || async { Ok(self.stores.projects.find_by_name(ctx, &name).await.optional()?) },
+            || self.create(ctx, spec.clone()),
+            |e| matches!(e, ProjectError::Store(StoreError::NameTaken { .. })),
+        )
+        .await
+    }
+
     /// Deletes project `id` on behalf of `ctx` (`DeleteProject`): marked first, then the sessions
     /// that lie in it - each through the `SessionManager`, in `ctx`'s name, with what lies in its
     /// scope -, then what lies in its scope (`ScopedEntities`), as far as `ctx` may delete it, then
@@ -113,8 +129,9 @@ impl ProjectManager {
     ///
     /// # Errors
     /// `InvalidScope` for a session's own, which goes with the session; `ScopeNotEmpty` with how
-    /// many sessions and what else are left; `Session` if deleting a session failed otherwise; or
-    /// whatever the store reports, `PermissionDenied` included.
+    /// many sessions and what else are left; `Session` if deleting a session failed otherwise -
+    /// `SessionError::RunsElsewhere` for one another process runs (issue 554), which keeps the
+    /// project as it is; or whatever the store reports, `PermissionDenied` included.
     pub async fn delete(&self, ctx: &SecurityContext, id: ProjectId) -> ProjectResult<bool> {
         let _lifecycle = self.lifecycles.lock(id).await;
         let Some(project) = self.stores.projects.get(ctx, id).await.optional()? else {
@@ -302,6 +319,18 @@ impl ProjectManager {
     }
 }
 
+/// Whether a shared project lies in `scope`: the global one or a user's own - a session's holds
+/// its own project, which goes with the session.
+///
+/// # Errors
+/// `InvalidScope` for another scope.
+fn require_shared(scope: &Scope) -> ProjectResult<()> {
+    match scope {
+        Scope::GlobalScope | Scope::UserScope { .. } => Ok(()),
+        _ => Err(ProjectError::InvalidScope),
+    }
+}
+
 /// The sessions that lie in project `id`.
 fn in_project(id: ProjectId) -> Query<SessionField> {
     Query::filtered(Filter::in_project(id))
@@ -311,12 +340,35 @@ fn in_project(id: ProjectId) -> Query<SessionField> {
 mod tests {
     use super::*;
     use crate::session::testing::{create, failing_kernel};
+    use crate::testing::TestKernel;
     use caelumora_domain::channel::Channel;
     use caelumora_domain::component::ComponentBundle;
     use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::user::UserId;
     use std::sync::atomic::Ordering;
+
+    /// A project is found by its name where it is asked for, or made there: whoever asks twice, or
+    /// two at once, get the one project, made once.
+    #[tokio::test]
+    async fn a_project_is_found_by_its_name_or_made_once() {
+        let manager = Arc::new(SessionManager::new(TestKernel::default().build()));
+        let projects = ProjectManager::new(manager);
+        let owner = UserId::new();
+        let ctx =
+            SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
+        let spec = ProjectSpec::new("report", Scope::UserScope { user_id: owner });
+
+        let (one, other) = tokio::join!(
+            projects.find_or_create(&ctx, &spec),
+            projects.find_or_create(&ctx, &spec)
+        );
+        let ((one, one_made), (other, other_made)) = (one.unwrap(), other.unwrap());
+        assert_eq!(one.id, other.id, "one project");
+        assert!(one_made != other_made, "made once: {one_made}, {other_made}");
+        let (again, made) = projects.find_or_create(&ctx, &spec).await.unwrap();
+        assert_eq!((again.id, made), (one.id, false), "found the next time");
+    }
 
     /// Issue 469: a project whose members' group cannot come back stays deleted, marked as it was,
     /// and tried again, comes back with its sessions and what lay in its scope.
@@ -332,7 +384,7 @@ mod tests {
         let system = SecurityContext::system();
         let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
-            .create(&ctx, "report", Scope::UserScope { user_id: owner }, None)
+            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
         session.update_project(&ctx, Some(project.id)).await.unwrap();
@@ -381,7 +433,7 @@ mod tests {
         let system = SecurityContext::system();
         let session = create(&manager, &ctx, make_session("in it", owner)).await.unwrap();
         let project = projects
-            .create(&ctx, "report", Scope::UserScope { user_id: owner }, None)
+            .create(&ctx, ProjectSpec::new("report", Scope::UserScope { user_id: owner }))
             .await
             .unwrap();
         session.update_project(&ctx, Some(project.id)).await.unwrap();

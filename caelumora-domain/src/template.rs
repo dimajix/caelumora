@@ -4,7 +4,6 @@
 //! (`SessionManager::create_from_template`, issue 88), so nothing here touches a store.
 
 use crate::actor::ActorId;
-use crate::agent::PersonalityId;
 use crate::approval::{ApprovalRule, ApprovalStrategy, Approver};
 use crate::channel::{Channel, ChannelId, InternalActor, Participant};
 use crate::component::ComponentConfig;
@@ -42,18 +41,6 @@ pub enum TemplateError {
     /// A scope that cannot be made yet.
     #[error("the scope '{0}' is not supported yet")]
     UnsupportedScope(&'static str),
-    /// The agent the template names exists in the scope it asks for, but
-    /// with another personality (issue 178): neither reused nor replaced.
-    #[error(
-        "the agent '{0}' already exists where the template asks for it, with another personality"
-    )]
-    AgentNameTaken(Name),
-    /// The workspace the template names exists in the scope it asks for,
-    /// but in another storage (issue 251): neither reused nor replaced.
-    #[error(
-        "the workspace '{0}' already exists where the template asks for it, in another storage"
-    )]
-    WorkspaceNameTaken(Name),
 }
 
 pub type TemplateResult<T> = Result<T, TemplateError>;
@@ -292,19 +279,6 @@ pub struct WorkspaceTemplate {
     pub description: Option<Description>,
 }
 
-impl WorkspaceTemplate {
-    /// Its name where it lies for the session `session_id` of `owner`.
-    ///
-    /// # Errors
-    /// `TemplateError::UnsupportedScope` for a group scope.
-    pub fn scoped_name(&self, session_id: SessionId, owner: UserId) -> TemplateResult<ScopedName> {
-        Ok(ScopedName {
-            name: self.name.clone(),
-            scope: self.scope.instantiate(session_id, owner)?,
-        })
-    }
-}
-
 /// A template lies in a user's scope or everywhere (issue 178): one of a
 /// session's or a channel's scope would make sessions that can never lie
 /// in it, so it is not stored.
@@ -454,8 +428,8 @@ impl SessionTemplate {
 pub enum ParticipantTemplate {
     /// A user; "user" is the session's owner.
     User { name: String },
-    /// An agent of `personality_id`, found by its name in `scope` or made.
-    Agent { name: Name, scope: ScopeTemplate, personality_id: PersonalityId },
+    /// An agent of the personality `personality`, found by its name in `scope` or made.
+    Agent { name: Name, scope: ScopeTemplate, personality: ScopedName },
 }
 
 /// What a participant of a template is for one session: the kernel finds or makes what it names
@@ -464,9 +438,9 @@ pub enum ParticipantTemplate {
 pub enum ParticipantRequest {
     /// This user, who must exist.
     User(UserId),
-    /// The agent of that name in exactly that scope, if it is of
-    /// `personality_id`, or a new one of it there.
-    Agent { name: ScopedName, personality_id: PersonalityId },
+    /// The agent of that name in exactly that scope, if it is of the personality of the name
+    /// `personality`, in exactly its scope, or a new one of it there.
+    Agent { name: ScopedName, personality: ScopedName },
 }
 
 impl ParticipantTemplate {
@@ -493,13 +467,13 @@ impl ParticipantTemplate {
                 Ok(ParticipantRequest::User(owner))
             }
             ParticipantTemplate::User { name } => Err(TemplateError::UnboundUser(name.clone())),
-            ParticipantTemplate::Agent { name, scope, personality_id } => {
+            ParticipantTemplate::Agent { name, scope, personality } => {
                 Ok(ParticipantRequest::Agent {
                     name: ScopedName {
                         name: name.clone(),
                         scope: scope.instantiate(session_id, owner)?,
                     },
-                    personality_id: *personality_id,
+                    personality: personality.clone(),
                 })
             }
         }
@@ -581,7 +555,7 @@ mod tests {
                 ParticipantTemplate::Agent {
                     name: Name::new("helper").unwrap(),
                     scope: ScopeTemplate::UserScope,
-                    personality_id: PersonalityId::new(),
+                    personality: ScopedName::new("plain", Scope::GlobalScope).unwrap(),
                 },
             ],
             channels: vec![
@@ -770,7 +744,7 @@ mod tests {
         let group = ParticipantTemplate::Agent {
             name: Name::new("x").unwrap(),
             scope: ScopeTemplate::GroupScope,
-            personality_id: PersonalityId::new(),
+            personality: ScopedName::new("plain", Scope::GlobalScope).unwrap(),
         };
         assert!(
             matches!(group.request(session, owner), Err(TemplateError::UnsupportedScope("group"))),

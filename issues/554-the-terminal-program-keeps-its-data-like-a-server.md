@@ -1,6 +1,6 @@
 # 554 — The terminal program keeps its data as a server does, out of reach of its user
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Persistence
@@ -299,3 +299,131 @@ Each reviewed and committed on its own, on a branch of this issue.
   identity, an `id` in a file taking precedence; `Agent::personality_id`, owner, access list and
   scope stay ids; configuration held by state stays by name; a crate of its own over the state side
   of the JSON store; directories of state by id, with names as symbolic links.
+- **2026-11-10** — Step 1: `JsonStates` and `StateLayout` out of `JsonFileStore`, which no longer is
+  a state store itself but hands out its `JsonStates`; a layout says where alone, and what is
+  written makes its directories. `JsonFileStore::new` takes the journal's floor in place of
+  `with_journal_floor`. To be settled in the plan of step 4: the store suite puts states of channels
+  that have no document, for which the layout of `home` knows no session.
+- **2026-11-10** — Step 2: a template names a personality by name, resolved as the session is made,
+  in the name of whoever makes it and before anything is stored; what an agent keeps is its id. The
+  rule of addresses and identities is in `docs/STORAGE.md`, and `docs/CRATES.md` allows a plugin
+  that builds a backend on another's. Stored data: the session templates, to be deleted.
+- **2026-11-10** — Step 3: the key of an artifact's content holds its project,
+  `artifacts/<project>/<artifact>/<content>`. An artifact never leaves its project: lifting one
+  keeps its id. Stored data: the content of artifacts and their documents, to be deleted.
+- **2026-11-10** — Decided for step 4, with the maintainer. **The backend finds what lies where by
+  searching, and remembers it.** `DocumentStorage` and the state stores name a document or a channel
+  by its id alone, and only this layout needs what lies above it. Passing the session down
+  (`Address<Channel>`) was weighed and rejected: it costs 21 methods of the kernel's stores, and
+  leaves what lies in a scope, which no address names, to be searched for all the same. `Address`
+  stays what issue 335 made it, how an event names an entity. A channel without a directory of a
+  session lies in `channels/<id>`, for the store suite, which keeps states of channels no document
+  names. **A document stays where it was made**: a project is tied to the directory the program was
+  started in, so that nothing is lifted, and should a scope change all the same, the document says
+  so and nothing moves. **A session's artifacts lie in its project**, `projects/<id>/artifacts`, not
+  in the session's directory, and outlive it. Sessions stay flat, `sessions/<id>`, since the kernel
+  makes each in its own project and moves it from there. **`memory` and `user_profile` lie in the
+  directory of their agent and user** (`HomeStoreConfig::within`), since the backend knows kinds by
+  name alone. **Comments in a file are lost** when the program writes it. The session's lock moves
+  to step 6: only the program knows when a session runs. Step 4 is committed in three parts: the
+  crate with its documents and states; the definitions as files; the content and the plugin.
+- **2026-11-10** — Before step 4, without a change of behaviour: `JsonDocuments` and
+  `DocumentLayout` out of `JsonFileStore`, as step 1 did with its states. Documents by id lie as
+  JSON files in `home` too, so that it would otherwise repeat their revisions and names; what is
+  written makes its directories.
+- **2026-11-10** — Step 4, its first part: the crate `caelumora-store-home`, its documents by id
+  and its states, a `flock` per kind, passing the store suite. A document is the file `<kind>.json`
+  in a directory named by its id, in `<kind>s` of whatever its scope says. The states of a channel
+  lie in `state/` of its directory, apart from what lies in the channel's scope. Removing a document
+  removes what it leaves empty, never what is still in its directory. `HomeStorePlugin` comes with
+  it, which the program links in step 6. Still to come: the symbolic links of names, which need the
+  layout to hear of a write; and whether the session's lock of step 6 also keeps another program
+  from purging a running session, whose channel would otherwise start a directory of its own.
+- **2026-11-10** — Before the second part of step 4, as a preparation: `JsonDocuments` is
+  `FileDocuments`, since how a document looks in its file is a `DocumentFormat` of its own, and a
+  `DocumentLayout` says only where it lies. It offers `all` as a stream, `named` to narrow what a
+  name is looked for among, `moved_to` and `written`; `lock` names the file a write holds the lock
+  of, in place of `writing`. One change of behaviour: the JSON store's writes are kept apart by a
+  lock of the file system, `entities/<kind>.lock`, also between processes. `scan` still takes every
+  id first: what does not meet a filter is passed over for what follows, so that how many are
+  needed cannot be told, and a bounded selection would list the directory anew within one scan.
+  A format is given the path, since a definition takes its name and its id from it.
+- **2026-11-10** — Step 4, its second part: the definitions as files and the links of names. A
+  definition of a user's or a group's scope lies in the directory of that user or group in the data
+  directory, not in the configuration directory with its scope in it: the names of different
+  scopes would share a file there. A deleted definition lies by its id in `.deleted`, so that its
+  name is free, as the store asks of what is deleted. Looking one up by its name reads every file of
+  the kind: whether another file holds the same id or name is told by reading them all, also for
+  one looked up by its id, so that a copy made meanwhile is seen. One type of `home`,
+  `Definitions`, is the layout and the format of a kind's definitions alike. A file named by a
+  name takes it from its file, whatever a field says. No link is made for what lies in a user's or
+  a group's scope, whose names share a directory, nor under a name that is an id. What prints the
+  id of a file goes public with `caelumora id`, in step 6.
+- **2026-11-10** — `DocumentFormat::render` is given the text of the file it takes the place of,
+  which `FileDocuments` read to judge the write: an `id` once in a definition's file stays when the
+  file moves - deleted, restored, renamed -, and a format reads no file itself.
+- **2026-11-10** — Step 4, its third part: the content `home` (`HomeContent`), registered by
+  `HomeStorePlugin`. A key lies in `content/` of the directory of what its second segment names,
+  apart from the documents there - the versions of an artifact would otherwise share the directory
+  of its document, which removing them would take along -, where the key space is named in
+  `spaces`, found by the same search as the stores' - decided with the
+  maintainer, who finds none of the ways satisfying; issue
+  [556](556-what-an-id-lies-in-is-found-by-searching.md) thinks it through. The files are written
+  by the kernel's `LocalContentStorage`, now public for it, below the data directory, so that a
+  copy between two channels is one of one storage.
+- **2026-11-10** — Step 5, decided with the maintainer and done: the storage of workspaces
+  `directory`, `LocalProvider` whose workspaces all lie in one directory (`dir`), each named by a
+  link `<root>/<id>` to it, made by `create` and removed by `remove`, the directory never. What
+  works in a workspace - its terminal, a command and its environment - is handed the directory
+  itself, never the link, so that `pwd` and the paths a model is shown are where it works. Its
+  `destination` has to be given. `environment: inherit` hands a command the program's environment,
+  its `HOME` too, so that the person's tools, configuration and keys are there; `isolated`, the
+  default, is `local`'s. A workspace is found by a name made from its directory's path, which
+  step 6 settles.
+- **2026-11-11** — Step 6, decided with the maintainer: in three parts - the program starting
+  without a configuration in its directory; the sessions of a directory (`--continue`, `--resume`,
+  `--sessions`) under the session's lock; `id <file>`, with the program named `caelumora`.
+  `~/.config/caelumora/config.yaml` lies over the defaults, section by section; `--config`
+  replaces them. A first start writes a template `default` and its assistant's personality into the
+  configuration directory, so that they are the person's to change.
+- **2026-11-11** — Step 6, its first part: the program's directories of XDG, its defaults
+  (`allow_all`, `accept_any` with the system's user, `home` for the stores and the content, the
+  storage `here` of the directory it was started in, with a shell and the person's environment),
+  the files of a first start, and the project and the workspace of the directory, found by its name
+  and a part of an id of its path, or made in the user's scope. Started for real: an empty home
+  gets its files, a second start in one directory finds its project, workspace and agent again, and
+  another directory gets its own. The links of `directory` lie in `links`, since `workspaces` of the
+  data directory holds the documents of the workspaces, and a link there met one.
+- **2026-11-11** — Decided before the second part of step 6: finding or making a workspace and a
+  project is their managers' (`find_or_create`), shared by templates and the terminal program, and
+  what a caller chooses of a new entity is a `…Spec` that `create` takes. The specs come first, as a
+  step of their own without a change of behaviour: `WorkspaceSpec`, `ProjectSpec`, `AgentSpec` and
+  `GroupSpec`, and `ChannelSpec` with a `new` and its defaults in place of `None`; each in the
+  `spec.rs` of its module, `SessionSpec` and `ChannelSpec` in that of `session`.
+- **2026-11-11** — Finding or making: `WorkspaceManager`, `ProjectManager` and `AgentManager` find
+  one by the name a spec asks for, or make it, and look once more for one made by another meanwhile
+  (`find_or_create`, the steps shared as `found_or_made`); a workspace of that name in another
+  storage and an agent of another personality are refused by their managers' errors, which take the
+  place of the template's. Templates and the terminal program use them: three programs started at
+  once in a new directory get one project and one workspace.
+- **2026-11-11** — Step 6, its second part, decided with the maintainer: first the session's lock,
+  as a step of its own, then `--continue`, `--resume` and `--sessions`, the sessions of a directory
+  ordered by their last message. The lock is the store's to offer and the `SessionManager`'s to
+  take (`SessionLocks`, `PersistenceBackend::session_locks`): held as a session starts and let go as
+  it stops, and taken for its deletion, restoring and purge where it does not run, so that another
+  program neither starts, deletes, restores nor purges a running session (`RunsElsewhere`) - which
+  answers the question of the first part of step 4. `home` holds a session by a `flock` of
+  `locks/sessions/<id>`, not of `sessions/<id>/lock`, which would keep the session's directory from
+  being removed with it; the file goes as the session is purged.
+- **2026-11-11** — Step 6, its second part done: `--sessions` lists the sessions of the project of
+  the directory, by the last message said in a channel the person reads - a session without one by
+  when it was made -, `--continue` opens the one spoken in last, or starts one, and `--resume <id>`
+  the one whose id begins so. Started for real: two sessions listed in their order, one resumed and
+  spoken in comes first, and resuming it again while it is open in another terminal is refused.
+- **2026-11-11** — Step 6, its third part: the program is called `caelumora`, its crate still
+  `caelumora-tui`, and `caelumora id <file>` prints the id the store keeps a definition's file by -
+  derived from its name where the file names none, else its own -, as `HomeStore::identity_of`
+  reads it, by the same reading the store does; with a hint to write a derived id into the file.
+  It asks the store `home` of the configuration, without a kernel.
+- **2026-11-11** — Done: every step is in. Not tried for real: a turn of a model in the terminal
+  program, since no model was at hand; what it does is its components', as in the server.

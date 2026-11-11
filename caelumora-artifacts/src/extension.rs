@@ -55,7 +55,7 @@ pub enum ArtifactError {
     #[error("the artifact '{0}' is classified otherwise than the workspace; publish it under another name")]
     ClassifiedOtherwise(String),
     /// Published under a name in a scope an artifact does not lie in: the caller vouches for a
-    /// project's (issue 467).
+    /// project's (issue 467). Or a document without a project, which could not have been stored.
     #[error("an artifact lies in a project's scope")]
     InvalidScope,
     #[error(transparent)]

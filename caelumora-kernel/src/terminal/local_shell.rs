@@ -1,12 +1,14 @@
-//! The shell of the `local` provider (issue 251): commands run with `bash -c`
-//! in the workspace's directory on Caelumora's host, as its user - so it
-//! is opt-in (`shell` of the storage) and meant for development and tests.
+//! The shell of the `local` provider (issue 251): commands run with `bash -c` in the workspace's
+//! directory on Caelumora's host, as its user - so it is opt-in (`shell` of the storage) and meant
+//! for development, tests, and a program of one person, whose commands are its user's.
 //!
 //! - Each command runs in a process group of its own, and killing it kills
 //!   the group: what it started goes with it.
-//! - Its environment is cleared but for `PATH`, `HOME` (the workspace),
-//!   `LANG`, `TERM=dumb`, `NO_COLOR` and `CAELUMORA_WORKSPACE`: nothing of
-//!   Caelumora's own environment - no secret - reaches a command.
+//! - Its environment is cleared but for `PATH`, `HOME` (the workspace), `LANG`, `TERM=dumb`,
+//!   `NO_COLOR`, `PWD` and `CAELUMORA_WORKSPACE`: nothing of Caelumora's own environment - no
+//!   secret - reaches a command; unless the storage hands it on (`Environment::Inherit`), for a
+//!   program of one person whose commands are its user's. Its `PWD` is the workspace's directory
+//!   either way, so that `pwd` tells where it runs, not where Caelumora was started.
 //! - What it prints is kept up to `KEPT_OUTPUT`, the oldest dropped first,
 //!   and the command as long as its storage keeps commands
 //!   (`commands::KEPT_AFTER_END`).
@@ -23,6 +25,7 @@ use caelumora_domain::workspace::CommandStatus;
 use caelumora_domain::workspace::WorkspaceId;
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
+use serde::Deserialize;
 use std::env;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -102,6 +105,18 @@ impl Kept for Command {
 /// The commands of the workspaces of a `local` storage.
 pub(super) type LocalCommands = Commands<Arc<Command>>;
 
+/// What a command is given of the environment Caelumora runs in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Environment {
+    /// Nothing but `PATH`, the workspace as its `HOME`: no secret of Caelumora's reaches it.
+    #[default]
+    Isolated,
+    /// All of it, its `HOME` too: the commands of a program of one person are its user's, who
+    /// needs their tools, their configuration and their keys there (issue 554).
+    Inherit,
+}
+
 /// The shell of one workspace, as one scope sees it.
 #[derive(Debug)]
 pub(super) struct LocalShell {
@@ -111,6 +126,7 @@ pub(super) struct LocalShell {
     pub(super) commands: Arc<LocalCommands>,
     /// How long a command may run.
     pub(super) max_run: Duration,
+    pub(super) environment: Environment,
 }
 
 impl LocalShell {
@@ -170,20 +186,18 @@ fn state(id: &str, running: &Running, offset: u64) -> CommandState {
 #[async_trait]
 impl Shell for LocalShell {
     async fn start(&self, command: &str) -> TerminalResult<String> {
-        let mut child = process::Command::new("bash")
-            .arg("-c")
-            .arg(command)
-            .current_dir(&self.dir)
-            .env_clear()
-            .env(
-                "PATH",
-                env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into()),
-            )
-            .env("HOME", &self.dir)
-            .env("LANG", "C.UTF-8")
+        let mut bash = process::Command::new("bash");
+        bash.arg("-c").arg(command).current_dir(&self.dir);
+        if self.environment == Environment::Isolated {
+            let path = env::var_os("PATH").unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into());
+            bash.env_clear().env("PATH", path).env("HOME", &self.dir).env("LANG", "C.UTF-8");
+        }
+        let mut child = bash
             .env("TERM", "dumb")
             .env("NO_COLOR", "1")
             .env("CAELUMORA_WORKSPACE", &self.dir)
+            .env("PWD", &self.dir)
+            .env_remove("OLDPWD")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -267,6 +281,7 @@ mod tests {
             scope: "channel".to_string(),
             commands: Arc::default(),
             max_run,
+            environment: Environment::Isolated,
         }
     }
 
@@ -282,6 +297,7 @@ mod tests {
             scope: scope.to_string(),
             commands: Arc::clone(&shell.commands),
             max_run: shell.max_run,
+            environment: shell.environment,
         }
     }
 

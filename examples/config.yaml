@@ -188,7 +188,7 @@ users:
 #  address: "127.0.0.1:3000"
 
 # Log format and destination; what is logged is selected with RUST_LOG.
-# Defaults: text, to stderr (REST server) or local/tui.log (TUI).
+# Defaults: text, to stderr (REST server) or tui.log of the state directory (TUI).
 #logging:
 #  format: json
 #  file: "local/server.log"

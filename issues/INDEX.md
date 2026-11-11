@@ -67,7 +67,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [496](496-a-sessions-purge-removes-its-channels-documents-first.md) | done | `SessionManager::purge` removes the documents of a session and its channels first and their states and attachments afterwards, so that a purge that fails between leaves states and attachments that nothing finds again. |
 | [498](498-the-mark-of-a-participant-who-left-says-whether-it-is-purged.md) | done | `Removal` marks a deleted entity and a participant who left a channel alike, and since issue 492 carries `purging`, which means something for the one and nothing for the other. |
 | [500](500-a-copy-never-stored-carries-the-first-revision.md) | done | A new entity carries the first revision and `create` stores it at that revision, so that a copy never stored cannot be told from one stored once, and its `update` passes against a document created meanwhile under its id. |
-| [554](554-the-terminal-program-keeps-its-data-like-a-server.md) | open | `caelumora-tui` keeps everything in directories it is configured with, in files named by UUID, and works in workspaces of its own, so that on one person's machine nothing it does can be told by the files in their home, and none of its sessions can be found or read there. |
+| [554](554-the-terminal-program-keeps-its-data-like-a-server.md) | done | `caelumora-tui` keeps everything in directories it is configured with, in files named by UUID, and works in workspaces of its own, so that on one person's machine nothing it does can be told by the files in their home, and none of its sessions can be found or read there. |
 
 ## Sessions and channels
 

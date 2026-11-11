@@ -30,11 +30,13 @@
 mod extension;
 mod manager;
 pub(crate) mod reaper;
+mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
 pub(crate) use extension::{UsableWorkspace, WorkspaceUse};
 pub use manager::WorkspaceManager;
+pub use spec::WorkspaceSpec;
 
 use crate::terminal::TerminalProvider;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};

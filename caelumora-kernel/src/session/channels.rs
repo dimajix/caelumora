@@ -1,8 +1,8 @@
 //! The channels of a running session: finding, creating, deleting and restoring them.
 
 use super::{
-    purge_channel_document, require_classification, ChannelEntry, ChannelRun, Listed, SessionError,
-    SessionLoop,
+    purge_channel_document, require_classification, ChannelEntry, ChannelRun, ChannelSpec, Listed,
+    SessionError, SessionLoop,
 };
 use crate::channel::ChannelLoop;
 use crate::group::keep_participants;
@@ -10,11 +10,9 @@ use crate::scoped::ScopeNotEmpty;
 use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
 use caelumora_api::component::ComponentError;
-use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::channel::{self, Channel, ChannelId, Participant};
-use caelumora_domain::component::ComponentConfig;
-use caelumora_domain::confidentiality::{Classification, Place};
+use caelumora_domain::confidentiality::Place;
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::group::Group;
 use caelumora_domain::removal::Removal;
@@ -29,34 +27,6 @@ use futures::future;
 use std::slice;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
-
-/// What a new channel should be (issue 09), as it was asked: its name and
-/// language are made from it by `create_channel` (issue 248).
-#[derive(Debug, Clone)]
-pub struct ChannelSpec {
-    pub name: String,
-    /// The channel's components (issue 174): its moderator and the policy
-    /// for the moderator's slot; the defaults for what is left out, as in a
-    /// template.
-    pub components: ComponentConfig,
-    /// Who takes part, from the session's participants. Whoever creates the
-    /// channel takes part anyway, if they are a participant of the session.
-    pub participants: Vec<ActorId>,
-    /// The classification of the channel's contents (issue 133); `None`
-    /// for the default, as in a template. Set by whoever may create the
-    /// channel - its owner.
-    pub classification: Option<Classification>,
-    /// The language its conversation is held in (issue 56); `None` for none
-    /// in particular. Offering the one its creator prefers is the
-    /// frontend's (issue 331).
-    pub language: Option<String>,
-    /// Whether its participants work on the session's workspace in it (issue
-    /// 253); `None` for the default, as in a template.
-    pub uses_workspace: Option<bool>,
-    /// The actors that belong to the channel itself (issue 420): its
-    /// approver, if one is named - none that is not.
-    pub internal_actors: Vec<InternalActorTemplate>,
-}
 
 /// What `error` of building a channel's loop says if its components cannot be read
 /// (`ComponentError::is_unavailable`, issue 463); `error` itself otherwise - a store that failed
@@ -247,7 +217,7 @@ impl SessionLoop {
         let session = self.session();
         let name = Name::new(&spec.name)?;
         let language = Language::optional(spec.language.as_deref())?;
-        let classification = spec.classification.unwrap_or_default();
+        let classification = spec.classification;
         require_classification(self.policies.confidentiality().as_ref(), &classification)?;
 
         // The creator first, if they take part in the session at all.
@@ -288,9 +258,7 @@ impl SessionLoop {
         );
         channel.internal_actors =
             spec.internal_actors.iter().map(InternalActorTemplate::instantiate).collect();
-        if let Some(uses) = spec.uses_workspace {
-            channel.uses_workspace = uses;
-        }
+        channel.uses_workspace = spec.uses_workspace;
         // Whether the actor may create it, before anything is asked of the
         // others in it (issues 198, 312): who may not learns nothing of their
         // clearance. The store asks again as it stores.
@@ -950,10 +918,7 @@ mod tests {
         let unsaid = session.create_channel(&ctx, spec("unsaid", vec![])).await.unwrap();
         assert!(unsaid.channel().uses_workspace, "by default");
         let without = session
-            .create_channel(
-                &ctx,
-                ChannelSpec { uses_workspace: Some(false), ..spec("without", vec![]) },
-            )
+            .create_channel(&ctx, ChannelSpec { uses_workspace: false, ..spec("without", vec![]) })
             .await
             .unwrap();
         assert!(!without.channel().uses_workspace, "as its creator says");

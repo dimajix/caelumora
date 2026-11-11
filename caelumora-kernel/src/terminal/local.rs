@@ -1,18 +1,18 @@
-//! The `local` provider (issue 251, part A): a directory per workspace
-//! under a root on Caelumora's host, read and written by Caelumora itself.
-//! A symbolic link inside a workspace is followed only where its target
-//! stays inside: it is checked when a path is used, so a link made between
-//! the check and the use - by a command running in the workspace - is the
-//! one gap, closed only by a provider that keeps commands elsewhere.
+//! The `local` provider (issue 251, part A): a directory per workspace under a root on Caelumora's
+//! host, read and written by Caelumora itself - or, as the storage `directory` (issue 554), every
+//! workspace in the one directory a program of one person was started in. A symbolic link inside a
+//! workspace is followed only where its target stays inside: it is checked when a path is used, so
+//! a link made between the check and the use - by a command running in the workspace - is the one
+//! gap, closed only by a provider that keeps commands elsewhere.
 
-use super::local_shell::{LocalCommands, LocalShell};
+use super::local_shell::{Environment, LocalCommands, LocalShell};
 use super::{
     check_max_file_bytes, check_max_run_secs, default_max_file_bytes, default_max_run_secs,
     CommandKey, TerminalProvider,
 };
 use crate::backend::Backends;
 use async_trait::async_trait;
-use caelumora_api::component::{ComponentResult, Params};
+use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::terminal::{
     ByteStream, FileEntry, Shell, Terminal, TerminalError, TerminalReader, TerminalResult,
     WorkspacePath,
@@ -22,7 +22,7 @@ use caelumora_domain::workspace::WorkspaceId;
 use futures::future::join_all;
 use futures::StreamExt;
 use serde::Deserialize;
-use std::fs::Metadata;
+use std::fs::{self as std_fs, Metadata};
 use std::io::{Error, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -68,8 +68,45 @@ impl Params for LocalStorageConfig {
     }
 }
 
-/// Registers the storage `local` with `backends`.
-pub(super) fn register_backend(backends: &mut Backends) {
+/// The parameters of `directory`: every workspace in `dir` - the directory a program of one person
+/// was started in -, named in `root` by a link to it, so that it is found there after the program
+/// was started elsewhere. Removing a workspace never removes `dir`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectoryStorageConfig {
+    /// Where the links that name the workspaces lie: a directory of this storage's own.
+    root: PathBuf,
+    /// The directory every workspace made from now on lies in, as it is when the kernel is built:
+    /// a workspace made before keeps the one its link names.
+    dir: PathBuf,
+    /// Whether agents run commands there, as its user, on Caelumora's host.
+    #[serde(default)]
+    shell: bool,
+    /// What may be put into this storage, named, since the one where it is left out, `public` with
+    /// a shell, is not what a person's own directory is for.
+    destination: Classification,
+    /// What a command is given of the program's environment: nothing of it unless named.
+    #[serde(default)]
+    environment: Environment,
+    /// How long a command may run (issue 254). Of use only with `shell`.
+    #[serde(default = "default_max_run_secs")]
+    max_run_secs: u64,
+    /// The largest file a person may put into a workspace of it.
+    #[serde(default = "default_max_file_bytes")]
+    max_file_bytes: u64,
+}
+
+impl Params for DirectoryStorageConfig {
+    /// # Errors
+    /// As `LocalStorageConfig::check`.
+    fn check(&self) -> ComponentResult<()> {
+        check_max_run_secs(self.max_run_secs)?;
+        check_max_file_bytes(self.max_file_bytes)
+    }
+}
+
+/// Registers the storages `local` and `directory` with `backends`.
+pub(super) fn register_backends(backends: &mut Backends) {
     backends.register::<dyn TerminalProvider, _, _>("local", |_, config: LocalStorageConfig, _| {
         Ok(Arc::new(LocalProvider::new(
             config.root,
@@ -79,11 +116,43 @@ pub(super) fn register_backend(backends: &mut Backends) {
             config.destination,
         )))
     });
+    backends.register::<dyn TerminalProvider, _, _>(
+        "directory",
+        |_, config: DirectoryStorageConfig, _| {
+            let dir = std_fs::canonicalize(&config.dir).map_err(|e| {
+                ComponentError::InvalidConfig(format!("dir cannot be reached: {}", e.kind()))
+            })?;
+            if !dir.is_dir() {
+                return Err(ComponentError::InvalidConfig("dir is no directory".to_string()));
+            }
+            let provider = LocalProvider::new(
+                config.root,
+                config.shell,
+                Duration::from_secs(config.max_run_secs),
+                config.max_file_bytes,
+                Some(config.destination),
+            );
+            Ok(Arc::new(provider.sharing(dir, config.environment)))
+        },
+    );
+}
+
+/// Where the workspaces of a storage lie.
+#[derive(Debug)]
+enum Placement {
+    /// Each in a directory of its own below the root, made and removed with it.
+    Own,
+    /// All in this directory, each named below the root by a link to it, which is made and removed
+    /// with it; the directory never.
+    Shared(PathBuf),
 }
 
 #[derive(Debug)]
 pub(crate) struct LocalProvider {
     root: PathBuf,
+    placement: Placement,
+    /// What a command of its shells is given of the environment.
+    environment: Environment,
     /// The commands of its workspaces, if it has a shell.
     commands: Option<Arc<LocalCommands>>,
     /// How long a command may run.
@@ -105,16 +174,36 @@ impl LocalProvider {
         destination: Option<Classification>,
     ) -> Self {
         let destination = destination.or_else(|| shell.then_some(Classification::PUBLIC));
-        Self { root, commands: shell.then(Arc::default), max_run, max_file_bytes, destination }
+        Self {
+            root,
+            placement: Placement::Own,
+            environment: Environment::Isolated,
+            commands: shell.then(Arc::default),
+            max_run,
+            max_file_bytes,
+            destination,
+        }
+    }
+
+    /// The provider as one whose workspaces all lie in `dir`, its commands given `environment`.
+    fn sharing(self, dir: PathBuf, environment: Environment) -> Self {
+        Self { placement: Placement::Shared(dir), environment, ..self }
     }
 
     fn place(&self, id: WorkspaceId) -> PathBuf {
         self.root.join(id.to_string())
     }
 
-    /// The directory of workspace `id`, if it is there; a place gone is logged.
+    /// The directory of workspace `id`, if it is there - for one in a shared directory that
+    /// directory, as it is, never the link that names it, so that what a command or a model is
+    /// shown is where it works; a place gone is logged.
     async fn found(&self, id: WorkspaceId) -> TerminalResult<PathBuf> {
         let dir = self.place(id);
+        let dir = match self.placement {
+            Placement::Own => dir,
+            // One gone is told as below, by what its link names.
+            Placement::Shared(_) => fs::canonicalize(&dir).await.unwrap_or(dir),
+        };
         match fs::metadata(&dir).await {
             Ok(metadata) if metadata.is_dir() => Ok(dir),
             Ok(_) => Err(TerminalError::Unavailable("its place is not a directory".to_string())),
@@ -149,13 +238,24 @@ fn unavailable(error: Error) -> TerminalError {
 #[async_trait]
 impl TerminalProvider for LocalProvider {
     async fn create(&self, id: WorkspaceId) -> TerminalResult<()> {
-        fs::create_dir_all(self.place(id)).await.map_err(unavailable)
+        match &self.placement {
+            Placement::Own => fs::create_dir_all(self.place(id)).await.map_err(unavailable),
+            Placement::Shared(dir) => {
+                fs::create_dir_all(&self.root).await.map_err(unavailable)?;
+                fs::symlink(dir, self.place(id)).await.map_err(unavailable)
+            }
+        }
     }
 
+    /// Of a shared directory the link alone.
     async fn remove(&self, id: WorkspaceId) -> TerminalResult<()> {
         // Nothing of it goes on writing into what is being removed.
         self.end_commands_of(id).await?;
-        match fs::remove_dir_all(self.place(id)).await {
+        let removed = match self.placement {
+            Placement::Own => fs::remove_dir_all(self.place(id)).await,
+            Placement::Shared(_) => fs::remove_file(self.place(id)).await,
+        };
+        match removed {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
             Err(e) => Err(unavailable(e)),
@@ -179,6 +279,7 @@ impl TerminalProvider for LocalProvider {
             scope: scope.to_string(),
             commands: Arc::clone(commands),
             max_run: self.max_run,
+            environment: self.environment,
         })))
     }
 
@@ -198,6 +299,7 @@ impl TerminalProvider for LocalProvider {
             scope: scope.clone(),
             commands: Arc::clone(commands),
             max_run: self.max_run,
+            environment: self.environment,
         };
         shell.end(id).await
     }
@@ -422,7 +524,7 @@ mod tests {
     use caelumora_domain::workspace::CommandStatus;
     use futures::stream;
     use serde_json::{json, Value};
-    use std::fs as std_fs;
+    use std::env;
     use std::os::unix::fs::symlink;
     use std::slice;
     use tempfile::TempDir;
@@ -681,6 +783,147 @@ mod tests {
                     && refused.contains(why),
                 "{refused}"
             );
+        }
+    }
+
+    /// A storage `directory` below `root`, every workspace in `dir`, with a shell given
+    /// `environment`.
+    fn sharing(root: &Path, dir: &Path, environment: Environment) -> LocalProvider {
+        let destination = Some(Classification::PUBLIC);
+        LocalProvider::new(root.to_path_buf(), true, Duration::from_secs(3600), 100, destination)
+            .sharing(std_fs::canonicalize(dir).unwrap(), environment)
+    }
+
+    /// What `command` printed in the shell of workspace `id`.
+    async fn printed(provider: &LocalProvider, id: WorkspaceId, command: &str) -> String {
+        let shell = provider.shell_for(id, "channel").await.unwrap().unwrap();
+        let started = shell.start(command).await.unwrap();
+        shell.output(&started, 0, Duration::from_secs(10)).await.unwrap().output
+    }
+
+    /// A workspace of a shared directory works in it as it is - a command and its environment see
+    /// the directory, never the link that names it -, and leaves it when it is removed.
+    #[tokio::test]
+    async fn a_workspace_of_a_shared_directory_works_in_it_and_leaves_it() {
+        let (root, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let real = std_fs::canonicalize(dir.path()).unwrap();
+        let provider = sharing(root.path(), dir.path(), Environment::Isolated);
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+        assert_eq!(std_fs::read_link(root.path().join(id.to_string())).unwrap(), real);
+
+        let terminal = provider.terminal_for(id).await.unwrap();
+        terminal.write(&path("a.txt"), content("hello")).await.unwrap();
+        assert_eq!(std_fs::read_to_string(dir.path().join("a.txt")).unwrap(), "hello");
+        let seen =
+            printed(&provider, id, "pwd; echo $PWD; echo $HOME; echo $CAELUMORA_WORKSPACE").await;
+        let real = real.display().to_string();
+        assert_eq!(seen.lines().collect::<Vec<_>>(), [real.as_str(); 4], "{seen}");
+
+        provider.remove(id).await.unwrap();
+        assert!(std_fs::symlink_metadata(root.path().join(id.to_string())).is_err(), "its link");
+        assert!(dir.path().join("a.txt").is_file(), "never the directory");
+    }
+
+    /// The link remembers the directory: a storage told another one finds a workspace where it
+    /// was made.
+    #[tokio::test]
+    async fn a_workspace_keeps_its_directory_when_the_storage_names_another() {
+        let root = tempfile::tempdir().unwrap();
+        let (first, second) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let id = WorkspaceId::new();
+        sharing(root.path(), first.path(), Environment::Isolated).create(id).await.unwrap();
+
+        let elsewhere = sharing(root.path(), second.path(), Environment::Isolated);
+        let terminal = elsewhere.terminal_for(id).await.unwrap();
+        terminal.write(&path("b.txt"), content("kept")).await.unwrap();
+
+        assert!(first.path().join("b.txt").is_file());
+        assert!(!second.path().join("b.txt").exists());
+    }
+
+    /// An inherited environment is the program's, its `HOME` too, with the workspace beside it.
+    #[tokio::test]
+    async fn an_inherited_environment_is_the_program_s() {
+        let (root, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let provider = sharing(root.path(), dir.path(), Environment::Inherit);
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+
+        let seen =
+            printed(&provider, id, "echo \"$HOME\"; echo \"$CAELUMORA_WORKSPACE\"; pwd -L").await;
+
+        let home = env::var("HOME").unwrap_or_default();
+        let real = std_fs::canonicalize(dir.path()).unwrap().display().to_string();
+        let expected = [home.as_str(), real.as_str(), real.as_str()];
+        assert_eq!(seen.lines().collect::<Vec<_>>(), expected, "its own PWD, not the program's");
+    }
+
+    /// A workspace whose directory is gone is told so, and its link is removed all the same.
+    #[tokio::test]
+    async fn a_workspace_whose_directory_is_gone_is_unavailable() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let provider = sharing(root.path(), dir.path(), Environment::Isolated);
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+        dir.close().unwrap();
+
+        let gone = provider.terminal_for(id).await.map(drop);
+        assert!(matches!(gone, Err(TerminalError::Unavailable(ref why)) if why.contains("gone")));
+        provider.remove(id).await.expect("its link goes");
+        assert!(std_fs::symlink_metadata(root.path().join(id.to_string())).is_err());
+    }
+
+    /// What runs in a workspace of a shared directory is ended as it is removed.
+    #[tokio::test]
+    async fn what_runs_in_a_shared_directory_is_ended_as_its_workspace_is_removed() {
+        let (root, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let provider = sharing(root.path(), dir.path(), Environment::Isolated);
+        let id = WorkspaceId::new();
+        provider.create(id).await.unwrap();
+        let shell = provider.shell_for(id, "channel").await.unwrap().unwrap();
+        let running = shell.start("sleep 30").await.unwrap();
+
+        provider.remove(id).await.unwrap();
+
+        let ended = shell.output(&running, 0, Duration::ZERO).await.unwrap();
+        assert_eq!(ended.status, CommandStatus::Killed);
+    }
+
+    /// A storage `directory` names its directory, which has to be one, and its destination.
+    #[test]
+    fn a_shared_directory_is_named_with_its_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let make = |params: Value| {
+            let storages = [("here".to_string(), BackendConfig::new("directory", params))].into();
+            Backends::built_in()
+                .make_named::<dyn TerminalProvider>(
+                    "storage of workspaces",
+                    &storages,
+                    &Services::empty(),
+                )
+                .map(drop)
+                .map_err(|e| e.to_string())
+        };
+        let destination = json!({ "level": "internal" });
+        make(json!({ "root": "x", "dir": dir.path(), "destination": destination }))
+            .expect("its root, its directory and its destination");
+        let file = dir.path().join("file");
+        std_fs::write(&file, "").unwrap();
+        for (params, why) in [
+            (json!({ "root": "x", "dir": dir.path() }), "destination"),
+            (
+                json!({ "root": "x", "dir": "/no/such/dir", "destination": destination }),
+                "dir cannot be reached",
+            ),
+            (
+                json!({ "root": "x", "dir": file, "destination": destination }),
+                "dir is no directory",
+            ),
+        ] {
+            let refused = make(params).unwrap_err();
+            assert!(refused.contains("(directory)") && refused.contains(why), "{refused}");
         }
     }
 }

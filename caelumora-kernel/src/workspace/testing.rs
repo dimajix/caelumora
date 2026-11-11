@@ -6,6 +6,7 @@
 use crate::kernel::Kernel;
 use crate::session::{SessionLoop, SessionManager};
 use crate::testing::TestKernel;
+use crate::workspace::WorkspaceSpec;
 use caelumora_api::terminal::{Shell, Terminal, TerminalReader};
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_domain::actor::ActorId;
@@ -73,18 +74,12 @@ pub async fn session_with_workspace() -> WithWorkspace {
     let owner = owner.id;
     let as_owner =
         SecurityContext::new(ActorId::User(owner), Default::default(), Default::default());
-    let workspace = kernel
-        .workspace_manager()
-        .create(
-            &as_owner,
-            "docs",
-            Scope::UserScope { user_id: owner },
-            "dev",
-            Some("Drafts"),
-            internal.clone(),
-        )
-        .await
-        .unwrap();
+    let spec = WorkspaceSpec {
+        description: Some("Drafts".to_string()),
+        classification: internal.clone(),
+        ..WorkspaceSpec::new("docs", Scope::UserScope { user_id: owner }, "dev")
+    };
+    let workspace = kernel.workspace_manager().create(&as_owner, spec).await.unwrap();
 
     let agent = stored_agent(
         kernel.entity_stores(),

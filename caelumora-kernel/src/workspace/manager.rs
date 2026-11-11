@@ -2,19 +2,18 @@
 //! stored first, then announced -, each with its place in its storage, and reaching them for the
 //! kernel's other operations.
 
-use super::{require_classification, store_error};
+use super::{require_classification, store_error, WorkspaceSpec};
 use crate::backend::NamedBackends;
 use crate::event::EventBus;
-use crate::scoped::{purge_for_good, ScopeHolders, ScopeMember};
+use crate::scoped::{found_or_made, purge_for_good, ScopeHolders, ScopeMember};
 use crate::terminal::TerminalProvider;
 use async_trait::async_trait;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{Announcing, EventPublisher, GlobalEvent};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::store::{StoreError, StoreResult, Stored};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
@@ -70,12 +69,10 @@ impl WorkspaceManager {
         self.storages.iter().map(|(name, provider)| (name, provider.has_shell()))
     }
 
-    /// Makes a workspace of the user `ctx` acts for, of `name` in `scope`,
-    /// in `storage`: the document, then its place there. A place that
-    /// cannot be made leaves no document. What was asked for is validated,
-    /// then its flow asked; creating it (`CreateWorkspace`) is the store's
-    /// to ask, since nothing is changed and nothing of others asked before
-    /// (issue 312).
+    /// Makes the workspace `spec` asks for, of the user `ctx` acts for: the document, then its
+    /// place in its storage. A place that cannot be made leaves no document. What was asked for is
+    /// validated, then its flow asked; creating it (`CreateWorkspace`) is the store's to ask, since
+    /// nothing is changed and nothing of others asked before (issue 312).
     ///
     /// A workspace of a session's scope goes with the session: what lies
     /// there and cannot be deleted by who deletes the session keeps the
@@ -95,26 +92,23 @@ impl WorkspaceManager {
     pub async fn create(
         &self,
         ctx: &SecurityContext,
-        name: &str,
-        scope: Scope,
-        storage: &str,
-        description: Option<&str>,
-        classification: Classification,
+        spec: WorkspaceSpec,
     ) -> WorkspaceResult<Workspace> {
+        let WorkspaceSpec { name, scope, storage, description, classification } = spec;
         let ActorId::User(owner) = ctx.principal_id else {
             return Err(WorkspaceError::OwnerNotAUser);
         };
         let provider = self
             .storages
-            .get(storage)
-            .ok_or_else(|| WorkspaceError::UnknownStorage(storage.to_string()))?;
+            .get(&storage)
+            .ok_or_else(|| WorkspaceError::UnknownStorage(storage.clone()))?;
         let mut workspace =
-            Workspace::new(ScopedName::new(name, scope)?, storage, classification, owner);
-        workspace.description = Description::optional(description)?;
+            Workspace::new(ScopedName::new(&name, scope)?, &storage, classification, owner);
+        workspace.description = Description::optional(description.as_deref())?;
         require_classification(
             self.policies.confidentiality().as_ref(),
             ctx,
-            storage,
+            &storage,
             provider.as_ref(),
             &workspace.classification,
         )?;
@@ -142,6 +136,35 @@ impl WorkspaceManager {
         self.events.announce(GlobalEvent::created::<Workspace>(&workspace.id), &workspace);
         info!(workspace = %workspace.id, storage, by = %ctx.caller_id, "Workspace created");
         Ok(workspace)
+    }
+
+    /// The workspace of the name `spec` asks for in exactly its scope, among those `ctx` may read
+    /// and is cleared for, if it lies in the storage `spec` names; else a new one, made as `create`
+    /// makes it - with whether it was made. One made by another meanwhile is looked up once more
+    /// (`found_or_made`, issue 250).
+    ///
+    /// # Errors
+    /// `InAnotherStorage` if the one of its name lies in another storage, `Invalid` for a name
+    /// that does not fit; what `create` reports - `NameTaken` if the one of its name lies where
+    /// `ctx` may not read it -; whatever else the store reports.
+    pub async fn find_or_create(
+        &self,
+        ctx: &SecurityContext,
+        spec: &WorkspaceSpec,
+    ) -> WorkspaceResult<(Workspace, bool)> {
+        let name = ScopedName::new(&spec.name, spec.scope.clone())?;
+        found_or_made(
+            || async {
+                match self.workspaces.find_by_name(ctx, &name).await.optional()? {
+                    Some(found) if found.storage == spec.storage => Ok(Some(found)),
+                    Some(_) => Err(WorkspaceError::InAnotherStorage(name.name.clone())),
+                    None => Ok(None),
+                }
+            },
+            || self.create(ctx, spec.clone()),
+            |e| matches!(e, WorkspaceError::Store(StoreError::NameTaken { .. })),
+        )
+        .await
     }
 
     /// Deletes workspace `id` (`DeleteWorkspace`): marked, its files kept.
@@ -210,21 +233,6 @@ impl WorkspaceManager {
     async fn remove_place(&self, workspace: &Workspace) -> WorkspaceResult<()> {
         self.storages.kept_in(&workspace.storage)?.remove(workspace.id).await?;
         Ok(())
-    }
-
-    /// The workspace of `name`, in exactly that scope, among those `ctx`
-    /// may read and is cleared for - as a template looks for the one it
-    /// names.
-    ///
-    /// # Errors
-    /// `StoreError::NotFound` if there is none; whatever else the store
-    /// reports.
-    pub(crate) async fn find_by_name(
-        &self,
-        ctx: &SecurityContext,
-        name: &ScopedName,
-    ) -> StoreResult<Workspace> {
-        self.workspaces.find_by_name(ctx, name).await
     }
 
     /// Workspace `id` as `ctx` reaches it, as the views reach it: by the

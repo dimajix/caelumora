@@ -16,6 +16,7 @@ use caelumora_domain::project::ProjectId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::user::UserId;
 use caelumora_kernel::controller::ProjectController;
+use caelumora_kernel::project::ProjectSpec;
 use caelumora_rest_api::access::AccessEntry;
 use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::project::{
@@ -63,7 +64,13 @@ pub(super) async fn create_project(
     })?;
     let made = state
         .project_manager
-        .create(&user.security_context(), &request.name, scope, request.description.as_deref())
+        .create(
+            &user.security_context(),
+            ProjectSpec {
+                description: request.description,
+                ..ProjectSpec::new(request.name, scope)
+            },
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(readable(&state, &user, made.id).await?)))
 }

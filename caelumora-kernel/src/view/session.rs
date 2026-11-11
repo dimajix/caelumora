@@ -29,6 +29,7 @@ use caelumora_domain::value::language::Language;
 use caelumora_domain::value::text::{Briefing, Summary};
 use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::{AccessQuestions, ActionType, SecurityContext};
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tracing::warn;
 
@@ -95,6 +96,11 @@ impl SessionView {
 
     pub fn name(&self) -> &str {
         self.session.name.as_str()
+    }
+
+    /// When the session was made.
+    pub fn created_at(&self) -> DateTime<Utc> {
+        self.session.created_at
     }
 
     /// The project its results go to (issue 467): its own, or the shared one it lies in.

@@ -4,12 +4,13 @@ mod channels;
 mod manager;
 mod participants;
 mod settings;
+mod spec;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
-pub use channels::ChannelSpec;
 pub(crate) use manager::Found;
-pub use manager::{SessionManager, SessionSpec};
+pub use manager::SessionManager;
+pub use spec::{ChannelSpec, SessionSpec};
 
 use crate::channel::{ChannelLoop, Participation};
 use crate::command::CommandExecutor;
@@ -120,6 +121,10 @@ pub enum SessionError {
     /// started any more.
     #[error("Caelumora is shutting down: no session is started")]
     ShuttingDown,
+    /// The session runs in another process that shares the stores (issue 554): it is not started,
+    /// deleted, restored or purged here meanwhile.
+    #[error("The session {0} runs in another process")]
+    RunsElsewhere(SessionId),
 }
 
 /// Nothing if a channel may be given `classification` at all - it names

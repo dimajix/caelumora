@@ -1,10 +1,8 @@
-//! A chain a state holds, as the `JsonFileStore` keeps it (issues 379,
-//! 380): per chain a directory beside its state's snapshot, with the nodes
-//! in segments of `SEGMENT` entries by position (`chain-<from>.json`) and
-//! `head.json`, which says where the chain ends and what its head is. A put
-//! writes the segments, then the head: nodes a crash left past the head's
-//! end are not there. What is laid over a chain - a history's items - keeps
-//! files of its own beside these.
+//! A chain a state holds, as `JsonStates` keeps it (issues 379, 380): per chain a directory beside
+//! its state's snapshot, with the nodes in segments of `SEGMENT` entries by position
+//! (`chain-<from>.json`) and `head.json`, which says where the chain ends and what its head is. A
+//! put writes the segments, then the head: nodes a crash left past the head's end are not there.
+//! What is laid over a chain - a history's items - keeps files of its own beside these.
 
 use super::{read_json_opt, to_backend_error, write_json_atomic};
 use caelumora_domain::chain::{Chain, Node, Position, Stored};

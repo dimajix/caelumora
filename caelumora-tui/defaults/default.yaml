@@ -1,0 +1,25 @@
+# The session the terminal program starts unless it is told another template: the person and an
+# assistant, in the directory the program was started in. Written on the first start; change it as
+# you like - the program never writes it again.
+description: You and an assistant, working on the files of this directory
+participants:
+- User:
+    name: user
+- Agent:
+    name: assistant
+    scope: UserScope
+    personality:
+      name: assistant
+channels:
+- name: main
+  components:
+  - id: moderator
+    kind: policy_moderator
+    params:
+      max_agent_hops: 20
+  internal_actors:
+  - Approver:
+      strategy: Any
+  participants:
+  - user
+  - assistant
