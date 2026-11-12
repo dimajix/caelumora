@@ -30,6 +30,7 @@ use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_domain::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -72,8 +73,8 @@ pub struct CommandContext<'a> {
 /// channel, not an agent's turn.
 #[async_trait]
 pub trait ChannelCommandProvider: ProvidesCommands {
-    /// Runs the command `name` with `args`, the rest of the input line after
-    /// the name, which the command parses itself.
+    /// Runs the command `name` - by its name, whichever it was issued by - with `args`, the rest of
+    /// the input line after it, which the command parses itself.
     ///
     /// # Errors
     /// `CommandError::InvalidArguments` for arguments it cannot use,
@@ -81,7 +82,7 @@ pub trait ChannelCommandProvider: ProvidesCommands {
     /// `CommandError::Failed` otherwise.
     async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput>;
@@ -124,9 +125,10 @@ impl CommandExecutor {
         Self { access_policy, commands: CommandSet::empty() }
     }
 
-    /// Whether it has a command `name`, whoever may see it.
-    pub fn has(&self, name: &str) -> bool {
-        self.commands.has(name)
+    /// The command of the session's that `command` collides with, whoever may see it
+    /// (`CommandSet::colliding`): an agent's command must not be hidden by one of the session.
+    pub fn colliding(&self, command: &Command) -> Option<&Command> {
+        self.commands.colliding(command)
     }
 
     /// The commands `issuer` may see in the channel with `channel`
@@ -146,31 +148,31 @@ impl CommandExecutor {
         visible
     }
 
-    /// Runs the command `name` for `context.issuer`: `Empty` for an empty
-    /// name; `Unknown` if there is no such command or the issuer may not see
-    /// it - one they may not see is unknown to them, not refused;
-    /// `Forbidden` if they may see but not run it.
+    /// The name of the command `line` begins with - by its name or an alias - and the rest of
+    /// the line, its arguments (`CommandSet::find`), whoever may see it: running it asks that.
+    pub fn find<'a>(&self, line: &'a str) -> Option<(&CommandName, &'a str)> {
+        self.commands.find(line).map(|(entry, args)| (&entry.command().name, args))
+    }
+
+    /// Runs the command `name` with `args` for `context.issuer`: `Unknown` if there is no such
+    /// command or the issuer may not see it, since one they may not see is unknown to them, not
+    /// refused; `Forbidden` if they may see but not run it.
     ///
     /// # Errors
     /// As above; otherwise whatever the command reports.
     pub async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
-        if name.is_empty() {
-            return Err(CommandError::Empty);
-        }
-        let entry =
-            self.commands.entry(name).ok_or_else(|| CommandError::Unknown(name.to_string()))?;
+        let unknown = || CommandError::Unknown(name.to_string());
+        let entry = self.commands.entry(name.as_str()).ok_or_else(unknown)?;
         let issuer = context.issuer.security_context();
         let channel = context.channel.security_attributes();
         let command = entry.command();
         self.access_policy
-            .require(&issuer, ActionType::ShowCommand { command, channel: &channel }, |_| {
-                CommandError::Unknown(name.to_string())
-            })
+            .require(&issuer, ActionType::ShowCommand { command, channel: &channel }, |_| unknown())
             .await?;
         self.access_policy
             .require(
@@ -235,6 +237,11 @@ pub(crate) fn command_error(command: &str, error: &Error) -> CommandError {
     CommandError::Failed { command: command.to_string(), reason }
 }
 
+/// The first word of `line`, what a command that was not found is told by.
+pub(crate) fn first_word(line: &str) -> &str {
+    line.split_whitespace().next().unwrap_or_default()
+}
+
 /// `names` joined as a sentence: "A, B and C".
 pub(crate) fn names(names: &[String]) -> String {
     match names {
@@ -265,7 +272,8 @@ mod tests {
     impl ProvidesCommands for Named {
         fn commands(&self) -> Vec<Command> {
             vec![Command {
-                name: self.0.to_string(),
+                name: CommandName::fixed(self.0),
+                aliases: Vec::new(),
                 description: String::new(),
                 usage: None,
                 owners_only: false,
@@ -277,7 +285,7 @@ mod tests {
     impl ChannelCommandProvider for Named {
         async fn execute(
             &self,
-            _name: &str,
+            _name: &CommandName,
             _args: &str,
             _context: &CommandContext<'_>,
         ) -> CommandResult<CommandOutput> {
@@ -318,7 +326,7 @@ mod tests {
             .visible(&SecurityContext::default(), &SecurityAttributes::systems())
             .await
             .into_iter()
-            .map(|c| c.name)
+            .map(|c| c.name.to_string())
             .collect();
         assert_eq!(names, vec!["help", "wakeup"], "sorted by name");
     }

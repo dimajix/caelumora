@@ -7,6 +7,7 @@ use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_domain::value::command_name::CommandName;
 
 /// The name of its command, `/compact`.
 const COMPACT_COMMAND_NAME: &str = "compact";
@@ -14,7 +15,8 @@ const COMPACT_COMMAND_NAME: &str = "compact";
 impl ProvidesCommands for CompactionComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: COMPACT_COMMAND_NAME.to_string(),
+            name: CommandName::fixed(COMPACT_COMMAND_NAME),
+            aliases: Vec::new(),
             description: "Compacts the agent's context: the older part of its conversation is replaced by a shorter one, the newest is kept. What it saw before stays recorded.".to_string(),
             usage: None,
             // Like approving its calls (issue 269): its owners'.
@@ -27,11 +29,11 @@ impl ProvidesCommands for CompactionComponent {
 impl AgentCommandProvider for CompactionComponent {
     async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
-        if name != COMPACT_COMMAND_NAME {
+        if name.as_str() != COMPACT_COMMAND_NAME {
             return Err(CommandError::Unknown(name.to_string()));
         }
         let invalid = |reason: &str| CommandError::InvalidArguments {
@@ -77,7 +79,8 @@ mod tests {
         let component = component(&strategy);
         let mut turn = workspace_turn(&world, &mut state);
         before(&mut turn, world.agent);
-        let result = component.execute(COMPACT_COMMAND_NAME, args, &mut turn).await;
+        let result =
+            component.execute(&CommandName::fixed(COMPACT_COMMAND_NAME), args, &mut turn).await;
         (result, strategy.times_asked())
     }
 

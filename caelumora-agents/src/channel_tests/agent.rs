@@ -571,7 +571,7 @@ async fn an_agent_whose_turn_outlasts_its_inbox_hears_all_of_it_afterwards() {
         .modify_message(first.id, Some("message 0, corrected".to_string()), None, Vec::new())
         .await
         .expect("hers to modify");
-    alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
+    alice.execute_command("mark @helper during").await.expect("sent to the agent");
     alice
         .send_message(Some("after the command".to_string()), None, Vec::new())
         .await
@@ -909,7 +909,7 @@ async fn behind_a_barrier_an_agent_hearing_during_a_turn_waits_for_what_the_hist
         .send_message(Some("before the command.".to_string()), None, Vec::new())
         .await
         .expect("taken during a turn");
-    alice.execute_command("mark", "@helper during").await.expect("sent to the agent");
+    alice.execute_command("mark @helper during").await.expect("sent to the agent");
     let after: Vec<String> = (0..AFTER).map(|n| numbered("after the command", n)).collect();
     for text in &after {
         alice

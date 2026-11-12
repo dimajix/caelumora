@@ -11,6 +11,7 @@ use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::reader::ViewError;
 use caelumora_domain::command::{Command, CommandOutput, CREATE_AGENT_KIND};
 use caelumora_domain::scope::Scope;
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
 use std::sync::Arc;
 
@@ -30,7 +31,8 @@ pub struct CreateAgentComponent {
 impl ProvidesCommands for CreateAgentComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: CREATE_AGENT_COMMAND_NAME.to_string(),
+            name: CommandName::fixed(CREATE_AGENT_COMMAND_NAME),
+            aliases: Vec::new(),
             description: "Makes an agent of the personality named, in this session, named after it unless named.".to_string(),
             usage: Some("<personality> [as <name>]".to_string()),
             owners_only: false,
@@ -42,7 +44,7 @@ impl ProvidesCommands for CreateAgentComponent {
 impl ChannelCommandProvider for CreateAgentComponent {
     async fn execute(
         &self,
-        _name: &str,
+        _name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {

@@ -471,15 +471,18 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                         // `/retry` above are this terminal's own; every
                         // other command goes to the channel (issue 28).
                         match parse_input(input) {
-                            UserInput::Command { name, args } => {
-                                match user_actor.execute_command(&name, &args).await {
+                            UserInput::Command(line) => {
+                                match user_actor.execute_command(&line).await {
                                     // Also for an answer to the whole channel: its
                                     // announcement is not routed back to its sender.
                                     Ok(reply) => if let Some(output) = reply.output { println!("{}", output) },
                                     Err(e) => {
-                                        tracing::warn!("Command /{} failed: {:#}", name, e);
-                                        let message = user_message(&e)
-                                            .unwrap_or_else(|| format!("/{} failed; the details are in the log", name));
+                                        // The line is not logged: what follows the command
+                                        // may be what was said. The error names the command.
+                                        tracing::warn!("A command failed: {:#}", e);
+                                        let message = user_message(&e).unwrap_or_else(|| {
+                                            "The command failed; the details are in the log".to_string()
+                                        });
                                         println!("[error] {}", message);
                                     }
                                 }

@@ -1,13 +1,15 @@
 //! User commands (issue 28): input that addresses the system rather than the
 //! agents, such as `/help` or `/wakeup`.
 //!
-//! Commands are recognised by the frontends, which send them to the channel
-//! as commands instead of as messages; [`parse_input`] is the rule they
-//! follow. What a command does is up to the `ChannelCommandProvider` component that
-//! contributes it (see `caelumora-kernel`).
+//! Commands are recognised by the frontends, which send them to the channel as commands instead of
+//! as messages; [`parse_input`] is the rule they follow. Which command a line is, and where its
+//! arguments begin, is decided by the commands it is run among (issue 560). What a command does is
+//! up to the `ChannelCommandProvider` component that contributes it (see `caelumora-kernel`).
 
 use crate::component::{ComponentConfig, ComponentDescriptor};
+use crate::value::command_name::CommandName;
 use serde::{Deserialize, Serialize};
+use std::iter;
 
 // Unlike every other kind constant, these live in the domain, not next to their component in the
 // kernel: `default_commands` - the serde default of `AppConfig::commands` - names them, and the
@@ -27,8 +29,12 @@ pub const CREATE_AGENT_KIND: &str = "create-agent";
 /// A command as users see it: in `/help` and in the frontends' completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Command {
-    /// The name, without the leading slash.
-    pub name: String,
+    /// The name, without the leading slash: its words, from its group to itself.
+    pub name: CommandName,
+    /// The other names it is found by, its short forms (issue 560); none unless named. What is
+    /// recorded of it is its `name`, whichever it was issued by.
+    #[serde(default)]
+    pub aliases: Vec<CommandName>,
     /// What the command does, in one sentence.
     pub description: String,
     /// The parameters, e.g. `[agent]`, or `None` if it takes none.
@@ -39,6 +45,26 @@ pub struct Command {
     /// unless named; meaningless for a command the session runs.
     #[serde(default)]
     pub owners_only: bool,
+}
+
+impl Command {
+    /// The rest of `line` - its arguments, trimmed - if `line` begins with its name or one of its
+    /// aliases (`CommandName::strip_from`).
+    pub fn strip_from<'a>(&self, line: &'a str) -> Option<&'a str> {
+        self.names().find_map(|name| name.strip_from(line))
+    }
+
+    /// Whether a name of one - its name or an alias - begins a name of the other
+    /// (`CommandName::begins`): a line beginning with the longer could not be told from one
+    /// beginning with the shorter.
+    pub fn collides_with(&self, other: &Command) -> bool {
+        self.names().any(|mine| other.names().any(|its| mine.begins(its) || its.begins(mine)))
+    }
+
+    /// Its name and its aliases.
+    pub fn names(&self) -> impl Iterator<Item = &CommandName> {
+        iter::once(&self.name).chain(&self.aliases)
+    }
 }
 
 /// Who sees what a command answers.
@@ -72,16 +98,16 @@ impl CommandOutput {
 pub enum UserInput {
     /// Text for the conversation.
     Message(String),
-    /// A command: `name` without the slash (empty for a lone `/`), `args` the
-    /// trimmed rest of the line, left to the command to parse.
-    Command { name: String, args: String },
+    /// A command: the line after the slash, trimmed - empty for a lone `/`. Which command it is,
+    /// and where its arguments begin, is decided by the commands it is run among (issue 560).
+    Command(String),
 }
 
 /// Classifies a line of user input.
 ///
-/// Input starting with `/` is a command; its name runs up to the first
-/// whitespace. `//` escapes a literal slash, so `//etc/hosts` is the message
-/// `/etc/hosts`. A slash anywhere else is plain text.
+/// Input starting with `/` is a command, the rest of the line after the slash. `//` escapes a
+/// literal slash, so `//etc/hosts` is the message `/etc/hosts`. A slash anywhere else is plain
+/// text.
 pub fn parse_input(input: &str) -> UserInput {
     let Some(rest) = input.strip_prefix('/') else {
         return UserInput::Message(input.to_string());
@@ -89,8 +115,7 @@ pub fn parse_input(input: &str) -> UserInput {
     if rest.starts_with('/') {
         return UserInput::Message(rest.to_string());
     }
-    let (name, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
-    UserInput::Command { name: name.to_string(), args: args.trim().to_string() }
+    UserInput::Command(rest.trim().to_string())
 }
 
 /// The commands a deployment has unless its configuration says otherwise:
@@ -111,16 +136,16 @@ pub fn default_commands() -> ComponentConfig {
 mod tests {
     use super::*;
 
-    fn command(name: &str, args: &str) -> UserInput {
-        UserInput::Command { name: name.to_string(), args: args.to_string() }
+    fn command(line: &str) -> UserInput {
+        UserInput::Command(line.to_string())
     }
 
     #[test]
-    fn a_leading_slash_makes_a_command_with_the_rest_as_arguments() {
-        assert_eq!(parse_input("/help"), command("help", ""));
-        assert_eq!(parse_input("/wakeup sassy"), command("wakeup", "sassy"));
-        assert_eq!(parse_input("/wakeup   sassy  "), command("wakeup", "sassy"));
-        assert_eq!(parse_input("/help\twakeup"), command("help", "wakeup"));
+    fn a_leading_slash_makes_a_command_of_the_rest_of_the_line() {
+        assert_eq!(parse_input("/help"), command("help"));
+        assert_eq!(parse_input("/wakeup sassy"), command("wakeup sassy"));
+        assert_eq!(parse_input("/channel   list  "), command("channel   list"));
+        assert_eq!(parse_input("/help\twakeup"), command("help\twakeup"));
     }
 
     #[test]
@@ -140,8 +165,8 @@ mod tests {
 
     #[test]
     fn a_lone_slash_is_an_empty_command() {
-        assert_eq!(parse_input("/"), command("", ""));
-        assert_eq!(parse_input("/ help"), command("", "help"));
+        assert_eq!(parse_input("/"), command(""));
+        assert_eq!(parse_input("/  "), command(""));
     }
 
     #[test]
@@ -149,5 +174,35 @@ mod tests {
         let kinds: Vec<String> =
             default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
         assert_eq!(kinds, vec![HELP_KIND, WAKEUP_KIND, NUDGE_KIND, ADD_KIND, CREATE_AGENT_KIND]);
+    }
+
+    fn named(name: &str, aliases: &[&str]) -> Command {
+        Command {
+            name: CommandName::new(name).unwrap(),
+            aliases: aliases.iter().map(|a| CommandName::new(a).unwrap()).collect(),
+            description: String::new(),
+            usage: None,
+            owners_only: false,
+        }
+    }
+
+    #[test]
+    fn a_command_is_found_by_its_name_and_its_aliases() {
+        let add = named("participant add", &["add"]);
+        assert_eq!(add.strip_from("participant add Bob Smith"), Some("Bob Smith"));
+        assert_eq!(add.strip_from("add  Bob"), Some("Bob"));
+        assert_eq!(add.strip_from("participant"), None);
+        assert_eq!(add.strip_from("adds Bob"), None);
+    }
+
+    #[test]
+    fn commands_collide_where_a_name_of_one_begins_a_name_of_the_other() {
+        let add = named("participant add", &["add"]);
+        assert!(add.collides_with(&named("participant", &[])));
+        assert!(add.collides_with(&named("participant add", &[])));
+        assert!(add.collides_with(&named("nudge", &["add"])));
+        assert!(add.collides_with(&named("add more", &[])));
+        assert!(!add.collides_with(&named("participant nudge", &["nudge"])));
+        assert!(!add.collides_with(&named("adder", &[])));
     }
 }

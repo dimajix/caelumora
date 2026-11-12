@@ -531,11 +531,11 @@ export const api = {
   },
 
   /** Runs a command; an answer for the whole channel arrives on the event stream. */
-  async executeCommand(sessionId: string, channelId: string, name: string, args: string): Promise<CommandReply> {
+  async executeCommand(sessionId: string, channelId: string, line: string): Promise<CommandReply> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, args }),
+      body: JSON.stringify({ line }),
     });
     await ensureOk(res, 'Failed to run the command');
     return res.json();

@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::command::{Command, CommandOutput, NUDGE_KIND};
+use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
 pub const NUDGE_COMMAND_NAME: &str = "nudge";
@@ -22,7 +23,8 @@ pub struct NudgeComponent;
 impl ProvidesCommands for NudgeComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: NUDGE_COMMAND_NAME.to_string(),
+            name: CommandName::fixed(NUDGE_COMMAND_NAME),
+            aliases: Vec::new(),
             description: "Asks the participant named to respond to the conversation as it stands, without a message.".to_string(),
             usage: Some("<participant>".to_string()),
             owners_only: false,
@@ -34,7 +36,7 @@ impl ProvidesCommands for NudgeComponent {
 impl ChannelCommandProvider for NudgeComponent {
     async fn execute(
         &self,
-        _name: &str,
+        _name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {

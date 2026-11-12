@@ -1,6 +1,6 @@
 # 560 — The commands are not grouped by what they act on
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -171,8 +171,8 @@ issue of the terminal.
 - A command's name is a `CommandName` of one or more words, and a command may have short forms;
   the `CommandSet` refuses a name or short form that is the beginning of another.
 - The existing commands are in their groups, the often used ones with a short form.
-- The commands of the groups above exist - `channel switch` unless it went to an issue of the
-  terminal -, each asking nothing its operation does not ask; the security suite covers them.
+- The commands of the groups above exist but `channel switch`, each asking nothing its operation
+  does not ask; the security suite covers them.
 - `/help` lists them by group, and `/help <group>` the commands of a group.
 - COMMANDS.md describes groups, names and short forms.
 - The decisions above are recorded here.
@@ -195,3 +195,26 @@ issue of the terminal.
   Open: the commands of an agent and `/wakeup`, `/nudge`; whether a command declares the action it
   needs for `/help`; `channel switch`; the word for setting a description; arguments with two
   names and the channel as default; what each command does, as listed above.
+- **2026-11-12** — Decided with the maintainer: `channel switch` is a feature of the terminal and
+  went into issue [561](561-the-terminal-shows-one-channel-of-a-session.md); it is no part of
+  this issue.
+- **2026-11-12** — Decided with the maintainer, the plan of the first step, in two parts:
+  1. 1a, without a change of behaviour: `CommandName`, a value of the domain built as `Name` is,
+     its words of `a-z`, `0-9` and `-`; `CommandName::fixed` for the names the code gives, checked
+     by `CommandSet::new`. `Command` gets `aliases`. `parse_input` takes off the slash alone, and
+     the `CommandSet` finds the command a line begins with (`find`) and refuses two that collide;
+     an agent's command must not collide with one of the session. The executor, the user's actor,
+     the REST request (`line` instead of `name` and `args`), the web UI and the terminal pass the
+     line. Events, the history and REST keep the name as a string, the name and not the short form
+     typed.
+  2. 1b: `/add` becomes `participant add` and `/nudge` `participant nudge`, `/wakeup` becomes
+     `agent wakeup` and `/create-agent` `agent create`; `add`, `nudge` and `wakeup` stay as short
+     forms, `create-agent` does not. `/help` stays without a group. The commands of an agent stay
+     as they are in this issue. A component per group (`participant`, `agent`, later `channel`)
+     contributes its commands.
+- **2026-11-12** — Step 1a done, as planned but for one thing: the `CommandExecutor` finds the
+  command a line begins with (`find`, its name and the arguments) and runs it by its name
+  (`execute`), rather than running the line and answering the name, since the user's actor needs
+  the arguments as well for what it announces. The REST request carries `line`. One change of
+  behaviour comes with it: `/ help`, a blank after the slash, runs `/help` rather than being refused
+  as an empty command, since the line is trimmed before the command is sought.

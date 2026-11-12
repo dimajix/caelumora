@@ -12,6 +12,7 @@ use caelumora_domain::command::{CommandOutput, CommandVisibility};
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::user::testing::make_user;
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::ScopedName;
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
@@ -22,7 +23,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     let alice = make_user("alice");
     // `/wakeup` is hidden from everybody.
     let policy = Policy(
-        |action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name == "wakeup"),
+        |action| !matches!(action, ActionType::ShowCommand { command, .. } if command.name.as_str() == "wakeup"),
     );
     let channel = channel_with(&[&alice], Arc::new(policy)).await;
     let actor = channel.user_actor(alice.id).unwrap();
@@ -32,20 +33,21 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         async move { channel.run().await }
     });
 
-    let reply = actor.execute_command("help", "").await.expect("/help runs");
+    let reply = actor.execute_command("help").await.expect("/help runs");
     assert_eq!(reply.visibility, CommandVisibility::Private, "/help answers the issuer alone");
     let text = reply.output.expect("/help answers here");
     assert!(text.contains("/help"), "{text}");
     assert!(!text.contains("/wakeup"), "a hidden command is not listed: {text}");
-    let names: Vec<String> = actor.visible_commands().await.into_iter().map(|c| c.name).collect();
+    let names: Vec<String> =
+        actor.visible_commands().await.into_iter().map(|c| c.name.to_string()).collect();
     assert_eq!(names, vec!["help"]);
 
-    let error = actor.execute_command("wakeup", "").await.expect_err("hidden");
+    let error = actor.execute_command("wakeup").await.expect_err("hidden");
     assert!(
         matches!(as_command_error(&error), CommandError::Unknown(_)),
         "a hidden command looks unknown: {error}"
     );
-    let error = actor.execute_command("help", "wakeup").await.expect_err("hidden");
+    let error = actor.execute_command("help wakeup").await.expect_err("hidden");
     assert!(
         matches!(as_command_error(&error), CommandError::Unknown(_)),
         "/help does not describe it either: {error}"
@@ -69,7 +71,7 @@ async fn wakeup_is_announced_to_the_channel_in_the_issuers_name() {
         async move { channel.run().await }
     });
 
-    let reply = actor.execute_command("wakeup", "").await.expect("/wakeup runs");
+    let reply = actor.execute_command("wakeup").await.expect("/wakeup runs");
     let shown = time::timeout(Duration::from_secs(2), following.recv())
         .await
         .expect("shown")
@@ -107,16 +109,16 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
     let refuse_waking = Policy(|action| !matches!(action, ActionType::WakeChannel(_)));
     let channel = channel_with(&[&alice], Arc::new(refuse_waking)).await;
     let actor = channel.user_actor(alice.id).unwrap();
-    let error = actor.execute_command("wakeup", "").await.expect_err("waking is refused");
+    let error = actor.execute_command("wakeup").await.expect_err("waking is refused");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert!(is_forbidden(&error), "{error}");
 
     let refuse_running = Policy(
-        |action| !matches!(action, ActionType::ExecuteCommand { command, .. } if command.name == "wakeup"),
+        |action| !matches!(action, ActionType::ExecuteCommand { command, .. } if command.name.as_str() == "wakeup"),
     );
     let channel = channel_with(&[&alice], Arc::new(refuse_running)).await;
     let actor = channel.user_actor(alice.id).unwrap();
-    let error = actor.execute_command("wakeup", "").await.expect_err("running it is refused");
+    let error = actor.execute_command("wakeup").await.expect_err("running it is refused");
     assert!(
         matches!(as_command_error(&error), CommandError::Forbidden { .. }),
         "visible but not runnable: {error}"
@@ -124,11 +126,11 @@ async fn wakeup_reports_refusals_and_unknown_agents() {
 
     let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
     let actor = channel.user_actor(alice.id).unwrap();
-    let error = actor.execute_command("wakeup", "@nobody").await.expect_err("no such agent");
+    let error = actor.execute_command("wakeup @nobody").await.expect_err("no such agent");
     assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
-    let error = actor.execute_command("", "").await.expect_err("empty");
+    let error = actor.execute_command("").await.expect_err("empty");
     assert!(matches!(as_command_error(&error), CommandError::Empty), "{error}");
-    let error = actor.execute_command("nonsense", "").await.expect_err("unknown");
+    let error = actor.execute_command("nonsense").await.expect_err("unknown");
     assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
 }
 
@@ -137,14 +139,13 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
     let (channel, alice, sleepers) = channel_with_sleepers(&["Sassy", "Dr. Who", "Dr-Who"]).await;
     let actor = channel.user_actor(alice).unwrap();
 
-    let reply = actor.execute_command("wakeup", "@Sassy").await.expect("found regardless of case");
+    let reply = actor.execute_command("wakeup @Sassy").await.expect("found regardless of case");
     assert_eq!(reply.output.as_deref(), Some("Woke Sassy."));
     assert!(sleepers[0].woken() && !sleepers[1].woken(), "it alone");
-    let reply =
-        actor.execute_command("wakeup", "Dr. Who").await.expect("by its name, spaces and all");
+    let reply = actor.execute_command("wakeup Dr. Who").await.expect("by its name, spaces and all");
     assert_eq!(reply.output.as_deref(), Some("Woke Dr. Who."));
 
-    let error = actor.execute_command("wakeup", "@dr-who").await.expect_err("ambiguous");
+    let error = actor.execute_command("wakeup @dr-who").await.expect_err("ambiguous");
     assert!(
         matches!(as_command_error(&error), CommandError::InvalidArguments { reason, .. } if reason.contains("Dr-Who and Dr. Who")),
         "{error}"
@@ -159,7 +160,7 @@ async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> CommandResul
     let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice).expect("alice takes part");
     let context = CommandContext { issuer: &issuer, channel, executor: &executor };
-    NudgeComponent.execute("nudge", args, &context).await
+    NudgeComponent.execute(&CommandName::fixed("nudge"), args, &context).await
 }
 
 /// The next end of a turn of `agent` on `events`, with its envelope.
@@ -329,7 +330,8 @@ async fn add_and_create_agent_refuse_what_they_cannot_use() {
         ("create-agent", too_long.as_str()),
         ("create-agent", named_too_long.as_str()),
     ] {
-        let error = actor.execute_command(command, args).await.expect_err("unusable");
+        let error =
+            actor.execute_command(&format!("{command} {args}")).await.expect_err("unusable");
         assert!(
             matches!(as_command_error(&error), CommandError::InvalidArguments { .. }),
             "/{command} {args}: {error}"
@@ -349,7 +351,10 @@ async fn create_agent_names_the_agent_after_the_personality_or_after_the_last_as
     let alice = session.channels()[0].user_actor(world.alice).unwrap();
     let made = |args: &'static str| {
         let alice = Arc::clone(&alice);
-        async move { alice.execute_command("create-agent", args).await.unwrap().output.unwrap() }
+        async move {
+            let line = format!("create-agent {args}");
+            alice.execute_command(&line).await.unwrap().output.unwrap()
+        }
     };
     let plain = made("plain").await;
     assert!(plain.starts_with("Made the agent plain of plain"), "{plain}");
@@ -375,7 +380,7 @@ async fn create_agent_makes_the_agent_of_a_personality_of_the_channel_in_the_cha
     world.kernel.entity_stores().personalities.create(&World::system(), &mut own).await.unwrap();
 
     let alice = main.user_actor(world.alice).unwrap();
-    alice.execute_command("create-agent", "plain as Scout").await.expect("made");
+    alice.execute_command("create-agent plain as Scout").await.expect("made");
     let stores = world.kernel.entity_stores();
     let agents = stores.agents.list(&World::system(), &Query::all()).await.unwrap().items;
     let scout = agents.into_iter().find(|agent| agent.name.name == "scout").unwrap();

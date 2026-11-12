@@ -6,6 +6,7 @@ use crate::tool::turn_end::TURN_END_KIND;
 use caelumora_api::command::CommandError;
 use caelumora_domain::chain::Node;
 use caelumora_domain::transcript::TranscriptEntry;
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_kernel::command::{CommandContext, CommandReply};
 use std::sync::Mutex;
 
@@ -55,11 +56,13 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     let actor = channel.user_actor(alice).unwrap();
     let mut watch = actor.watch();
 
-    let reply = actor.execute_command("mark", "@helper twice").await.expect("sent to the agent");
+    // By its short form (issue 560): what is told and recorded is its name.
+    let reply = actor.execute_command("mk  @helper twice").await.expect("sent to the agent");
     assert!(
         reply.output.is_none() && reply.span_id.is_some(),
         "answered later, on the stream: {reply:?}"
     );
+    assert_eq!(reply.command, "mark", "answered by its name");
     let (started, states, answer) = command_events(&mut watch).await;
     let started = started.expect("she is told it began (issue 299)");
     let ActorEvent::CommandStarted { command, args, to, turn_id: begun } = started.event else {
@@ -128,7 +131,7 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
     let before = channel.history_entries().await.len();
 
     let reply =
-        actor.execute_command("mark", "@helper twice").await.expect("sent: the channel decides");
+        actor.execute_command("mark @helper twice").await.expect("sent: the channel decides");
     assert!(reply.output.is_none() && reply.span_id.is_some(), "{reply:?}");
     let refused = time::timeout(Duration::from_secs(5), async {
         loop {
@@ -166,7 +169,7 @@ async fn a_command_that_fails_is_told_to_the_issuer_and_leaves_nothing_behind() 
     let mut watch = actor.watch();
     let before = channel.history_entries().await.len();
 
-    actor.execute_command("mark", "@helper fail").await.expect("sent to the agent");
+    actor.execute_command("mark @helper fail").await.expect("sent to the agent");
     let (started, _, answer) = command_events(&mut watch).await;
     let Some(ActorEvent::CommandStarted { turn_id: begun, .. }) = started.map(|e| e.event) else {
         panic!("it began")
@@ -212,30 +215,30 @@ async fn a_command_of_an_agent_names_its_agent() {
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let error = |result: Result<CommandReply>| result.expect_err("refused");
 
-    let unnamed = error(actor.execute_command("mark", "twice").await);
+    let unnamed = error(actor.execute_command("mark twice").await);
     assert!(
         matches!(as_command_error(&unnamed), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper") && reason.contains("@all")),
         "{unnamed}"
     );
     let named = actor
-        .execute_command("mark", "@Helper twice")
+        .execute_command("mark @Helper twice")
         .await
         .expect("named regardless of case (issue 277)");
     assert!(named.span_id.is_some(), "it is asked: {named:?}");
-    let nobody = error(actor.execute_command("mark", "@nobody twice").await);
+    let nobody = error(actor.execute_command("mark @nobody twice").await);
     assert!(
         matches!(as_command_error(&nobody), CommandError::InvalidArguments { reason, .. } if reason.contains("@helper")),
         "{nobody}"
     );
-    let unknown = error(actor.execute_command("nonsense", "@helper").await);
+    let unknown = error(actor.execute_command("nonsense @helper").await);
     assert!(
         matches!(as_command_error(&unknown), CommandError::Unknown(name) if name == "nonsense"),
         "{unknown}"
     );
-    let all = actor.execute_command("mark", "@all").await.expect("every agent that carries it out");
+    let all = actor.execute_command("mark @all").await.expect("every agent that carries it out");
     assert!(all.span_id.is_some() && all.output.is_none(), "all of them asked: {all:?}");
     let channel_wide = actor
-        .execute_command("mark", "@channel")
+        .execute_command("mark @channel")
         .await
         .expect("a group handle, as a mention (issue 401)");
     assert!(channel_wide.span_id.is_some(), "all of them asked: {channel_wide:?}");
@@ -248,7 +251,7 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let mut watch = actor.watch();
 
-    actor.execute_command("mark", "@helper asleep").await.expect("sent to the agent");
+    actor.execute_command("mark @helper asleep").await.expect("sent to the agent");
     let (started, states, answer) = command_events(&mut watch).await;
     assert!(
         matches!(answer.event, ActorEvent::CommandExecuted { .. }),
@@ -273,9 +276,23 @@ async fn help_lists_the_commands_of_the_agents_with_their_handles() {
     let issuer = channel.user_actor(alice_of(&context)).expect("alice takes part");
     let help = CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
 
-    let all = HelpComponent.execute("help", "", &help).await.expect("/help runs").text;
+    let all = HelpComponent
+        .execute(&CommandName::fixed("help"), "", &help)
+        .await
+        .expect("/help runs")
+        .text;
     assert!(all.contains("`/mark @agent [text]` — Marks. (@helper)"), "{all}");
-    let one = HelpComponent.execute("help", "mark", &help).await.expect("/help runs").text;
+    let one = HelpComponent
+        .execute(&CommandName::fixed("help"), "mark", &help)
+        .await
+        .expect("/help runs")
+        .text;
     assert!(one.contains("Carried out by @helper"), "{one}");
+    let short = HelpComponent
+        .execute(&CommandName::fixed("help"), "mk", &help)
+        .await
+        .expect("/help runs")
+        .text;
+    assert_eq!(short, one, "described by its short form as by its name");
     running.abort();
 }

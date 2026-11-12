@@ -123,7 +123,7 @@ its handler's doc comment.
 | `GET …/notes` | The notes the channel's agents published |
 | `GET …/actors/{aid}/messages/{mid}/context` | What an agent's model saw when it wrote a message, its transcript read from the store on whichever branch: `403 context_forbidden`, `404 context_not_recorded` (not produced by that actor), `404 context_unavailable` (recorded, no longer resolvable), `500 context_failed` (the store could not be read) |
 | `GET …/actors/{aid}/history`, `…/components`, `…/tools` | A page of all that was offered to an agent and what it said; the components it was built from in the channel; the tools it has now |
-| `GET`, `POST …/commands` | The commands of the channel the user may see; issue one |
+| `GET`, `POST …/commands` | The commands of the channel the user may see; issue one, as the line after the slash (`line`) |
 | `GET …/channels/{cid}/events`, `GET /events` | The channel's stream; the global stream |
 
 Some rules hold across the endpoints:

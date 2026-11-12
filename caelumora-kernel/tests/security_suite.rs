@@ -4577,7 +4577,7 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let bob = main.user_actor(world.bob).unwrap();
 
-    let (reply, asked) = world.asked(bob.execute_command("help", "")).await;
+    let (reply, asked) = world.asked(bob.execute_command("help")).await;
     let text = reply.expect("his to run").output.expect("answered to him");
     assert!(text.contains("/wakeup") && text.contains("/nudge"), "{text}");
     let about: Vec<&str> =
@@ -4619,11 +4619,11 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         other => panic!("refused as invalid, not {other:?}"),
     };
 
-    let error = alice.execute_command("add", "dave").await.expect_err("two equally near");
+    let error = alice.execute_command("add dave").await.expect_err("two equally near");
     let reason = refused(&error);
     assert!(reason.contains("the user dave and the agent dave"), "{reason}");
 
-    let (error, asked) = world.asked(bob.execute_command("add", "carol")).await;
+    let (error, asked) = world.asked(bob.execute_command("add carol")).await;
     let error = error.expect_err("not his to change");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert_eq!(
@@ -4645,7 +4645,7 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         ]),
         "{asked:#?}"
     );
-    let (reply, asked) = world.asked(alice.execute_command("add", "Carol")).await;
+    let (reply, asked) = world.asked(alice.execute_command("add Carol")).await;
     let reply = reply.expect("hers to change");
     assert_eq!(
         asked,
@@ -4683,10 +4683,10 @@ async fn adding_by_command_asks_what_taking_in_asks() {
     let in_main = || world.participants(world.alice, session.id(), main.id());
     assert!(in_main().await.contains(&ActorId::User(world.carol)), "in the channel");
     assert!(session.session().takes_part(ActorId::User(world.carol)), "and in the session");
-    let reply = alice.execute_command("add", "carol").await.expect("nothing to do");
+    let reply = alice.execute_command("add carol").await.expect("nothing to do");
     assert_eq!(reply.output.as_deref(), Some("carol takes part already."));
-    let nobody = refused(&bob.execute_command("add", "zed").await.expect_err("nobody"));
-    let hidden = refused(&bob.execute_command("add", "hers").await.expect_err("not his"));
+    let nobody = refused(&bob.execute_command("add zed").await.expect_err("nobody"));
+    let hidden = refused(&bob.execute_command("add hers").await.expect_err("not his"));
     assert_eq!(
         (nobody.replace("zed", "_"), hidden.replace("hers", "_")),
         (String::from("nobody '_' to add"), String::from("nobody '_' to add")),
@@ -4713,7 +4713,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         other => panic!("refused as invalid, not {other:?}"),
     };
 
-    let (error, asked) = world.asked(bob.execute_command("create-agent", "plain")).await;
+    let (error, asked) = world.asked(bob.execute_command("create-agent plain")).await;
     assert_eq!(
         asked,
         checks(&[
@@ -4724,10 +4724,10 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         "none of hers is listed to him: {asked:#?}"
     );
     let hidden = refused(&error.expect_err("not his"));
-    let nobody = refused(&bob.execute_command("create-agent", "zed").await.expect_err("nobody"));
+    let nobody = refused(&bob.execute_command("create-agent zed").await.expect_err("nobody"));
     assert_eq!(hidden.replace("plain", "_"), nobody.replace("zed", "_"), "alike");
     assert!(hidden.contains("no personality named \"plain\""), "{hidden}");
-    let (reply, asked) = world.asked(alice.execute_command("create-agent", "plain as Scout")).await;
+    let (reply, asked) = world.asked(alice.execute_command("create-agent plain as Scout")).await;
     assert_eq!(
         asked,
         checks(&[
@@ -4760,7 +4760,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         .find(|agent| agent.name.name == "scout")
         .expect("made");
     assert_eq!(scout.name.scope, Scope::SessionScope { session_id: session.id() });
-    alice.execute_command("add", "scout").await.expect("brought in");
+    alice.execute_command("add scout").await.expect("brought in");
     let in_main = world.participants(world.alice, session.id(), main.id()).await;
     assert!(in_main.contains(&ActorId::Agent(scout.id)), "in the channel");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();

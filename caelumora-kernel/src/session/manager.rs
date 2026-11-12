@@ -1371,7 +1371,7 @@ mod tests {
                 .visible(&SecurityContext::default(), &SecurityAttributes::systems())
                 .await
                 .into_iter()
-                .map(|c| c.name)
+                .map(|c| c.name.to_string())
                 .collect::<Vec<_>>()
         };
 

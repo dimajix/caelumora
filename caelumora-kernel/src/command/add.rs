@@ -10,6 +10,7 @@ use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::HistoryAccess;
 use caelumora_domain::command::{Command, CommandOutput, ADD_KIND};
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{Name, NameMatch};
 use std::sync::Arc;
 
@@ -26,7 +27,8 @@ pub struct AddComponent;
 impl ProvidesCommands for AddComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: ADD_COMMAND_NAME.to_string(),
+            name: CommandName::fixed(ADD_COMMAND_NAME),
+            aliases: Vec::new(),
             description: "Brings the user or agent named into this channel, and into the session if not in it yet; they see the whole history.".to_string(),
             usage: Some("<name>".to_string()),
             owners_only: false,
@@ -38,7 +40,7 @@ impl ProvidesCommands for AddComponent {
 impl ChannelCommandProvider for AddComponent {
     async fn execute(
         &self,
-        _name: &str,
+        _name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {

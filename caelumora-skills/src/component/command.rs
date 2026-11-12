@@ -12,6 +12,7 @@ use caelumora_agents::turn::Turn;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::value::command_name::CommandName;
 use chrono::Utc;
 use tracing::warn;
 
@@ -24,13 +25,15 @@ impl ProvidesCommands for SkillsComponent {
     fn commands(&self) -> Vec<Command> {
         vec![
             Command {
-                name: SKILL_COMMAND_NAME.to_string(),
+                name: CommandName::fixed(SKILL_COMMAND_NAME),
+                aliases: Vec::new(),
                 description: "Gives the agent a skill to follow: its text goes into the agent's conversation, in your name.".to_string(),
                 usage: Some("<name>".to_string()),
                 owners_only: false,
             },
             Command {
-                name: SKILLS_COMMAND_NAME.to_string(),
+                name: CommandName::fixed(SKILLS_COMMAND_NAME),
+                aliases: Vec::new(),
                 description: "Lists the skills the agent can load here.".to_string(),
                 usage: None,
                 owners_only: false,
@@ -62,10 +65,11 @@ fn command_error(command: &str, error: SkillError) -> CommandError {
 impl AgentCommandProvider for SkillsComponent {
     async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
+        let name = name.as_str();
         let failed = |reason: &str| CommandError::Failed {
             command: name.to_string(),
             reason: reason.to_string(),

@@ -1,7 +1,7 @@
 use crate::actor::ChannelAnswering;
 use crate::actor::Shown;
 use crate::channel::{ChannelError, ChannelLoop};
-use crate::command::{CommandContext, CommandReply};
+use crate::command::{first_word, CommandContext, CommandReply};
 use crate::controller::{ChannelController, UserController};
 use crate::kernel::ParticipantRuntime;
 use anyhow::{anyhow, Result};
@@ -639,29 +639,33 @@ impl UserActor {
         Some(self.envelope(Self::answer(response, approved), envelope.context.span_id))
     }
 
-    /// Issues the user command `name` with `args` on behalf of this user
-    /// (issue 28). Commands are for people, so only a `UserActor` issues
-    /// them.
+    /// Issues the user command `line` - the line after the slash - on behalf of this user (issue
+    /// 28). Commands are for people, so only a `UserActor` issues them.
     ///
-    /// A command of the channel runs here and answers either this user alone
-    /// or the whole channel; in the latter case this actor announces it as a
-    /// `CommandExecuted`, in its own name. The answer is returned in both
-    /// cases. A command the session's set does not know is looked for among
-    /// the agents of the channel (`request_command`, issue 269). Commands
-    /// never enter the history; what an agent carried out does.
+    /// A command of the channel - the one `line` begins with, by its name or an alias
+    /// (`CommandExecutor::find`, issue 560) - runs here and answers either this user alone or the
+    /// whole channel; in the latter case this actor announces it as a `CommandExecuted`, in its own
+    /// name, by the command's name, whichever it was issued by. The answer is returned in both
+    /// cases. A line no command of the session's set begins, as this user sees them, is looked for
+    /// among the agents of the channel (`request_command`, issue 269). Commands never enter the
+    /// history; what an agent carried out does.
     ///
     /// # Errors
-    /// A `CommandError` if the command is unknown, refused or fails; an error
+    /// A `CommandError` if the line is empty, or the command is unknown, refused or fails; an error
     /// if the channel is gone.
-    pub async fn execute_command(&self, name: &str, args: &str) -> Result<CommandReply> {
+    pub async fn execute_command(&self, line: &str) -> Result<CommandReply> {
+        if line.trim().is_empty() {
+            return Err(CommandError::Empty.into());
+        }
         let channel = self.channel_loop()?;
         let executor = self.participant_runtime.command_executor();
         let context = CommandContext { issuer: self, channel: &channel, executor };
+        let Some((name, args)) = executor.find(line) else {
+            return self.request_command(&channel, line).await;
+        };
         debug!("UserActor {} runs /{}", self.id, name);
         let output = match executor.execute(name, args, &context).await {
-            Err(CommandError::Unknown(_)) => {
-                return self.request_command(&channel, name, args).await
-            }
+            Err(CommandError::Unknown(_)) => return self.request_command(&channel, line).await,
             result => result?,
         };
         if output.visibility == CommandVisibility::Channel {
@@ -682,80 +686,81 @@ impl UserActor {
         })
     }
 
-    /// Asks agents of `channel` to carry out the command `name` (issue 269).
-    /// `args` begins with whom: `@handle` names one agent, `@all` - or
-    /// another group handle, as a mention (issue 401) - every agent here that
-    /// carries the command out; the rest is the command's.
-    /// Whom it names is found among the agents that carry it out as this
-    /// user sees them (`ChannelLoop::agent_commands`, `ShowAgentCommand`) -
-    /// offering, which asks nothing of the agent's queue. Whether this user
-    /// may ask for it (`ExecuteAgentCommand`) is each agent's to decide, once,
-    /// as it carries it out; a refusal is its `CommandFailed` (issue 304).
-    /// Sent as `CommandRequested`, one per agent under one span, through
-    /// this actor's transport; no wakeup ahead of it - a sleeping agent
-    /// carries a command out asleep.
+    /// Asks agents of `channel` to carry out the command `line` begins with (issue 269), by its
+    /// name or an alias, as each agent's commands split the line (issue 560). What follows the
+    /// command begins with whom: `@handle` names one agent, `@all` - or another group handle, as a
+    /// mention (issue 401) - every agent here that carries the command out; the rest is the
+    /// command's. Whom it names is found among the agents that carry it out as this user sees them
+    /// (`ChannelLoop::agent_commands`, `ShowAgentCommand`) - offering, which asks nothing of the
+    /// agent's queue. Whether this user may ask for it (`ExecuteAgentCommand`) is decided at the
+    /// channel's door; a refusal is its `MessageRejected` (issue 516). Sent as `CommandRequested`,
+    /// by the command's name, one per agent under one span, through this actor's transport; no
+    /// wakeup ahead of it - a sleeping agent carries a command out asleep.
     ///
     /// # Errors
-    /// `CommandError::Unknown` if no agent here carries it out as this user
-    /// sees it; `InvalidArguments` if `args` names no agent that does; an
-    /// error if a request cannot be sent.
-    async fn request_command(
-        &self,
-        channel: &ChannelLoop,
-        name: &str,
-        args: &str,
-    ) -> Result<CommandReply> {
+    /// `CommandError::Unknown` if no agent here carries it out as this user sees it;
+    /// `InvalidArguments` if the line names no agent that does; an error if a request cannot be
+    /// sent.
+    async fn request_command(&self, channel: &ChannelLoop, line: &str) -> Result<CommandReply> {
+        // Each agent that carries out a command the line begins with, with the command's name,
+        // whom the line names after it and the rest, as that agent's commands split the line.
         let understanding: Vec<_> = channel
             .agent_commands(&self.security_context())
             .await
             .into_iter()
-            .filter(|(_, commands)| commands.iter().any(|c| c.name == name))
-            .map(|(agent, _)| agent)
+            .filter_map(|(agent, commands)| {
+                let (name, args) = commands.into_iter().find_map(|command| {
+                    command.strip_from(line).map(|args| (command.name, args))
+                })?;
+                let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
+                Some((agent, name, whom, rest.trim()))
+            })
             .collect();
-        if understanding.is_empty() {
-            return Err(CommandError::Unknown(name.to_string()).into());
-        }
-        let handles: Vec<String> = understanding
-            .iter()
-            .filter_map(|m| m.handle.as_ref())
-            .map(|h| format!("@{h}"))
-            .collect();
+        let Some((_, name, whom, _)) = understanding.first() else {
+            return Err(CommandError::Unknown(first_word(line).to_string()).into());
+        };
         let invalid =
             |reason: String| CommandError::InvalidArguments { command: name.to_string(), reason };
-        let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
-        let targets: Vec<_> = match whom.strip_prefix('@') {
-            Some(group) if is_group_handle(&handle_of(group)) => understanding,
-            Some(agent) => {
-                let named = channel.agents_named(agent);
-                if named.len() > 1 {
-                    let names: Vec<&str> = named.iter().map(|m| m.name.as_str()).collect();
-                    return Err(invalid(format!(
-                        "{whom} names several agents: {}",
-                        names.join(", ")
-                    ))
-                    .into());
-                }
-                understanding.into_iter().filter(|m| named.iter().any(|n| n.id == m.id)).collect()
+        let mut targets = Vec::new();
+        for (agent, name, whom, rest) in &understanding {
+            let addressed = match whom.strip_prefix('@') {
+                Some(group) if is_group_handle(&handle_of(group)) => true,
+                Some(handle) => match channel.agents_named(handle).as_slice() {
+                    [one] => one.id == agent.id,
+                    [] => false,
+                    several => {
+                        let names: Vec<&str> = several.iter().map(|m| m.name.as_str()).collect();
+                        let reason = format!("{whom} names several agents: {}", names.join(", "));
+                        return Err(invalid(reason).into());
+                    }
+                },
+                None => false,
+            };
+            if addressed {
+                targets.push((agent.id, name, *rest));
             }
-            None => {
-                return Err(
-                    invalid(format!("name the agent: {}, or @all", handles.join(", "))).into()
-                )
-            }
-        };
+        }
         if targets.is_empty() {
-            return Err(invalid(format!(
-                "{whom} does not carry it out here; name {}, or @all",
-                handles.join(", ")
-            ))
-            .into());
+            let handles: Vec<String> = understanding
+                .iter()
+                .filter_map(|(agent, _, _, _)| agent.handle.as_ref())
+                .map(|h| format!("@{h}"))
+                .collect();
+            let reason = match whom.starts_with('@') {
+                true => format!(
+                    "{whom} does not carry it out here; name {}, or @all",
+                    handles.join(", ")
+                ),
+                false => format!("name the agent: {}, or @all", handles.join(", ")),
+            };
+            return Err(invalid(reason).into());
         }
         let span_id = Uuid::new_v4();
-        for agent in targets {
+        for (agent, name, args) in &targets {
             let event = ActorEvent::CommandRequested {
                 command: name.to_string(),
-                args: rest.trim().to_string(),
-                agent: agent.id,
+                args: args.to_string(),
+                agent: *agent,
             };
             self.send(self.envelope(event, span_id)).await?;
         }

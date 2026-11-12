@@ -622,7 +622,7 @@ async fn an_external_agent_is_shown_carrying_out_a_command_as_an_agent_run_here_
     let actor = channel.user_actor(alice_of(&context)).unwrap();
     let mut watch = actor.watch();
 
-    actor.execute_command("mark", "@hermes once").await.expect("sent to the agent");
+    actor.execute_command("mark @hermes once").await.expect("sent to the agent");
     let (started, states, answer) = command_events(&mut watch).await;
     assert!(
         matches!(started.map(|e| e.event), Some(ActorEvent::CommandStarted { .. })),

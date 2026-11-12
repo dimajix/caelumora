@@ -24,9 +24,24 @@ itself.
 
 The client decides whether a line is a command and sends it as one rather than as a message; the
 message API stays plain text. The rule is `caelumora_domain::command::parse_input`, mirrored in the
-web UI: a leading `/` starts a command, whose name runs to the first whitespace; the rest of the
-line is handed to the command unparsed; `//` sends a literal `/`. Only this lexical rule is repeated
-per frontend. What a command means, who may run it and what it answers is decided in one place.
+web UI: a leading `/` starts a command, and the rest of the line is sent, trimmed; `//` sends a
+literal `/`. Only this lexical rule is repeated per frontend. Which command a line is, what it
+means, who may run it and what it answers is decided in one place.
+
+### Names
+
+A command's name is a `CommandName`: its words, from its group to itself (`channel list`), of lower
+case letters, digits and `-`, separated by single spaces (issue
+[560](../issues/560-commands-are-not-grouped-by-what-they-act-on.md)). A command may have other
+names, its short forms (`Command::aliases`). A line begins with a name if the name's words begin
+it, whatever whitespace runs between them there; what follows is the command's arguments, handed to
+it unparsed.
+
+No name or short form of a set of commands is the beginning of another - `channel` beside
+`channel list`, two equal names, a short form equal to another's name -, so that a line begins at
+most one command of the set and no rule of the longest is needed. A set that breaks this refuses to
+be built (`CommandSet::new`), as does a name the code gave unchecked (`CommandName::fixed`). What
+is recorded and announced of a command is its name, whichever it was issued by.
 
 ### Commands are components
 
@@ -41,14 +56,14 @@ tools; the issuer is given as their actor. Commands come from two places:
 Both are built once per session, in the name of its owner
 ([COMPONENTS.md](COMPONENTS.md#what-a-component-may-reach)), into a `CommandExecutor` shared by the
 session's channels - the counterpart of an agent's `ToolExecutor`, which likewise receives ready
-providers and is no component. Two commands of one name keep the session from starting. What the
-executor finds its commands in is a `CommandSet`, generic over the facet: finding a command and
-refusing two of one name are the same whoever runs the commands, and an agent's actor keeps its
-commands in one too. What a command is given to run with - the session, or an agent's turn - and
-who asks whether it may be seen and run are the facet's: the channel's commands the executor
-itself (`ShowCommand`, `ExecuteCommand`), an agent's the channel's door as it admits the request
-(`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). How a command runs is the command's
-business, and there is nothing about running commands to try out.
+providers and is no component. Two commands a line could not tell apart keep the session from
+starting. What the executor finds its commands in is a `CommandSet`, generic over the facet: finding
+the command a line begins and refusing two that collide are the same whoever runs the commands, and
+an agent's actor keeps its commands in one too. What a command is given to run with - the session,
+or an agent's turn - and who asks whether it may be seen and run are the facet's: the channel's
+commands the executor itself (`ShowCommand`, `ExecuteCommand`), an agent's the channel's door as it
+admits the request (`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). How a command runs is the
+command's business, and there is nothing about running commands to try out.
 
 ### Seeing and running
 
@@ -105,8 +120,8 @@ external agent alike.
 
 *   **Contributed by components.** A component of the personality offers them through
     `AgentCommandProvider`, as a tool is offered, carried out in the agent's `Turn`. Which commands
-    an agent carries out follows from its personality alone. Two of one name, or one that a command
-    of the session has, keep the agent from starting.
+    an agent carries out follows from its personality alone. Two that a line could not tell apart,
+    or one that a line could not tell from a command of the session, keep the agent from starting.
 *   **Always addressed.** A command of an agent names its agent - `/compact @bob`; `@all`, or
     `@channel`, as for a mention, names every agent of the channel that carries it out. Without a
     handle, or with one that names no such agent, it is refused with the handles to choose from.
@@ -116,15 +131,17 @@ external agent alike.
     whoever answers for the agent, as approving its calls (see
     [SECURITY.md](SECURITY.md#the-ownership-policy)). Who may not see a command finds it unknown.
 *   **Sent, then carried out.** The issuer's actor asks the session's commands first, then the
-    agents of the channel. Which of an agent's commands the issuer sees, the channel answers from
-    the agent's list (`ChannelLoop::commands_of`), so it answers at once while the agent is busy.
-    Whether the issuer may ask for the command is decided at the channel's door, as it admits the
-    request (issue 516): only from a user, to an agent taking part that carries the command out,
-    and only if the issuer may see it and ask for it; what is refused is answered to the issuer
-    alone (`MessageRejected`). The moderator routes an admitted request to that agent alone. A
-    quiet channel delivers it as well; one read back from the history for the agent is admitted
-    again, with the issuer's rights as they are then, and left out if it is not - the issuer is
-    not told, having been answered when it entered.
+    agents of the channel, each splitting the line by its own commands: an agent is asked if the
+    line begins with one of its commands and the word after it names the agent or a group of them.
+    The request names the command by its name. Which of an agent's commands the issuer sees, the
+    channel answers from the agent's list (`ChannelLoop::commands_of`), so it answers at once while
+    the agent is busy. Whether the issuer may ask for the command is decided at the channel's door,
+    as it admits the request (issue 516): only from a user, to an agent taking part that carries the
+    command out, and only if the issuer may see it and ask for it; what is refused is answered to
+    the issuer alone (`MessageRejected`). The moderator routes an admitted request to that agent
+    alone. A quiet channel delivers it as well; one read back from the history for the agent is
+    admitted again, with the issuer's rights as they are then, and left out if it is not - the
+    issuer is not told, having been answered when it entered.
 *   **Where it came.** The agent takes in what it was told up to the command, carries it out, and
     takes in the rest, so that what was said before and after stands around it in its transcript as
     in the history. A command wakes nobody and is carried out asleep as well; the agent does not

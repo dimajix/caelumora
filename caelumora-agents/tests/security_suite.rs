@@ -67,6 +67,7 @@ use caelumora_domain::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemp
 use caelumora_domain::tool::{Tool, ToolParameters};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceChoice;
@@ -3878,7 +3879,8 @@ struct Commanded(Arc<Mutex<Vec<ActorId>>>);
 impl ProvidesCommands for Commanded {
     fn commands(&self) -> Vec<Command> {
         let command = |name: &str, owners_only| Command {
-            name: name.to_string(),
+            name: CommandName::new(name).unwrap(),
+            aliases: Vec::new(),
             description: String::new(),
             usage: None,
             owners_only,
@@ -3891,7 +3893,7 @@ impl ProvidesCommands for Commanded {
 impl AgentCommandProvider for Commanded {
     async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         _args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
@@ -3957,7 +3959,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
 
     let ((sent, answer), asked) = world
         .asked(async {
-            let sent = bob.execute_command("mark", "@helper").await;
+            let sent = bob.execute_command("mark @helper").await;
             (sent, shown(&mut his, "CommandExecuted").await)
         })
         .await;
@@ -3977,7 +3979,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
         "what he sees, then the door asking whether he may ask for it"
     );
 
-    let refused = bob.execute_command("seal", "@helper").await.expect_err("not his");
+    let refused = bob.execute_command("seal @helper").await.expect_err("not his");
     assert!(
         matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "seal"),
         "unknown to him: {refused}"
@@ -3985,7 +3987,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice)
         .unwrap()
-        .execute_command("seal", "@helper")
+        .execute_command("seal @helper")
         .await
         .expect("hers, as its owner");
     assert!(
@@ -4003,7 +4005,7 @@ async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
     let (world, session, main, _, mut his) = with_a_commanded_agent().await;
     main.user_actor(world.bob)
         .unwrap()
-        .execute_command("mark", "@helper")
+        .execute_command("mark @helper")
         .await
         .expect("his to ask for");
     shown(&mut his, "CommandExecuted").await;
@@ -4058,7 +4060,7 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .execute_command("mark", "@helper")
+                .execute_command("mark @helper")
                 .await
                 .expect("his to ask for");
             shown(&mut his, "CommandExecuted").await;

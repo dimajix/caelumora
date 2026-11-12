@@ -204,9 +204,8 @@ async fn only_an_agents_owner_compacts_its_context() {
     let (session, main, _) = helper_with(&world, vec![compaction()]).await;
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
 
-    let (refused, asked) = world
-        .asked(main.user_actor(world.bob).unwrap().execute_command("compact", "@helper"))
-        .await;
+    let (refused, asked) =
+        world.asked(main.user_actor(world.bob).unwrap().execute_command("compact @helper")).await;
     let refused = refused.expect_err("not his");
     assert!(
         matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "compact"),
@@ -220,7 +219,7 @@ async fn only_an_agents_owner_compacts_its_context() {
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice)
         .unwrap()
-        .execute_command("compact", "@helper")
+        .execute_command("compact @helper")
         .await
         .expect("hers, as its owner");
     assert!(

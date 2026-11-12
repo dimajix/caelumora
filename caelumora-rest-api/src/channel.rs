@@ -431,13 +431,11 @@ pub struct SendApprovalRequest {
     pub approved: bool,
 }
 
-/// A user command to run in a channel (issue 28): the name without the slash
-/// and the rest of the input line, which the command parses itself.
+/// A user command to run in a channel (issue 28): the input line after the slash. Which command it
+/// is and where its arguments begin is decided by the commands of the channel (issue 560).
 #[derive(Debug, Deserialize)]
 pub struct ExecuteCommandRequest {
-    pub name: String,
-    #[serde(default)]
-    pub args: String,
+    pub line: String,
 }
 
 /// What a command answered. `output` is set only if the answer is for the
@@ -461,6 +459,7 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::ApproverId;
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::command_name::CommandName;
     use chrono::Utc;
 
     #[test]
@@ -794,7 +793,8 @@ mod tests {
         );
         assert!(json.get("commands").is_none(), "absent without commands");
         let mark = Command {
-            name: "mark".to_string(),
+            name: CommandName::fixed("mark"),
+            aliases: Vec::new(),
             description: "Marks.".to_string(),
             usage: None,
             owners_only: false,

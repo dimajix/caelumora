@@ -91,15 +91,18 @@ impl AgentKinds {
         let session_commands = Arc::clone(runtime.command_executor());
         let agent_runtime = AgentRuntime::new(runtime, agent, personality);
         let actor = (registration.factory)(Arc::new(agent_runtime)).await?;
-        if let Some(command) = actor.commands().into_iter().find(|c| session_commands.has(&c.name))
-        {
-            return Err(anyhow!(
-                "command /{} of agent '{}' ({}), which a component of its personality provides, \
-                 is a command of the session too, which would hide it",
-                command.name,
-                actor.name(),
-                actor.id()
-            ));
+        for command in actor.commands() {
+            if let Some(session) = session_commands.colliding(&command) {
+                return Err(anyhow!(
+                    "command /{} of agent '{}' ({}), which a component of its personality \
+                     provides, cannot be told apart from command /{} of the session, which would \
+                     hide it",
+                    command.name,
+                    actor.name(),
+                    actor.id(),
+                    session.name
+                ));
+            }
         }
         Ok(actor)
     }
@@ -125,6 +128,7 @@ mod tests {
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::SessionId;
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::command_name::CommandName;
     use caelumora_domain::value::name::{Name, ScopedName};
     use caelumora_security::AccessPolicy;
     use std::sync::Weak;
@@ -195,9 +199,9 @@ mod tests {
         }
 
         fn commands(&self) -> Vec<Command> {
-            let help = HELP_COMMAND_NAME.to_string();
             vec![Command {
-                name: help,
+                name: CommandName::fixed(HELP_COMMAND_NAME),
+                aliases: Vec::new(),
                 description: String::new(),
                 usage: None,
                 owners_only: false,

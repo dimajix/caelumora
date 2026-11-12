@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::command::{Command, CommandOutput, HELP_KIND};
+use caelumora_domain::value::command_name::CommandName;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -26,7 +27,8 @@ fn signature(command: &Command) -> String {
 impl ProvidesCommands for HelpComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: HELP_COMMAND_NAME.to_string(),
+            name: CommandName::fixed(HELP_COMMAND_NAME),
+            aliases: Vec::new(),
             description: "Lists the commands you can use, or describes one.".to_string(),
             usage: Some("[command]".to_string()),
             owners_only: false,
@@ -44,8 +46,10 @@ fn agent_signature(command: &Command) -> String {
 
 /// The commands the agents of the channel carry out that the issuer may
 /// see (issue 269), by name, each with the handles of the agents that do.
-async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Command, Vec<String>)> {
-    let mut by_name: BTreeMap<String, (Command, Vec<String>)> = BTreeMap::new();
+async fn agents_commands(
+    context: &CommandContext<'_>,
+) -> BTreeMap<CommandName, (Command, Vec<String>)> {
+    let mut by_name: BTreeMap<CommandName, (Command, Vec<String>)> = BTreeMap::new();
     for (agent, commands) in
         context.channel.agent_commands(&context.issuer.security_context()).await
     {
@@ -65,7 +69,7 @@ async fn agents_commands(context: &CommandContext<'_>) -> BTreeMap<String, (Comm
 impl ChannelCommandProvider for HelpComponent {
     async fn execute(
         &self,
-        _name: &str,
+        _name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
@@ -76,16 +80,19 @@ impl ChannelCommandProvider for HelpComponent {
         let of_agents = agents_commands(context).await;
         let wanted = args.trim().trim_start_matches('/');
         if !wanted.is_empty() {
-            // Unknown and invisible alike, as for running a command.
-            if let Some(command) = visible.iter().find(|c| c.name == wanted) {
+            // Unknown and invisible alike, as for running a command; by its name or an alias.
+            let named = |command: &Command| command.strip_from(wanted) == Some("");
+            if let Some(command) = visible.iter().find(|c| named(c)) {
                 return Ok(CommandOutput::private(format!(
                     "`{}` — {}",
                     signature(command),
                     command.description
                 )));
             }
-            let (command, handles) =
-                of_agents.get(wanted).ok_or_else(|| CommandError::Unknown(wanted.to_string()))?;
+            let (command, handles) = of_agents
+                .values()
+                .find(|(c, _)| named(c))
+                .ok_or_else(|| CommandError::Unknown(wanted.to_string()))?;
             return Ok(CommandOutput::private(format!(
                 "`{}` — {} Carried out by {}.",
                 agent_signature(command),

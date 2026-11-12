@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use caelumora_api::command::{CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::command::{Command, CommandOutput, WAKEUP_KIND};
+use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
 pub const WAKEUP_COMMAND_NAME: &str = "wakeup";
@@ -20,7 +21,8 @@ pub struct WakeupComponent;
 impl ProvidesCommands for WakeupComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: WAKEUP_COMMAND_NAME.to_string(),
+            name: CommandName::fixed(WAKEUP_COMMAND_NAME),
+            aliases: Vec::new(),
             description: "Wakes the sleeping agents of this channel, or the one named.".to_string(),
             usage: Some("[agent]".to_string()),
             owners_only: false,
@@ -32,7 +34,7 @@ impl ProvidesCommands for WakeupComponent {
 impl ChannelCommandProvider for WakeupComponent {
     async fn execute(
         &self,
-        _name: &str,
+        _name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {

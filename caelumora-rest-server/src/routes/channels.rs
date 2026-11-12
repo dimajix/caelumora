@@ -728,7 +728,7 @@ pub(super) async fn execute_command(
 ) -> Result<Json<CommandReplyResponse>, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let reply = user_actor.execute_command(&payload.name, &payload.args).await?;
+    let reply = user_actor.execute_command(&payload.line).await?;
     // An answer for the whole channel reaches this client on the channel's
     // stream, like everybody else; returning it here as well would show it twice.
     let output = reply.output.filter(|_| reply.visibility == CommandVisibility::Private);

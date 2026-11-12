@@ -65,7 +65,7 @@ impl AgentBody {
                     warn!("{:#}", e);
                 }
                 started = true;
-                entry.provider().execute(command, args, &mut turn).await
+                entry.provider().execute(&entry.command().name, args, &mut turn).await
             }
             None => Err(CommandError::Unknown(command.clone())),
         };

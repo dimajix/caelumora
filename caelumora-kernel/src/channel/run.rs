@@ -437,7 +437,8 @@ impl ChannelLoop {
         command: &str,
     ) -> Result<(), Rejection> {
         let (commands, agent) = self.commands_held(agent).await.ok_or(Rejection::Invalid)?;
-        let command = commands.iter().find(|c| c.name == command).ok_or(Rejection::Invalid)?;
+        let command =
+            commands.iter().find(|c| c.name.as_str() == command).ok_or(Rejection::Invalid)?;
         let channel = self.security_attributes();
         let policy = self.policies.access_policy();
         policy
