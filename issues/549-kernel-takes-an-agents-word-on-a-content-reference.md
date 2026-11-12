@@ -1,6 +1,6 @@
 # 549 — The kernel takes the agent side's word on a reference to content
 
-**Status:** open
+**Status:** in progress
 **Type:** bug
 **Priority:** medium
 **Area:** Identity and access management
@@ -73,3 +73,10 @@ id at hand. How the labels of a result's `media` and `shown` should be checked g
   where letting the view read a reference handed in by the agent side was rejected for this reason.
 - **2026-11-08** — Added with the maintainer: reading in the agent's own channel needs only
   `lies_in`, which `ActorRuntime` can ask, since it is made for that channel.
+- **2026-11-12** — Step 1, `copy_attachment`: the agent side names the attachment by its message
+  and its id (`ActorRuntime::copy_attachment`, `Turn::copy_attachment`), and the kernel reads it
+  through the view of the agent's channel, as the attachment tools do, so that the copy has the
+  label the channel holds. `AttachmentManager::copy` no longer asks `lies_in`, which the view
+  already ensures, and is the kernel's alone. Its test is in the agents' security suite. Step 2,
+  `load_attachments` with the admission of `media` and `shown`, follows: the kernel is to know the
+  labels itself there too.

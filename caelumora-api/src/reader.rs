@@ -189,8 +189,8 @@ pub enum ViewError {
     /// Only agents have a context.
     #[error("There is nothing {actor} saw: it is no agent, or no longer exists")]
     NoContext { actor: ActorId },
-    /// An attachment of a message the viewer sees could not be read: it carries none such, or its
-    /// storage failed (issue 282).
+    /// An attachment of a message the viewer sees could not be read or copied: it carries none
+    /// such, the viewer may not keep a copy, or its storage failed (issues 282, 549).
     #[error(transparent)]
     Attachment(#[from] AttachmentError),
     /// Reaching it failed; the cause is in the log.

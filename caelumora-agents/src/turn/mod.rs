@@ -44,16 +44,16 @@ use crate::situation::Situation;
 use crate::testing::detached_actor_runtime;
 use anyhow::Result;
 use caelumora_api::actor::Answering;
-use caelumora_api::error::AttachmentResult;
+use caelumora_api::reader::ViewResult;
 use caelumora_api::runtime::ActorRuntime;
 use caelumora_api::transport::EventSender;
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState};
 use caelumora_domain::agent::{AgentChannelState, AgentId};
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::content::ContentRef;
+use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::digest::Digest;
-use caelumora_domain::message::{Message, MessageRole};
+use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::note::NoteChange;
 use caelumora_domain::prompt_catalogue::PromptError;
 use caelumora_domain::tool::Tool;
@@ -146,13 +146,18 @@ impl<'a> Turn<'a> {
         self.runtime.writer(situation.initiator(), situation.classification()).await
     }
 
-    /// `attachment`, one of the agent's channel, copied in the turn's name for what the agent
-    /// says there (`ActorRuntime::copy_attachment`, issue 282).
+    /// The attachment `id` of message `message` in the agent's channel, copied in the turn's name
+    /// for what the agent says there (`ActorRuntime::copy_attachment`, issues 282, 549).
     ///
     /// # Errors
     /// As `ActorRuntime::copy_attachment`.
-    pub async fn copy_attachment(&self, attachment: &ContentRef) -> AttachmentResult<ContentRef> {
-        self.runtime.copy_attachment(self.situation().initiator(), attachment).await
+    pub async fn copy_attachment(
+        &self,
+        message: MessageId,
+        id: ContentId,
+    ) -> ViewResult<ContentRef> {
+        let (initiator, within) = (self.situation().initiator(), self.situation().classification());
+        self.runtime.copy_attachment(initiator, within, message, id).await
     }
 
     /// Whether a note of the agent in its channel, public or private, may be reclassified, in the

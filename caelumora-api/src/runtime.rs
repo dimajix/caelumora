@@ -15,7 +15,7 @@ use caelumora_domain::approval::ApprovalRuleId;
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::content::ContentRef;
+use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
@@ -138,16 +138,22 @@ pub trait ActorRuntime: Send + Sync + Debug {
         files: Vec<ToolContent>,
     ) -> AttachmentResult<Vec<ContentRef>>;
 
-    /// `attachment`, one of the agent's channel, copied for `initiator` for a message the agent
-    /// will say there (issue 282).
+    /// The attachment `id` of message `message` in the agent's channel, as its work for
+    /// `initiator` reads it there at `classification`, copied for a message the agent will say
+    /// there (issues 282, 549): named, not handed over, so that the copy has the content and the
+    /// label its channel holds for it, not those the agent side would state.
     ///
     /// # Errors
-    /// `AttachmentError` if it may not or cannot be copied.
+    /// What following the views to the attachment reports (`channel`,
+    /// `ChannelReader::attachment`); `Failed` while the channel is not attached to its session, or
+    /// once either is gone; `Attachment` if it may not or cannot be copied.
     async fn copy_attachment(
         &self,
         initiator: ActorId,
-        attachment: &ContentRef,
-    ) -> AttachmentResult<ContentRef>;
+        classification: Classification,
+        message: MessageId,
+        id: ContentId,
+    ) -> ViewResult<ContentRef>;
 
     /// The agent's session as its work for `initiator` reads it from its channel at
     /// `classification` (issue 163), if it may read it (`GetSession`): the root of what the work

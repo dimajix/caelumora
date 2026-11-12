@@ -547,7 +547,11 @@ gives the agent side in the name of the actor it made it for; a decision a libra
 tool call is admitted, whether its tool set may be offered, whether it may recall what it read
 elsewhere - is a call of the kernel, decided by the kernel; and what touches the kernel's
 resources - a secret, the workspace, what is kept - is checked once more where it is touched, in the
-same name.
+same name. An attachment a library has copied it names by its message and its id, and the kernel
+reads it as its channel holds it (`ActorRuntime::copy_attachment`), never as a reference whose
+label and key would be the library's word. That the attachments of the transcript a model is given
+along are taken as the library hands them over (`ActorRuntime::load_attachments`), and the labels
+of what a tool's result gave and showed as its message states them, is still open (issue 549).
 
 ### What enters a channel
 

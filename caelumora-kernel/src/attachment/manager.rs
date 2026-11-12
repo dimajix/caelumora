@@ -399,25 +399,23 @@ impl AttachmentManager {
         })
     }
 
-    /// A copy of `attachment` - one of the channel's, as the caller of `ctx` read it there - for
+    /// A copy of `attachment` - one of the channel's, as the caller of `ctx` read it there through
+    /// its view (`ChannelView::attachment`), never as someone else hands it over (issue 549) - for
     /// a message the caller will say in `channel`, handed over as for `create` (issue 282): the
     /// same content, label and name under an id and a key of its own in the same storage, waiting
     /// for the message that claims it as an upload does. What an agent shows of what it heard, so
     /// that each message holds its own.
     ///
     /// # Errors
-    /// `NotAParticipant`; `NotFound` for content that is none of the channel's, or that its storage
-    /// has nothing of; `StorageGone`, `Content`.
-    pub async fn copy(
+    /// `NotAParticipant`; `NotFound` for content its storage has nothing of; `StorageGone`,
+    /// `Content`.
+    pub(crate) async fn copy(
         &self,
         ctx: &SecurityContext,
         channel: &Channel,
         attachment: &ContentRef,
     ) -> AttachmentResult<ContentRef> {
         let by = uploader(ctx, channel)?;
-        if !self.lies_in(channel.id, attachment) {
-            return Err(AttachmentError::NotFound(attachment.id));
-        }
         self.forget_expired().await;
         let (id, key) = new_key(channel.id);
         self.storages.kept_in(&attachment.storage)?.copy(&attachment.key, &key).await.map_err(
