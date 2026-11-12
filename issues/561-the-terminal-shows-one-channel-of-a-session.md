@@ -117,3 +117,13 @@ a session is continued - would be the same choice made at start. Nobody has aske
   questions open, what `/retry` asks for - and takes in what the channel shows, answering the lines
   to print. The watch and the questions being answered line by line stay in `run_repl`; what the
   user types is handled by `handle_line`.
+- **2026-11-12** — Decided with the maintainer on the review of step 1: two findings become steps
+  of their own. The steps are now: 2, an approval a rule of the user answered is told again; 3,
+  the first channel taken part in and a channel that ends; 4, `Followed` answers which open
+  questions are put to the user, for `/answer` and `/decline` alike, so that the terminal no longer
+  knows the user beside it; 5, following every channel and `/switch`.
+
+  Step 2 done: "answered by your rule" was never printed, since the user's actor shows a rule's
+  answer in the user's name and the terminal passed over all it sent so; it lets that answer
+  through, and no longer tells another user's answer by a rule as the user's. As in the web UI,
+  a rule's answer is the user's: it cannot be given again, as after `/approve`.

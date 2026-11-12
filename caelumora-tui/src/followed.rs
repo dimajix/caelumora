@@ -71,10 +71,11 @@ impl Followed {
 
     /// Takes in what the channel showed: keeps what the user's commands need of it, and answers
     /// the lines the terminal prints of it. What was sent in the user's name is passed over, kept
-    /// and printed not at all: what they typed is on the screen already, as typed.
+    /// and printed not at all, since what they typed is on the screen already, as typed - but for
+    /// an approval a rule of theirs answered (issue 13).
     pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<String> {
         let sender_id = envelope.context.sender_id;
-        if sender_id == self.me {
+        if sender_id == self.me && !answered_by_rule(&envelope.event) {
             return Vec::new();
         }
         let is_agent = matches!(sender_id, ActorId::Agent(_));
@@ -110,16 +111,19 @@ impl Followed {
                 self.pending_approvals.insert(request.id, request.agent_id);
                 approval_shown(request)
             }
-            // The user's own answer, given by a rule of theirs (issue 13).
+            // The user's own answer, given by a rule of theirs: no longer theirs to give, as after
+            // `/approve`, though only the approver tells when the approval is over.
             ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response)
+                if sender_id == self.me =>
+            {
+                self.pending_approvals.remove(&response.id);
+                vec![format!("--- Approval {} answered by your rule ---", response.id.0)]
+            }
+            // Another user's answer alone does not decide it.
+            ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_)
                 if !matches!(sender_id, ActorId::Approver(_)) =>
             {
-                let by_rule = response.decisions.iter().any(|decision| decision.by_rule.is_some());
-                let id = response.id.0;
-                by_rule
-                    .then(|| format!("--- Approval {id} answered by your rule ---"))
-                    .into_iter()
-                    .collect()
+                Vec::new()
             }
             // The approval is over: decided, or no longer asked for.
             ActorEvent::ApprovalGranted(response)
@@ -197,6 +201,16 @@ impl Followed {
     /// Whether `sender` gives the answer under way.
     fn is_under_way(&self, sender: ActorId) -> bool {
         self.under_way.is_some_and(|(agent, _)| agent == sender)
+    }
+}
+
+/// Whether `event` is an answer to an approval that a rule gave (`ApprovalDecision::by_rule`).
+fn answered_by_rule(event: &ActorEvent) -> bool {
+    match event {
+        ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) => {
+            response.decisions.iter().any(|decision| decision.by_rule.is_some())
+        }
+        _ => false,
     }
 }
 
@@ -373,7 +387,7 @@ mod tests {
     use super::*;
     use anyhow::Error;
     use caelumora_domain::actor::EventContext;
-    use caelumora_domain::approval::ApproverId;
+    use caelumora_domain::approval::{ApprovalDecision, ApprovalRuleId, ApproverId};
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::question::{Addressee, Question, Questions};
@@ -509,6 +523,36 @@ mod tests {
         followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
         assert!(followed.approve(id, false).await.unwrap(), "answered");
         assert!(!followed.approve(id, true).await.unwrap(), "answered once");
+    }
+
+    #[tokio::test]
+    async fn an_approval_answered_by_a_rule_of_the_user_is_told_to_them_alone() {
+        let (mut followed, channel, me) = followed().await;
+        let agent_id = AgentId::new();
+        let request = approval(&channel, agent_id);
+        let id = request.id;
+        let agent = ActorId::Agent(agent_id);
+        followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
+        let answer = |by: ActorId, by_rule: Option<ApprovalRuleId>| {
+            let name = by.to_string();
+            let decision = ApprovalDecision { by, name, by_rule, at: Default::default() };
+            let response = ApprovalResponse {
+                decisions: vec![decision],
+                ..ApprovalResponse::new(id, agent_id)
+            };
+            from(&channel, by, ActorEvent::ApprovalGranted(response))
+        };
+        let other = ActorId::User(UserId::new());
+        assert!(followed.take_in(&answer(me, None)).is_empty(), "typed by the user");
+        assert!(
+            followed.take_in(&answer(other, Some(ApprovalRuleId::new()))).is_empty(),
+            "not theirs"
+        );
+        assert_eq!(
+            followed.take_in(&answer(me, Some(ApprovalRuleId::new()))),
+            [format!("--- Approval {} answered by your rule ---", id.0)]
+        );
+        assert!(!followed.approve(id, true).await.unwrap(), "answered once, as by the user");
     }
 
     #[tokio::test]
