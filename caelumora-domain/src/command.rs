@@ -17,12 +17,12 @@ use std::iter;
 
 /// Component kind of the built-in `/help` command.
 pub const HELP_KIND: &str = "help";
-/// Component kind of the built-in command group `participant` (issue 560): `/participant add`
-/// and `/participant nudge`.
+/// Component kind of the built-in command group `participant` (issue 560).
 pub const PARTICIPANT_GROUP_KIND: &str = "participant";
-/// Component kind of the built-in command group `agent` (issue 560): `/agent create` and
-/// `/agent wakeup`.
+/// Component kind of the built-in command group `agent` (issue 560).
 pub const AGENT_GROUP_KIND: &str = "agent";
+/// Component kind of the built-in command group `channel` (issue 560).
+pub const CHANNEL_GROUP_KIND: &str = "channel";
 
 /// A command as users see it: in `/help` and in the frontends' completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,13 +117,14 @@ pub fn parse_input(input: &str) -> UserInput {
 }
 
 /// The commands a deployment has unless its configuration says otherwise: `/help` and the
-/// command groups `participant` and `agent`.
+/// command groups `participant`, `agent` and `channel`.
 pub fn default_commands() -> ComponentConfig {
     ComponentConfig {
         component_nodes: vec![
             ComponentDescriptor::new("help", HELP_KIND),
             ComponentDescriptor::new("participant", PARTICIPANT_GROUP_KIND),
             ComponentDescriptor::new("agent", AGENT_GROUP_KIND),
+            ComponentDescriptor::new("channel", CHANNEL_GROUP_KIND),
         ],
     }
 }
@@ -169,7 +170,8 @@ mod tests {
     fn the_default_commands_are_the_built_in_ones() {
         let kinds: Vec<String> =
             default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
-        assert_eq!(kinds, vec![HELP_KIND, PARTICIPANT_GROUP_KIND, AGENT_GROUP_KIND]);
+        let groups = [PARTICIPANT_GROUP_KIND, AGENT_GROUP_KIND, CHANNEL_GROUP_KIND];
+        assert_eq!(kinds, [&[HELP_KIND][..], &groups].concat());
     }
 
     fn named(name: &str, aliases: &[&str]) -> Command {

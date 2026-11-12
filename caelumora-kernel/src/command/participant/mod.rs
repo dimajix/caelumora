@@ -7,10 +7,9 @@ mod list;
 mod nudge;
 mod remove;
 
-use crate::command::{command_error, ChannelCommandProvider, CommandContext};
+use crate::command::{ChannelCommandProvider, CommandContext};
 use crate::component::ComponentRegistry;
 use crate::view::ParticipantView;
-use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
@@ -56,16 +55,7 @@ async fn taking_part(
     command: &str,
     context: &CommandContext<'_>,
 ) -> CommandResult<Vec<ParticipantView>> {
-    let failed = |e: Error| command_error(command, &e);
-    let (session, views) = context.session_loop(command)?;
-    let channel = views
-        .session(session.id())
-        .await
-        .map_err(|e| failed(e.into()))?
-        .channel(context.channel.id())
-        .await
-        .map_err(|e| failed(e.into()))?;
-    Ok(channel.participants().await)
+    Ok(context.channel_view(command).await?.participants().await)
 }
 
 /// Registers the kind `participant` with `registry`.

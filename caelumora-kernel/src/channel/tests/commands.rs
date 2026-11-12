@@ -14,6 +14,7 @@ use caelumora_domain::scope::Scope;
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::text::{Briefing, Summary};
 use std::time::Duration;
 use tokio::sync::broadcast::Receiver;
 use tokio::time;
@@ -392,11 +393,15 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// `/participant list` and `/agent list` take nothing, `/participant remove` and `/agent delete`
-/// refuse what names nobody (issue 560), before they remove or delete anyone.
+/// The commands of the groups refuse what they cannot use (issue 560) before they change anything:
+/// the lists take nothing, `/participant remove`, `/agent delete` and `/channel describe` refuse
+/// what names nobody, `/channel rename`, `summary` and `briefing` a text that does not fit.
 #[tokio::test]
-async fn the_lists_removing_and_deleting_refuse_what_they_cannot_use() {
+async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
     let world = World::new().await;
+    let rename_too_long = format!("channel rename {}", "x".repeat(101));
+    let summary_too_long = format!("channel summary {}", "x".repeat(Summary::MAX_CHARS + 1));
+    let briefing_too_long = format!("channel briefing {}", "x".repeat(Briefing::MAX_CHARS + 1));
     let session = world.shared_session(&[], &[]).await;
     let actor = session.channels()[0].user_actor(world.alice).unwrap();
     for line in [
@@ -406,6 +411,12 @@ async fn the_lists_removing_and_deleting_refuse_what_they_cannot_use() {
         "agent list everyone",
         "agent delete",
         "agent delete zed",
+        "channel list everyone",
+        "channel describe nowhere",
+        "channel rename",
+        &rename_too_long,
+        &summary_too_long,
+        &briefing_too_long,
     ] {
         let error = actor.execute_command(line).await.expect_err("unusable");
         assert!(

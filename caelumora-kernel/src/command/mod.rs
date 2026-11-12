@@ -14,6 +14,7 @@
 //! (`caelumora_api::command`, issue 516).
 
 pub(crate) mod agent;
+pub(crate) mod channel;
 pub mod help;
 pub(crate) mod participant;
 
@@ -22,7 +23,7 @@ use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
 use crate::session::SessionLoop;
-use crate::view::{Viewer, Views};
+use crate::view::{ChannelView, SessionView, Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
@@ -83,6 +84,26 @@ impl CommandContext<'_> {
         })?;
         let views = session.views(Viewer::new(self.issuer.security_context()));
         Ok((session, views))
+    }
+
+    /// The session the channel belongs to as the issuer reads it, for the command `command`: its
+    /// view, reached through `session_loop`'s views.
+    ///
+    /// # Errors
+    /// `CommandError::Failed` if the channel belongs to no session or the session cannot be read.
+    pub(crate) async fn session_view(&self, command: &str) -> CommandResult<SessionView> {
+        let (session, views) = self.session_loop(command)?;
+        views.session(session.id()).await.map_err(|e| command_error(command, &e.into()))
+    }
+
+    /// The channel the command `command` runs in as the issuer reads it: its view, reached through
+    /// `session_view`.
+    ///
+    /// # Errors
+    /// `CommandError::Failed` if the session or the channel cannot be read.
+    pub(crate) async fn channel_view(&self, command: &str) -> CommandResult<ChannelView> {
+        let session = self.session_view(command).await?;
+        session.channel(self.channel.id()).await.map_err(|e| command_error(command, &e.into()))
     }
 }
 
@@ -273,6 +294,7 @@ pub(crate) fn names(names: &[String]) -> String {
 /// Registers the command kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
     agent::register(registry);
+    channel::register(registry);
     help::register(registry);
     participant::register(registry);
 }

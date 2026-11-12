@@ -202,7 +202,7 @@ pub struct AppConfig {
     pub logging: LoggingConfig,
     /// The user commands every session has (issue 28), as `ChannelCommandProvider` components; a
     /// session template can add its own. Defaults to `default_commands`: `/help` and the command
-    /// groups `participant` and `agent` (issue 560); an empty list switches them off.
+    /// groups `participant`, `agent` and `channel` (issue 560); an empty list switches them off.
     pub commands: ComponentConfig,
     /// Components that replace the built-in default of a facet of which an
     /// agent has exactly one (issue 99) - the model it talks to (issue 130)

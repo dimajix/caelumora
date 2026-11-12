@@ -45,19 +45,19 @@ be built (`CommandSet::new`), as does a name the code gave unchecked (`CommandNa
 is recorded and announced of a command is its name, whichever it was issued by.
 
 The commands of the channel are grouped by the kind of entity they act on, as command line tools
-group theirs - `participant`, `agent` -: the group is a command's first word, nothing of its own, so
-that any component may contribute to any group. `/help <group>` lists the commands of a group. What
-is done often keeps a short form of one word - `/add`, `/nudge`, `/wakeup` -: a second way of
-issuing the same command, kept deliberately for a line typed while talking. `/help` belongs to no
-group. The commands of an agent are not grouped.
+group theirs - `participant`, `agent`, `channel` -: the group is a command's first word, nothing of
+its own, so that any component may contribute to any group. `/help <group>` lists the commands of a
+group. What is done often keeps a short form of one word - `/add`, `/nudge`, `/wakeup` -: a second
+way of issuing the same command, kept deliberately for a line typed while talking. `/help` belongs
+to no group. The commands of an agent are not grouped.
 
 ### Commands are components
 
 A `ChannelCommandProvider` contributes commands run on the channel, as a `ToolProvider` contributes
 tools; the issuer is given as their actor. Commands come from two places:
 
-*   `AppConfig::commands`, the global set - by default `/help` and the groups `participant` and
-    `agent`, a component each; an empty list switches them off (see
+*   `AppConfig::commands`, the global set - by default `/help` and the groups `participant`,
+    `agent` and `channel`, a component each; an empty list switches them off (see
     [CONFIGURATION.md](CONFIGURATION.md));
 *   `SessionTemplate::commands`, for commands that belong to what a session is for, copied into the
     session, so a running session keeps its set.
@@ -93,19 +93,21 @@ asks nothing of the policy either. `/participant add` asks what taking someone i
 (`AgentManager::delete`: `DeleteAgent`), so whoever reads the channel sees them, and those without
 the right are refused on running them. `/participant list` asks what reading the channel asks, as
 its view does, and `/agent list` what reading the session's agents asks (`SessionView::agents`): an
-agent the issuer may not read is neither listed nor deleted by name.
+agent the issuer may not read is neither listed nor deleted by name. `/channel list` and
+`/channel describe` ask what reading the session's channels asks, and `/channel rename`, `summary`
+and `briefing` what changing the channel they are issued in asks (`UpdateChannel`).
 
 ### Private or channel-wide answers
 
 A command answers the issuer alone (`/help`, `/participant list`, `/participant nudge`,
-`/participant add`, `/participant remove`, `/agent list`, `/agent create`, `/agent delete`) or the
-whole channel (`/agent wakeup`): that `/participant add` brought someone in or `/participant remove`
-took someone out, the channel tells everyone anyway. A channel-wide answer is announced by the
-issuer's actor as `CommandExecuted`, forwarded to the users only, shown but never stored. The issuer
-gets the answer back from `execute_command` either way, since the channel never routes an envelope
-back to its sender; the REST response carries it only when it is private, since the web UI receives
-the announcement on its stream. A command of an agent answers later, on the stream; an answer for
-the issuer alone is routed to them alone.
+`/participant add`, `/participant remove`, `/agent list`, `/agent create`, `/agent delete`, the
+group `channel`) or the whole channel (`/agent wakeup`): that `/participant add` brought someone in
+or `/participant remove` took someone out, the channel tells everyone anyway. A channel-wide answer
+is announced by the issuer's actor as `CommandExecuted`, forwarded to the users only, shown but
+never stored. The issuer gets the answer back from `execute_command` either way, since the channel
+never routes an envelope back to its sender; the REST response carries it only when it is private,
+since the web UI receives the announcement on its stream. A command of an agent answers later, on
+the stream; an answer for the issuer alone is routed to them alone.
 
 ### Naming an agent
 
@@ -117,7 +119,10 @@ then refuses with their names rather than picking one. What it is sought among i
 `/agent wakeup` and `/participant nudge` act on an actor, and seek among those running;
 `/participant remove` seeks among those `/participant list` lists, as the issuer reads the channel,
 so that it also removes one that cannot run - but one that no longer exists, which has no name to
-be named by; `/agent delete` seeks among the agents `/agent list` lists, taking part or not.
+be named by; `/agent delete` seeks among the agents `/agent list` lists, taking part or not. A
+channel is named by its whole name, which is the only one of its session (`/channel describe`,
+`SessionView::channel_named`); one the issuer may not read is answered like one that does not
+exist.
 
 Who is to be brought into the channel does not take part in it yet, so `/participant add` looks
 further, by the whole name (`SessionView::candidates`, issue
@@ -200,6 +205,11 @@ external agent alike.
 | `/agent create` | - | the channel | `agent` | `<personality> [as <name>]` | private | Makes an agent of the personality named, in the session's scope - in the channel's for a personality of the channel's scope -, named after the personality unless named; `/participant add` brings it in. |
 | `/agent delete` | - | the channel | `agent` | `<agent>` | private | Deletes the agent of the session named, among those `/agent list` lists; one taking part rests in its channels until it is restored. |
 | `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named. |
+| `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
+| `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |
+| `/channel rename` | - | the channel | `channel` | `<new name>` | private | Renames this channel. |
+| `/channel summary` | - | the channel | `channel` | `[text]` | private | Says in a line what this channel is for, its briefing kept; without a text, removes it. |
+| `/channel briefing` | - | the channel | `channel` | `[text]` | private | Says what an agent should know before it works in this channel, its summary kept; without a text, removes it. |
 | `/skill` | - | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | - | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
 | `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |

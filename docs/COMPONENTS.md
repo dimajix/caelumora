@@ -353,7 +353,7 @@ by the agents' library (`caelumora_agents::library::register_components`, issue 
 | Module | Components |
 |---|---|
 | `tool/` | tool providers (`calculator`, `ask_user`, ...) |
-| `command/` | command providers (`help`, and the command groups `participant` and `agent`) |
+| `command/` | command providers (`help`, and the command groups `participant`, `agent` and `channel`) |
 | `prompt/` | prompt providers (`system_prompt`, `channel_participants`, ...) and the context providers (`turn_context`, `external_context`), with what their parts share (`Prompt`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
 | `moderator/` | the moderator and its responder policies |
 | `external/` | the facet through which an external agent is reached, and no kind: each protocol is a library (`a2a_agent` in `caelumora-a2a`) |
@@ -522,6 +522,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `help` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `participant` | `ChannelCommandProvider` | - | The command group `participant`: `/participant list`, `add`, `remove` and `nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `agent` | `ChannelCommandProvider` | - | The command group `agent`: `/agent list`, `create`, `delete` and `wakeup`. Uses the `AgentManager`. |
+| `channel` | `ChannelCommandProvider` | - | The command group `channel`: `/channel list`, `describe`, `rename`, `summary` and `briefing`. |
 
 `position` is `start`, `before_turn_input`, `end` or `given`
 ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.

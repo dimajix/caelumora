@@ -267,3 +267,21 @@ issue of the terminal.
   participants of a channel and the agents of a session alike. `AgentView` gives its name, handle
   and personality as `ParticipantView` does, and `Views::agents_of` lists agents by a query, for
   `Views::agents` and `SessionView::agents`.
+- **2026-11-12** — Decided with the maintainer, for the group `channel`:
+  1. `channel describe [channel]` shows a channel; what it is for is set by `channel summary` and
+     `channel briefing`, its two parts, each keeping the other.
+  2. `channel rename`, `summary` and `briefing` act on the channel they are issued in, and
+     `describe` on it unless a channel is named: no command takes two names in a line.
+  3. `channel create <name>` makes a channel as `ChannelSpec::new` does, with its issuer alone.
+  4. `channel leave` needs a right and an operation of its own: issue
+     [562](562-nobody-can-leave-a-channel.md).
+  5. No command of the group has a short form.
+  6. In two steps: first `list`, `describe`, `rename`, `summary` and `briefing`; then `create`,
+     `delete` and `join`.
+
+  Step 4a done: the first five. `CommandContext::session_view` and `channel_view` give the
+  issuer's view of the session and of the channel, for the groups `participant`, `agent` and
+  `channel` alike. A text that does not fit - a name, a summary, a briefing - is refused before
+  anything is changed. `channel summary` and `briefing` write both parts back, so a change of the
+  other part made at the same moment is lost; the maintainer judged it too rare to change
+  `update_description` for.

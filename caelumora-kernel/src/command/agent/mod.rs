@@ -11,7 +11,6 @@ use crate::agent::AgentManager;
 use crate::command::{command_error, ChannelCommandProvider, CommandContext};
 use crate::component::ComponentRegistry;
 use crate::view::{AgentView, SessionView};
-use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
@@ -67,10 +66,8 @@ async fn session_agents(
     command: &str,
     context: &CommandContext<'_>,
 ) -> CommandResult<(SessionView, Vec<AgentView>)> {
-    let failed = |e: Error| command_error(command, &e);
-    let (session, views) = context.session_loop(command)?;
-    let session = views.session(session.id()).await.map_err(|e| failed(e.into()))?;
-    let agents = session.agents().await.map_err(|e| failed(e.into()))?;
+    let session = context.session_view(command).await?;
+    let agents = session.agents().await.map_err(|e| command_error(command, &e.into()))?;
     Ok((session, agents))
 }
 
