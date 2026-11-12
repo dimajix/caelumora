@@ -73,16 +73,14 @@ impl Participation {
         Self { agents, controllers, policies: policies.clone() }
     }
 
-    /// `participant` of channel `channel_id` of session `session_id` - of
-    /// the session alone without one - resolved: with its controller, an
-    /// agent also with its personality's, for its actor to be built from; `None` if its user or
-    /// agent no longer exists - an agent as `agent_exists` says. An agent runs only with a
-    /// personality it may read there (`require_runnable`).
+    /// `participant` of channel `channel_id` of session `session_id` - of the session alone
+    /// without one - resolved: with its controller, an agent also with its personality's, for its
+    /// own context and for its actor to be built from; `None` if its user or agent no longer
+    /// exists, an agent as `agent_exists` says. Asks nothing: whether it may run is
+    /// `require_runnable`'s, asked by whoever builds its actor or admits it.
     ///
     /// # Errors
-    /// Whatever else the store reports when loading it - also that an
-    /// agent's personality is gone - and `StoreError::PermissionDenied` if
-    /// it is not the agent's to read: the agent exists, but cannot be run.
+    /// Whatever else the store reports when loading it - also that an agent's personality is gone.
     pub(crate) async fn resolve(
         &self,
         participant: &Participant,
@@ -111,9 +109,7 @@ impl Participation {
         };
         let personality =
             self.controllers.personality_controller(agent.load().personality_id).await?;
-        let resolved = at(ResolvedKind::Agent(agent, personality));
-        self.require_runnable(&resolved).await?;
-        Ok(Some(resolved))
+        Ok(Some(at(ResolvedKind::Agent(agent, personality))))
     }
 
     /// Whether agent `id` exists - neither deleted nor purged -, asked of
@@ -127,15 +123,14 @@ impl Participation {
         Ok(self.agents.get(&SecurityContext::system(), id).await.optional()?.is_some())
     }
 
-    /// Nothing if `resolved` can be run: an agent only with a personality it
-    /// may read, in its place (`GetPersonality`): one whose owner lost it - a
-    /// share withdrawn - is not run (issue 191). A user and an approver have
-    /// none to read.
+    /// Nothing if `resolved` can be run: an agent only with a personality it may read, in its place
+    /// (`GetPersonality`): one whose owner lost it - a share withdrawn - is not run (issue 191). A
+    /// user and an approver have none to read. Asked of every participant before its actor is
+    /// built, and before it is admitted to a channel.
     ///
     /// # Errors
-    /// `StoreError::PermissionDenied` if the personality is not the agent's
-    /// to read.
-    async fn require_runnable(&self, resolved: &ResolvedParticipant) -> StoreResult<()> {
+    /// `StoreError::PermissionDenied` if the personality is not the agent's to read.
+    pub(crate) async fn require_runnable(&self, resolved: &ResolvedParticipant) -> StoreResult<()> {
         match (&resolved.kind, resolved.context()) {
             (ResolvedKind::Agent(_, personality), Some(context)) => {
                 self.policies
@@ -221,14 +216,15 @@ impl Participation {
         self.require_cleared(resolved, context, classification)
     }
 
-    /// Nothing if every one of `participants` that still exists may take
-    /// part in `channel` (`require_admissible`) - asked before anything of a
-    /// new or restored channel is stored: of the founders of a new one
-    /// (issue 420), of the participants of a restored one.
+    /// Nothing if every one of `participants` that still exists can run (`require_runnable`) and
+    /// may take part in `channel` (`require_admissible`) - asked before anything of a new or
+    /// restored channel is stored: of the founders of a new one (issue 420), of the participants of
+    /// a restored one.
     ///
     /// # Errors
     /// `ChannelError::OutOfScope` or `NotCleared` for the first who may not;
-    /// whatever reading a participant reports.
+    /// `StoreError::PermissionDenied` for an agent that cannot run; whatever reading a participant
+    /// reports.
     pub(crate) async fn require_admitted(
         &self,
         context: &SecurityContext,
@@ -239,6 +235,7 @@ impl Participation {
             if let Some(resolved) =
                 self.resolve(participant, channel.session_id, Some(channel.id)).await?
             {
+                self.require_runnable(&resolved).await?;
                 self.require_admissible(&resolved, context, &channel.classification)?;
             }
         }

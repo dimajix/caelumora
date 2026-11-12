@@ -5,7 +5,7 @@ use super::{
     ActorChange, Actors, ChannelActor, ChannelError, ChannelLoop, ChannelParticipant,
     ResolvedParticipant, LEAVE_GRACE,
 };
-use anyhow::Result;
+use anyhow::{Error, Result};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::chain::Position;
@@ -137,6 +137,7 @@ impl ChannelLoop {
             .resolve(&found)
             .await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
+        self.participation.require_runnable(&resolved).await?;
         // Joining or founding was permitted; storing is the kernel's.
         let storing = match entry {
             Entry::Added => context.clone(),
@@ -251,6 +252,7 @@ impl ChannelLoop {
                 let Some(resolved) = self.resolve(&found).await? else {
                     return Err(refusal(leaving.refused()).into());
                 };
+                self.participation.require_runnable(&resolved).await?;
                 self.participation.require_own_act(&resolved, context, leaving, refusal).await?;
                 SecurityContext::system()
             }
@@ -297,21 +299,17 @@ impl ChannelLoop {
                     ),
                 },
                 None => {
-                    let rejoined = match self.resolve(&participant).await {
-                        Ok(Some(resolved)) => match self.rejoining_from(actor).await {
-                            Ok(from) => self
-                                .start_participant(
-                                    resolved,
-                                    Some(from),
-                                    Some(&SecurityContext::system()),
-                                )
-                                .await
-                                .map(|()| true),
-                            Err(e) => Err(e.into()),
-                        },
-                        Ok(None) => Ok(false),
-                        Err(e) => Err(e),
-                    };
+                    let rejoined = async {
+                        let Some(resolved) = self.resolve(&participant).await? else {
+                            return Ok(false);
+                        };
+                        self.participation.require_runnable(&resolved).await?;
+                        let from = self.rejoining_from(actor).await?;
+                        let joined = SecurityContext::system();
+                        self.start_participant(resolved, Some(from), Some(&joined)).await?;
+                        Ok::<_, Error>(true)
+                    }
+                    .await;
                     match rejoined {
                         Ok(true) => {
                             self.channel.announce_resting(id, false);

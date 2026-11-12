@@ -97,7 +97,7 @@ impl SessionLoop {
 
     /// Takes `actor` into the session on behalf of `context` - by their own act if `joining` -,
     /// once it is asked whether they may take part in `channel` as well, if one is named
-    /// (`resolve_to_take_in`), and whether they may join it by themselves.
+    /// (`require_to_take_in`), and whether they may join it by themselves.
     /// Whoever takes them in reads them first, a user to find out that they exist (issue 120).
     /// The session announces it, and follows an agent taken in (`run`).
     ///
@@ -130,7 +130,8 @@ impl SessionLoop {
             }
             other => return Err(SessionError::CannotTakeIn(other).into()),
         };
-        let resolved = self.resolve_to_take_in(context, &participant, channel).await?;
+        let resolved = self.resolve_to_take_in(&participant, channel).await?;
+        self.require_to_take_in(context, &resolved, channel).await?;
         // Joining was permitted; storing is the kernel's.
         let storing = match (in_session, joining) {
             (true, _) => None,
@@ -165,30 +166,42 @@ impl SessionLoop {
         Ok(())
     }
 
-    /// `participant` with what its actor is built from, if they may take part in `channel` too,
-    /// where one is named: it lies where it may and is cleared for it, asked in `context`, whoever
-    /// takes them in. What is asked before anyone is taken in, and what says whom one cannot take
-    /// in (`SessionView::candidates`).
+    /// `participant` with what its actor is built from, to be taken into the session and into
+    /// `channel` too, where one is named (`Participation::resolve`). Asks nothing.
     ///
     /// # Errors
-    /// `SessionError::CannotTakeIn` for a user or agent that no longer exists;
-    /// `ChannelError::OutOfScope` or `NotCleared`; `StoreError::PermissionDenied` for an agent
-    /// that may not read its personality, and cannot run; whatever reading it reports.
+    /// `SessionError::CannotTakeIn` for a user or agent that no longer exists; whatever reading
+    /// it reports.
     pub(crate) async fn resolve_to_take_in(
         &self,
-        context: &SecurityContext,
         participant: &Participant,
         channel: Option<&Arc<ChannelLoop>>,
     ) -> Result<ResolvedParticipant> {
-        let resolved = self
-            .participation
+        self.participation
             .resolve(participant, self.id, channel.map(|channel| channel.id()))
             .await?
-            .ok_or(SessionError::CannotTakeIn(participant.actor_id()))?;
+            .ok_or_else(|| SessionError::CannotTakeIn(participant.actor_id()).into())
+    }
+
+    /// Nothing if `resolved` can be taken in: it can run (`Participation::require_runnable`), and
+    /// may take part in `channel` too, where one is named - it lies where it may and is cleared
+    /// for it, asked in `context`, whoever takes them in. What is asked before anyone is taken in,
+    /// and what says whom one cannot take in (`SessionView::candidates`).
+    ///
+    /// # Errors
+    /// `StoreError::PermissionDenied` for an agent that may not read its personality, and cannot
+    /// run; `ChannelError::OutOfScope` or `NotCleared`.
+    pub(crate) async fn require_to_take_in(
+        &self,
+        context: &SecurityContext,
+        resolved: &ResolvedParticipant,
+        channel: Option<&Arc<ChannelLoop>>,
+    ) -> Result<()> {
+        self.participation.require_runnable(resolved).await?;
         if let Some(channel) = channel {
-            self.participation.require_admissible(&resolved, context, &channel.classification())?;
+            self.participation.require_admissible(resolved, context, &channel.classification())?;
         }
-        Ok(resolved)
+        Ok(())
     }
 }
 

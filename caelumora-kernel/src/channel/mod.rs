@@ -364,30 +364,22 @@ impl ChannelLoop {
             // keep everyone else out, nor can a third party - the
             // personality's owner, or the components' - stop someone's
             // channel so.
-            let found = channel_loop.resolve(participant).await;
-            let resolved = match found {
-                Ok(Some(resolved)) => resolved,
-                Ok(None) => {
-                    info!(
-                        "{} of channel {} no longer exists and is left out",
-                        participant.actor_id(),
-                        channel_loop.id
-                    );
-                    continue;
-                }
-                Err(e) if cannot_run(&e) => {
-                    warn!(
-                        "{} of channel {} cannot be run and is left out: {:#}",
-                        participant.actor_id(),
-                        channel_loop.id,
-                        e
-                    );
-                    continue;
-                }
-                Err(e) => return Err(e),
-            };
-            match channel_loop.start_participant(resolved, None, None).await {
-                Ok(()) => {}
+            let started = async {
+                let Some(resolved) = channel_loop.resolve(participant).await? else {
+                    return Ok(false);
+                };
+                channel_loop.participation.require_runnable(&resolved).await?;
+                channel_loop.start_participant(resolved, None, None).await?;
+                Ok(true)
+            }
+            .await;
+            match started {
+                Ok(true) => {}
+                Ok(false) => info!(
+                    "{} of channel {} no longer exists and is left out",
+                    participant.actor_id(),
+                    channel_loop.id
+                ),
                 Err(e) if cannot_run(&e) => warn!(
                     "{} of channel {} cannot be run and is left out: {:#}",
                     participant.actor_id(),
