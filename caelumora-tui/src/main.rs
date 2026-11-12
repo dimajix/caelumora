@@ -2,6 +2,7 @@
 //! the program was started in (issue 554) - one started from a template, or one of the directory
 //! continued or resumed -; or it is asked what a definition's file is to its store (`id`).
 
+mod followed;
 mod here;
 mod home;
 mod sessions;
@@ -16,21 +17,16 @@ use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
-use caelumora_domain::actor::{ActorEvent, ActorId};
-use caelumora_domain::agent::AgentId;
-use caelumora_domain::approval::{ApprovalId, ApprovalResponse};
+use caelumora_domain::actor::ActorId;
+use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::config::AppConfig;
-use caelumora_domain::mention::{is_group_handle, mention_spans};
-use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::Query;
-use caelumora_domain::question::{Question, QuestionId, QuestionRequest, Response};
+use caelumora_domain::question::{Question, QuestionRequest, Response};
 use caelumora_domain::store::StoreResultExt;
-use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
-use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::error::user_message;
@@ -61,6 +57,7 @@ use caelumora_tool_mcp::library::McpToolLibrary;
 use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use clap::{Parser, Subcommand};
+use followed::Followed;
 use here::{place_of, HERE};
 use home::Home;
 use rustyline::error::ReadlineError;
@@ -68,7 +65,6 @@ use rustyline::history::DefaultHistory;
 use rustyline::Editor;
 use serde_json::Value;
 use sessions::Asked;
-use std::collections::HashMap;
 use std::env;
 use std::future;
 use std::io::Error;
@@ -79,71 +75,6 @@ use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-/// What `message` says as the terminal prints it: its words, the participants it mentions
-/// highlighted, and what it carries by name, type and size (issue 282); `None` if it says neither.
-fn said(message: &Message, handles: &HashMap<ActorId, String>) -> Option<String> {
-    let words = message
-        .content
-        .as_deref()
-        .filter(|content| !content.is_empty())
-        .map(|content| render_content(message, content, handles));
-    let attachments = message.attachments.iter().map(|attachment| {
-        format!(
-            "[{}, {}, {}]",
-            attachment.name.as_str(),
-            attachment.media_type,
-            attachment.size_shown()
-        )
-    });
-    let parts: Vec<String> = words.into_iter().chain(attachments).collect();
-    (!parts.is_empty()).then(|| parts.join(" "))
-}
-
-fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
-    let mentioned: Vec<&String> =
-        message.mentions.iter().filter_map(|id| handles.get(id)).collect();
-    let mut rendered = String::with_capacity(content.len());
-    let mut pos = 0;
-    for span in mention_spans(content) {
-        // A group handle addresses everyone (issue 401): resolved if anyone was.
-        if mentioned.contains(&&span.handle)
-            || (is_group_handle(&span.handle) && !message.mentions.is_empty())
-        {
-            rendered.push_str(&content[pos..span.range.start]);
-            rendered.push_str("\x1b[1;36m");
-            rendered.push_str(&content[span.range.clone()]);
-            rendered.push_str("\x1b[0m");
-            pos = span.range.end;
-        }
-    }
-    rendered.push_str(&content[pos..]);
-    rendered
-}
-
-/// Prints the questions of `request` (issue 165), and - if they are put to
-/// `me` - how to answer them.
-#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-fn print_questions(request: &QuestionRequest, me: ActorId) {
-    println!("\r--- Questions of {} (id: {}) ---", request.tool_call.function_name, request.id.0);
-    for (index, question) in request.questions.questions.iter().enumerate() {
-        println!("{}. [{}] {}", index + 1, question.header, question.question);
-        for (number, choice) in question.choices.iter().enumerate() {
-            let recommended = if choice.recommended { " (recommended)" } else { "" };
-            let description =
-                choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
-            println!("   {}) {}{}{}", number + 1, choice.label, recommended, description);
-        }
-    }
-    if request.questions.is_asked(me) {
-        if request.questions.sensitive {
-            println!("Sensitive: the answers go to the tool alone - but what you type is shown on this terminal.");
-        }
-        println!("Type '/answer {}' to answer them one by one, or '/decline {}'. A message instead declines them.", request.id.0, request.id.0);
-    } else {
-        println!("They are put to others.");
-    }
-}
 
 /// What the prompt for question `index` of `question` says.
 fn prompt_of(index: usize, question: &Question) -> String {
@@ -186,45 +117,16 @@ fn response_of(question: &Question, line: &str) -> Response {
     }
 }
 
-/// The open questions `arg` names by id - or, without one, the last that
-/// was put to `me`.
-fn questions_named(open: &[QuestionRequest], arg: &str, me: ActorId) -> Option<QuestionRequest> {
-    match arg.trim() {
-        "" => open.iter().rev().find(|q| q.questions.is_asked(me)).cloned(),
-        id => Uuid::parse_str(id)
-            .ok()
-            .and_then(|id| open.iter().find(|q| q.id == QuestionId(id)).cloned()),
-    }
-}
-
+/// Has the user talk in `channel`, line by line, until they end it or a signal does.
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-#[expect(clippy::too_many_lines, reason = "to be simplified; older than the lint (issue 452)")]
 async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
-    let user_actor = channel
-        .user_actor(user)
-        .ok_or_else(|| anyhow::anyhow!("The user is not a participant of the channel"))?;
-
-    let mut receiver = user_actor.watch();
+    let mut followed = Followed::new(&channel, user)?;
+    let mut receiver = followed.actor().watch();
     let mut input_rx = spawn_rustyline_input();
-    // Approval id -> agent id, so `/approve <id>`/`/deny <id>` know which
-    // agent to answer. Covers both plan proposals and regular tool calls -
-    // both flow through the same generic ApprovalRequested event.
-    let mut pending_approvals: HashMap<Uuid, AgentId> = HashMap::new();
-    // The last answer of an agent shown, which `/retry` asks it to give
-    // again (issue 234) - or, while one is under way, that answer, by the
-    // agent and its turn (issue 235); or, after a turn given up that may be
-    // answered anew and nothing since, that turn (issue 259).
-    let mut last_answer: Option<MessageId> = None;
-    let mut under_way: Option<(ActorId, TurnId)> = None;
-    let mut given_up: Option<(ActorId, TurnId)> = None;
-    // The questions open in the channel (issue 165), in the order they were
-    // asked, and those being answered, with the responses given so far:
-    // while they are, every line answers the next question.
     let me = ActorId::User(user);
-    let mut open_questions: Vec<QuestionRequest> = Vec::new();
+    // The questions being answered, with the responses given so far: while they are, every line
+    // answers the next question.
     let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
-    let handles: HashMap<ActorId, String> =
-        channel.participants().into_iter().filter_map(|m| Some((m.id, m.handle?))).collect();
 
     println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
     // A signal ends the loop as `exit` does, so that the session is shut
@@ -237,262 +139,24 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                 break;
             }
             received = receiver.recv() => {
-                let maybe_envelope = match received {
-                    Ok(envelope) => Some(envelope),
+                let envelope = match received {
+                    Ok(envelope) => envelope,
                     Err(RecvError::Lagged(lost)) => {
                         println!("\r[{} events missed]", lost);
                         continue;
                     }
-                    Err(RecvError::Closed) => None,
+                    Err(RecvError::Closed) => break,
                 };
-                // What the user said is on the screen already, as typed.
-                if maybe_envelope.as_ref().is_some_and(|e| e.context.sender_id == ActorId::User(user)) {
-                    continue;
+                for line in followed.take_in(&envelope) {
+                    println!("\r{line}");
                 }
-                let sender = maybe_envelope.as_ref().map(|e| e.context.sender_name.clone()).unwrap_or_default();
-                let sender_id = maybe_envelope.as_ref().map(|e| e.context.sender_id);
-                match maybe_envelope.map(|envelope| envelope.event) {
-                    Some(ActorEvent::ResponseStarted { turn_id }) => {
-                        under_way = sender_id.filter(|id| matches!(id, ActorId::Agent(_))).map(|id| (id, turn_id));
-                    }
-                    // Its answer has ended, said or not.
-                    Some(ActorEvent::TurnFinished { .. }) if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) => {
-                        under_way = None;
-                    }
-                    // Each message as soon as it is complete, as the web UI
-                    // shows it; the full response that ends an answer holds
-                    // them again (issue 220).
-                    Some(ActorEvent::CompleteMessageGenerated(message)) => {
-                        if matches!(message.sender_id, ActorId::Agent(_)) {
-                            last_answer = Some(message.id);
-                        }
-                        given_up = None;
-                        if let Some(said) = said(&message, &handles) {
-                            println!("\r{}> {}", message.sender_name, said);
-                        }
-                    }
-                    Some(ActorEvent::IntermediateMessageGenerated(message)) => {
-                        if let Some(said) = said(&message, &handles) {
-                            println!("\r[working] {}> {}", message.sender_name, said);
-                        }
-                    }
-                    // What another changed of what was said (issue 234).
-                    Some(ActorEvent::MessageModified(message)) => {
-                        if let Some(said) = said(&message, &handles) {
-                            println!("\r{}> [edited] {}", message.sender_name, said);
-                        }
-                    }
-                    Some(ActorEvent::MessageRevoked { .. }) => {
-                        println!("\r{} took a message back", sender);
-                    }
-                    Some(ActorEvent::RetryAccepted { .. }) => {
-                        println!("\r{} answers again", sender);
-                    }
-                    Some(ActorEvent::RetryRejected { reason, .. }) => {
-                        println!("\r{} cannot answer again: {}", sender, reason);
-                    }
-                    // What this user sent that the channel did not let in
-                    // (issue 304), told to them alone.
-                    Some(ActorEvent::MessageRejected { rejected, reason, .. }) => {
-                        println!("\r[refused] the channel did not let in your {}: {}", rejected, reason);
-                    }
-                    Some(ActorEvent::TurnGivenUp { turn_id, reason }) => {
-                        if under_way.is_some_and(|(agent, _)| Some(agent) == sender_id) {
-                            under_way = None;
-                        }
-                        given_up = sender_id.filter(|id| matches!(id, ActorId::Agent(_)) && reason.may_be_answered_again()).map(|id| (id, turn_id));
-                        match reason {
-                            GivenUpReason::Failed { message } => println!("\r[error] {} could not answer: {}", sender, message),
-                            GivenUpReason::Lowered { channel } => println!("\r{} gave its answer up: the channel was lowered to {}", sender, channel),
-                            GivenUpReason::CallLimit { calls } => println!("\r{} gave its answer up: it asked its model {} times, as often as one answer or one step of a plan may", sender, calls),
-                            GivenUpReason::Left | GivenUpReason::Retried => println!("\r{} gave its answer up: {}", sender, reason.cause()),
-                        }
-                    }
-                    Some(ActorEvent::CommandStarted { command, .. }) => {
-                        // Told to its issuer alone (issue 299).
-                        println!("\r{} is carrying out /{}...", sender, command);
-                    }
-                    Some(ActorEvent::CommandExecuted { command, output, turn_id, .. }) => {
-                        // Carried out by an agent in a turn of its own (issue 269), or run by a
-                        // user.
-                        let verb = if turn_id.is_some() { "carried out" } else { "ran" };
-                        println!("\r{} {} /{}: {}", sender, verb, command, output);
-                    }
-                    Some(ActorEvent::CommandFailed { command, reason, .. }) => {
-                        println!("\r{} did not carry out /{}: {}", sender, command, reason);
-                    }
-                    Some(ActorEvent::ActivityStarted { activity, .. }) => {
-                        // Of its own accord (issue 284).
-                        println!("\r{} is {}...", sender, activity);
-                    }
-                    Some(ActorEvent::ActivityFinished { output, .. }) => {
-                        println!("\r{}", output);
-                    }
-                    // Who joined or left (issue 408), by whose act.
-                    Some(ActorEvent::ParticipantJoined { participant, name }) => {
-                        match sender_id {
-                            Some(by) if by == participant => println!("\r{} joined the channel", name),
-                            Some(ActorId::System) => println!("\r{} was added to the channel", name),
-                            _ => println!("\r{} added {} to the channel", sender, name),
-                        }
-                    }
-                    Some(ActorEvent::ParticipantLeft { participant, name, .. }) => {
-                        match sender_id {
-                            Some(by) if by == participant => println!("\r{} left the channel", name),
-                            Some(ActorId::System) => println!("\r{} was removed from the channel", name),
-                            _ => println!("\r{} removed {} from the channel", sender, name),
-                        }
-                    }
-                    Some(ActorEvent::ApprovalRequested(request)) => {
-                        pending_approvals.insert(request.id.0, request.agent_id);
-                        println!("\r--- Approval requested (id: {}) ---", request.id.0);
-                        println!("{}", request.description);
-                        if request.explicit {
-                            println!("A rule of this session or channel asks for this call to be decided by a person.");
-                        }
-                        println!("Type '/approve {}' or '/deny {}' to respond.", request.id.0, request.id.0);
-                    }
-                    // The user's own answer, given by a rule of theirs (issue 13).
-                    Some(ActorEvent::ApprovalGranted(response)) | Some(ActorEvent::ApprovalDenied(response)) if !matches!(sender_id, Some(ActorId::Approver(_))) => {
-                        if response.decisions.iter().any(|decision| decision.by_rule.is_some()) {
-                            println!("\r--- Approval {} answered by your rule ---", response.id.0);
-                        }
-                    }
-                    // The approval is over: decided, or no longer asked for.
-                    Some(ActorEvent::ApprovalGranted(response)) | Some(ActorEvent::ApprovalDenied(response)) | Some(ActorEvent::ApprovalTimedOut(response)) => {
-                        pending_approvals.remove(&response.id.0);
-                    }
-                    Some(ActorEvent::ApprovalRequestWithdrawn { id }) => {
-                        if pending_approvals.remove(&id.0).is_some() {
-                            println!("\r--- Approval {} withdrawn: the turn ended ---", id.0);
-                        }
-                    }
-                    // Asked anew by an agent that resumed its turn: shown once.
-                    Some(ActorEvent::QuestionRequested(request)) => {
-                        if !open_questions.iter().any(|q| q.id == request.id) {
-                            print_questions(&request, me);
-                            open_questions.push(request);
-                        }
-                    }
-                    Some(ActorEvent::QuestionClosed { id, .. }) => {
-                        open_questions.retain(|q| q.id != id);
-                        if answering.as_ref().is_some_and(|(q, _)| q.id == id) {
-                            answering = None;
-                            println!("\r--- Questions {} closed before you answered ---", id.0);
-                        }
-                    }
-                    Some(_) => {
-                    }
-                    None => break,
+                if let Some((request, _)) = answering.take_if(|(q, _)| !followed.is_open(q.id)) {
+                    println!("\r--- Questions {} closed before you answered ---", request.id.0);
                 }
             }
             maybe_input = input_rx.recv() => {
-                match maybe_input {
-                    Some(Ok(line)) => {
-                        let input = line.trim();
-                        if input.is_empty() {
-                            continue;
-                        }
-                        if input == "exit" || input == "quit" {
-                            break;
-                        }
-                        if let Some(rest) = input.strip_prefix("/decline").filter(|r| r.is_empty() || r.starts_with(' ')) {
-                            match questions_named(&open_questions, rest, me) {
-                                Some(request) => {
-                                    answering = None;
-                                    if let Err(e) = user_actor.answer_questions(request.id, None).await {
-                                        println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
-                                    }
-                                }
-                                None => println!("No open questions put to you{}", if rest.trim().is_empty() { String::new() } else { format!(" with id {}", rest.trim()) }),
-                            }
-                            continue;
-                        }
-                        if let Some(rest) = input.strip_prefix("/answer").filter(|r| r.is_empty() || r.starts_with(' ')) {
-                            match questions_named(&open_questions, rest, me).filter(|q| q.questions.is_asked(me)) {
-                                Some(request) => {
-                                    if let Some(first) = request.questions.questions.first() {
-                                        println!("{}", prompt_of(0, first));
-                                        answering = Some((request, Vec::new()));
-                                    }
-                                }
-                                None => println!("No open questions put to you{}", if rest.trim().is_empty() { String::new() } else { format!(" with id {}", rest.trim()) }),
-                            }
-                            continue;
-                        }
-                        // While questions are answered, each line answers the next.
-                        if let Some((request, mut responses)) = answering.take() {
-                            if let Some(question) = request.questions.questions.get(responses.len()) {
-                                responses.push(response_of(question, input));
-                            }
-                            match request.questions.questions.get(responses.len()) {
-                                Some(next) => {
-                                    println!("{}", prompt_of(responses.len(), next));
-                                    answering = Some((request, responses));
-                                }
-                                None => if let Err(e) = user_actor.answer_questions(request.id, Some(responses)).await {
-                                    println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
-                                },
-                            }
-                            continue;
-                        }
-                        if let Some(rest) = input.strip_prefix("/approve ").or_else(|| input.strip_prefix("/deny ")) {
-                            let approved = input.starts_with("/approve ");
-                            match Uuid::parse_str(rest.trim()) {
-                                Ok(id) => {
-                                    match pending_approvals.remove(&id) {
-                                        Some(agent_id) => {
-                                            let response = ApprovalResponse::new(ApprovalId(id), agent_id);
-                                            user_actor.send_approval(response, approved).await?;
-                                        }
-                                        None => println!("No pending approval with id {}", id),
-                                    }
-                                }
-                                Err(_) => println!("Invalid approval id: {}", rest.trim()),
-                            }
-                            continue;
-                        }
-                        if input == "/retry" {
-                            let asked = match (under_way.or(given_up), last_answer) {
-                                (Some((agent, turn)), _) => user_actor.request_retry_of_turn(agent, turn).await,
-                                (None, Some(answer)) => user_actor.request_retry(answer).await,
-                                (None, None) => {
-                                    println!("No answer of an agent to give again");
-                                    continue;
-                                }
-                            };
-                            if let Err(e) = asked {
-                                let message = user_message(&e).unwrap_or_else(|| e.to_string());
-                                println!("[error] {}", message);
-                            }
-                            continue;
-                        }
-                        // `/approve`, `/deny`, `/answer`, `/decline` and
-                        // `/retry` above are this terminal's own; every
-                        // other command goes to the channel (issue 28).
-                        match parse_input(input) {
-                            UserInput::Command(line) => {
-                                match user_actor.execute_command(&line).await {
-                                    // Also for an answer to the whole channel: its
-                                    // announcement is not routed back to its sender.
-                                    Ok(reply) => if let Some(output) = reply.output { println!("{}", output) },
-                                    Err(e) => {
-                                        // The line is not logged: what follows the command
-                                        // may be what was said. The error names the command.
-                                        tracing::warn!("A command failed: {:#}", e);
-                                        let message = user_message(&e).unwrap_or_else(|| {
-                                            "The command failed; the details are in the log".to_string()
-                                        });
-                                        println!("[error] {}", message);
-                                    }
-                                }
-                            }
-                            UserInput::Message(text) => {
-                                let span_id = user_actor.send_message(Some(text), None, Vec::new()).await?;
-                                tracing::debug!(span_id = %span_id, "Message sent");
-                            }
-                        }
-                    }
+                let line = match maybe_input {
+                    Some(Ok(line)) => line,
                     Some(Err(ReadlineError::Interrupted)) => {
                         println!("CTRL-C");
                         break;
@@ -502,11 +166,133 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                         break;
                     }
                     None => break,
+                };
+                let input = line.trim();
+                if input == "exit" || input == "quit" {
+                    break;
                 }
+                handle_line(input, &mut followed, &mut answering, me).await?;
             }
         }
     }
 
+    Ok(())
+}
+
+/// Does what the user typed, `input`, in the channel `followed`: answers the next of the
+/// questions being `answering`, or runs one of this terminal's own commands - `/approve`,
+/// `/deny`, `/answer`, `/decline` and `/retry` -, or sends a command or a message to the channel
+/// (issue 28).
+///
+/// # Errors
+/// If a message or an approval cannot be sent into the channel.
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
+async fn handle_line(
+    input: &str,
+    followed: &mut Followed,
+    answering: &mut Option<(QuestionRequest, Vec<Response>)>,
+    me: ActorId,
+) -> Result<()> {
+    if input.is_empty() {
+        return Ok(());
+    }
+    let none_named = |rest: &str| match rest.trim() {
+        "" => println!("No open questions put to you"),
+        id => println!("No open questions put to you with id {id}"),
+    };
+    if let Some(rest) =
+        input.strip_prefix("/decline").filter(|r| r.is_empty() || r.starts_with(' '))
+    {
+        match followed.questions_named(rest) {
+            Some(request) => {
+                *answering = None;
+                if let Err(e) = followed.actor().answer_questions(request.id, None).await {
+                    println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
+                }
+            }
+            None => none_named(rest),
+        }
+        return Ok(());
+    }
+    if let Some(rest) = input.strip_prefix("/answer").filter(|r| r.is_empty() || r.starts_with(' '))
+    {
+        match followed.questions_named(rest).filter(|q| q.questions.is_asked(me)) {
+            Some(request) => {
+                if let Some(first) = request.questions.questions.first() {
+                    println!("{}", prompt_of(0, first));
+                    *answering = Some((request.clone(), Vec::new()));
+                }
+            }
+            None => none_named(rest),
+        }
+        return Ok(());
+    }
+    // While questions are answered, each line answers the next.
+    if let Some((request, mut responses)) = answering.take() {
+        if let Some(question) = request.questions.questions.get(responses.len()) {
+            responses.push(response_of(question, input));
+        }
+        match request.questions.questions.get(responses.len()) {
+            Some(next) => {
+                println!("{}", prompt_of(responses.len(), next));
+                *answering = Some((request, responses));
+            }
+            None => {
+                if let Err(e) = followed.actor().answer_questions(request.id, Some(responses)).await
+                {
+                    println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
+                }
+            }
+        }
+        return Ok(());
+    }
+    if let Some(rest) = input.strip_prefix("/approve ").or_else(|| input.strip_prefix("/deny ")) {
+        let approved = input.starts_with("/approve ");
+        match Uuid::parse_str(rest.trim()) {
+            Ok(id) => {
+                if !followed.approve(ApprovalId(id), approved).await? {
+                    println!("No pending approval with id {}", id);
+                }
+            }
+            Err(_) => println!("Invalid approval id: {}", rest.trim()),
+        }
+        return Ok(());
+    }
+    if input == "/retry" {
+        match followed.retry().await {
+            Ok(true) => {}
+            Ok(false) => println!("No answer of an agent to give again"),
+            Err(e) => println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string())),
+        }
+        return Ok(());
+    }
+    // Every other command goes to the channel.
+    match parse_input(input) {
+        UserInput::Command(line) => {
+            match followed.actor().execute_command(&line).await {
+                // Also for an answer to the whole channel: its announcement is not routed back to
+                // its sender.
+                Ok(reply) => {
+                    if let Some(output) = reply.output {
+                        println!("{}", output)
+                    }
+                }
+                Err(e) => {
+                    // The line is not logged: what follows the command may be what was said. The
+                    // error names the command.
+                    tracing::warn!("A command failed: {:#}", e);
+                    let message = user_message(&e).unwrap_or_else(|| {
+                        "The command failed; the details are in the log".to_string()
+                    });
+                    println!("[error] {}", message);
+                }
+            }
+        }
+        UserInput::Message(text) => {
+            let span_id = followed.actor().send_message(Some(text), None, Vec::new()).await?;
+            tracing::debug!(span_id = %span_id, "Message sent");
+        }
+    }
     Ok(())
 }
 
@@ -880,30 +666,6 @@ mod tests {
                 .collect(),
             multi_select,
         }
-    }
-
-    #[test]
-    fn a_message_is_printed_with_what_it_carries() {
-        use caelumora_domain::confidentiality::Classification;
-        use caelumora_domain::content::testing::make_content_ref;
-        let message = |content: Option<&str>, attachments| Message {
-            content: content.map(str::to_string),
-            attachments,
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
-        let chart = make_content_ref("chart.png", b"chart");
-        let printed = |message: Message| said(&message, &HashMap::new());
-        assert_eq!(printed(message(Some("hello"), Vec::new())).as_deref(), Some("hello"));
-        assert_eq!(
-            printed(message(None, vec![chart.clone()])).as_deref(),
-            Some("[chart.png, image/png, 5 B]"),
-            "attachments alone"
-        );
-        assert_eq!(
-            printed(message(Some("look"), vec![chart])).as_deref(),
-            Some("look [chart.png, image/png, 5 B]")
-        );
-        assert_eq!(printed(message(Some(""), Vec::new())), None, "nothing said");
     }
 
     #[test]

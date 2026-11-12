@@ -50,7 +50,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [208](208-generated-artifacts.md) | open | high | feature | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
-| [561](561-the-terminal-shows-one-channel-of-a-session.md) | open | medium | feature | `caelumora-tui` always talks in the first channel of a session and cannot change to another, so whoever takes part in several channels of a session can reach only one of them from the terminal, and does not learn what happens in the others - not even that an approval waits there. |
+| [561](561-the-terminal-shows-one-channel-of-a-session.md) | in progress | medium | feature | `caelumora-tui` always talks in the first channel of a session and cannot change to another, so whoever takes part in several channels of a session can reach only one of them from the terminal, and does not learn what happens in the others - not even that an approval waits there. |
 
 ## Context and knowledge
 

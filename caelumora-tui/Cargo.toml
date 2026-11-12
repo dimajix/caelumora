@@ -46,6 +46,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 caelumora-domain = { workspace = true, features = ["test-support"] }
+caelumora-kernel = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

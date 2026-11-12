@@ -1,6 +1,6 @@
 # 561 — The terminal shows only the first channel of a session
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -90,3 +90,30 @@ a session is continued - would be the same choice made at start. Nobody has aske
 - **2026-11-12** — Issue created at the maintainer's request: `channel switch`, proposed with the
   commands of 560, is a feature of the terminal and goes into an issue of its own. Nothing else is
   decided yet.
+- **2026-11-12** — Decided with the maintainer:
+  1. Of the channels it does not talk in, the terminal tells what waits for the user - an
+     approval, questions put to them, a mention of them -, with the channel's name. So it follows
+     every channel the user takes part in, from the start: a watch shows only what comes after it
+     began (`UserActor::watch`), and what `/retry` gives again cannot be rebuilt.
+  2. What the terminal keeps of a channel is kept per channel, in a type of its own, made in a
+     step before the switch, without a change of behaviour.
+  3. `/approve`, `/deny`, `/answer` and `/decline` with an id act in the channel where it waits,
+     without a switch; without one, in the channel talked in.
+  4. Only the channels the user takes part in are switched to; switching joins nobody.
+  5. The command is the terminal's own word, `/switch <channel>`: the group `channel` is the
+     session's since 560, where `/help channel` lists it and the `CommandSet` keeps names apart.
+     The channels are listed by `/channel list`.
+  6. Joining or creating a channel by command does not switch to it; the terminal tells how to.
+  7. Not raised in the issue, reachable since 560 and 562: when the user leaves the channel talked
+     in, or it is deleted, the terminal says so and talks in none until `/switch`; and it starts
+     in the first channel the user takes part in, not the session's first, which they may have
+     left.
+
+  In three steps: the type per channel; the first channel taken part in and a channel that ends;
+  then following every channel, `/switch`, the notices, and the channels joined meanwhile, which
+  the terminal learns of from the event bus.
+- **2026-11-12** — Step 1 done, without a change of behaviour: `Followed` (`caelumora-tui`,
+  `followed.rs`) holds what the terminal keeps of a channel - the user's actor, the approvals and
+  questions open, what `/retry` asks for - and takes in what the channel shows, answering the lines
+  to print. The watch and the questions being answered line by line stay in `run_repl`; what the
+  user types is handled by `handle_line`.
