@@ -10,9 +10,10 @@
 
 [SECURITY.md](../docs/SECURITY.md) says that a library of the agent side is trusted for nothing.
 Against such a library the kernel ensures two things: it reads nothing it may not reach through its
-channel and the views, and nothing it writes lies above the place it writes to - the channel admits
-every part of a message by `require_publish` into the channel (`require_parts`,
-`caelumora-kernel/src/channel/run.rs:663`).
+channel and the views, and nothing it says or keeps in its channel lies above the channel - the
+channel admits every part of a message by `require_publish` into the channel (`require_parts`,
+`caelumora-kernel/src/channel/run.rs:663`), and content is kept only as it may flow into the
+channel.
 
 Between those bounds, every label is what the agent side states:
 
@@ -21,7 +22,9 @@ Between those bounds, every label is what the agent side states:
 - **Content it keeps.** `ActorRuntime::create_content` takes the classification from the agent
   side (`AttachmentManager::create_content`, `caelumora-kernel/src/attachment/manager.rs:180`).
 - **What it stages.** `ActorRuntime::commit_staged` takes the classification of the work from the
-  agent side, along with the notes and memory it staged.
+  agent side, along with the notes and memory it staged. The place it stages for is built from that
+  classification (`AgentRuntime::views_of_work`), so not even the bound above holds there: what a
+  writer checks an entry against (`MemoryUse::require_within`, say) is the library's word too.
 
 The rule that keeps these labels honest - "what it writes is classified at least as everything it
 has seen" ([CONFIDENTIALITY.md](../docs/CONFIDENTIALITY.md)) - is kept on the agent side, by
@@ -68,3 +71,6 @@ that alone keeps no label from being lowered, since `create_content` takes any.
 - **2026-11-12** — Opened from step 2 of issue
   [549](549-kernel-takes-an-agents-word-on-a-content-reference.md), where knowing the labels of a
   transcript's attachments in the kernel was given up: without this, it would protect nothing.
+- **2026-11-12** — Corrected with the maintainer: the bound by the place holds for what an agent
+  says and keeps in its channel, not for what it stages, whose place is built from the
+  classification the agent side passes.

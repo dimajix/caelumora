@@ -127,23 +127,29 @@ impl AttachmentsComponent {
     }
 }
 
-/// Where the attachment the model of `turn` names `reference` lies: the message that carries it,
-/// and its id - and the view of the agent's channel, through which it is read as that message
-/// stands.
+/// The attachment the model of `turn` names `reference`: the message that carries it, and its id.
 ///
 /// # Errors
-/// `InvalidParameter` if its transcript numbered none so; `ExecutionFailed` if the turn is in no
-/// channel, and what reading the channel reports.
+/// `InvalidParameter` if its transcript numbered none so.
+fn attachment_named(turn: &Turn<'_>, reference: &str) -> ToolResult<(MessageId, ContentId)> {
+    turn.situation().agent_channel_state().attachments.named(reference).ok_or_else(|| {
+        ToolError::InvalidParameter(format!(
+            "there is no attachment '{reference}' in this conversation"
+        ))
+    })
+}
+
+/// Where the attachment the model of `turn` names `reference` lies (`attachment_named`) - and the
+/// view of the agent's channel, through which it is read as that message stands.
+///
+/// # Errors
+/// As `attachment_named`; `ExecutionFailed` if the turn is in no channel, and what reading the
+/// channel reports.
 async fn place_of(
     turn: &Turn<'_>,
     reference: &str,
 ) -> ToolResult<((MessageId, ContentId), Box<dyn ChannelReader>)> {
-    let place =
-        turn.situation().agent_channel_state().attachments.named(reference).ok_or_else(|| {
-            ToolError::InvalidParameter(format!(
-                "there is no attachment '{reference}' in this conversation"
-            ))
-        })?;
+    let place = attachment_named(turn, reference)?;
     let channel = turn
         .situation()
         .channel()
@@ -267,11 +273,11 @@ impl ToolProvider for AttachmentsComponent {
             }
             ATTACH => {
                 let Named { reference } = arguments(params)?;
-                let attachment = attachment(turn, &reference).await?;
-                let copy = turn.copy_attachment(&attachment).await?;
-                let classification = copy.classification.clone();
+                let (message, id) = attachment_named(turn, &reference)?;
+                let copy = turn.copy_attachment(message, id).await?;
+                let (classification, name) = (copy.classification.clone(), copy.name.clone());
                 turn.put_aside(copy);
-                let value = json!({ "ref": reference, "name": attachment.name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
+                let value = json!({ "ref": reference, "name": name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
                 Ok(ToolOutput::classified(value, classification))
             }
             _ => Err(ToolError::UnknownTool(name.to_string())),

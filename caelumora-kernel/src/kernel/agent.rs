@@ -5,13 +5,13 @@ use super::{Kernel, ParticipantRuntime};
 use crate::component::BuildContext;
 use crate::controller::{AgentController, PersonalityController};
 use crate::view::{SessionView, Viewer, Views};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_api::component::ComponentContainer;
 use caelumora_api::component::ComponentResult;
 use caelumora_api::component::Face;
 use caelumora_api::error::AttachmentResult;
-use caelumora_api::reader::{ChannelReader, SessionReader, ViewResult};
+use caelumora_api::reader::{ChannelReader, SessionReader, ViewError, ViewResult};
 use caelumora_api::runtime::{ActorRuntime, CallPermit};
 use caelumora_api::staging::{CommitError, CommitResult};
 use caelumora_domain::actor::ActorId;
@@ -20,7 +20,7 @@ use caelumora_domain::approval::{ApprovalRule, ApprovalRuleId, RuleDecision};
 use caelumora_domain::channel::{self, Channel, ChannelId};
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Place};
-use caelumora_domain::content::ContentRef;
+use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::event::{Announcing, GlobalEvent};
 use caelumora_domain::message::{Message, MessageId};
@@ -259,8 +259,8 @@ impl ActorRuntime for AgentRuntime {
         messages: &mut [Message],
         profile: &ModelProfile,
     ) -> AttachmentResult<Vec<Classification>> {
-        // Asking nothing: what lies in the agent's transcript, it heard.
-        self.kernel.attachment_manager().load(messages, profile).await
+        let channel = self.participant.channel_id;
+        self.kernel.attachment_manager().load(channel, messages, profile).await
     }
 
     async fn create_content(
@@ -278,11 +278,19 @@ impl ActorRuntime for AgentRuntime {
     async fn copy_attachment(
         &self,
         initiator: ActorId,
-        attachment: &ContentRef,
-    ) -> AttachmentResult<ContentRef> {
+        classification: Classification,
+        message: MessageId,
+        id: ContentId,
+    ) -> ViewResult<ContentRef> {
+        let Some(view) = self.channel(initiator, classification).await? else {
+            // Not the model's to correct, as no channel to read is for the attachment tools.
+            return Err(ViewError::Failed(anyhow!("the agent's channel is not attached")));
+        };
+        // Read as the channel holds it: the agent side names it, the kernel knows it.
+        let attachment = view.attachment(message, id).await?;
         let context = &self.acting_for(initiator);
         let channel = self.participant.channel();
-        self.kernel.attachment_manager().copy(context, &channel, attachment).await
+        Ok(self.kernel.attachment_manager().copy(context, &channel, &attachment).await?)
     }
 
     async fn session(

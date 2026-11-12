@@ -549,6 +549,17 @@ elsewhere - is a call of the kernel, decided by the kernel; and what touches the
 resources - a secret, the workspace, what is kept - is checked once more where it is touched, in the
 same name.
 
+Against a library the kernel ensures two things: that it reads nothing it may not reach through its
+channel and the views, and that nothing it says or keeps in its channel lies above the channel. What
+it names of its channel is checked to be its channel's: an attachment to copy is read as the channel
+holds it (`ActorRuntime::copy_attachment`); an attachment its model is given along is read only
+from the channel's key space (`ActorRuntime::load_attachments`), and so is what a tool's result
+gave and showed as the channel admits it (issue 549) - what lies there and the agent did not hear,
+it cannot name, since its key holds a random id. The labels of what it writes are its word below
+those bounds - its messages, the content it keeps -, and so is the classification of the place it
+stages for (`ActorRuntime::commit_staged`): that what it writes is classified at least as what it
+has seen is kept by `caelumora-agents`, not checked by the kernel (issue 559).
+
 ### What enters a channel
 
 The channel decides what enters it: every event an actor sends is admitted or refused by the

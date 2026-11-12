@@ -2297,6 +2297,149 @@ async fn what_a_tool_kept_is_found_by_its_agent_alone_until_its_channel_recorded
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// Alice says a message carrying an attachment `name` of `bytes` in `channel`: the message as its
+/// history holds it.
+async fn said_with_attachment(
+    world: &World,
+    channel: &ChannelLoop,
+    name: &str,
+    bytes: &'static [u8],
+) -> Message {
+    use caelumora_api::terminal::ByteStream;
+    use caelumora_domain::history::HistoryEntry;
+    let hers = World::as_user(world.alice);
+    let content: ByteStream = Box::pin(stream::iter([Ok(bytes.to_vec().into())]));
+    let attachments = world.kernel.attachment_manager();
+    let notes = attachments
+        .create(&hers, &channel.channel(), name, None, (bytes.len() as u64, content))
+        .await
+        .unwrap();
+    let actor = channel.user_actor(world.alice).unwrap();
+    actor.send_message(Some("look".to_string()), None, vec![notes.id]).await.unwrap();
+    let view = world
+        .manager
+        .views(Viewer::new(hers))
+        .session(channel.session_id())
+        .await
+        .unwrap()
+        .channel(channel.id())
+        .await
+        .unwrap();
+    time::timeout(Duration::from_secs(5), async {
+        loop {
+            let page = view.history_page(None, 10).await.unwrap();
+            let said = page
+                .entries()
+                .filter_map(HistoryEntry::said)
+                .find(|said| said.attachments.iter().any(|attachment| attachment.id == notes.id));
+            if let Some(message) = said {
+                break message.clone();
+            }
+            time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("said")
+}
+
+/// An agent's runtime copies an attachment the agent side names - a message and an id, never a
+/// reference it hands over (issue 549) - as its channel holds it, with its content and label,
+/// asking what reading the channel asks; and nothing its channel does not hold: no attachment the
+/// message does not carry, no message of another channel.
+#[tokio::test]
+async fn an_attachment_is_copied_as_its_channel_holds_it_and_nothing_else() {
+    use caelumora_agents::testing::agent_runtime;
+    use caelumora_api::error::AttachmentError;
+    use caelumora_kernel::testing::participant_runtime_in;
+    let world = agent_testing::world().await;
+    let personality = world.personality("plain", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let elsewhere = world.shared_session(&[], &[]).await;
+    let runtime = agent_runtime(participant_runtime_in(&main, ActorId::Agent(helper)));
+    let (alice, classification) = (ActorId::User(world.alice), main.classification());
+    let said = said_with_attachment(&world, &main, "notes.txt", b"line one\n").await;
+    let other =
+        said_with_attachment(&world, &elsewhere.channels()[0], "notes.txt", b"other\n").await;
+    let (notes, others) = (&said.attachments[0], &other.attachments[0]);
+    let copy = |message, id| runtime.copy_attachment(alice, classification.clone(), message, id);
+
+    let (copied, asked) = world.asked(copy(said.id, notes.id)).await;
+    let copied = copied.expect("an attachment of its channel");
+    assert!(
+        copied.id != notes.id
+            && copied.key.starts_with(&format!("attachments/{}/", main.id()))
+            && (copied.digest, &copied.classification) == (notes.digest, &notes.classification),
+        "its own id and key, the content and the label its channel holds: {copied:?}"
+    );
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice as helper: GetSession(alice's) yes",
+            "alice as helper: GetChannel(alice's) yes"
+        ]),
+        "reaching the channel, nothing of its own"
+    );
+    let not_carried = copy(said.id, others.id).await;
+    assert!(
+        matches!(not_carried, Err(ViewError::Attachment(AttachmentError::NotFound(_)))),
+        "none its message does not carry: {not_carried:?}"
+    );
+    let not_its = copy(other.id, others.id).await;
+    assert!(
+        matches!(not_its, Err(ViewError::MessageNotFound { .. })),
+        "none of another channel: {not_its:?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), elsewhere.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// What an agent's model is given along is read only from the key space of the agent's channel
+/// (issue 549), whatever its transcript says, asking nothing: an image of another channel, which
+/// an agent there is given, is not read for it, and fails the call; one of its own channel is.
+#[tokio::test]
+async fn an_agent_is_given_along_only_what_lies_in_its_channel() {
+    use caelumora_agents::testing::agent_runtime;
+    use caelumora_api::error::AttachmentError;
+    use caelumora_kernel::testing::participant_runtime_in;
+    use std::slice;
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\nthe rest";
+    let world = agent_testing::world().await;
+    let personality = world.personality("plain", None, &[]).await;
+    let helper = world.agent("helper", world.alice, &personality).await;
+    let other = world.agent("other", world.alice, &personality).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let elsewhere = world.shared_session(&[other], &[]).await;
+    let (main, theirs) = (&session.channels()[0], &elsewhere.channels()[0]);
+    let ours = said_with_attachment(&world, main, "chart.png", PNG).await;
+    let foreign = said_with_attachment(&world, theirs, "chart.png", PNG).await;
+    let seeing = ModelProfile { max_images: 4, ..ModelProfile::default() };
+    let runtime_in =
+        |channel, agent| agent_runtime(participant_runtime_in(channel, ActorId::Agent(agent)));
+    let (helpers, others) = (runtime_in(main, helper), runtime_in(theirs, other));
+
+    let mut there = vec![foreign.clone()];
+    others.load_attachments(&mut there, &seeing).await.expect("its own channel's");
+    assert_eq!(there[0].attachments[0].content.as_deref(), Some(PNG), "given there, and held");
+    let mut here = vec![foreign.clone()];
+    let (refused, asked) = world.asked(helpers.load_attachments(&mut here, &seeing)).await;
+    assert!(
+        matches!(refused, Err(AttachmentError::NotFound(id)) if id == foreign.attachments[0].id),
+        "not of its channel: {refused:?}"
+    );
+    assert_eq!(asked, checks(&[]), "asking nothing");
+    assert_eq!(here[0].attachments[0].content, None, "nothing read for it");
+    let mut own = vec![ours.clone()];
+    let (given, asked) = world.asked(helpers.load_attachments(&mut own, &seeing)).await;
+    let image = &ours.attachments[0];
+    assert_eq!(given.expect("of its channel"), slice::from_ref(&image.classification));
+    assert_eq!(asked, checks(&[]), "asking nothing");
+    assert_eq!(own[0].attachments[0].content.as_deref(), Some(PNG));
+    world.manager.stop(&World::as_user(world.alice), elsewhere.id()).await.unwrap();
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// An agent does not read a channel of its session that its owner may not
 /// read and it takes no part in (issue 264): bob's `reader` does not reach
 /// alice's "side" (`GetChannel`), and nothing of it is asked to be copied -
