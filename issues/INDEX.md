@@ -147,6 +147,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [558](558-no-agent-hands-a-task-to-a-sub-agent.md) | open | An agent cannot hand a task to another agent that works on it apart, in a context of its own, and gives back only its result, nor can a user start such a sub-agent by command; the agent either does all of it itself, filling its transcript with every step, or asks another agent of the channel, where everyone hears every step. |
 | [562](562-nobody-can-leave-a-channel.md) | open | Who takes part in a channel can leave it only by being removed by whoever may change it (`UpdateChannel`), so a participant who is not the channel's owner cannot take themselves - or their own agent - out of a channel, though `Join` lets them take themselves in. |
 | [563](563-a-channel-invitation-is-never-used-up.md) | open | A personal `Join` entry of a channel - an invitation - stays in its access list when the one it names joins, against the rule of issue 221 that SECURITY.md and CHANNELS.md state, so that someone removed from the channel takes themselves back in by `/channel join`. |
+| [564](564-taking-someone-in-is-rolled-back-in-part.md) | open | Taking someone into a session together with a channel stores the session first and keeps it when the channel fails, two takings-in of one participant can race and undo each other, and a join is announced for one already listed; with them, a few loose ends of the same code - visibility, a rollback step not named so, an invitation built by hand. |
 
 ## Identity and access management
 
