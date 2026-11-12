@@ -4592,6 +4592,8 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
         ],
         "by the channel's attributes: the command, then what /help lists"
     );
@@ -4692,6 +4694,76 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         (String::from("nobody '_' to add"), String::from("nobody '_' to add")),
         "nobody, and what bob may not read, alike"
     );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/participant list` and `/participant remove` (issue 560) ask nothing reading the channel and
+/// taking someone out of it do not ask: bob, who reads the channel, lists who takes part and is
+/// refused removing anyone, which changes the channel; alice removes him from the channel, and he
+/// stays in the session.
+#[tokio::test]
+async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+
+    let (reply, asked) = world.asked(bob.execute_command("participant list")).await;
+    let listed = reply.expect("his to read").output.expect("answered to him");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            // Reading the channel, as its view does.
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert!(listed.contains("- alice (@alice), user\n- bob (@bob), user"), "{listed}");
+
+    let (error, asked) = world.asked(bob.execute_command("participant remove alice")).await;
+    let error = error.expect_err("not his to change");
+    assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            // Removing, as the store asks it.
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+            "bob: UpdateChannel(alice's) no",
+        ]),
+        "{asked:#?}"
+    );
+
+    let (reply, asked) = world.asked(alice.execute_command("participant remove bob")).await;
+    let reply = reply.expect("hers to change");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: UpdateChannel(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert_eq!(reply.output.as_deref(), Some("Removed bob."));
+    assert_eq!(reply.visibility, CommandVisibility::Private);
+    let in_main = world.participants(world.alice, session.id(), main.id()).await;
+    assert!(!in_main.contains(&ActorId::User(world.bob)), "out of the channel");
+    assert!(session.session().takes_part(ActorId::User(world.bob)), "still in the session");
+
+    // Herself as anyone: she may change the channel, and is answered though her actor leaves.
+    let reply = alice.execute_command("participant remove alice").await.expect("hers to change");
+    assert_eq!(reply.output.as_deref(), Some("Removed alice."));
+    assert!(main.user_actor(world.alice).is_none(), "out of the channel");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

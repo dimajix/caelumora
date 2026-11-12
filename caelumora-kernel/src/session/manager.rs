@@ -1380,7 +1380,15 @@ mod tests {
             kernel.new_command_executor(&session).await.expect("the global commands build");
         assert_eq!(
             names(executor).await,
-            vec!["agent create", "agent wakeup", "help", "participant add", "participant nudge"]
+            vec![
+                "agent create",
+                "agent wakeup",
+                "help",
+                "participant add",
+                "participant list",
+                "participant nudge",
+                "participant remove"
+            ]
         );
 
         // A second /help from the session's own configuration - with the same

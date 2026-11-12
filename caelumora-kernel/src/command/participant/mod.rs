@@ -1,9 +1,11 @@
 //! The built-in command group `participant` (issue 560): the commands on who takes part in a
-//! channel - `participant add` and `participant nudge` -, contributed by one component, one file
-//! per command.
+//! channel - `participant list`, `add`, `remove` and `nudge` -, contributed by one component, one
+//! file per command.
 
 mod add;
+mod list;
 mod nudge;
+mod remove;
 
 use crate::command::{ChannelCommandProvider, CommandContext};
 use crate::component::ComponentRegistry;
@@ -14,14 +16,14 @@ use caelumora_domain::command::{Command, CommandOutput, PARTICIPANT_GROUP_KIND};
 use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
-/// The component of the command group `participant`: `/participant add` (`/add`) and
-/// `/participant nudge` (`/nudge`).
+/// The component of the command group `participant`: `/participant list`, `/participant add`
+/// (`/add`), `/participant remove` and `/participant nudge` (`/nudge`).
 #[derive(Debug)]
 pub(crate) struct ParticipantGroupComponent;
 
 impl ProvidesCommands for ParticipantGroupComponent {
     fn commands(&self) -> Vec<Command> {
-        vec![add::command(), nudge::command()]
+        vec![list::command(), add::command(), remove::command(), nudge::command()]
     }
 }
 
@@ -34,7 +36,9 @@ impl ChannelCommandProvider for ParticipantGroupComponent {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         match name.as_str() {
+            list::LIST_COMMAND_NAME => list::execute(args, context).await,
             add::ADD_COMMAND_NAME => add::execute(args, context).await,
+            remove::REMOVE_COMMAND_NAME => remove::execute(args, context).await,
             nudge::NUDGE_COMMAND_NAME => nudge::execute(args, context).await,
             _ => Err(CommandError::Unknown(name.to_string())),
         }

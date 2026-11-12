@@ -40,7 +40,9 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     assert!(!text.contains("wakeup"), "a hidden command is not listed: {text}");
     let names: Vec<String> =
         actor.visible_commands().await.into_iter().map(|c| c.name.to_string()).collect();
-    assert_eq!(names, vec!["agent create", "help", "participant add", "participant nudge"]);
+    let participant =
+        ["participant add", "participant list", "participant nudge", "participant remove"];
+    assert_eq!(names, [&["agent create", "help"][..], &participant].concat());
 
     for hidden in ["agent wakeup", "wakeup", "help agent wakeup", "help wakeup"] {
         let error = actor.execute_command(hidden).await.expect_err("hidden");
@@ -386,6 +388,25 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
             "/{command} {args}: {error}"
         );
     }
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/participant list` takes nothing, and `/participant remove` refuses what names nobody taking
+/// part (issue 560), before it removes anyone.
+#[tokio::test]
+async fn participant_list_and_remove_refuse_what_they_cannot_use() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let actor = session.channels()[0].user_actor(world.alice).unwrap();
+    for line in ["participant list everyone", "participant remove", "participant remove zed"] {
+        let error = actor.execute_command(line).await.expect_err("unusable");
+        assert!(
+            matches!(as_command_error(&error), CommandError::InvalidArguments { .. }),
+            "/{line}: {error}"
+        );
+    }
+    let in_main = world.participants(world.alice, session.id(), session.channels()[0].id()).await;
+    assert_eq!(in_main.len(), 2, "nobody was removed");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

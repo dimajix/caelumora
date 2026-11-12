@@ -3946,6 +3946,31 @@ async fn with_a_commanded_agent(
     (world, session, main, seen, his)
 }
 
+/// `/participant list` (issue 560) tells bob alice's agent with the name of its personality, public
+/// as its introduction is (issue 244), asking nothing beyond reading the channel - nothing of the
+/// personality.
+#[tokio::test]
+async fn a_bystander_lists_an_agent_with_its_personality_but_reads_nothing_of_it() {
+    let (world, session, main, _, _) = with_a_commanded_agent().await;
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (reply, asked) = world.asked(bob.execute_command("participant list")).await;
+    let listed = reply.expect("his to read").output.expect("answered to him");
+    assert!(listed.contains("- helper (@helper), agent of commanded"), "{listed}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+        ]),
+        "{asked:#?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// A command of an agent (issue 269) is seen and asked for by whoever may
 /// write in the channel - bob, taking part -, unless it is for the agent's
 /// owners alone: `/seal` bob neither sees nor asks for, alice, the agent's

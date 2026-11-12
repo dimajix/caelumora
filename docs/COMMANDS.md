@@ -87,19 +87,22 @@ the command does is checked on its own as well: `/agent wakeup` asks for `WakeCh
 `/participant nudge` asks nothing more: it asks someone to respond, as an `@`-mention does, which
 asks nothing of the policy either. `/participant add` asks what taking someone in asks
 (`SessionLoop::add_participant`: `UpdateSession` unless they are in the session already,
-`UpdateChannel`), and `/agent create` what making an agent asks (`AgentManager::create`), so
-whoever reads the channel sees both, and those without the right are refused on running them.
+`UpdateChannel`), `/participant remove` what taking someone out of the channel asks
+(`ChannelLoop::remove_participant`: `UpdateChannel`), and `/agent create` what making an agent asks
+(`AgentManager::create`), so whoever reads the channel sees them, and those without the right are
+refused on running them. `/participant list` asks what reading the channel asks, as its view does.
 
 ### Private or channel-wide answers
 
-A command answers the issuer alone (`/help`, `/participant nudge`, `/participant add`,
-`/agent create`) or the whole channel (`/agent wakeup`): that `/participant add` brought someone in,
-the channel tells everyone anyway. A
-channel-wide answer is announced by the issuer's actor as `CommandExecuted`, forwarded to the users
-only, shown but never stored. The issuer gets the answer back from `execute_command` either way,
-since the channel never routes an envelope back to its sender; the REST response carries it only
-when it is private, since the web UI receives the announcement on its stream. A command of an agent
-answers later, on the stream; an answer for the issuer alone is routed to them alone.
+A command answers the issuer alone (`/help`, `/participant list`, `/participant nudge`,
+`/participant add`, `/participant remove`, `/agent create`) or the whole channel (`/agent wakeup`):
+that `/participant add` brought someone in or `/participant remove` took someone out, the channel
+tells everyone anyway. A channel-wide answer is announced by the issuer's actor as
+`CommandExecuted`, forwarded to the users only, shown but never stored. The issuer gets the answer
+back from `execute_command` either way, since the channel never routes an envelope back to its
+sender; the REST response carries it only when it is private, since the web UI receives the
+announcement on its stream. A command of an agent answers later, on the stream; an answer for the
+issuer alone is routed to them alone.
 
 ### Naming an agent
 
@@ -182,7 +185,9 @@ external agent alike.
 | Command | Short form | Of | Component | Arguments | Answer | What it does |
 |---|---|---|---|---|---|---|
 | `/help` | - | the channel | `help` | `[group or command]` | private | Lists the commands the user may use - the channel's and the agents' -, those of a group, or describes one. |
+| `/participant list` | - | the channel | `participant` | - | private | Lists who takes part in the channel: their names and handles, whether users or agents, and an agent's personality. |
 | `/participant add` | `/add` | the channel | `participant` | `<name>` | private | Brings the user or agent named into the channel, and into the session first if not in it yet; they see the whole history ([CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). |
+| `/participant remove` | - | the channel | `participant` | `<participant>` | private | Removes the participant named from the channel; they stay in the session. |
 | `/participant nudge` | `/nudge` | the channel | `participant` | `<participant>` | private | Asks the participant named to respond to the conversation as it stands, without a message ([CHANNELS.md](CHANNELS.md#nudging-someone)). |
 | `/agent create` | - | the channel | `agent` | `<personality> [as <name>]` | private | Makes an agent of the personality named, in the session's scope - in the channel's for a personality of the channel's scope -, named after the personality unless named; `/participant add` brings it in. |
 | `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named. |

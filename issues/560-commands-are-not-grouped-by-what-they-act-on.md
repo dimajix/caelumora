@@ -228,3 +228,14 @@ issue of the terminal.
   old kinds no longer builds and is to be changed, and a stored session or template whose
   `commands` name them is to be deleted or changed. The history keeps `wakeup` as the name of a
   wakeup carried out before; it stays readable.
+- **2026-11-12** — Decided with the maintainer, for the group `participant`:
+  1. `participant remove` removes from the channel alone (`ChannelLoop::remove_participant`); a
+     removal from the session has no operation and is left to an issue of its own.
+  2. Removing oneself asks `UpdateChannel` as removing anyone does; leaving without that right is
+     for `channel leave`, which needs a right of its own.
+  3. Neither `participant list` nor `participant remove` has a short form.
+  4. `participant list` shows who takes part now: name, handle, user or agent, an agent's
+     personality; no state, no former participants.
+
+  Step 2 done: `/participant list` (through `ChannelView::participants`, in the issuer's name) and
+  `/participant remove`; the security suite covers what both ask.
