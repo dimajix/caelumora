@@ -493,7 +493,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
         checks(&[
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes"
+            "bob: Cleared(bob) yes"
         ]),
         "reaching the channel, cleared for it; reading in it asks nothing more"
     );
@@ -581,7 +581,7 @@ async fn the_messages_carrying_attachments_are_read_as_far_as_the_readers_view_g
         checks(&[
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes"
+            "bob: Cleared(bob) yes"
         ]),
         "reaching the channel; reading in it asks nothing more"
     );
@@ -646,7 +646,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
     marked.expect("his to mark");
     assert_eq!(
         asked,
-        checks(&["bob: GetChannel(alice's) yes", "bob: JoinChannel(bob) yes"]),
+        checks(&["bob: GetChannel(alice's) yes", "bob: Cleared(bob) yes"]),
         "reaching the channel, as the views do; marking what he read asks nothing more"
     );
     assert_eq!(unread(world.bob).await, Some(0));
@@ -702,7 +702,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
         checks(&[
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes"
+            "bob: Cleared(bob) yes"
         ]),
         "reaching the channel; following asks nothing more"
     );
@@ -765,16 +765,16 @@ async fn taking_someone_in_is_for_whoever_may_change_the_session_and_the_channel
     assert_eq!(asked, checks(&[
         "alice: UpdateSession(alice's) yes",
         "alice: GetChannel(alice's) yes",
-        "alice: JoinChannel(alice) yes",
+        "alice: Cleared(alice) yes",
         "alice: UpdateChannel(alice's) yes",
         "alice: GetUser(system's) yes",
-        "alice: JoinChannel(carol) yes",
+        "alice: Cleared(carol) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         "alice: UpdateChannel(alice's) yes",
-        "alice: JoinChannel(carol) yes",
+        "alice: Cleared(carol) yes",
         "alice: GetChannel(alice's) yes",
-        "alice: JoinChannel(alice) yes",
+        "alice: Cleared(alice) yes",
         "alice: UpdateChannel(alice's) yes",
     ]), "changing the session and the channel, reading carol and whether she is cleared - then the store and the channel ask again as they store");
     assert!(
@@ -1330,7 +1330,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
         checks(&[
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes"
+            "bob: Cleared(bob) yes"
         ]),
         "reaching the channel, as reading the message asks; its attachment asks nothing more"
     );
@@ -1379,7 +1379,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
         checks(&[
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes"
+            "bob: Cleared(bob) yes"
         ]),
         "as reading the message of the result asks"
     );
@@ -1399,7 +1399,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
         checks(&[
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes"
+            "bob: Cleared(bob) yes"
         ]),
         "as reading the message of the result asks"
     );
@@ -1490,7 +1490,7 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
         checks(&[
             "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes"
+            "alice: Cleared(alice) yes"
         ]),
         "reaching the channel, as reading a message asks"
     );
@@ -2611,13 +2611,13 @@ async fn creating_a_channel_needs_owning_its_session() {
         asked,
         checks(&[
             "alice: CreateChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
-            "alice: JoinChannel(bob) yes",
+            "alice: Cleared(alice) yes",
+            "alice: Cleared(bob) yes",
             "alice: CreateChannel(alice's) yes",
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
-            "alice: JoinChannel(alice) yes",
-            "alice: JoinChannel(bob) yes",
+            "alice: Cleared(alice) yes",
+            "alice: Cleared(bob) yes",
         ])
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -2656,8 +2656,8 @@ async fn a_founder_who_is_not_cleared_leaves_no_channel() {
         asked,
         checks(&[
             "alice: CreateChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
-            "alice: JoinChannel(dave) no"
+            "alice: Cleared(alice) yes",
+            "alice: Cleared(dave) no"
         ]),
         "nothing stored"
     );
@@ -2724,13 +2724,13 @@ async fn the_components_a_new_channel_names_are_read_in_its_creators_name() {
         "alice: List(component_bundle) yes",
         "alice: GetComponentBundle(bob's) yes",
         "alice: CreateChannel(alice's) yes",
-        "alice: JoinChannel(alice) yes",
+        "alice: Cleared(alice) yes",
         "alice: CreateChannel(alice's) yes",
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         "alice: List(component_bundle) yes",
         "alice: GetComponentBundle(bob's) yes",
-        "alice: JoinChannel(alice) yes",
+        "alice: Cleared(alice) yes",
     ]), "read as she names it, and again as the channel is built in its owner's name - hers; then its founder joins");
 
     let mut withdrawn =
@@ -2934,7 +2934,7 @@ async fn deleting_a_channel_needs_owning_its_session() {
         asked,
         checks(&[
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             "bob: DeleteChannel(alice's) no"
         ]),
         "refused before the session is touched"
@@ -2947,12 +2947,12 @@ async fn deleting_a_channel_needs_owning_its_session() {
         asked,
         checks(&[
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: DeleteChannel(alice's) yes",
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: DeleteChannel(alice's) yes",
         ])
     );
@@ -3117,7 +3117,7 @@ async fn deleted_channels_are_restored_only_by_who_may_change_their_session() {
             "bob: GetSession(alice's) yes",
             "bob: List(channel) yes",
             "bob: ReadDeletedChannel(bob's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             "bob: RestoreChannel(bob's) yes",
             "bob: PurgeChannel(bob's) no",
             "bob: UpdateSession(alice's) no",
@@ -3187,12 +3187,12 @@ async fn restoring_a_channel_needs_owning_its_session() {
         asked,
         checks(&[
             "alice: ReadDeletedChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: RestoreChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
-            "alice: JoinChannel(bob) yes",
+            "alice: Cleared(alice) yes",
+            "alice: Cleared(bob) yes",
             "alice: ReadDeletedChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: RestoreChannel(alice's) yes",
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
@@ -3334,7 +3334,7 @@ async fn a_workspace_is_its_owners_alone() {
     let docs = made.expect("alice makes one");
     assert_eq!(
         asked,
-        checks(&["alice: JoinChannel(alice) yes", "alice: CreateWorkspace(alice's) yes"]),
+        checks(&["alice: Cleared(alice) yes", "alice: CreateWorkspace(alice's) yes"]),
         "her own flow, then creating it as it is stored (issue 312)"
     );
     assert!(world.files.path().join(docs.id.to_string()).is_dir(), "with its place");
@@ -3391,9 +3391,9 @@ async fn a_workspace_is_its_owners_alone() {
         asked,
         checks(&[
             "alice: GetWorkspace(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: GetWorkspace(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateWorkspace(alice's) yes"
         ]),
         "reached, then reached again and changed by the store (issue 322)"
@@ -3411,7 +3411,7 @@ async fn a_workspace_is_its_owners_alone() {
         asked,
         checks(&[
             "alice: ReadDeletedWorkspace(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: RestoreWorkspace(alice's) yes"
         ]),
         "reached by the store (issue 322), and not read back (issue 318)"
@@ -3426,7 +3426,7 @@ async fn a_workspace_is_its_owners_alone() {
         asked,
         checks(&[
             "alice: ReadDeletedWorkspace(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: PurgeWorkspace(alice's) no"
         ])
     );
@@ -3499,7 +3499,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     );
     assert_eq!(
         asked,
-        checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) no"]),
+        checks(&["alice: GetWorkspace(alice's) yes", "alice: Cleared(alice) no"]),
         "read, not cleared - and not asked whether she may change it"
     );
     let (reached, asked) = world.asked(workspace(&world, docs.id).await.terminal(&alice)).await;
@@ -3508,7 +3508,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
         asked,
         checks(&[
             "alice: GetWorkspace(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: WriteWorkspace(alice's) yes"
         ]),
         "read, cleared, then the verb"
@@ -3519,10 +3519,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     let (renamed, asked) =
         world.asked(workspace(&world, docs.id).await.update_name(&uncleared, "mine")).await;
     assert!(matches!(renamed, Err(WorkspaceError::NotFound(_))), "{renamed:?}");
-    assert_eq!(
-        asked,
-        checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) no"])
-    );
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: Cleared(alice) no"]));
     let shared = workspace(&world, docs.id)
         .await
         .share(&uncleared, Subject::Actor(ActorId::User(world.bob)), Grant::Read)
@@ -3543,7 +3540,7 @@ async fn a_workspace_one_is_not_cleared_for_is_not_found() {
     assert!(matches!(restored, Err(WorkspaceError::NotFound(_))), "nor to restore");
     assert_eq!(
         asked,
-        checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: JoinChannel(alice) no"])
+        checks(&["alice: ReadDeletedWorkspace(alice's) yes", "alice: Cleared(alice) no"])
     );
     assert_eq!(
         world.manager.views(Viewer::new(alice.clone())).deleted_workspaces().await.unwrap().len(),
@@ -3592,7 +3589,7 @@ async fn a_storage_holds_no_workspace_above_its_destination() {
         asked,
         checks(&[
             "alice: Publish yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: CreateWorkspace(alice's) yes"
         ])
     );
@@ -3651,7 +3648,7 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
         checks(&[
             "alice: UpdateSession(alice's) yes",
             "alice: GetWorkspace(bob's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateWorkspace(bob's) no"
         ]),
         "refused as its owner's act, before the session is stored"
@@ -3665,7 +3662,7 @@ async fn only_its_owner_attaches_a_workspace_to_a_session_they_may_change() {
         checks(&[
             "alice: UpdateSession(alice's) yes",
             "alice: GetWorkspace(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateWorkspace(alice's) yes",
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes"
@@ -3879,7 +3876,7 @@ async fn a_command_runs_on_only_while_some_participant_could_start_it_in_its_cha
         [
             format!("{who}, asked by system: GetSession(alice's) yes"),
             format!("{who}, asked by system: GetChannel(alice's) yes"),
-            format!("{who}, asked by system: JoinChannel({who}) yes"),
+            format!("{who}, asked by system: Cleared({who}) yes"),
         ]
     };
     let may = [
@@ -3975,7 +3972,7 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
     let reached = [
         "bob: GetSession(alice's) yes",
         "bob: GetChannel(alice's) yes",
-        "bob: JoinChannel(bob) yes",
+        "bob: Cleared(bob) yes",
         "bob: GetWorkspace(alice's) yes",
         "bob: Publish yes",
         "bob: Publish yes",
@@ -4035,7 +4032,7 @@ async fn a_workspace_is_reached_by_its_list_wherever_one_acts() {
     let (shared, asked) =
         world.asked(workspace(&world, docs.id).await.update_access(&alice, bobs.clone())).await;
     shared.expect("its owner shares it");
-    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: JoinChannel(alice) yes", "alice: UpdateWorkspace(alice's) yes"]),
+    assert_eq!(asked, checks(&["alice: GetWorkspace(alice's) yes", "alice: Cleared(alice) yes", "alice: GetWorkspace(alice's) yes", "alice: Cleared(alice) yes", "alice: UpdateWorkspace(alice's) yes"]),
         "reached, then reached again and changed as stored: whether she reads a group it names tells her nothing of others (issue 312)");
 
     let elsewhere =
@@ -4232,7 +4229,7 @@ async fn a_group_is_named_in_an_access_list_only_by_who_reads_it() {
         asked,
         checks(&[
             "carol: GetWorkspace(carol's) yes",
-            "carol: JoinChannel(carol) yes",
+            "carol: Cleared(carol) yes",
             "carol: GetGroup(alice's) no"
         ]),
         "reached, then the group: her own question"
@@ -4652,7 +4649,7 @@ async fn adding_by_command_asks_what_taking_in_asks() {
             "bob: GetSession(alice's) yes",
             "bob: UpdateSession(alice's) no",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             "bob: List(user) yes",
             "bob: GetUser(system's) yes",
             "bob: List(agent) yes",
@@ -4672,24 +4669,24 @@ async fn adding_by_command_asks_what_taking_in_asks() {
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: List(user) yes",
             "alice: GetUser(system's) yes",
             "alice: List(agent) yes",
-            "alice: JoinChannel(carol) yes",
+            "alice: Cleared(carol) yes",
             // ... then taking her in, as `add_participant` asks it.
             "alice: UpdateSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
             "alice: GetUser(system's) yes",
-            "alice: JoinChannel(carol) yes",
+            "alice: Cleared(carol) yes",
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
             "alice: UpdateChannel(alice's) yes",
-            "alice: JoinChannel(carol) yes",
+            "alice: Cleared(carol) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
         ]),
         "{asked:#?}"
@@ -4733,7 +4730,7 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
             // Reading the channel, as its view does.
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
         ]),
         "{asked:#?}"
     );
@@ -4750,10 +4747,10 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
             // Whom he names, among those he reads taking part, as `/participant list` ...
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             // ... then removing, as the store asks it.
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             "bob: UpdateChannel(alice's) no",
         ]),
         "{asked:#?}"
@@ -4768,9 +4765,9 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
             "alice: ExecuteCommand(alice's) yes",
             "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
         ]),
         "{asked:#?}"
@@ -4918,7 +4915,7 @@ async fn listing_and_describing_channels_ask_what_reading_them_asks() {
             "bob: ExecuteCommand(alice's) yes",
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             // The private channel, which he may not read.
             "bob: GetChannel(alice's) no",
         ]),
@@ -4934,7 +4931,7 @@ async fn listing_and_describing_channels_ask_what_reading_them_asks() {
             "bob: ExecuteCommand(alice's) yes",
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
         ]),
         "{asked:#?}"
     );
@@ -4967,7 +4964,7 @@ async fn changing_a_channel_by_command_asks_what_changing_it_asks() {
                 "bob: ShowCommand(alice's) yes",
                 "bob: ExecuteCommand(alice's) yes",
                 "bob: GetChannel(alice's) yes",
-                "bob: JoinChannel(bob) yes",
+                "bob: Cleared(bob) yes",
                 "bob: UpdateChannel(alice's) no",
             ]),
             "/{line}: {asked:#?}"
@@ -4985,7 +4982,7 @@ async fn changing_a_channel_by_command_asks_what_changing_it_asks() {
             "alice: ShowCommand(alice's) yes",
             "alice: ExecuteCommand(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
         ]),
         "{asked:#?}"
@@ -5041,11 +5038,11 @@ async fn making_a_channel_by_command_asks_what_making_one_asks() {
             "alice: ExecuteCommand(alice's) yes",
             // As `SessionLoop::create_channel` asks it, with her alone.
             "alice: CreateChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: CreateChannel(alice's) yes",
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
         ]),
         "{asked:#?}"
     );
@@ -5082,10 +5079,10 @@ async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
             // Finding it ...
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             // ... then deleting it, as `SessionLoop::delete_channel` asks it.
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             "bob: DeleteChannel(alice's) no",
         ]),
         "{asked:#?}"
@@ -5104,15 +5101,15 @@ async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
             // Finding it, by its name first ...
             "alice: GetSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             // ... then deleting it, as `SessionLoop::delete_channel` asks it.
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: DeleteChannel(alice's) yes",
             "alice: GetSession(alice's) yes",
             "alice: UpdateSession(alice's) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: DeleteChannel(alice's) yes",
         ]),
         "{asked:#?}"
@@ -5183,7 +5180,7 @@ async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
             "bob: ExecuteCommand(alice's) yes",
             // Not sought among what he reads: he reads nothing of it before he joined.
             "bob: JoinChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
         ]),
         "{asked:#?}"
     );

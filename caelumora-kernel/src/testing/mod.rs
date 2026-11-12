@@ -185,8 +185,9 @@ impl AccessPolicy for Recorder {
 }
 
 /// The flow decisions, recorded by the names the actions had before they
-/// left the `AccessPolicy` (issue 304): `Publish`, `CopyInformation`,
-/// and `JoinChannel` with whom it clears.
+/// left the `AccessPolicy` (issue 304) - `Publish`, `CopyInformation` -, and
+/// a clearance as `Cleared` with whom it clears: not as `JoinChannel`, its
+/// name before, which is how the `Join` verb on a channel is recorded.
 impl ConfidentialityPolicy for Recorder {
     fn may_publish(
         &self,
@@ -220,7 +221,7 @@ impl ConfidentialityPolicy for Recorder {
         classification: &Classification,
     ) -> bool {
         let allowed = self.rules.cleared(context, participant, roles, classification);
-        self.record(context, format!("JoinChannel({})", self.name(participant)), allowed);
+        self.record(context, format!("Cleared({})", self.name(participant)), allowed);
         allowed
     }
 

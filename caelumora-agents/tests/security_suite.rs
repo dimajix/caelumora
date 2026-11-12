@@ -611,11 +611,11 @@ async fn joining_needs_an_entry_that_lets_one_join() {
     assert_eq!(asked, checks(&[
         "bob: JoinSession(alice's) yes",
         "bob: GetUser(system's) yes",
-        "bob: JoinChannel(bob) yes",
+        "bob: Cleared(bob) yes",
         "bob: JoinSession(alice's) yes",
         "bob: JoinChannel(alice's) yes",
         "bob: JoinChannel(alice's) yes",
-        "bob: JoinChannel(bob) yes",
+        "bob: Cleared(bob) yes",
     ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the kernel's");
     assert!(
         world.participants(world.bob, session.id(), main).await.contains(&ActorId::User(world.bob)),
@@ -3308,9 +3308,9 @@ async fn making_a_session_needs_the_template_the_personalities_and_creating_what
         "alice: GetSession(alice's) yes",
         "alice: UpdateSession(alice's) yes",
         // The channel's founders join it, the agent's actor built.
-        "alice: JoinChannel(alice) yes",
+        "alice: Cleared(alice) yes",
         "alice as helper: GetPersonality(bob's) yes",
-        "alice: JoinChannel(helper) yes",
+        "alice: Cleared(helper) yes",
     ]), "the agent's personality is asked for in its name twice: as it is taken into the session, and as its actor is built");
     world.manager.stop(&alice, session.id()).await.unwrap();
 
@@ -3524,9 +3524,9 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
         checks(&[
             "alice: UpdateChannel(alice's) yes",
             "alice as helper: GetPersonality(bob's) yes",
-            "alice: JoinChannel(helper) yes",
+            "alice: Cleared(helper) yes",
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes",
         ])
     );
@@ -3567,7 +3567,7 @@ async fn removing_an_agent_needs_owning_the_channel() {
         asked,
         checks(&[
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
             "bob: UpdateChannel(alice's) no"
         ]),
         "reached by the store, the clearance included (issue 322)"
@@ -3580,7 +3580,7 @@ async fn removing_an_agent_needs_owning_the_channel() {
         asked,
         checks(&[
             "alice: GetChannel(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateChannel(alice's) yes"
         ])
     );
@@ -3768,7 +3768,7 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
             "alice: GetSessionTemplate(system's) yes",
             "alice: CreateSession(alice's) yes",
             "alice: GetWorkspace(alice's) yes",
-            "alice: JoinChannel(alice) yes",
+            "alice: Cleared(alice) yes",
             "alice: UpdateWorkspace(alice's) yes"
         ]),
         "{asked:?}"
@@ -3965,7 +3965,7 @@ async fn a_bystander_lists_an_agent_with_its_personality_but_reads_nothing_of_it
             "bob: ExecuteCommand(alice's) yes",
             "bob: GetSession(alice's) yes",
             "bob: GetChannel(alice's) yes",
-            "bob: JoinChannel(bob) yes",
+            "bob: Cleared(bob) yes",
         ]),
         "{asked:#?}"
     );

@@ -1058,12 +1058,12 @@ async fn an_artifact_goes_with_its_session_only_as_far_as_whoever_deletes_it_may
     // (issue 316), but not hers to delete.
     let his_checks = checks(&[
         "alice: GetArtifact(bob's) yes",
-        "alice: JoinChannel(alice) yes",
+        "alice: Cleared(alice) yes",
         "alice: DeleteArtifact(bob's) no",
     ]);
     let her_checks = checks(&[
         "alice: GetArtifact(alice's) yes",
-        "alice: JoinChannel(alice) yes",
+        "alice: Cleared(alice) yes",
         "alice: DeleteArtifact(alice's) yes",
     ]);
     assert!(
