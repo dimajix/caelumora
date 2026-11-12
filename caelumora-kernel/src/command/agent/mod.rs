@@ -1,13 +1,17 @@
 //! The built-in command group `agent` (issue 560): the commands on the agents of a session -
-//! `agent create` and `agent wakeup` -, contributed by one component, one file per command. The
-//! commands an agent carries out itself are its own (`caelumora_agents::command`).
+//! `agent list`, `create`, `delete` and `wakeup` -, contributed by one component, one file per
+//! command. The commands an agent carries out itself are its own (`caelumora_agents::command`).
 
 mod create;
+mod delete;
+mod list;
 mod wakeup;
 
 use crate::agent::AgentManager;
-use crate::command::{ChannelCommandProvider, CommandContext};
+use crate::command::{command_error, ChannelCommandProvider, CommandContext};
 use crate::component::ComponentRegistry;
+use crate::view::{AgentView, SessionView};
+use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
@@ -15,8 +19,9 @@ use caelumora_domain::command::{Command, CommandOutput, AGENT_GROUP_KIND};
 use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
-/// The component of the command group `agent`: `/agent create` and `/agent wakeup` (`/wakeup`).
-/// It holds the `AgentManager`, which `/agent create` makes agents with.
+/// The component of the command group `agent`: `/agent list`, `/agent create`, `/agent delete` and
+/// `/agent wakeup` (`/wakeup`). It holds the `AgentManager`, which `/agent create` makes agents
+/// with and `/agent delete` deletes them with.
 #[derive(Debug)]
 pub(crate) struct AgentGroupComponent {
     agents: Arc<AgentManager>,
@@ -31,7 +36,7 @@ impl AgentGroupComponent {
 
 impl ProvidesCommands for AgentGroupComponent {
     fn commands(&self) -> Vec<Command> {
-        vec![create::command(), wakeup::command()]
+        vec![list::command(), create::command(), delete::command(), wakeup::command()]
     }
 }
 
@@ -44,11 +49,29 @@ impl ChannelCommandProvider for AgentGroupComponent {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         match name.as_str() {
+            list::LIST_COMMAND_NAME => list::execute(args, context).await,
             create::CREATE_COMMAND_NAME => create::execute(&self.agents, args, context).await,
+            delete::DELETE_COMMAND_NAME => delete::execute(&self.agents, args, context).await,
             wakeup::WAKEUP_COMMAND_NAME => wakeup::execute(args, context).await,
             _ => Err(CommandError::Unknown(name.to_string())),
         }
     }
+}
+
+/// The session the channel the command `command` runs in belongs to, as the issuer reads it, with
+/// its agents (`SessionView::agents`): whom `/agent list` lists and `/agent delete` deletes.
+///
+/// # Errors
+/// `CommandError::Failed` if the session or its agents cannot be read.
+async fn session_agents(
+    command: &str,
+    context: &CommandContext<'_>,
+) -> CommandResult<(SessionView, Vec<AgentView>)> {
+    let failed = |e: Error| command_error(command, &e);
+    let (session, views) = context.session_loop(command)?;
+    let session = views.session(session.id()).await.map_err(|e| failed(e.into()))?;
+    let agents = session.agents().await.map_err(|e| failed(e.into()))?;
+    Ok((session, agents))
 }
 
 /// Registers the kind `agent` with `registry`.

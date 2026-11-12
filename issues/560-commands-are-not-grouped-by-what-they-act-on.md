@@ -250,3 +250,20 @@ issue of the terminal.
      given; `named_participant` takes them, and `ChannelLoop::participants_named` is gone.
      `agent wakeup` and `participant nudge` give the actors running, `participant list` and
      `participant remove` those the issuer reads taking part (`taking_part`).
+- **2026-11-12** — Decided with the maintainer, for the group `agent`:
+  1. `agent list` lists the agents of the session the issuer may read - those taking part in it,
+     in any channel or none, and those lying in its scope or its channels' -, by a new
+     `SessionView::agents`.
+  2. `agent delete` seeks whom it deletes among them, as `participant remove` does among those
+     `participant list` lists; an agent of the issuer or a global one not in the session is
+     deleted in the web UI.
+  3. An agent taking part may be deleted by command: it rests in its channels and can be
+     restored, so nothing is asked again.
+  4. Neither has a short form.
+
+  Step 3 done. How a text names one of several is `value::name::named` in the domain, over
+  anything with a name, the handle being the name's; `command::named_one` - formerly
+  `named_participant` - finds the one a command names and words that it did not, for the
+  participants of a channel and the agents of a session alike. `AgentView` gives its name, handle
+  and personality as `ParticipantView` does, and `Views::agents_of` lists agents by a query, for
+  `Views::agents` and `SessionView::agents`.

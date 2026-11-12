@@ -42,7 +42,8 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         actor.visible_commands().await.into_iter().map(|c| c.name.to_string()).collect();
     let participant =
         ["participant add", "participant list", "participant nudge", "participant remove"];
-    assert_eq!(names, [&["agent create", "help"][..], &participant].concat());
+    let agent = ["agent create", "agent delete", "agent list"];
+    assert_eq!(names, [&agent[..], &["help"], &participant].concat());
 
     for hidden in ["agent wakeup", "wakeup", "help agent wakeup", "help wakeup"] {
         let error = actor.execute_command(hidden).await.expect_err("hidden");
@@ -391,14 +392,21 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// `/participant list` takes nothing, and `/participant remove` refuses what names nobody taking
-/// part (issue 560), before it removes anyone.
+/// `/participant list` and `/agent list` take nothing, `/participant remove` and `/agent delete`
+/// refuse what names nobody (issue 560), before they remove or delete anyone.
 #[tokio::test]
-async fn participant_list_and_remove_refuse_what_they_cannot_use() {
+async fn the_lists_removing_and_deleting_refuse_what_they_cannot_use() {
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
     let actor = session.channels()[0].user_actor(world.alice).unwrap();
-    for line in ["participant list everyone", "participant remove", "participant remove zed"] {
+    for line in [
+        "participant list everyone",
+        "participant remove",
+        "participant remove zed",
+        "agent list everyone",
+        "agent delete",
+        "agent delete zed",
+    ] {
         let error = actor.execute_command(line).await.expect_err("unusable");
         assert!(
             matches!(as_command_error(&error), CommandError::InvalidArguments { .. }),

@@ -4587,6 +4587,10 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
         [
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
+            // What /help lists, one for each command: /agent create, delete, list, wakeup, /help,
+            // /participant add, list, nudge, remove.
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
@@ -4771,6 +4775,93 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
     let reply = alice.execute_command("participant remove alice").await.expect("hers to change");
     assert_eq!(reply.output.as_deref(), Some("Removed alice."));
     assert!(main.user_actor(world.alice).is_none(), "out of the channel");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/agent list` and `/agent delete` (issue 560) ask nothing reading the session's agents and
+/// deleting one do not ask: bob, who may not read alice's agent made in the session, sees none and
+/// is answered as if there were none to delete; alice lists it and deletes it, and the session has
+/// no agents then.
+#[tokio::test]
+async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_ask() {
+    let world = World::new().await;
+    let plain = world.personality("plain", Some(world.alice), &[]).await;
+    let session = world.shared_session(&[], &[]).await;
+    let in_session = Scope::SessionScope { session_id: session.id() };
+    world.agent_in("scout", in_session, world.alice, &plain).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+
+    let (reply, asked) = world.asked(bob.execute_command("agent list")).await;
+    let listed = reply.expect("his to run").output.expect("answered to him");
+    assert_eq!(listed, "This session has no agents.", "hers is not his to read");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: List(agent) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let (error, asked) = world.asked(bob.execute_command("agent delete scout")).await;
+    let error = error.expect_err("none he may read");
+    assert!(
+        matches!(
+            as_command_error(&error),
+            CommandError::InvalidArguments { reason, .. } if reason == "nobody 'scout' among the agents of this session"
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: List(agent) yes",
+        ]),
+        "{asked:#?}"
+    );
+
+    let (reply, asked) = world.asked(alice.execute_command("agent list")).await;
+    let listed = reply.expect("hers to read").output.expect("answered to her");
+    assert!(listed.contains("- scout (@scout), of plain, not taking part"), "{listed}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            "alice: GetSession(alice's) yes",
+            "alice: List(agent) yes",
+            "alice: GetAgent(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let (reply, asked) = world.asked(alice.execute_command("agent delete @scout")).await;
+    let reply = reply.expect("hers to delete");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            // The session's agents, as `/agent list` reads them ...
+            "alice: GetSession(alice's) yes",
+            "alice: List(agent) yes",
+            "alice: GetAgent(alice's) yes",
+            // ... then deleting the one named, as `AgentManager::delete` asks it.
+            "alice: GetAgent(alice's) yes",
+            "alice: DeleteAgent(alice's) yes",
+            "alice: GetAgent(alice's) yes",
+            "alice: DeleteAgent(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert_eq!(reply.output.as_deref(), Some("Deleted scout; it can be restored."));
+    let listed = alice.execute_command("agent list").await.unwrap().output.unwrap();
+    assert_eq!(listed, "This session has no agents.");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

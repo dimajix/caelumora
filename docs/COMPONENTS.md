@@ -521,7 +521,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LanguageModelClient`. |
 | `help` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `participant` | `ChannelCommandProvider` | - | The command group `participant`: `/participant list`, `add`, `remove` and `nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
-| `agent` | `ChannelCommandProvider` | - | The command group `agent`: `/agent create` and `/agent wakeup`. Uses the `AgentManager`. |
+| `agent` | `ChannelCommandProvider` | - | The command group `agent`: `/agent list`, `create`, `delete` and `wakeup`. Uses the `AgentManager`. |
 
 `position` is `start`, `before_turn_input`, `end` or `given`
 ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.

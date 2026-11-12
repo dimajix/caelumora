@@ -1382,6 +1382,8 @@ mod tests {
             names(executor).await,
             vec![
                 "agent create",
+                "agent delete",
+                "agent list",
                 "agent wakeup",
                 "help",
                 "participant add",

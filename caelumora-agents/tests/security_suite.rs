@@ -72,6 +72,7 @@ use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::testing::as_command_error;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::project::ProjectSpec;
@@ -3967,6 +3968,58 @@ async fn a_bystander_lists_an_agent_with_its_personality_but_reads_nothing_of_it
             "bob: JoinChannel(bob) yes",
         ]),
         "{asked:#?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/agent list` (issue 560) tells alice her agent taking part in the channel, and `/agent delete`
+/// deletes it: it rests in the channel, no longer among those taking part, until it is restored.
+#[tokio::test]
+async fn an_agent_taking_part_is_listed_and_deleted_by_command_and_rests() {
+    let (world, session, main, _, _) = with_a_commanded_agent().await;
+    let alice = main.user_actor(world.alice).unwrap();
+
+    let listed = alice.execute_command("agent list").await.unwrap().output.unwrap();
+    assert!(listed.contains("- helper (@helper), of commanded, in this channel"), "{listed}");
+    let reply = alice.execute_command("agent delete helper").await.expect("hers to delete");
+    assert_eq!(
+        reply.output.as_deref(),
+        Some("Deleted helper; it rests in the channels it took part in until it is restored.")
+    );
+    let taking_part = world.participants(world.alice, session.id(), main.id()).await;
+    assert!(taking_part.iter().all(|actor| actor.as_agent_id().is_none()), "{taking_part:?}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// An agent taking part that bob may not read (issue 560) is not listed to him by `/agent list`,
+/// though it takes part, and `/agent delete` answers him as if there were no such agent.
+#[tokio::test]
+async fn an_agent_a_bystander_may_not_read_is_neither_listed_nor_deleted_by_him() {
+    let (world, session, main, _, _) = with_a_commanded_agent().await;
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (reply, asked) = world.asked(bob.execute_command("agent list")).await;
+    let listed = reply.expect("his to run").output.expect("answered to him");
+    assert_eq!(listed, "This session has no agents.", "alice's is not his to read");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            // None lies in the session's scope; the one taking part he may not read.
+            "bob: List(agent) yes",
+            "bob: GetAgent(alice's) no",
+        ]),
+        "{asked:#?}"
+    );
+    let error = bob.execute_command("agent delete helper").await.expect_err("none he may read");
+    assert!(
+        matches!(
+            as_command_error(&error),
+            CommandError::InvalidArguments { reason, .. } if reason == "nobody 'helper' among the agents of this session"
+        ),
+        "{error}"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
