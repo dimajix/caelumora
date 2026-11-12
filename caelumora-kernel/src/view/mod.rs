@@ -431,10 +431,18 @@ impl Views {
     /// # Errors
     /// `Failed` if the store cannot list them.
     pub async fn agents(&self) -> ViewResult<Vec<AgentView>> {
+        self.agents_of(&Query::all()).await
+    }
+
+    /// The agents `query` asks for that the viewer may read, in the order the store lists them.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list them.
+    pub(super) async fn agents_of(&self, query: &Query<ScopeField>) -> ViewResult<Vec<AgentView>> {
         let agents = self
             .stores
             .agents
-            .list(self.viewer.context(), &Query::all())
+            .list(self.viewer.context(), query)
             .await
             .map(|page| page.items)
             .map_err(|e| ViewError::failed(e, "listing the agents"))?;

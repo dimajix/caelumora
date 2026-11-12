@@ -135,6 +135,22 @@ impl NameMatch {
 
 impl_value!([] Name, "name");
 
+/// Those of `among` - participants, agents, anything with a name, which `name` gives - that `text`
+/// names, as someone names one in a command (issues 277, 560): those whose name it is, compared as
+/// names are, or else those whose handle it is (`Name::handle`), with or without its `@`,
+/// normalised as a mention is; sorted by name. Several if it is ambiguous, none if it names
+/// nobody.
+pub fn named<T>(mut among: Vec<T>, text: &str, name: impl Fn(&T) -> &Name) -> Vec<T> {
+    among.sort_by(|l, r| name(l).as_str().cmp(name(r).as_str()));
+    if let Ok(wanted) = Name::new(text) {
+        if among.iter().any(|m| *name(m) == wanted) {
+            return among.into_iter().filter(|m| *name(m) == wanted).collect();
+        }
+    }
+    let handle = handle_of(text);
+    among.into_iter().filter(|m| !handle.is_empty() && name(m).handle() == handle).collect()
+}
+
 /// The name of a definition and the scope it lies in (issue 177): what it
 /// is found by. Written into the definition's document as its fields `name`
 /// and `scope` - flattened - the scope global unless named.

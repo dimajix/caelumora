@@ -18,7 +18,7 @@ pub mod help;
 pub(crate) mod participant;
 
 use crate::actor::user::UserActor;
-use crate::channel::{named, ChannelLoop, ChannelParticipant};
+use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
 use crate::session::SessionLoop;
@@ -31,6 +31,7 @@ use caelumora_domain::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::command_name::CommandName;
+use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -202,40 +203,42 @@ impl CommandExecutor {
     }
 }
 
-/// The one of `participants` - agents, users or any other actors taking part - that the argument
-/// `wanted` of the command `command` names (`channel::named`, issues 277, 278): the one way the
-/// commands of the channel that take someone - `/agent wakeup`, `/participant nudge` among the
-/// actors running, `/participant remove` among those the issuer reads taking part - find them and
-/// word that they did not.
+/// The one of `among` - participants, anything with a name, which `name` gives - that the
+/// argument `wanted` of the command `command` names (`named`, issues 277, 278, 560): the one way
+/// the commands of the channel that take someone find them and word that they did not - those
+/// who take part `in this channel`, as `place` says. What they are sought among is the command's:
+/// `/agent wakeup` and `/participant nudge` act on an actor, and seek among those running;
+/// `/participant remove` among those the issuer reads taking part.
 ///
 /// # Errors
-/// `CommandError::InvalidArguments` naming the handles of `participants`, if `wanted` names none,
-/// or those it names, if it names several: nobody is picked.
-pub(crate) fn named_participant(
+/// `CommandError::InvalidArguments` naming the handles of `among`, if `wanted` names none, or
+/// those it names, if it names several: nobody is picked.
+pub(crate) fn named_one<T>(
     command: &str,
     wanted: &str,
-    participants: Vec<ChannelParticipant>,
-) -> CommandResult<ChannelParticipant> {
+    among: Vec<T>,
+    name: impl Fn(&T) -> &Name,
+    place: &str,
+) -> CommandResult<T> {
     let invalid =
         |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
-    match named(participants.clone(), wanted).as_slice() {
-        [one] => Ok(one.clone()),
-        [] => {
-            let mut handles: Vec<String> = participants
-                .into_iter()
-                .filter_map(|m| m.handle)
-                .map(|h| format!("@{h}"))
-                .collect();
-            handles.sort();
-            Err(invalid(format!(
-                "nobody '{}' in this channel; the participants are {}",
-                wanted,
-                names(&handles)
-            )))
+    let mut handles: Vec<String> = among
+        .iter()
+        .map(|m| name(m).handle())
+        .filter(|handle| !handle.is_empty())
+        .map(|handle| format!("@{handle}"))
+        .collect();
+    handles.sort();
+    let mut found = named(among, wanted, &name);
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 if handles.is_empty() => Err(invalid(format!("nobody '{wanted}' {place}"))),
+        0 => {
+            Err(invalid(format!("nobody '{wanted}' {place}; to choose from: {}", names(&handles))))
         }
-        several => {
-            let several: Vec<String> = several.iter().map(|m| m.name.to_string()).collect();
-            Err(invalid(format!("'{}' names several participants: {}", wanted, names(&several))))
+        _ => {
+            let several: Vec<String> = found.iter().map(|m| name(m).to_string()).collect();
+            Err(invalid(format!("'{wanted}' names several {place}: {}", names(&several))))
         }
     }
 }

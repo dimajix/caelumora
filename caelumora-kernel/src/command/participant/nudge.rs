@@ -1,7 +1,7 @@
 //! The built-in `/participant nudge` command (issues 278, 560), `/nudge` for short.
 
 use crate::channel::ChannelError;
-use crate::command::{command_error, named_participant, CommandContext};
+use crate::command::{command_error, named_one, CommandContext};
 use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
@@ -36,8 +36,13 @@ pub(super) async fn execute(
     if wanted.is_empty() {
         return Err(invalid("name who is to respond"));
     }
-    let participant =
-        named_participant(NUDGE_COMMAND_NAME, wanted, context.channel.participants())?;
+    let participant = named_one(
+        NUDGE_COMMAND_NAME,
+        wanted,
+        context.channel.participants(),
+        |m| &m.name,
+        "in this channel",
+    )?;
     match context.issuer.request_response(participant.id).await {
         Ok(_) => Ok(CommandOutput::private(format!("Asked {} to respond.", participant.name))),
         Err(e) => match e.downcast_ref::<ChannelError>() {

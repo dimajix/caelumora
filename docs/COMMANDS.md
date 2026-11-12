@@ -106,14 +106,15 @@ issuer alone is routed to them alone.
 
 ### Naming an agent
 
-Every command that names someone taking part in the channel names agents and participants alike, by
-one rule (`channel::named`, `ChannelLoop::agents_named`). The text is taken as a name first,
-compared as names are; only if it is nobody's name is it taken as a handle, with or without its `@`,
-normalised as a mention is. A handle is coarser than a name, so it can name several; a command then
-refuses with their names rather than picking one. What it is sought among is the command's: `/agent
-wakeup` and `/participant nudge` act on an actor, and seek among those running; `/participant
-remove` seeks among those `/participant list` lists, as the issuer reads the channel, so that it
-also removes one that cannot run - but one that no longer exists, which has no name to be named by.
+Every command that names someone taking part in the channel names agents and participants alike,
+by one rule (`value::name::named`, `command::named_one`). The text is taken as a name first,
+compared as names are; only if it is nobody's name is it taken as a handle, with or without its
+`@`, normalised as a mention is. A handle is coarser than a name, so it can name several; a command
+then refuses with their names rather than picking one. What it is sought among is the command's:
+`/agent wakeup` and `/participant nudge` act on an actor, and seek among those running;
+`/participant remove` seeks among those `/participant list` lists, as the issuer reads the channel,
+so that it also removes one that cannot run - but one that no longer exists, which has no name to
+be named by.
 
 Who is to be brought into the channel does not take part in it yet, so `/participant add` looks
 further, by the whole name (`SessionView::candidates`, issue

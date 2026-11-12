@@ -13,11 +13,11 @@ use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::HistoryAccess;
 use caelumora_domain::channel::Participant;
 use caelumora_domain::command::Command;
-use caelumora_domain::mention::{handle_of, MentionDirectory};
+use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::Stored;
-use caelumora_domain::value::name::Name;
+use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{ActionType, SecurityContext};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -395,6 +395,7 @@ impl ChannelLoop {
         named(
             self.participants().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect(),
             text,
+            |m| &m.name,
         )
     }
 
@@ -491,28 +492,6 @@ impl ChannelLoop {
     pub(crate) fn mentions_in(&self, text: &str) -> Vec<ActorId> {
         self.mentions.load().resolve(text)
     }
-}
-
-/// Those of `participants` that `text` names - by name, compared as names are, or else by handle,
-/// normalised as a mention is -, sorted by name: how a text names someone taking part, whichever
-/// participants it is sought among (`ChannelLoop::agents_named`, the commands of the channel that
-/// take someone, issues 277, 278).
-pub(crate) fn named(
-    mut participants: Vec<ChannelParticipant>,
-    text: &str,
-) -> Vec<ChannelParticipant> {
-    participants.sort_by(|l, r| l.name.as_str().cmp(r.name.as_str()));
-    if let Ok(name) = Name::new(text) {
-        let named: Vec<_> = participants.iter().filter(|m| m.name == name).cloned().collect();
-        if !named.is_empty() {
-            return named;
-        }
-    }
-    let handle = handle_of(text);
-    participants
-        .into_iter()
-        .filter(|m| !handle.is_empty() && m.handle.as_deref() == Some(handle.as_str()))
-        .collect()
 }
 
 #[cfg(test)]

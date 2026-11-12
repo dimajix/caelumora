@@ -1,6 +1,6 @@
 //! The built-in `/agent wakeup` command (issues 28, 560), `/wakeup` for short.
 
-use crate::command::{command_error, named_participant, names, CommandContext};
+use crate::command::{command_error, named_one, names, CommandContext};
 use caelumora_api::command::CommandResult;
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
@@ -42,8 +42,13 @@ pub(super) async fn execute(
     }
 
     // Anyone taking part, as `/participant nudge` takes them; only an agent sleeps.
-    let participant =
-        named_participant(WAKEUP_COMMAND_NAME, wanted, context.channel.participants())?;
+    let participant = named_one(
+        WAKEUP_COMMAND_NAME,
+        wanted,
+        context.channel.participants(),
+        |m| &m.name,
+        "in this channel",
+    )?;
     let was_asleep = context
         .channel
         .wakeup_actor(&context.issuer.security_context(), participant.id)
