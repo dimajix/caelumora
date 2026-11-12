@@ -8,7 +8,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [549](549-kernel-takes-an-agents-word-on-a-content-reference.md) | in progress | medium | bug | `ActorRuntime::load_attachments` and `copy_attachment` take a `ContentRef` from the agent side and act on its key and its label, although a library of the agent side is trusted for nothing, so that it can read content of another channel or copy an attachment under a lower label. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Sessions and channels

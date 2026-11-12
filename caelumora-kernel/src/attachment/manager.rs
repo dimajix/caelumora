@@ -51,10 +51,15 @@ fn uploader(ctx: &SecurityContext, channel: &Channel) -> AttachmentResult<ActorI
     channel.lists(by).then_some(by).ok_or(AttachmentError::NotAParticipant(by))
 }
 
+/// The key the bytes of content `id` of channel `channel` lie under.
+fn key_of(channel: ChannelId, id: ContentId) -> String {
+    format!("{}/{id}", channel_key(channel))
+}
+
 /// A new id for content of channel `channel`, and the key its bytes lie under.
 fn new_key(channel: ChannelId) -> (ContentId, String) {
     let id = ContentId::new();
-    (id, format!("{}/{id}", channel_key(channel)))
+    (id, key_of(channel, id))
 }
 
 /// Content kept for a message yet to come: who it was kept by, for which channel, and when.
@@ -379,9 +384,11 @@ impl AttachmentManager {
     }
 
     /// Whether `content` lies in the key space of channel `channel`: one of its attachments, or a
-    /// copy of one (issue 282).
+    /// copy of one (issue 282). Its key is the very one `new_key` gives its id there, not merely
+    /// one that begins so: a key handed over is judged without asking a storage how it reads
+    /// `..` (issue 549).
     pub(crate) fn lies_in(&self, channel: ChannelId, content: &ContentRef) -> bool {
-        content.key.strip_prefix(&channel_key(channel)).is_some_and(|rest| rest.starts_with('/'))
+        content.key == key_of(channel, content.id)
     }
 
     /// The content of the attachment `content`, with its size - asking nothing: the view it is read
@@ -439,17 +446,23 @@ impl AttachmentManager {
             .insert(upload.content.id, upload);
     }
 
-    /// Puts their content on the attachments of `messages`, and on what their tool results gave and
-    /// showed, that the model of `profile` is given along (issues 282, 512) - held in memory, else
-    /// read from its storage and checked against its digest -, and answers how each is classified:
-    /// what the model is given of them. Asking nothing: what lies in an agent's transcript, it
-    /// heard (`ActorRuntime::load_attachments`).
+    /// Puts their content on the attachments of `messages` - of the transcript of an agent in
+    /// channel `channel` -, and on what their tool results gave and showed, that the model of
+    /// `profile` is given along (issues 282, 512) - held in memory, else read from its storage and
+    /// checked against its digest -, and answers how each is classified, as its message says: what
+    /// the model is given of them. Only what lies in the channel's key space is read, whatever the
+    /// messages say (issue 549). What lies there and the agent did not hear - an upload of another
+    /// not claimed yet, what a tool gave another agent, what was said before its history begins -
+    /// it cannot name: its key holds a random id. Their labels are the agent side's word, as the
+    /// labels of all it writes are (issue 559).
     ///
     /// # Errors
-    /// `NotFound` if the storage has nothing under an attachment's key, `Altered` if its bytes are
-    /// not what the message says they are, `StorageGone`, `Content`.
+    /// `NotFound` for an attachment outside the channel's key space, or if the storage has nothing
+    /// under its key, `Altered` if its bytes are not what the message says they are,
+    /// `StorageGone`, `Content`.
     pub(crate) async fn load(
         &self,
+        channel: ChannelId,
         messages: &mut [Message],
         profile: &ModelProfile,
     ) -> AttachmentResult<Vec<Classification>> {
@@ -461,6 +474,10 @@ impl AttachmentManager {
             .collect();
         let mut given = Vec::with_capacity(carried.len());
         for attachment in carried {
+            // Before the cache is asked: it holds what other channels' agents were given too.
+            if !self.lies_in(channel, attachment) {
+                return Err(AttachmentError::NotFound(attachment.id));
+            }
             attachment.content = Some(self.content(attachment).await?);
             given.push(attachment.classification.clone());
         }
@@ -715,6 +732,26 @@ mod tests {
         );
     }
 
+    /// Issue 549: what lies in a channel's key space lies under the very key of its id there, not
+    /// under one that merely begins so - whatever a storage would make of `..`.
+    #[tokio::test]
+    async fn content_lies_in_a_channel_by_the_very_key_of_its_id() {
+        let world = World::new().await;
+        let session = world.shared_session(&[], &[]).await;
+        let main = main_of(&session);
+        let attachments = world.kernel.attachment_manager();
+        let hers = World::as_user(world.alice);
+        let uploaded = attachments.create(&hers, &main, "a.png", None, bytes(PNG)).await.unwrap();
+        let climbing = format!("{}/../{}/{}", channel_key(main.id), ChannelId::new(), uploaded.id);
+
+        assert!(attachments.lies_in(main.id, &uploaded), "as it was kept");
+        assert!(!attachments.lies_in(ChannelId::new(), &uploaded), "in no other channel");
+        let renamed = ContentRef { id: ContentId::new(), ..uploaded.clone() };
+        assert!(!attachments.lies_in(main.id, &renamed), "not under another id's key");
+        let climbed = ContentRef { key: climbing, ..uploaded };
+        assert!(!attachments.lies_in(main.id, &climbed), "nor under one that only begins so");
+    }
+
     #[tokio::test]
     async fn what_a_tool_gave_is_kept_for_the_channel_as_images_all_or_none_waiting_for_nothing() {
         let world = World::new().await;
@@ -908,15 +945,17 @@ mod tests {
         };
 
         let (mut blind, mut seeing) = (messages(), messages());
+        let sighted = ModelProfile { max_images: 4, ..ModelProfile::default() };
         assert!(
-            attachments.load(&mut blind, &ModelProfile::default()).await.unwrap().is_empty(),
+            attachments
+                .load(main.id, &mut blind, &ModelProfile::default())
+                .await
+                .unwrap()
+                .is_empty(),
             "nothing given to a model that does not see"
         );
         assert_eq!(contents(&blind), [None, None]);
-        let given = attachments
-            .load(&mut seeing, &ModelProfile { max_images: 4, ..ModelProfile::default() })
-            .await
-            .unwrap();
+        let given = attachments.load(main.id, &mut seeing, &sighted).await.unwrap();
         assert_eq!(contents(&seeing), [Some(PNG.to_vec()), None], "the image alone");
         assert_eq!(
             seeing[1].tool_results[0].shown[0].content.as_deref(),
@@ -934,18 +973,13 @@ mod tests {
         let file = world.files.path().join("content").join(&image.key);
         fs::write(&file, b"another image").unwrap();
         assert!(
-            attachments
-                .load(&mut messages(), &ModelProfile { max_images: 4, ..ModelProfile::default() })
-                .await
-                .is_ok(),
+            attachments.load(main.id, &mut messages(), &sighted).await.is_ok(),
             "held: not read again"
         );
         attachments.purge(main.id).await.unwrap();
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, b"another image").unwrap();
-        let changed = attachments
-            .load(&mut messages(), &ModelProfile { max_images: 4, ..ModelProfile::default() })
-            .await;
+        let changed = attachments.load(main.id, &mut messages(), &sighted).await;
         assert!(
             matches!(changed, Err(AttachmentError::Altered(id)) if id == image.id),
             "read again once let go of, and refused as not what the message says: {changed:?}"

@@ -1,6 +1,6 @@
 # 549 — The kernel takes the agent side's word on a reference to content
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Identity and access management
@@ -80,3 +80,15 @@ id at hand. How the labels of a result's `media` and `shown` should be checked g
   already ensures, and is the kernel's alone. Its test is in the agents' security suite. Step 2,
   `load_attachments` with the admission of `media` and `shown`, follows: the kernel is to know the
   labels itself there too.
+- **2026-11-12** — Step 2: the kernel's knowing the labels of the attachments a model is given along
+  was given up. `create_content` takes any label from the agent side, and so do an agent's messages
+  and what it stages: a library that misbehaves can lower a label without any reference, and
+  knowing the labels on this path would cost a read of the history before every model call and
+  protect nothing. That gap is issue [559](559-labels-of-what-an-agent-writes-are-its-word.md).
+  What is closed is the read: `AttachmentManager::load` reads only what lies in the key space of
+  the agent's channel, asked before the `ContentCache`, which holds what other channels' agents
+  were given too; a test in the agents' security suite holds it. `lies_in` now asks for the very
+  key of the content's id, no longer for a prefix, so that a key handed over is judged without
+  asking a storage how it reads `..`. The admission of a result's
+  `files` and `shown` stays with `lies_in`, their labels with the message, as for every label of
+  what an agent writes; SECURITY.md says so.

@@ -259,8 +259,8 @@ impl ActorRuntime for AgentRuntime {
         messages: &mut [Message],
         profile: &ModelProfile,
     ) -> AttachmentResult<Vec<Classification>> {
-        // Asking nothing: what lies in the agent's transcript, it heard.
-        self.kernel.attachment_manager().load(messages, profile).await
+        let channel = self.participant.channel_id;
+        self.kernel.attachment_manager().load(channel, messages, profile).await
     }
 
     async fn create_content(

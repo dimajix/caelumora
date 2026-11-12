@@ -116,10 +116,12 @@ pub trait ActorRuntime: Send + Sync + Debug {
     ) -> CommitResult<()>;
 
     /// Puts their content on the attachments of `messages` - of the agent's transcript - that the
-    /// model of `profile` is given along (issue 282), and answers how each is classified.
+    /// model of `profile` is given along (issue 282), and answers how each is classified, as its
+    /// message says. Only an attachment of the agent's channel is read (issue 549).
     ///
     /// # Errors
-    /// `AttachmentError` if one cannot be read, or is not what its message says.
+    /// `AttachmentError`: `NotFound` for one that is not of the agent's channel; if one cannot be
+    /// read, or is not what its message says.
     async fn load_attachments(
         &self,
         messages: &mut [Message],
