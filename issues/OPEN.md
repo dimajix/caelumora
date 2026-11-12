@@ -8,7 +8,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [563](563-a-channel-invitation-is-never-used-up.md) | open | medium | bug | A personal `Join` entry of a channel - an invitation - stays in its access list when the one it names joins, against the rule of issue 221 that SECURITY.md and CHANNELS.md state, so that someone removed from the channel takes themselves back in by `/channel join`. |
+| [563](563-a-channel-invitation-is-never-used-up.md) | in progress | medium | bug | A personal `Join` entry of a channel - an invitation - stays in its access list when the one it names joins, against the rule of issue 221 that SECURITY.md and CHANNELS.md state, so that someone removed from the channel takes themselves back in by `/channel join`. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Sessions and channels

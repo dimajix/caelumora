@@ -329,6 +329,19 @@ impl Channel {
         self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
     }
 
+    /// Takes `participant` in, unless it is listed already, as `Session::take_in` takes one into
+    /// the session: no longer one of its former participants (issue 164), and their invitation
+    /// used up (`SecurityAttributes::use_up_invitation`, issue 563) - on every way in, joining,
+    /// being added or founding. Whether they may is asked before.
+    pub fn take_in(&mut self, participant: Participant) {
+        let actor = participant.actor_id();
+        self.security_attributes.use_up_invitation(actor);
+        self.former.retain(|former| former.participant.actor_id() != actor);
+        if !self.lists(actor) {
+            self.participants.push(participant);
+        }
+    }
+
     /// Says what the channel is for (issue 245): `summary` and `briefing`
     /// replace what it said - a missing or empty one removes it.
     ///
@@ -349,6 +362,9 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentId;
+    use crate::channel::testing::make_channel;
+    use crate::security::AclEntry;
     use crate::session::testing::make_session;
     use crate::user::UserId;
 
@@ -405,6 +421,49 @@ mod tests {
             channel.effective_language(&session),
             tag("fr").as_ref(),
             "its own before the session's"
+        );
+    }
+
+    /// Taking someone into a channel uses up their invitation as the session does (issue 563),
+    /// and no rule; whoever left it before is no longer a former participant.
+    #[test]
+    fn taking_a_user_in_uses_up_their_invitation_and_no_rule() {
+        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
+        let made = make_channel(SessionId::new(), "main");
+        let mut channel = Channel {
+            security_attributes: Channel::attributes_of(made.id, ActorId::User(alice))
+                .granting(Subject::Actor(ActorId::User(bob)), Grant::Join)
+                .granting(Subject::Actor(ActorId::User(carol)), Grant::Join)
+                .granting(Subject::Everyone, Grant::Join),
+            former: vec![FormerParticipant {
+                participant: Participant::User(bob),
+                left: Removal::now(ActorId::User(alice)),
+            }],
+            ..made
+        };
+        channel.take_in(Participant::User(bob));
+        channel.take_in(Participant::User(bob));
+        channel.take_in(Participant::Agent(AgentId::new()));
+        assert_eq!(channel.participants.len(), 2, "each once");
+        assert!(channel.former.is_empty(), "bob is back, no longer a former participant");
+        let joins: Vec<Subject> = channel
+            .security_attributes
+            .acl
+            .iter()
+            .filter(|e| e.grant == Grant::Join)
+            .map(|e| e.subject)
+            .collect();
+        assert_eq!(
+            joins,
+            [Subject::Actor(ActorId::User(carol)), Subject::Everyone],
+            "bob's invitation is used up, carol's and the rule stay"
+        );
+        assert!(
+            channel.security_attributes.acl.contains(&AclEntry {
+                subject: Subject::Group(GroupId::of_channel(channel.id)),
+                grant: Grant::Read,
+            }),
+            "what is not a join stays"
         );
     }
 }

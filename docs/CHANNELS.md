@@ -557,9 +557,10 @@ themselves or their own agent, never someone else.
 *   **The session first, then the channel.** One the channel refuses after all stays in the session.
     Who is in the session already is added to a channel by whoever may change the channel alone.
 *   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
-    personal `Join` entry - an invitation - is used up then, so that one removed later cannot take
-    themselves back in; an entry for a role, a group or everyone stays. Who joins a channel by
-    themselves sees all of its history: whoever let them join let them read it.
+    personal `Join` entry - an invitation - is used up as the person comes into the session or the
+    channel, whoever takes them in (`Session::take_in`, `Channel::take_in`), so that one removed
+    later cannot take themselves back in; an entry for a role, a group or everyone stays. Who joins
+    a channel by themselves sees all of its history: whoever let them join let them read it.
 *   **What follows**: the session's document gains the participant, the group of its participants
     follows before it is announced (`SessionUpdateEvent::ParticipantJoined`), so that the new one
     hears of it, too, and a running session follows an agent taken in as it follows those it started

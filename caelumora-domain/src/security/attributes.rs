@@ -44,6 +44,15 @@ impl SecurityAttributes {
         self
     }
 
+    /// Uses up the invitation of `actor` (issue 221): removes the entry that lets them alone join
+    /// (`Join` for `Subject::Actor`), so that they cannot take themselves in again once removed;
+    /// one for a role, a group or everyone is a rule, not an invitation, and stays.
+    pub fn use_up_invitation(&mut self, actor: ActorId) {
+        self.acl.retain(|entry| {
+            !(entry.grant == Grant::Join && entry.subject == Subject::Actor(actor))
+        });
+    }
+
     /// These attributes, letting `subjects` read besides.
     pub fn granting_read(self, subjects: impl IntoIterator<Item = Subject>) -> Self {
         subjects

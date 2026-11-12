@@ -134,11 +134,12 @@ impl ChannelController {
         self.update(ctx, &ChannelUpdateEvent::ApprovalRulesChanged(rules)).await
     }
 
-    /// Adds `participant` to the channel on behalf of `ctx` (issue 46). How
-    /// much of the history it is given is the history's to record
-    /// (`HistoryShared`, issue 417). Stored first
-    /// (`UpdateChannel`), then the group of its participants follows, so
-    /// that the newcomer may read it (issue 286), then taken over and
+    /// Adds `participant` to the channel on behalf of `ctx` (issue 46), as
+    /// `Channel::take_in` takes one in - no longer a former participant,
+    /// their invitation used up (issue 563). How much of the history it is
+    /// given is the history's to record (`HistoryShared`, issue 417). Stored
+    /// first (`UpdateChannel`), then the group of its participants follows,
+    /// so that the newcomer may read it (issue 286), then taken over and
     /// announced (`channel::JOINED`).
     ///
     /// # Errors
@@ -153,9 +154,7 @@ impl ChannelController {
         let id = participant.actor_id();
         let ((), channel) = writing
             .change(ctx, |channel| {
-                channel.participants.push(participant.clone());
-                // Back again: no longer a former participant (issue 164).
-                channel.former.retain(|f| f.participant.actor_id() != id);
+                channel.take_in(participant.clone());
                 Ok(())
             })
             .await?;

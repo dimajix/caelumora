@@ -1,6 +1,6 @@
 # 563 — An invitation to a channel is never used up
 
-**Status:** open
+**Status:** in progress
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -58,3 +58,13 @@ and removed from it by its owner, runs `/channel join open` and is in it again.
 - **2026-11-12** — Opened from a finding of the review of issue
   [560](560-commands-are-not-grouped-by-what-they-act-on.md), step 4b: `/channel join` makes a
   channel's invitation that is never used up a way back in for whoever was removed.
+- **2026-11-12** — Decided with the maintainer: the channel takes someone in as the session does,
+  by a method of its document, `Channel::take_in`, on every way in; their invitation is used up by
+  `SecurityAttributes::use_up_invitation`, which `Session::take_in` calls too, so that what tells an
+  invitation from a rule stands once, at the access list that holds both. An owner who brings
+  their agent along keeps their invitation, as in the session; whether that stays is issue
+  [342](342-invitations.md)'s.
+
+  Done: `ChannelController::add_participant` takes the participant in by `Channel::take_in`. The
+  store asks nothing new - whoever may change the channel, or the kernel for one who joined, writes
+  the access list with it.
