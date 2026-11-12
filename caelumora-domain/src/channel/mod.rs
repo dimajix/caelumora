@@ -21,7 +21,7 @@ use crate::group::GroupId;
 use crate::query::Field;
 use crate::removal::Removal;
 use crate::scope::{Scope, Scoped};
-use crate::security::{Grant, Secured, SecuredMut, SecurityAttributes, Subject};
+use crate::security::{AclEntry, Grant, Secured, SecuredMut, SecurityAttributes, Subject};
 use crate::session::{Session, SessionId};
 use crate::store::{EntityKind, Revision, Stored, Updatable};
 use crate::value::language::Language;
@@ -329,6 +329,51 @@ impl Channel {
         self.internal_actors.iter().any(|internal| internal.actor_id() == actor)
     }
 
+    /// Takes `participant` in, unless it is listed already, as `Session::take_in` takes one into
+    /// the session: no longer one of its former participants (issue 164), and their invitation
+    /// used up (`SecurityAttributes::use_up_invitation`, issue 563) - on every way in, joining,
+    /// being added or founding. Whether they may is asked before.
+    pub fn take_in(&mut self, participant: Participant) {
+        let actor = participant.actor_id();
+        self.security_attributes.use_up_invitation(actor);
+        self.former.retain(|former| former.participant.actor_id() != actor);
+        if !self.lists(actor) {
+            self.participants.push(participant);
+        }
+    }
+
+    /// Lets `actor` go, removed by `removal`: out of its participants, and kept as a former
+    /// participant (issue 164), as they left the last time. `None` if they are not listed.
+    pub fn let_go(&mut self, actor: ActorId, removal: Removal) -> Option<Participant> {
+        let index = self.participants.iter().position(|p| p.actor_id() == actor)?;
+        let participant = self.participants.remove(index);
+        self.former.retain(|former| former.participant.actor_id() != actor);
+        self.former.push(FormerParticipant { participant: participant.clone(), left: removal });
+        Some(participant)
+    }
+
+    /// Undoes taking `actor` in (`take_in`), as `before` - the channel as it was before - had
+    /// them: out of its participants unless listed before, a former participant again if they
+    /// were one, and their invitation given back if it was there. Nothing if they were let go
+    /// meanwhile (`let_go`): who removed them decided, and what that left stands. Nothing else of
+    /// the channel is set back, so that what changed meanwhile stays.
+    pub fn undo_take_in(&mut self, actor: ActorId, before: &Channel) {
+        if !self.lists(actor) {
+            return;
+        }
+        if !before.lists(actor) {
+            self.participants.retain(|p| p.actor_id() != actor);
+        }
+        self.former.retain(|former| former.participant.actor_id() != actor);
+        let was_former = before.former.iter().filter(|f| f.participant.actor_id() == actor);
+        self.former.extend(was_former.cloned());
+        let invitation = AclEntry::invitation(actor);
+        let invited = before.security_attributes.acl.contains(&invitation);
+        if invited && !self.security_attributes.acl.contains(&invitation) {
+            self.security_attributes.acl.push(invitation);
+        }
+    }
+
     /// Says what the channel is for (issue 245): `summary` and `briefing`
     /// replace what it said - a missing or empty one removes it.
     ///
@@ -349,20 +394,14 @@ impl Channel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::AgentId;
+    use crate::channel::testing::make_channel;
     use crate::session::testing::make_session;
     use crate::user::UserId;
 
     #[test]
     fn a_change_is_made_into_the_channel_s_values_or_leaves_it_as_it_was() {
-        let owner = ActorId::User(UserId::new());
-        let mut channel = Channel::build(
-            SessionId::new(),
-            owner,
-            Name::new("main").unwrap(),
-            ComponentConfig::default(),
-            Classification::CHANNEL_DEFAULT,
-            None,
-        );
+        let mut channel = make_channel(SessionId::new(), "main");
         channel.apply(&ChannelUpdateEvent::NameChanged("planning".to_string())).unwrap();
         channel.apply(&ChannelUpdateEvent::LanguageChanged(Some("de".to_string()))).unwrap();
         channel.apply(&ChannelUpdateEvent::UsesWorkspaceChanged(false)).unwrap();
@@ -389,14 +428,7 @@ mod tests {
         let owner = UserId::new();
         let mut session = make_session("s", owner);
         let tag = |tag: &str| Some(Language::new(tag).unwrap());
-        let mut channel = Channel::build(
-            session.id,
-            ActorId::User(owner),
-            Name::new("main").unwrap(),
-            ComponentConfig::default(),
-            Classification::CHANNEL_DEFAULT,
-            None,
-        );
+        let mut channel = make_channel(session.id, "main");
         assert_eq!(channel.effective_language(&session), None, "neither has one");
         session.language = tag("de");
         assert_eq!(channel.effective_language(&session), tag("de").as_ref(), "the session's");
@@ -405,6 +437,105 @@ mod tests {
             channel.effective_language(&session),
             tag("fr").as_ref(),
             "its own before the session's"
+        );
+    }
+
+    /// Taking someone into a channel uses up their invitation as the session does (issue 563),
+    /// and no rule; whoever left it before is no longer a former participant.
+    #[test]
+    fn taking_a_user_in_uses_up_their_invitation_and_no_rule() {
+        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
+        let made = make_channel(SessionId::new(), "main");
+        let mut channel = Channel {
+            security_attributes: Channel::attributes_of(made.id, ActorId::User(alice))
+                .granting(Subject::Actor(ActorId::User(bob)), Grant::Join)
+                .granting(Subject::Actor(ActorId::User(carol)), Grant::Join)
+                .granting(Subject::Everyone, Grant::Join),
+            former: vec![FormerParticipant {
+                participant: Participant::User(bob),
+                left: Removal::now(ActorId::User(alice)),
+            }],
+            ..made
+        };
+        channel.take_in(Participant::User(bob));
+        channel.take_in(Participant::User(bob));
+        channel.take_in(Participant::Agent(AgentId::new()));
+        assert_eq!(channel.participants.len(), 2, "each once");
+        assert!(channel.former.is_empty(), "bob is back, no longer a former participant");
+        let joins: Vec<Subject> = channel
+            .security_attributes
+            .acl
+            .iter()
+            .filter(|e| e.grant == Grant::Join)
+            .map(|e| e.subject)
+            .collect();
+        assert_eq!(
+            joins,
+            [Subject::Actor(ActorId::User(carol)), Subject::Everyone],
+            "bob's invitation is used up, carol's and the rule stay"
+        );
+        assert!(
+            channel.security_attributes.acl.contains(&AclEntry {
+                subject: Subject::Group(GroupId::of_channel(channel.id)),
+                grant: Grant::Read,
+            }),
+            "what is not a join stays"
+        );
+    }
+
+    /// Letting someone go keeps them as a former participant, as they left the last time; undoing
+    /// their coming in sets back what it changed - out again, a former participant again, their
+    /// invitation given back - and nothing else, and nothing once they were let go meanwhile.
+    #[test]
+    fn undoing_taking_in_sets_back_what_it_changed_and_nothing_else() {
+        let (alice, bob, carol) = (UserId::new(), UserId::new(), UserId::new());
+        let (alice_id, bob_id) = (ActorId::User(alice), ActorId::User(bob));
+        let made = make_channel(SessionId::new(), "main");
+        let mut channel = Channel {
+            security_attributes: Channel::attributes_of(made.id, alice_id)
+                .granting(Subject::Actor(bob_id), Grant::Join),
+            participants: vec![Participant::User(alice), Participant::User(bob)],
+            ..made
+        };
+        assert!(channel.let_go(ActorId::User(carol), Removal::now(alice_id)).is_none());
+        channel.let_go(bob_id, Removal::now(alice_id)).expect("listed");
+        channel.let_go(alice_id, Removal::now(alice_id)).expect("listed");
+        channel.take_in(Participant::User(alice));
+        assert_eq!(channel.former.len(), 1, "alice back, bob a former participant");
+
+        let before = channel.clone();
+        channel.take_in(Participant::User(bob));
+        channel.take_in(Participant::User(carol));
+        channel.undo_take_in(bob_id, &before);
+        assert!(!channel.lists(bob_id), "out again");
+        assert!(channel.lists(ActorId::User(carol)), "what came meanwhile stays");
+        assert!(
+            channel.former.iter().any(|f| f.participant.actor_id() == bob_id),
+            "a former participant again"
+        );
+        assert!(
+            channel.security_attributes.acl.contains(&AclEntry::invitation(bob_id)),
+            "his invitation given back"
+        );
+        channel.undo_take_in(alice_id, &before);
+        assert!(channel.lists(alice_id), "listed before, she stays");
+
+        // Let go between coming in and the undoing: who removed him decided.
+        let before = channel.clone();
+        channel.take_in(Participant::User(bob));
+        let removal = Removal::now(alice_id);
+        channel.let_go(bob_id, removal.clone()).expect("listed");
+        channel.undo_take_in(bob_id, &before);
+        let left: Vec<&Removal> = channel
+            .former
+            .iter()
+            .filter(|f| f.participant.actor_id() == bob_id)
+            .map(|f| &f.left)
+            .collect();
+        assert_eq!(left, [&removal], "as he was let go");
+        assert!(
+            !channel.security_attributes.acl.contains(&AclEntry::invitation(bob_id)),
+            "his invitation stays used up"
         );
     }
 }

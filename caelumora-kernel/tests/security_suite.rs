@@ -5191,6 +5191,37 @@ async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// An invitation to a channel is used up as it is taken (issue 563), as the session's is: bob,
+/// invited to "open", joins it, is removed by alice, and cannot take himself in again - neither by
+/// `/channel join`, which answers as for a channel that does not exist, nor by `SessionLoop::join`.
+#[tokio::test]
+async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
+    let (world, session, main) = with_a_channel_to_join().await;
+    let bob = main.user_actor(world.bob).unwrap();
+    let bob_id = ActorId::User(world.bob);
+    let invitation = AclEntry::invitation(bob_id);
+    let open = session.channel_named("open").expect("running");
+    assert!(open.security_attributes().acl.contains(&invitation), "invited");
+
+    bob.execute_command("channel join open").await.expect("his to join");
+    assert!(!open.security_attributes().acl.contains(&invitation), "his invitation is used up");
+    open.remove_participant(&World::as_user(world.alice), bob_id).await.expect("hers to remove");
+
+    assert_eq!(
+        unusable(&bob, "channel join", "open").await,
+        unusable(&bob, "channel join", "nowhere").await,
+        "no longer his to join, as one that does not exist"
+    );
+    let refused = session
+        .join(&World::as_user(world.bob), bob_id, Some(open.id()))
+        .await
+        .expect_err("no longer his to join");
+    // Asked by the session before the channel is (`SessionLoop::join`).
+    assert!(matches!(refused.downcast_ref(), Some(StoreError::PermissionDenied(_))), "{refused}");
+    assert!(!open.participants().iter().any(|p| p.id == bob_id), "he stays out");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// `/agent create` (issue 555) asks nothing making an agent does not ask, beside the lookup of the
 /// personality: a personality bob may not read is answered as one that does not exist. The agent
 /// lies in the session, and is brought in by `/participant add`.

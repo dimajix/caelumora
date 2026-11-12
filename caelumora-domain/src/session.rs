@@ -235,15 +235,12 @@ impl Session {
 
     /// Takes `participant` in (issue 221), unless it takes part already;
     /// the group of its participants follows it where it is stored
-    /// (`Group::of_session`). An entry that let a user join them alone - an
-    /// invitation - is used up, so that one removed later cannot take
-    /// themselves back in; one for a role, a group or everyone stays.
-    /// Whether they may is asked before.
+    /// (`Group::of_session`). Their invitation is used up
+    /// (`SecurityAttributes::use_up_invitation`). Whether they may is asked
+    /// before.
     pub fn take_in(&mut self, participant: Participant) {
         let actor = participant.actor_id();
-        self.security_attributes.acl.retain(|entry| {
-            !(entry.grant == Grant::Join && entry.subject == Subject::Actor(actor))
-        });
+        self.security_attributes.use_up_invitation(actor);
         if !self.takes_part(actor) {
             self.participants.push(participant);
         }

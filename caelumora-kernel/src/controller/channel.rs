@@ -5,9 +5,7 @@ use arc_swap::Guard;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::ApprovalRule;
-use caelumora_domain::channel::{
-    self, Channel, ChannelId, ChannelUpdateEvent, FormerParticipant, Participant,
-};
+use caelumora_domain::channel::{self, Channel, ChannelId, ChannelUpdateEvent, Participant};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{EventPublisher, GlobalEvent};
 use caelumora_domain::group::Group;
@@ -134,12 +132,14 @@ impl ChannelController {
         self.update(ctx, &ChannelUpdateEvent::ApprovalRulesChanged(rules)).await
     }
 
-    /// Adds `participant` to the channel on behalf of `ctx` (issue 46). How
-    /// much of the history it is given is the history's to record
-    /// (`HistoryShared`, issue 417). Stored first
-    /// (`UpdateChannel`), then the group of its participants follows, so
-    /// that the newcomer may read it (issue 286), then taken over and
-    /// announced (`channel::JOINED`).
+    /// Adds `participant` to the channel on behalf of `ctx` (issue 46), as
+    /// `Channel::take_in` takes one in - no longer a former participant,
+    /// their invitation used up (issue 563). How much of the history it is
+    /// given is the history's to record (`HistoryShared`, issue 417). Stored
+    /// first (`UpdateChannel`), then the group of its participants follows,
+    /// so that the newcomer may read it (issue 286), then taken over and
+    /// announced (`channel::JOINED`). Answers the channel as it was before,
+    /// for [`Self::roll_back_participant_addition`].
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
@@ -148,30 +148,57 @@ impl ChannelController {
         &self,
         ctx: &SecurityContext,
         participant: Participant,
-    ) -> StoreResult<()> {
+    ) -> StoreResult<Channel> {
         let mut writing = self.channel.write().await;
         let id = participant.actor_id();
-        let ((), channel) = writing
+        let (before, channel) = writing
             .change(ctx, |channel| {
-                channel.participants.push(participant.clone());
-                // Back again: no longer a former participant (issue 164).
-                channel.former.retain(|f| f.participant.actor_id() != id);
-                Ok(())
+                let before = channel.clone();
+                channel.take_in(participant.clone());
+                Ok(before)
             })
             .await?;
         self.keep_participants(&channel).await;
         if let Some(event) = self.joined_or_left_event(id, true) {
             writing.announce(event, &channel);
         }
+        Ok(before)
+    }
+
+    /// Rolls back adding `participant` (`add_participant`), in the kernel's name - adding it was
+    /// permitted -, as `before`, the channel as it was before, had them (`Channel::undo_take_in`):
+    /// out of it again, a former participant again if they were one, their invitation given back;
+    /// nothing if they were let go meanwhile. The group of its participants follows, and a leave
+    /// is announced where the addition announced a join that changed who is listed. Unlike the
+    /// other `roll_back_…` steps it answers what the store reports, for its caller to log, as the
+    /// controller's other operations do.
+    ///
+    /// # Errors
+    /// Whatever the store reports; the channel is then unchanged.
+    pub(crate) async fn roll_back_participant_addition(
+        &self,
+        participant: ActorId,
+        before: &Channel,
+    ) -> StoreResult<()> {
+        let mut writing = self.channel.write().await;
+        let (left, channel) = writing
+            .change(&SecurityContext::system(), |channel| {
+                let listed = channel.lists(participant);
+                channel.undo_take_in(participant, before);
+                Ok(listed && !channel.lists(participant))
+            })
+            .await?;
+        self.keep_participants(&channel).await;
+        if let Some(event) = self.joined_or_left_event(participant, false).filter(|_| left) {
+            writing.announce_also_to(event, &channel, [Subject::Actor(participant)]);
+        }
         Ok(())
     }
 
-    /// Removes `participant` from the channel on behalf of `ctx` (issue 46)
-    /// and returns it, like [`Self::add_participant`]. It is kept as a
-    /// former participant, with who removed it and when (issue 164). The
-    /// announcement (`channel::LEFT`) is delivered to whoever was
-    /// removed besides the participants (issue 23): they are no participant any more
-    /// when it is delivered.
+    /// Removes `participant` from the channel on behalf of `ctx` (issue 46) and returns it: let go
+    /// as `Channel::let_go` lets one go, kept as a former participant, with who removed it and
+    /// when (issue 164). The announcement (`channel::LEFT`) is delivered to whoever was removed
+    /// besides the participants (issue 23): they are no participant any more when it is delivered.
     ///
     /// # Errors
     /// `StoreError::NotFound` if `participant` takes no part in the channel;
@@ -184,21 +211,9 @@ impl ChannelController {
         let mut writing = self.channel.write().await;
         let (removed, channel) = writing
             .change(ctx, |channel| {
-                let index = channel
-                    .participants
-                    .iter()
-                    .position(|p| p.actor_id() == participant)
-                    .ok_or_else(|| StoreError::NotFound {
-                    entity: "participant",
-                    id: participant.to_string(),
-                })?;
-                let removed = channel.participants.remove(index);
-                channel.former.retain(|f| f.participant.actor_id() != participant);
-                channel.former.push(FormerParticipant {
-                    participant: removed.clone(),
-                    left: Removal::now(ctx.caller_id),
-                });
-                Ok(removed)
+                channel.let_go(participant, Removal::now(ctx.caller_id)).ok_or_else(|| {
+                    StoreError::NotFound { entity: "participant", id: participant.to_string() }
+                })
             })
             .await?;
         self.keep_participants(&channel).await;

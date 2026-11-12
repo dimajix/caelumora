@@ -93,16 +93,14 @@ impl ChannelLoop {
         self.take_in(context, participant, HistoryAccess::None, Entry::Founding).await
     }
 
-    /// Takes `participant` into the channel, on behalf of `context`, seeing
-    /// as much of the history as `history` grants, by the way `entry` says:
-    /// joining is asked once the participant is resolved. Stored first
-    /// (also asked as `ConfidentialityPolicy::cleared`), then its actor
-    /// started (`start_participant`) - taken back out of the document if it
-    /// cannot be - and the join announced, on the event bus and in the
-    /// channel, in the name of `context`'s caller - who added them, or who
-    /// joined (issue 408). A participant removed shortly
-    /// before is added only once its old actor has ended (`left`, issue
-    /// 171).
+    /// Takes `participant` into the channel, on behalf of `context`, seeing as much of the history
+    /// as `history` grants, by the way `entry` says: joining is asked once the participant is
+    /// resolved. Stored first (also asked as `ConfidentialityPolicy::cleared`), then its actor
+    /// started (`start_participant`) - the addition rolled back if it cannot be, as the channel had
+    /// them before (`ChannelController::roll_back_participant_addition`) - and the join announced,
+    /// on the event bus and in the channel, in the name of `context`'s caller - who added them, or
+    /// who joined (issue 408). A participant removed shortly before is added only once its old
+    /// actor has ended (`left`, issue 171).
     ///
     /// # Errors
     /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`,
@@ -153,16 +151,15 @@ impl ChannelLoop {
             Entry::Founding => None,
             Entry::Added | Entry::Joining => Some(self.history_start(history).await?),
         };
-        self.channel.add_participant(&storing, found.clone()).await?;
+        let before = self.channel.add_participant(&storing, found.clone()).await?;
 
         if let Err(error) = self.start_participant(resolved, from, Some(context)).await {
-            // Stored, but it cannot run: taken back out, in the kernel's name - adding it was
-            // permitted.
+            // Stored, but it cannot run: the addition rolled back, as the channel had them before.
             if let Err(undo) =
-                self.channel.remove_participant(&SecurityContext::system(), participant).await
+                self.channel.roll_back_participant_addition(participant, &before).await
             {
                 warn!(
-                    "{} was added to channel {} but could not be started nor removed again: {}",
+                    "{} was added to channel {} but could not be started nor rolled back: {}",
                     participant, self.id, undo
                 );
             }
@@ -499,11 +496,11 @@ mod tests {
     use crate::actor::user::ChannelWatch;
     use crate::actor::Shown;
     use crate::channel::tests::*;
-    use crate::channel::ChannelLoop;
+    use crate::channel::{ChannelError, ChannelLoop};
     use crate::error::is_forbidden;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError, SessionManager};
-    use crate::testing::Script;
+    use crate::testing::{Script, World};
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_api::actor::Actor;
@@ -1032,5 +1029,31 @@ mod tests {
                 && !channel.participants().iter().any(|m| m.id == bob_id)
         );
         manager.stop(&SecurityContext::system(), running.id()).await.unwrap();
+    }
+
+    /// Adding one whose actor cannot start is rolled back as the channel had them (issue 563):
+    /// not listed, and not made a former participant they never were - here an agent, which a
+    /// world without agents cannot run.
+    #[tokio::test]
+    async fn the_addition_of_one_who_cannot_start_is_rolled_back_as_the_channel_had_them() {
+        let world = World::new().await;
+        let plain = world.personality("plain", Some(world.alice), &[]).await;
+        let waiting = world.agent("scout", world.alice, &plain).await;
+        let scout = ActorId::Agent(waiting);
+        let session = world.shared_session(&[], &[waiting]).await;
+        let main = Arc::clone(&session.channels()[0]);
+
+        let error = main
+            .add_participant(&World::as_user(world.alice), scout, HistoryAccess::All)
+            .await
+            .expect_err("no agent runs here");
+        assert!(
+            matches!(error.downcast_ref(), Some(ChannelError::UnknownAgentKind { .. })),
+            "stored, then refused as it starts: {error}"
+        );
+        let after = main.channel();
+        assert!(!after.lists(scout), "taken back out");
+        assert!(after.former.is_empty(), "made no former participant");
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 }

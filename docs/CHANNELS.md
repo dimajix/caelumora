@@ -522,9 +522,14 @@ is permitted and can succeed.
 Participants of the session can be added to and removed from a running channel. Changing the
 participants is an operation of the channel, not of the session (`ChannelLoop::add_participant`,
 `remove_participant`). Like renaming, the change is made by the channel's one writer, the
-`ChannelController`: it recomputes the channel's security attributes from its participants, stores
-the channel (`UpdateChannel` - only the owner) and announces who joined or left. Events only
-announce; nothing changes a channel because an event arrived.
+`ChannelController`, by the rules of the channel's document: who comes in is no longer a former
+participant and has their invitation used up (`Channel::take_in`), who is removed is kept as a
+former participant (`Channel::let_go`, issue 164). It stores the channel - asked as `UpdateChannel`
+of whoever changes it, by default its owner, and in the kernel's name for one who joined or founded
+it -, lets the group of its participants follow and announces who joined or left. One whose actor
+then cannot start has the addition rolled back as the channel had them before
+(`Channel::undo_take_in`), announced as a leave. Events only announce; nothing changes a channel
+because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
@@ -557,9 +562,10 @@ themselves or their own agent, never someone else.
 *   **The session first, then the channel.** One the channel refuses after all stays in the session.
     Who is in the session already is added to a channel by whoever may change the channel alone.
 *   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
-    personal `Join` entry - an invitation - is used up then, so that one removed later cannot take
-    themselves back in; an entry for a role, a group or everyone stays. Who joins a channel by
-    themselves sees all of its history: whoever let them join let them read it.
+    personal `Join` entry - an invitation - is used up as the person comes into the session or the
+    channel, whoever takes them in (`Session::take_in`, `Channel::take_in`), so that one removed
+    later cannot take themselves back in; an entry for a role, a group or everyone stays. Who joins
+    a channel by themselves sees all of its history: whoever let them join let them read it.
 *   **What follows**: the session's document gains the participant, the group of its participants
     follows before it is announced (`SessionUpdateEvent::ParticipantJoined`), so that the new one
     hears of it, too, and a running session follows an agent taken in as it follows those it started

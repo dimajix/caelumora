@@ -8,7 +8,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [563](563-a-channel-invitation-is-never-used-up.md) | open | medium | bug | A personal `Join` entry of a channel - an invitation - stays in its access list when the one it names joins, against the rule of issue 221 that SECURITY.md and CHANNELS.md state, so that someone removed from the channel takes themselves back in by `/channel join`. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [564](564-taking-someone-in-is-rolled-back-in-part.md) | open | low | bug | Taking someone into a session together with a channel stores the session first and keeps it when the channel fails, two takings-in of one participant can race and undo each other, and a join is announced for one already listed; with them, a few loose ends of the same code - visibility, a rollback step not named so, an invitation built by hand. |
 
