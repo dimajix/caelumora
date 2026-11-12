@@ -5,8 +5,9 @@ mod commands;
 pub(super) use crate::channel::testing::*;
 
 use super::*;
+use crate::command::agent::AgentGroupComponent;
 use crate::command::help::HelpComponent;
-use crate::command::wakeup::WakeupComponent;
+use crate::command::participant::ParticipantGroupComponent;
 use crate::command::{ChannelCommandProvider, CommandExecutor};
 use crate::component::ComponentRegistry;
 use crate::kernel::ChannelRuntime;
@@ -86,7 +87,11 @@ async fn channel_built(
         Arc::clone(kernel.access_policy()),
         vec![
             builtin("help", Arc::new(HelpComponent)),
-            builtin("wakeup", Arc::new(WakeupComponent)),
+            builtin("participant", Arc::new(ParticipantGroupComponent)),
+            builtin(
+                "agent",
+                Arc::new(AgentGroupComponent::new(Arc::clone(kernel.agent_manager()))),
+            ),
         ],
     )
     .unwrap();

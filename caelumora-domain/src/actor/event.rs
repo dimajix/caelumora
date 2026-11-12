@@ -157,7 +157,7 @@ pub enum ActorEvent {
     },
     /// A command was carried out (issues 28, 269): `command` is its name
     /// without the slash, `args` what it was given, `output` what it
-    /// answered. One of the session - `/wakeup` - the envelope's sender is
+    /// answered. One of the session - `/agent wakeup` - the envelope's sender is
     /// the user who ran it, sent only when the answer concerns everybody;
     /// one an agent carried out, the sender is the agent, `turn_id` the
     /// turn it was carried out in, and `to` the issuer alone if the answer

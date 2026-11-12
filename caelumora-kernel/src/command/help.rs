@@ -1,4 +1,4 @@
-//! The built-in `/help` command (issue 28).
+//! The built-in `/help` command (issues 28, 560).
 
 use crate::command::{ChannelCommandProvider, CommandContext};
 use crate::component::ComponentRegistry;
@@ -12,8 +12,9 @@ use std::sync::Arc;
 
 pub const HELP_COMMAND_NAME: &str = "help";
 
-/// `/help [command]`: lists the commands the user may see, or describes one.
-/// The answer is for the user alone.
+/// `/help [group or command]`: lists the commands the user may see - all, or those of a group
+/// (issue 560) -, or describes one, found by its name or a short form. The answer is for the user
+/// alone.
 #[derive(Debug)]
 pub struct HelpComponent;
 
@@ -24,13 +25,23 @@ fn signature(command: &Command) -> String {
     }
 }
 
+/// The short forms of `command`, as told after its signature: " (also `/add`)", or nothing.
+fn also(command: &Command) -> String {
+    if command.aliases.is_empty() {
+        return String::new();
+    }
+    let aliases: Vec<String> = command.aliases.iter().map(|alias| format!("`/{alias}`")).collect();
+    format!(" (also {})", aliases.join(", "))
+}
+
 impl ProvidesCommands for HelpComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
             name: CommandName::fixed(HELP_COMMAND_NAME),
             aliases: Vec::new(),
-            description: "Lists the commands you can use, or describes one.".to_string(),
-            usage: Some("[command]".to_string()),
+            description: "Lists the commands you can use, those of a group, or describes one."
+                .to_string(),
+            usage: Some("[group or command]".to_string()),
             owners_only: false,
         }]
     }
@@ -79,38 +90,63 @@ impl ChannelCommandProvider for HelpComponent {
             .await;
         let of_agents = agents_commands(context).await;
         let wanted = args.trim().trim_start_matches('/');
+        // Unknown and invisible alike, as for running a command.
+        let unknown = || CommandError::Unknown(wanted.to_string());
         if !wanted.is_empty() {
-            // Unknown and invisible alike, as for running a command; by its name or an alias.
+            // By its name or a short form.
             let named = |command: &Command| command.strip_from(wanted) == Some("");
             if let Some(command) = visible.iter().find(|c| named(c)) {
                 return Ok(CommandOutput::private(format!(
-                    "`{}` — {}",
+                    "`{}`{} — {}",
                     signature(command),
+                    also(command),
                     command.description
                 )));
             }
-            let (command, handles) = of_agents
-                .values()
-                .find(|(c, _)| named(c))
-                .ok_or_else(|| CommandError::Unknown(wanted.to_string()))?;
-            return Ok(CommandOutput::private(format!(
-                "`{}` — {} Carried out by {}.",
-                agent_signature(command),
-                command.description,
-                handles.join(", ")
-            )));
+            if let Some((command, handles)) = of_agents.values().find(|(c, _)| named(c)) {
+                return Ok(CommandOutput::private(format!(
+                    "`{}`{} — {} Carried out by {}.",
+                    agent_signature(command),
+                    also(command),
+                    command.description,
+                    handles.join(", ")
+                )));
+            }
         }
 
-        let mut text = String::from("Commands:\n\n");
-        for command in &visible {
-            text.push_str(&format!("- `{}` — {}\n", signature(command), command.description));
+        // All of them, or those of the group asked for: whose name begins with it.
+        let group = match wanted {
+            "" => None,
+            _ => {
+                let words: Vec<&str> = wanted.split_whitespace().collect();
+                Some(CommandName::new(words.join(" ")).map_err(|_| unknown())?)
+            }
+        };
+        let in_group = |command: &Command| group.as_ref().is_none_or(|g| g.begins(&command.name));
+        let listed: Vec<&Command> = visible.iter().filter(|c| in_group(c)).collect();
+        let of_agents: Vec<_> = of_agents.values().filter(|(c, _)| in_group(c)).collect();
+        if listed.is_empty() && of_agents.is_empty() {
+            return Err(unknown());
+        }
+        let mut text = match &group {
+            Some(group) => format!("Commands of `/{group}`:\n\n"),
+            None => String::from("Commands:\n\n"),
+        };
+        for command in listed {
+            text.push_str(&format!(
+                "- `{}`{} — {}\n",
+                signature(command),
+                also(command),
+                command.description
+            ));
         }
         if !of_agents.is_empty() {
             text.push_str("\nCommands the agents here carry out - name the agent, or `@all`:\n\n");
-            for (command, handles) in of_agents.values() {
+            for (command, handles) in of_agents {
                 text.push_str(&format!(
-                    "- `{}` — {} ({})\n",
+                    "- `{}`{} — {} ({})\n",
                     agent_signature(command),
+                    also(command),
                     command.description,
                     handles.join(", ")
                 ));
@@ -121,6 +157,7 @@ impl ChannelCommandProvider for HelpComponent {
     }
 }
 
+/// Registers the kind `help` with `registry`.
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(HELP_KIND).provides::<dyn ChannelCommandProvider>(),

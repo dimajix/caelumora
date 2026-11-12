@@ -70,7 +70,7 @@ pub enum HistoryEntry {
     /// `actor` carried out the command `command` with `args` at `at`, on the
     /// word of `issuer`, and answered `output` (issues 269, 417) - to `to`
     /// alone if it is private, to every user otherwise: an agent in its turn
-    /// `turn_id`, recorded before the turn's end; the session (`/wakeup`),
+    /// `turn_id`, recorded before the turn's end; the session (`/agent wakeup`),
     /// without a turn, in the name of whoever asked.
     CommandExecuted {
         turn_id: Option<TurnId>,

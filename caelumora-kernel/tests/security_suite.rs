@@ -4579,7 +4579,7 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
 
     let (reply, asked) = world.asked(bob.execute_command("help")).await;
     let text = reply.expect("his to run").output.expect("answered to him");
-    assert!(text.contains("/wakeup") && text.contains("/nudge"), "{text}");
+    assert!(text.contains("/agent wakeup") && text.contains("/participant nudge"), "{text}");
     let about: Vec<&str> =
         asked.iter().filter(|line| line.contains("Command(")).map(String::as_str).collect();
     assert_eq!(
@@ -4598,10 +4598,10 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// `/add` (issue 555) asks nothing taking someone in does not ask, beside the lookup of the name:
-/// bob, who reads the channel, sees and runs it, and is refused what he may not do - changing the
-/// session. A name that finds nobody is answered alike whether it is nobody's or not the issuer's
-/// to read, and one that finds several equally near is refused with them.
+/// `/participant add` (issue 555) asks nothing taking someone in does not ask, beside the lookup of
+/// the name: bob, who reads the channel, sees and runs it, and is refused what he may not do -
+/// changing the session. A name that finds nobody is answered alike whether it is nobody's or not
+/// the issuer's to read, and one that finds several equally near is refused with them.
 #[tokio::test]
 async fn adding_by_command_asks_what_taking_in_asks() {
     let world = World::new().await;
@@ -4645,7 +4645,7 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         ]),
         "{asked:#?}"
     );
-    let (reply, asked) = world.asked(alice.execute_command("add Carol")).await;
+    let (reply, asked) = world.asked(alice.execute_command("participant add Carol")).await;
     let reply = reply.expect("hers to change");
     assert_eq!(
         asked,
@@ -4695,9 +4695,9 @@ async fn adding_by_command_asks_what_taking_in_asks() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// `/create-agent` (issue 555) asks nothing making an agent does not ask, beside the lookup of the
+/// `/agent create` (issue 555) asks nothing making an agent does not ask, beside the lookup of the
 /// personality: a personality bob may not read is answered as one that does not exist. The agent
-/// lies in the session, and is brought in by `/add`.
+/// lies in the session, and is brought in by `/participant add`.
 #[tokio::test]
 async fn making_an_agent_by_command_asks_what_making_one_asks() {
     // Agents that run, so that the one made can take part.
@@ -4713,7 +4713,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         other => panic!("refused as invalid, not {other:?}"),
     };
 
-    let (error, asked) = world.asked(bob.execute_command("create-agent plain")).await;
+    let (error, asked) = world.asked(bob.execute_command("agent create plain")).await;
     assert_eq!(
         asked,
         checks(&[
@@ -4724,10 +4724,10 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         "none of hers is listed to him: {asked:#?}"
     );
     let hidden = refused(&error.expect_err("not his"));
-    let nobody = refused(&bob.execute_command("create-agent zed").await.expect_err("nobody"));
+    let nobody = refused(&bob.execute_command("agent create zed").await.expect_err("nobody"));
     assert_eq!(hidden.replace("plain", "_"), nobody.replace("zed", "_"), "alike");
     assert!(hidden.contains("no personality named \"plain\""), "{hidden}");
-    let (reply, asked) = world.asked(alice.execute_command("create-agent plain as Scout")).await;
+    let (reply, asked) = world.asked(alice.execute_command("agent create plain as Scout")).await;
     assert_eq!(
         asked,
         checks(&[

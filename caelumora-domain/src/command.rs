@@ -17,14 +17,12 @@ use std::iter;
 
 /// Component kind of the built-in `/help` command.
 pub const HELP_KIND: &str = "help";
-/// Component kind of the built-in `/wakeup` command.
-pub const WAKEUP_KIND: &str = "wakeup";
-/// Component kind of the built-in `/nudge` command (issue 278).
-pub const NUDGE_KIND: &str = "nudge";
-/// Component kind of the built-in `/add` command (issue 555).
-pub const ADD_KIND: &str = "add";
-/// Component kind of the built-in `/create-agent` command (issue 555).
-pub const CREATE_AGENT_KIND: &str = "create-agent";
+/// Component kind of the built-in command group `participant` (issue 560): `/participant add`
+/// and `/participant nudge`.
+pub const PARTICIPANT_GROUP_KIND: &str = "participant";
+/// Component kind of the built-in command group `agent` (issue 560): `/agent create` and
+/// `/agent wakeup`.
+pub const AGENT_GROUP_KIND: &str = "agent";
 
 /// A command as users see it: in `/help` and in the frontends' completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,16 +116,14 @@ pub fn parse_input(input: &str) -> UserInput {
     UserInput::Command(rest.trim().to_string())
 }
 
-/// The commands a deployment has unless its configuration says otherwise:
-/// `/help`, `/wakeup`, `/nudge`, `/add` and `/create-agent`.
+/// The commands a deployment has unless its configuration says otherwise: `/help` and the
+/// command groups `participant` and `agent`.
 pub fn default_commands() -> ComponentConfig {
     ComponentConfig {
         component_nodes: vec![
             ComponentDescriptor::new("help", HELP_KIND),
-            ComponentDescriptor::new("wakeup", WAKEUP_KIND),
-            ComponentDescriptor::new("nudge", NUDGE_KIND),
-            ComponentDescriptor::new("add", ADD_KIND),
-            ComponentDescriptor::new("create-agent", CREATE_AGENT_KIND),
+            ComponentDescriptor::new("participant", PARTICIPANT_GROUP_KIND),
+            ComponentDescriptor::new("agent", AGENT_GROUP_KIND),
         ],
     }
 }
@@ -173,7 +169,7 @@ mod tests {
     fn the_default_commands_are_the_built_in_ones() {
         let kinds: Vec<String> =
             default_commands().component_nodes.into_iter().map(|n| n.kind).collect();
-        assert_eq!(kinds, vec![HELP_KIND, WAKEUP_KIND, NUDGE_KIND, ADD_KIND, CREATE_AGENT_KIND]);
+        assert_eq!(kinds, vec![HELP_KIND, PARTICIPANT_GROUP_KIND, AGENT_GROUP_KIND]);
     }
 
     fn named(name: &str, aliases: &[&str]) -> Command {

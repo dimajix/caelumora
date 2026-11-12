@@ -1543,7 +1543,7 @@ mod tests {
             );
         }
         let of_the_session = ActorEvent::CommandExecuted {
-            command: "wakeup".to_string(),
+            command: "agent wakeup".to_string(),
             args: String::new(),
             output: "Woke.".to_string(),
             to: None,

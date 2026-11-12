@@ -353,7 +353,7 @@ by the agents' library (`caelumora_agents::library::register_components`, issue 
 | Module | Components |
 |---|---|
 | `tool/` | tool providers (`calculator`, `ask_user`, ...) |
-| `command/` | command providers (`help`, `wakeup`, `nudge`) |
+| `command/` | command providers (`help`, and the command groups `participant` and `agent`) |
 | `prompt/` | prompt providers (`system_prompt`, `channel_participants`, ...) and the context providers (`turn_context`, `external_context`), with what their parts share (`Prompt`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
 | `moderator/` | the moderator and its responder policies |
 | `external/` | the facet through which an external agent is reached, and no kind: each protocol is a library (`a2a_agent` in `caelumora-a2a`) |
@@ -361,8 +361,12 @@ by the agents' library (`caelumora_agents::library::register_components`, issue 
 
 A component that offers several facets - `planning`, `notes` and the other memory components
 provide tools and a prompt part - stays in `components`, because it cannot be sorted by one
-facet. Each file holds the kind constant, its `register` function and its tests; each module's
-`register_all` registers its kinds and the singles it holds the default for. A new component gets a
+facet. Each file holds its component, its `register` function and its tests; each module's
+`register_all` registers its kinds and the singles it holds the default for. A component that
+contributes a group of commands (issue
+[560](../issues/560-commands-are-not-grouped-by-what-they-act-on.md)) is a directory named after its
+kind instead - `command/participant/` -, the component in its `mod.rs` and a file per command, since
+the commands of a group share nothing but their component. A new component gets a
 file of its own and a line in its module's `register_all`; `components` holds components only.
 
 A crate of its own that brings a kind - a library or a plugin - names the module after the kind's
@@ -516,8 +520,8 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the library `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it knew there, within half of the room between `keep` and `threshold`; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
 | `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LanguageModelClient`. |
 | `help` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
-| `wakeup` | `ChannelCommandProvider` | - | The user command `/wakeup`. |
-| `nudge` | `ChannelCommandProvider` | - | The user command `/nudge`. |
+| `participant` | `ChannelCommandProvider` | - | The command group `participant`: `/participant add` and `/participant nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
+| `agent` | `ChannelCommandProvider` | - | The command group `agent`: `/agent create` and `/agent wakeup`. Uses the `AgentManager`. |
 
 `position` is `start`, `before_turn_input`, `end` or `given`
 ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.

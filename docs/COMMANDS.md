@@ -8,10 +8,11 @@ the commands that come with Caelumora. How components are built is in
 
 ## User commands
 
-A line that starts with `/` addresses the system rather than the agents: `/help`, `/wakeup [agent]`,
-`/nudge <participant>`, `/add <name>`. A command is not a message: it never reaches an agent's
-context as something said. Commands of the channel never enter the history; what an agent carried
-out on someone's word does (see [Commands of an agent](#commands-of-an-agent)).
+A line that starts with `/` addresses the system rather than the agents: `/help`, `/agent wakeup
+[agent]`, `/participant nudge <participant>`, `/participant add <name>`. A command is not a message:
+it never reaches an agent's context as something said. Commands of the channel never enter the
+history; what an agent carried out on someone's word does (see [Commands of an
+agent](#commands-of-an-agent)).
 
 Commands are for people; agents act through tools. A command is always issued on behalf of a
 particular person, by that person's actor (`UserActor::execute_command`), as messages and approvals
@@ -43,13 +44,21 @@ most one command of the set and no rule of the longest is needed. A set that bre
 be built (`CommandSet::new`), as does a name the code gave unchecked (`CommandName::fixed`). What
 is recorded and announced of a command is its name, whichever it was issued by.
 
+The commands of the channel are grouped by the kind of entity they act on, as command line tools
+group theirs - `participant`, `agent` -: the group is a command's first word, nothing of its own, so
+that any component may contribute to any group. `/help <group>` lists the commands of a group. What
+is done often keeps a short form of one word - `/add`, `/nudge`, `/wakeup` -: a second way of
+issuing the same command, kept deliberately for a line typed while talking. `/help` belongs to no
+group. The commands of an agent are not grouped.
+
 ### Commands are components
 
 A `ChannelCommandProvider` contributes commands run on the channel, as a `ToolProvider` contributes
 tools; the issuer is given as their actor. Commands come from two places:
 
-*   `AppConfig::commands`, the global set - by default `/help`, `/wakeup`, `/nudge`, `/add` and
-    `/create-agent`; an empty list switches them off (see [CONFIGURATION.md](CONFIGURATION.md));
+*   `AppConfig::commands`, the global set - by default `/help` and the groups `participant` and
+    `agent`, a component each; an empty list switches them off (see
+    [CONFIGURATION.md](CONFIGURATION.md));
 *   `SessionTemplate::commands`, for commands that belong to what a session is for, copied into the
     session, so a running session keeps its set.
 
@@ -73,17 +82,19 @@ channel's attributes. The ownership policy grants them whoever reads the channel
 the owners alone the channel's owner.
 
 A command the user may not see is answered exactly like an unknown one, so hidden commands cannot be
-found by trying names. Whatever the command does is checked on its own as well: `/wakeup` asks for
-`WakeChannel`. `/nudge` asks nothing more: it asks someone to respond, as an `@`-mention does, which
-asks nothing of the policy either. `/add` asks what taking someone in asks
+found by trying names, by their names and their short forms alike, nor listed in a group. Whatever
+the command does is checked on its own as well: `/agent wakeup` asks for `WakeChannel`.
+`/participant nudge` asks nothing more: it asks someone to respond, as an `@`-mention does, which
+asks nothing of the policy either. `/participant add` asks what taking someone in asks
 (`SessionLoop::add_participant`: `UpdateSession` unless they are in the session already,
-`UpdateChannel`), and `/create-agent` what making an agent asks (`AgentManager::create`), so
+`UpdateChannel`), and `/agent create` what making an agent asks (`AgentManager::create`), so
 whoever reads the channel sees both, and those without the right are refused on running them.
 
 ### Private or channel-wide answers
 
-A command answers the issuer alone (`/help`, `/nudge`, `/add`, `/create-agent`) or the whole
-channel (`/wakeup`): that `/add` brought someone in, the channel tells everyone anyway. A
+A command answers the issuer alone (`/help`, `/participant nudge`, `/participant add`,
+`/agent create`) or the whole channel (`/agent wakeup`): that `/participant add` brought someone in,
+the channel tells everyone anyway. A
 channel-wide answer is announced by the issuer's actor as `CommandExecuted`, forwarded to the users
 only, shown but never stored. The issuer gets the answer back from `execute_command` either way,
 since the channel never routes an envelope back to its sender; the REST response carries it only
@@ -98,17 +109,17 @@ names are; only if it is nobody's name is it taken as a handle, with or without 
 as a mention is. A handle is coarser than a name, so it can name several; a command then refuses
 with their names rather than picking one.
 
-Who is to be brought into the channel does not take part in it yet, so `/add` looks further, by the
-whole name (`SessionView::candidates`, issue
+Who is to be brought into the channel does not take part in it yet, so `/participant add` looks
+further, by the whole name (`SessionView::candidates`, issue
 [555](../issues/555-no-command-brings-an-agent-into-a-channel.md)): among the users and agents the
 issuer may read, the nearest from the channel - the channel's scope, the session with its
 participants wherever they lie, the issuer's own agents, the global scope with the users. One that
 is shadowed by a nearer one of the same name is not reached by the command; the web UI's dialog
 still lists it. Several equally near - a user and a global agent of one name - are refused with
 their names. An agent of another user that does not take part in the session is not found, and a
-name the issuer may not read is answered like one that does not exist. `/create-agent` finds its
+name the issuer may not read is answered like one that does not exist. `/agent create` finds its
 personality the same way from the channel (`Views::personality_named`), the innermost first. A
-command that takes two names takes the last `as` as what separates them: `/create-agent Reviewer as
+command that takes two names takes the last `as` as what separates them: `/agent create Reviewer as
 Bob`.
 
 ## Commands of an agent
@@ -159,22 +170,22 @@ external agent alike.
     alone, with why. A command answers what it did, not what it read: nothing withholds its answer
     as a tool's result is withheld.
 *   **Recorded.** What was carried out - by an agent, with its arguments and on whose word, or by
-    the session (`/wakeup`) - goes into the channel's history with what it answered, to whom it was
-    answered: the issuer alone for a private answer, every user otherwise (issue 417). A command
-    refused or failed did nothing; that it did not is recorded to the issuer alone
+    the session (`/agent wakeup`) - goes into the channel's history with what it answered, to whom
+    it was answered: the issuer alone for a private answer, every user otherwise (issue 417). A
+    command refused or failed did nothing; that it did not is recorded to the issuer alone
     (`CommandFailed`).
 *   **Listed.** `/help` lists the agents' commands after the channel's, each with the handles of the
     agents that carry it out; the participant snapshots carry them for completion.
 
 ## Built-in commands
 
-| Command | Of | Component | Arguments | Answer | What it does |
-|---|---|---|---|---|---|
-| `/help` | the channel | `help` | `[command]` | private | Lists the commands the user may use - the channel's and the agents' -, or describes one. |
-| `/wakeup` | the channel | `wakeup` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named. |
-| `/nudge` | the channel | `nudge` | `<participant>` | private | Asks the participant named to respond to the conversation as it stands, without a message ([CHANNELS.md](CHANNELS.md#nudging-someone)). |
-| `/add` | the channel | `add` | `<name>` | private | Brings the user or agent named into the channel, and into the session first if not in it yet; they see the whole history ([CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). |
-| `/create-agent` | the channel | `create-agent` | `<personality> [as <name>]` | private | Makes an agent of the personality named, in the session's scope - in the channel's for a personality of the channel's scope -, named after the personality unless named; `/add` brings it in. |
-| `/skill` | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
-| `/skills` | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
-| `/compact` | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
+| Command | Short form | Of | Component | Arguments | Answer | What it does |
+|---|---|---|---|---|---|---|
+| `/help` | - | the channel | `help` | `[group or command]` | private | Lists the commands the user may use - the channel's and the agents' -, those of a group, or describes one. |
+| `/participant add` | `/add` | the channel | `participant` | `<name>` | private | Brings the user or agent named into the channel, and into the session first if not in it yet; they see the whole history ([CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). |
+| `/participant nudge` | `/nudge` | the channel | `participant` | `<participant>` | private | Asks the participant named to respond to the conversation as it stands, without a message ([CHANNELS.md](CHANNELS.md#nudging-someone)). |
+| `/agent create` | - | the channel | `agent` | `<personality> [as <name>]` | private | Makes an agent of the personality named, in the session's scope - in the channel's for a personality of the channel's scope -, named after the personality unless named; `/participant add` brings it in. |
+| `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named. |
+| `/skill` | - | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
+| `/skills` | - | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
+| `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |

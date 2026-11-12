@@ -1378,7 +1378,10 @@ mod tests {
         let session = make_session("plain", UserId::new());
         let executor =
             kernel.new_command_executor(&session).await.expect("the global commands build");
-        assert_eq!(names(executor).await, vec!["add", "create-agent", "help", "nudge", "wakeup"]);
+        assert_eq!(
+            names(executor).await,
+            vec!["agent create", "agent wakeup", "help", "participant add", "participant nudge"]
+        );
 
         // A second /help from the session's own configuration - with the same
         // component id, which is fine across the two configurations.

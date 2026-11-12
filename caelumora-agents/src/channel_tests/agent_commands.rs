@@ -281,7 +281,7 @@ async fn help_lists_the_commands_of_the_agents_with_their_handles() {
         .await
         .expect("/help runs")
         .text;
-    assert!(all.contains("`/mark @agent [text]` — Marks. (@helper)"), "{all}");
+    assert!(all.contains("`/mark @agent [text]` (also `/mk`) — Marks. (@helper)"), "{all}");
     let one = HelpComponent
         .execute(&CommandName::fixed("help"), "mark", &help)
         .await

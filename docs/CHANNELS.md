@@ -406,9 +406,9 @@ its own transcript only.
 Waking the channel for a message is the actor's job, too: it sends a `WakeupRequested` ahead of
 every message. Neither a frontend nor the channel decides that by itself.
 
-User commands (`/help`, `/wakeup`, `/nudge`) are run by the user's actor in the same way; a command
-an agent carries out itself is sent to that agent, which carries it out in a turn of its own. See
-[COMMANDS.md](COMMANDS.md).
+User commands (`/help`, `/agent wakeup`, `/participant nudge`) are run by the user's actor in the
+same way; a command an agent carries out itself is sent to that agent, which carries it out in a
+turn of its own. See [COMMANDS.md](COMMANDS.md).
 
 ## What a message carries
 

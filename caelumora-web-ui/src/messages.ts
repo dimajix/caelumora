@@ -238,7 +238,7 @@ export function commandNotice(turnId: string, command: string, args: string, age
 }
 
 /**
- * The notice of a command of the channel (issues 28, 417) - `/wakeup` - and
+ * The notice of a command of the channel (issues 28, 417) - `/agent wakeup` - and
  * what it answered, as `senderName` ran it, at the position `position`.
  */
 export function channelCommandNotice(command: string, output: string, senderName: string | undefined, at: string, position?: number): Message {

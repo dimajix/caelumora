@@ -218,3 +218,13 @@ issue of the terminal.
   the arguments as well for what it announces. The REST request carries `line`. One change of
   behaviour comes with it: `/ help`, a blank after the slash, runs `/help` rather than being refused
   as an empty command, since the line is trimmed before the command is sought.
+- **2026-11-12** — Step 1b done: `/participant add` (`/add`), `/participant nudge` (`/nudge`),
+  `/agent create` and `/agent wakeup` (`/wakeup`), contributed by the components of the kinds
+  `participant` and `agent` (`command/participant/`, `command/agent/`), which replace the kinds
+  `add`, `nudge`, `create-agent` and `wakeup`. `/help` shows the short forms, describes a command
+  by either, and lists the commands of a group (`/help agent`). The web UI's completion takes the
+  words of a name typed after the caret when a command is chosen. Renaming the kinds, which the
+  section on stored data above left open, comes with it: a configuration whose `commands` name the
+  old kinds no longer builds and is to be changed, and a stored session or template whose
+  `commands` name them is to be deleted or changed. The history keeps `wakeup` as the name of a
+  wakeup carried out before; it stays readable.

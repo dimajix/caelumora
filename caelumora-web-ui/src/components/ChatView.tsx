@@ -1193,8 +1193,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   };
 
   const selectCommand = (command: Command, handle?: string) => {
-    // The rest of the name typed, and the blanks after it - not a line break.
-    const rest = inputText.slice(caret).replace(/^\S*[^\S\n]*/, '');
+    // The rest of the name typed, and the blanks after it - not a line break: the rest of the word
+    // at the caret, and the words after it as long as the name goes on with them (issue 560).
+    let typed = inputText.slice(0, caret);
+    let rest = inputText.slice(caret);
+    for (let first = true; ; first = false) {
+      const word = /^\S*[^\S\n]*/.exec(rest)?.[0] ?? '';
+      const query = commandQueryAt(typed + word, (typed + word).length);
+      if (!word || (!first && (query === null || !completes(command, query.trimEnd())))) break;
+      typed += word;
+      rest = rest.slice(word.length);
+    }
     const inserted = handle ? `/${command.name} @${handle} ` : `/${command.name} `;
     const newCaret = inserted.length;
     setInputText(inserted + rest);
