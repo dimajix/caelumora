@@ -13,11 +13,11 @@ use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::Scope;
-use caelumora_domain::security::{Refused, SecurityAttributes};
+use caelumora_domain::security::Refused;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::store::{EntityKind, StoreError, StoreResult, StoreResultExt, Stored};
+use caelumora_domain::store::{StoreError, StoreResult, StoreResultExt, Stored};
 use caelumora_security::confidentiality::ConfidentialityQuestions;
-use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext, JOIN};
+use caelumora_security::{ActionType, Enforcement, Policies, SecurityContext};
 use caelumora_store::EntityStore;
 use std::iter;
 use std::sync::Arc;
@@ -151,29 +151,26 @@ impl Participation {
         }
     }
 
-    /// Nothing if `context` may take `resolved` into a session or channel of
-    /// `kind` with `attributes` by joining (issue 221): the participant is whom
-    /// `context` acts for, or owned by them - themselves, or their own agent
-    /// (issue 341) - and an entry lets the participant join (`JOIN`), asked in the
-    /// participant's own context, an agent by its owner.
+    /// Nothing if `context` may do `action` for `resolved` by its own act - join a session or
+    /// channel (`JOIN`, issue 221): the participant is whom `context` acts for, or owned by them -
+    /// themselves, or their own agent (issue 341) - and `action` is permitted in the participant's
+    /// own context, an agent's by its owner.
     ///
     /// # Errors
-    /// `refusal` of what was refused - joining, also for a participant that is
-    /// not the caller's to take in.
-    pub(crate) async fn require_joinable<E: Send>(
+    /// `refusal` of what was refused - `action`, also for a participant that is not the caller's
+    /// own.
+    pub(crate) async fn require_own_act<E: Send>(
         &self,
         resolved: &ResolvedParticipant,
         context: &SecurityContext,
-        kind: EntityKind,
-        attributes: &SecurityAttributes,
+        action: ActionType<'_>,
         refusal: impl FnOnce(Refused) -> E + Send,
     ) -> Result<(), E> {
-        let join = ActionType::custom(kind, &JOIN, attributes);
         match resolved.context() {
             Some(own) if own.owner_id == context.principal_id => {
-                self.policies.access_policy().require(&own, join, refusal).await
+                self.policies.access_policy().require(&own, action, refusal).await
             }
-            _ => Err(refusal(join.refused())),
+            _ => Err(refusal(action.refused())),
         }
     }
 

@@ -196,9 +196,10 @@ impl ChannelController {
     }
 
     /// Removes `participant` from the channel on behalf of `ctx` (issue 46) and returns it: let go
-    /// as `Channel::let_go` lets one go, kept as a former participant, with who removed it and
-    /// when (issue 164). The announcement (`channel::LEFT`) is delivered to whoever was removed
-    /// besides the participants (issue 23): they are no participant any more when it is delivered.
+    /// as `Channel::let_go` lets one go, kept as a former participant, removed by `by` now (issue
+    /// 164): who removed them, which need not be `ctx`'s caller, in whose name it is stored. The
+    /// announcement (`channel::LEFT`) is delivered to whoever was removed besides the participants
+    /// (issue 23): they are no participant any more when it is delivered.
     ///
     /// # Errors
     /// `StoreError::NotFound` if `participant` takes no part in the channel;
@@ -207,12 +208,14 @@ impl ChannelController {
         &self,
         ctx: &SecurityContext,
         participant: ActorId,
+        by: ActorId,
     ) -> StoreResult<Participant> {
         let mut writing = self.channel.write().await;
         let (removed, channel) = writing
             .change(ctx, |channel| {
-                channel.let_go(participant, Removal::now(ctx.caller_id)).ok_or_else(|| {
-                    StoreError::NotFound { entity: "participant", id: participant.to_string() }
+                channel.let_go(participant, Removal::now(by)).ok_or_else(|| StoreError::NotFound {
+                    entity: "participant",
+                    id: participant.to_string(),
                 })
             })
             .await?;

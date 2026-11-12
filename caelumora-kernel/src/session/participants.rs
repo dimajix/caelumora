@@ -9,7 +9,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant};
 use caelumora_domain::session::Session;
 use caelumora_domain::store::{StoreError, Stored};
-use caelumora_security::{ActionType, Enforcement, SecurityContext};
+use caelumora_security::{ActionType, Enforcement, SecurityContext, JOIN};
 use std::sync::Arc;
 use tracing::info;
 
@@ -136,11 +136,10 @@ impl SessionLoop {
             (true, _) => None,
             (false, true) => {
                 self.participation
-                    .require_joinable(
+                    .require_own_act(
                         &resolved,
                         context,
-                        Session::KIND,
-                        &session.security_attributes,
+                        ActionType::custom(Session::KIND, &JOIN, &session.security_attributes),
                         StoreError::PermissionDenied,
                     )
                     .await?;
@@ -149,12 +148,12 @@ impl SessionLoop {
             (false, false) => Some(context.clone()),
         };
         if let (Some(channel), true) = (channel, joining) {
+            let attributes = channel.security_attributes();
             self.participation
-                .require_joinable(
+                .require_own_act(
                     &resolved,
                     context,
-                    Channel::KIND,
-                    &channel.security_attributes(),
+                    ActionType::custom(Channel::KIND, &JOIN, &attributes),
                     StoreError::PermissionDenied,
                 )
                 .await?;

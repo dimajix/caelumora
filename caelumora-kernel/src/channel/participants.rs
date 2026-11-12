@@ -18,7 +18,7 @@ use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::Stored;
 use caelumora_domain::value::name::{named, Name};
-use caelumora_security::{ActionType, SecurityContext};
+use caelumora_security::{ActionType, SecurityContext, JOIN};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::time;
@@ -132,12 +132,12 @@ impl ChannelLoop {
             Entry::Added => context.clone(),
             Entry::Joining => {
                 let channel = self.id;
+                let attributes = self.security_attributes();
                 self.participation
-                    .require_joinable(
+                    .require_own_act(
                         &resolved,
                         context,
-                        Channel::KIND,
-                        &self.security_attributes(),
+                        ActionType::custom(Channel::KIND, &JOIN, &attributes),
                         |refused| ChannelError::Forbidden { action: "joining", channel, refused },
                     )
                     .await?;
@@ -199,7 +199,7 @@ impl ChannelLoop {
             return Err(ChannelError::NotAParticipant { participant, channel: self.id }.into());
         }
         let running = self.actors.load().get(&participant).cloned();
-        self.channel.remove_participant(context, participant).await?;
+        self.channel.remove_participant(context, participant, context.caller_id).await?;
         if let Some(running) = running {
             self.leave_actor(participant, running, context);
         }

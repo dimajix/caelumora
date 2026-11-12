@@ -1,6 +1,6 @@
 # 562 — Nobody can leave a channel by their own act
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -64,3 +64,27 @@ not part of this, and has no operation either.
 
 - **2026-11-12** — Issue created at the maintainer's request, split off from 560: `channel leave`
   needs a right and an operation of its own. Nothing is decided yet.
+- **2026-11-12** — Decided with the maintainer:
+  1. Leaving is an operation of its own, `ChannelLoop::leave`, beside `remove_participant`, as
+     `join` stands beside `add_participant`: both go out by one private way, as `take_in` is the
+     one way in.
+  2. It asks `ActionType::LeaveChannel` with the channel's attributes - no `CustomVerb`, since
+     leaving needs no right a `Requirement` could name -, in the context of the one who leaves, an
+     agent by its owner, once the kernel found that the participant is whom the caller acts for or
+     their own agent, as for joining. The `OwnershipPolicy` allows it always.
+  3. A leave is stored in the kernel's name; the former participant is kept as removed by who
+     left, so `ChannelController::remove_participant` is told who removed apart from in whose name
+     it stores.
+  4. An agent without an actor - deleted and resting - is taken out by whoever may change the
+     channel alone, as before.
+  5. No rule for the owner or the last participant: the owner may leave and keeps the channel,
+     the last may leave and the channel stays empty, as removing allows already.
+  6. A personal invitation is used up as one comes in; who left comes back only by an entry for a
+     role, a group or everyone, or added by whoever may change the channel.
+  7. `/channel leave [agent]` acts on the channel it is issued in: the issuer leaves, or the agent
+     of theirs named.
+  8. The REST API and the web UI let one leave, oneself or one's own agent.
+
+  In two steps: first who removed apart from in whose name it is stored, and the question whether
+  a participant is the caller's own apart from joining, without a change of behaviour; then
+  leaving.
