@@ -1,7 +1,6 @@
 //! The built-in `/participant add` command (issues 555, 560), `/add` for short.
 
 use crate::command::{command_error, names, CommandContext};
-use crate::view::Viewer;
 use anyhow::Error;
 use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;
@@ -44,14 +43,9 @@ pub(super) async fn execute(
     let nobody = || invalid(format!("nobody '{wanted}' to add"));
     let name = Name::new(wanted).map_err(|_| nobody())?;
     let failed = |e: Error| command_error(ADD_COMMAND_NAME, &e);
-    let session = context
-        .channel
-        .session_loop()
-        .ok_or_else(|| failed(Error::msg("the channel belongs to no session")))?;
-    let issuer = context.issuer.security_context();
+    let (session, views) = context.session_loop(ADD_COMMAND_NAME)?;
     let channel_id = context.channel.id();
-    let found = session
-        .views(Viewer::new(issuer.clone()))
+    let found = views
         .session(session.id())
         .await
         .map_err(|e| failed(e.into()))?
@@ -65,7 +59,7 @@ pub(super) async fn execute(
         }
         [one] => {
             session
-                .add_participant(&issuer, one.id, Some((channel_id, HistoryAccess::All)))
+                .add_participant(views.context(), one.id, Some((channel_id, HistoryAccess::All)))
                 .await
                 .map_err(failed)?;
             Ok(CommandOutput::private(format!("Added {}.", one.name)))

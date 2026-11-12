@@ -2,7 +2,6 @@
 
 use crate::agent::{AgentManager, AgentSpec};
 use crate::command::{command_error, CommandContext};
-use crate::view::Viewer;
 use anyhow::Error;
 use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_api::reader::ViewError;
@@ -53,17 +52,9 @@ pub(super) async fn execute(
     let personality = Name::new(personality).map_err(|_| unusable(personality))?;
     let name = Name::new(name).map_err(|_| unusable(name))?;
     let failed = |e: Error| command_error(CREATE_COMMAND_NAME, &e);
-    let session = context
-        .channel
-        .session_loop()
-        .ok_or_else(|| failed(Error::msg("the channel belongs to no session")))?;
-    let issuer = context.issuer.security_context();
+    let (session, views) = context.session_loop(CREATE_COMMAND_NAME)?;
     let place = Scope::ChannelScope { session_id: session.id(), channel_id: context.channel.id() };
-    let personality = match session
-        .views(Viewer::new(issuer.clone()))
-        .personality_named(&personality, &place)
-        .await
-    {
+    let personality = match views.personality_named(&personality, &place).await {
         Ok(personality) => personality,
         Err(e @ ViewError::NoPersonalityNamed(_)) => return Err(invalid(e.to_string())),
         Err(e) => return Err(failed(e.into())),
@@ -73,7 +64,7 @@ pub(super) async fn execute(
         _ => Scope::SessionScope { session_id: session.id() },
     };
     let spec = AgentSpec::new(name.as_str(), scope, personality.id);
-    let agent = agents.create(&issuer, spec).await.map_err(|e| failed(e.into()))?;
+    let agent = agents.create(views.context(), spec).await.map_err(|e| failed(e.into()))?;
     Ok(CommandOutput::private(format!(
         "Made the agent {} of {}; /participant add brings it into a channel.",
         agent.name.name, personality.name.name

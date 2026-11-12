@@ -21,6 +21,8 @@ use crate::actor::user::UserActor;
 use crate::channel::{ChannelLoop, ChannelParticipant};
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
+use crate::session::SessionLoop;
+use crate::view::{Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
@@ -64,6 +66,23 @@ pub struct CommandContext<'a> {
     pub issuer: &'a UserActor,
     pub channel: &'a ChannelLoop,
     pub executor: &'a CommandExecutor,
+}
+
+impl CommandContext<'_> {
+    /// The running session the channel belongs to, with the views of it in the issuer's name -
+    /// what the issuer may read there, and the context of the issuer it asks in, which what the
+    /// command does in their name is asked in as well -, for the command `command`.
+    ///
+    /// # Errors
+    /// `CommandError::Failed` if the channel belongs to no session, which a channel a command
+    /// runs in always does.
+    pub(crate) fn session_loop(&self, command: &str) -> CommandResult<(Arc<SessionLoop>, Views)> {
+        let session = self.channel.session_loop().ok_or_else(|| {
+            command_error(command, &Error::msg("the channel belongs to no session"))
+        })?;
+        let views = session.views(Viewer::new(self.issuer.security_context()));
+        Ok((session, views))
+    }
 }
 
 /// A component facet contributing user commands run on the channel -

@@ -1,7 +1,6 @@
 //! The built-in `/participant list` command (issue 560).
 
 use crate::command::{command_error, CommandContext};
-use crate::view::Viewer;
 use anyhow::Error;
 use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;
@@ -35,12 +34,8 @@ pub(super) async fn execute(
             reason: "it takes no arguments".to_string(),
         });
     }
-    let session = context
-        .channel
-        .session_loop()
-        .ok_or_else(|| failed(Error::msg("the channel belongs to no session")))?;
-    let channel = session
-        .views(Viewer::new(context.issuer.security_context()))
+    let (session, views) = context.session_loop(LIST_COMMAND_NAME)?;
+    let channel = views
         .session(session.id())
         .await
         .map_err(|e| failed(e.into()))?
