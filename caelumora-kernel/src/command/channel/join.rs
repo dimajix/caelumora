@@ -40,13 +40,13 @@ pub(super) async fn execute(
         return Err(invalid("name the channel to join".to_string()));
     }
     let nowhere = || invalid(format!("no channel '{wanted}' you may join"));
-    let (session, views) = context.session_loop(JOIN_COMMAND_NAME)?;
+    let session = context.session_loop(JOIN_COMMAND_NAME)?;
     let channel = session.channel_named(wanted).ok_or_else(nowhere)?;
     let (issuer, name) = (context.issuer.id(), channel.name());
     if channel.channel().lists(issuer) {
         return Ok(CommandOutput::private(format!("You take part in {name} already.")));
     }
-    match channel.join(views.context(), issuer).await {
+    match channel.join(&context.issuer.security_context(), issuer).await {
         Ok(()) => Ok(CommandOutput::private(format!("Joined {name}."))),
         Err(e) => match e.downcast_ref() {
             Some(

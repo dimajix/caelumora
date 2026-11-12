@@ -38,9 +38,9 @@ pub(super) async fn execute(
         return Err(invalid("name the new channel".to_string()));
     }
     Name::new(name).map_err(|e| invalid(e.to_string()))?;
-    let (session, views) = context.session_loop(CREATE_COMMAND_NAME)?;
+    let session = context.session_loop(CREATE_COMMAND_NAME)?;
     session
-        .create_channel(views.context(), ChannelSpec::new(name))
+        .create_channel(&context.issuer.security_context(), ChannelSpec::new(name))
         .await
         .map_err(|e| command_error(CREATE_COMMAND_NAME, &e))?;
     Ok(CommandOutput::private(format!("Created the channel {name}; you take part in it.")))

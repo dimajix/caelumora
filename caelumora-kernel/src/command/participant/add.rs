@@ -43,12 +43,10 @@ pub(super) async fn execute(
     let nobody = || invalid(format!("nobody '{wanted}' to add"));
     let name = Name::new(wanted).map_err(|_| nobody())?;
     let failed = |e: Error| command_error(ADD_COMMAND_NAME, &e);
-    let (session, views) = context.session_loop(ADD_COMMAND_NAME)?;
     let channel_id = context.channel.id();
-    let found = views
-        .session(session.id())
-        .await
-        .map_err(|e| failed(e.into()))?
+    let found = context
+        .session_view(ADD_COMMAND_NAME)
+        .await?
         .candidates(&NameMatch::Exact(name), Some(channel_id))
         .await
         .map_err(|e| failed(e.into()))?;
@@ -58,8 +56,13 @@ pub(super) async fn execute(
             Ok(CommandOutput::private(format!("{} takes part already.", one.name)))
         }
         [one] => {
-            session
-                .add_participant(views.context(), one.id, Some((channel_id, HistoryAccess::All)))
+            context
+                .session_loop(ADD_COMMAND_NAME)?
+                .add_participant(
+                    &context.issuer.security_context(),
+                    one.id,
+                    Some((channel_id, HistoryAccess::All)),
+                )
                 .await
                 .map_err(failed)?;
             Ok(CommandOutput::private(format!("Added {}.", one.name)))

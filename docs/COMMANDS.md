@@ -83,7 +83,8 @@ the owners alone the channel's owner.
 
 A command the user may not see is answered exactly like an unknown one, so hidden commands cannot be
 found by trying names, by their names and their short forms alike, nor listed in a group. Whatever
-the command does is checked on its own as well: `/agent wakeup` asks for `WakeChannel`.
+the command does is checked on its own as well, in the issuer's context - the one their views of
+the session read in, too (`UserActor::security_context`): `/agent wakeup` asks for `WakeChannel`.
 `/participant nudge` asks nothing more: it asks someone to respond, as an `@`-mention does, which
 asks nothing of the policy either. `/participant add` asks what taking someone in asks
 (`SessionLoop::add_participant`: `UpdateSession` unless they are in the session already,

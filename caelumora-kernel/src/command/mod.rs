@@ -63,38 +63,48 @@ pub struct CommandReply {
 /// command runs outside of any agent's turn, often because none is
 /// running.
 pub struct CommandContext<'a> {
-    /// The issuing user's actor in the channel: their security context, and
-    /// what a command sends in their name it sends through it - an actor
-    /// sends only in its own name (issue 228).
+    /// The issuing user's actor in the channel: their security context, which
+    /// whatever a command does is asked in (`UserActor::security_context`),
+    /// whatever it read before; and what a command sends in their name it
+    /// sends through it - an actor sends only in its own name (issue 228).
     pub issuer: &'a UserActor,
     pub channel: &'a ChannelLoop,
     pub executor: &'a CommandExecutor,
 }
 
 impl CommandContext<'_> {
-    /// The running session the channel belongs to, with the views of it in the issuer's name -
-    /// what the issuer may read there, and the context of the issuer it asks in, which what the
-    /// command does in their name is asked in as well -, for the command `command`.
+    /// The running session the channel belongs to, for the command `command`: what a command acts
+    /// on in the session, in the issuer's context (`issuer`).
     ///
     /// # Errors
     /// `CommandError::Failed` if the channel belongs to no session, which a channel a command
     /// runs in always does.
-    pub(crate) fn session_loop(&self, command: &str) -> CommandResult<(Arc<SessionLoop>, Views)> {
-        let session = self.channel.session_loop().ok_or_else(|| {
-            command_error(command, &Error::msg("the channel belongs to no session"))
-        })?;
-        let views = session.views(Viewer::new(self.issuer.security_context()));
-        Ok((session, views))
+    pub(crate) fn session_loop(&self, command: &str) -> CommandResult<Arc<SessionLoop>> {
+        self.channel
+            .session_loop()
+            .ok_or_else(|| command_error(command, &Error::msg("the channel belongs to no session")))
+    }
+
+    /// The views of the session the channel belongs to in the issuer's name - what the issuer may
+    /// read there -, for the command `command`.
+    ///
+    /// # Errors
+    /// As `session_loop`.
+    pub(crate) fn views(&self, command: &str) -> CommandResult<Views> {
+        Ok(self.session_loop(command)?.views(Viewer::new(self.issuer.security_context())))
     }
 
     /// The session the channel belongs to as the issuer reads it, for the command `command`: its
-    /// view, reached through `session_loop`'s views.
+    /// view, reached through `views`.
     ///
     /// # Errors
     /// `CommandError::Failed` if the channel belongs to no session or the session cannot be read.
     pub(crate) async fn session_view(&self, command: &str) -> CommandResult<SessionView> {
-        let (session, views) = self.session_loop(command)?;
-        views.session(session.id()).await.map_err(|e| command_error(command, &e.into()))
+        let views = self.views(command)?;
+        views
+            .session(self.channel.session_id())
+            .await
+            .map_err(|e| command_error(command, &e.into()))
     }
 
     /// The channel the command `command` runs in as the issuer reads it: its view, reached through

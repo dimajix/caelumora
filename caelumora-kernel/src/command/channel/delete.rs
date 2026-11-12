@@ -39,9 +39,9 @@ pub(super) async fn execute(
         return Err(invalid("name the channel to delete".to_string()));
     }
     let channel = channel_named(DELETE_COMMAND_NAME, wanted, context).await?;
-    let (session, views) = context.session_loop(DELETE_COMMAND_NAME)?;
+    let session = context.session_loop(DELETE_COMMAND_NAME)?;
     let deleted = session
-        .delete_channel(views.context(), channel.id())
+        .delete_channel(&context.issuer.security_context(), channel.id())
         .await
         .map_err(|e| command_error(DELETE_COMMAND_NAME, &e))?;
     if !deleted {

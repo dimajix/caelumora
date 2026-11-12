@@ -52,8 +52,9 @@ pub(super) async fn execute(
     let personality = Name::new(personality).map_err(|_| unusable(personality))?;
     let name = Name::new(name).map_err(|_| unusable(name))?;
     let failed = |e: Error| command_error(CREATE_COMMAND_NAME, &e);
-    let (session, views) = context.session_loop(CREATE_COMMAND_NAME)?;
-    let place = Scope::ChannelScope { session_id: session.id(), channel_id: context.channel.id() };
+    let views = context.views(CREATE_COMMAND_NAME)?;
+    let session_id = context.channel.session_id();
+    let place = Scope::ChannelScope { session_id, channel_id: context.channel.id() };
     let personality = match views.personality_named(&personality, &place).await {
         Ok(personality) => personality,
         Err(e @ ViewError::NoPersonalityNamed(_)) => return Err(invalid(e.to_string())),
@@ -61,10 +62,13 @@ pub(super) async fn execute(
     };
     let scope = match &personality.name.scope {
         in_channel @ Scope::ChannelScope { .. } => in_channel.clone(),
-        _ => Scope::SessionScope { session_id: session.id() },
+        _ => Scope::SessionScope { session_id },
     };
     let spec = AgentSpec::new(name.as_str(), scope, personality.id);
-    let agent = agents.create(views.context(), spec).await.map_err(|e| failed(e.into()))?;
+    let agent = agents
+        .create(&context.issuer.security_context(), spec)
+        .await
+        .map_err(|e| failed(e.into()))?;
     Ok(CommandOutput::private(format!(
         "Made the agent {} of {}; /participant add brings it into a channel.",
         agent.name.name, personality.name.name

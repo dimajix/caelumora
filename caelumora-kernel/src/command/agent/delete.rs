@@ -44,7 +44,7 @@ pub(super) async fn execute(
     let place = "among the agents of this session";
     let agent = named_one(DELETE_COMMAND_NAME, wanted, found, AgentView::name, place)?;
     let deleted = agents
-        .delete(session.views().context(), agent.id())
+        .delete(&context.issuer.security_context(), agent.id())
         .await
         .map_err(|e| command_error(DELETE_COMMAND_NAME, &e.into()))?;
     if !deleted {
