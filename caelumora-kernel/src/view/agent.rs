@@ -5,10 +5,11 @@
 use super::{ChannelView, Views};
 use caelumora_api::reader::{ViewError, ViewResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{Agent, AgentId};
+use caelumora_domain::agent::{Agent, AgentId, PersonalityKind};
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::snapshot::AgentSnapshot;
 use caelumora_domain::store::StoreResultExt;
+use caelumora_domain::value::name::Name;
 use caelumora_security::{AccessQuestions, SecurityContext};
 
 #[derive(Clone)]
@@ -24,6 +25,37 @@ impl AgentView {
 
     pub fn id(&self) -> AgentId {
         self.agent.id
+    }
+
+    /// Its name, without the scope it lies in.
+    pub fn name(&self) -> &Name {
+        &self.agent.name.name
+    }
+
+    /// The handle it is `@`-mentioned by (see `caelumora_domain::mention`), or `None` if its name
+    /// yields none - as a participant's (`ParticipantView::handle`).
+    pub fn handle(&self) -> Option<String> {
+        Some(self.name().handle()).filter(|handle| !handle.is_empty())
+    }
+
+    /// The name of its personality, without its scope, and whether it runs here or elsewhere - as
+    /// a participant's (`ParticipantView::personality`) -, read in the kernel's name: what an agent
+    /// is made of is no secret to whoever may read the agent. `None` if the personality is gone.
+    ///
+    /// # Errors
+    /// `Failed` if its personality cannot be read.
+    pub async fn personality(&self) -> ViewResult<Option<(String, PersonalityKind)>> {
+        let personality = self
+            .views
+            .stores()
+            .personalities
+            .get(&SecurityContext::system(), self.agent.personality_id)
+            .await
+            .optional()
+            .map_err(|e| {
+                ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id))
+            })?;
+        Ok(personality.map(|personality| (personality.name.to_string(), personality.kind)))
     }
 
     /// Whether the viewer may rename it (`UpdateAgent`).
@@ -64,30 +96,20 @@ impl AgentView {
         Ok(channels)
     }
 
-    /// The agent as the viewer sees it. Its personality is read in the kernel's name, as a
-    /// participant's is: what an agent is made of is no secret to whoever may read the agent.
+    /// The agent as the viewer sees it, its personality as `personality` reads it.
     ///
     /// # Errors
     /// `Failed` if its personality cannot be read; one that is gone is
     /// `None`.
     pub async fn snapshot(&self) -> ViewResult<AgentSnapshot> {
-        let personality = self
-            .views
-            .stores()
-            .personalities
-            .get(&SecurityContext::system(), self.agent.personality_id)
-            .await
-            .optional()
-            .map_err(|e| {
-                ViewError::failed(e, format!("reading the personality of agent {}", self.agent.id))
-            })?;
+        let personality = self.personality().await?.map(|(name, _)| name);
         Ok(AgentSnapshot {
             id: self.agent.id,
             name: self.agent.name.to_string(),
             scope: self.views.scope_snapshot(&self.agent.name.scope).await,
             owner: self.agent.security_attributes.owner_id,
             personality_id: self.agent.personality_id,
-            personality: personality.map(|personality| personality.name.to_string()),
+            personality,
             can_change: self.may_change().await,
             can_delete: self.may_delete().await,
         })

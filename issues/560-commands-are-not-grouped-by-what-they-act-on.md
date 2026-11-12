@@ -1,6 +1,6 @@
 # 560 — The commands are not grouped by what they act on
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -171,8 +171,8 @@ issue of the terminal.
 - A command's name is a `CommandName` of one or more words, and a command may have short forms;
   the `CommandSet` refuses a name or short form that is the beginning of another.
 - The existing commands are in their groups, the often used ones with a short form.
-- The commands of the groups above exist - `channel switch` unless it went to an issue of the
-  terminal -, each asking nothing its operation does not ask; the security suite covers them.
+- The commands of the groups above exist but `channel switch`, each asking nothing its operation
+  does not ask; the security suite covers them.
 - `/help` lists them by group, and `/help <group>` the commands of a group.
 - COMMANDS.md describes groups, names and short forms.
 - The decisions above are recorded here.
@@ -195,3 +195,106 @@ issue of the terminal.
   Open: the commands of an agent and `/wakeup`, `/nudge`; whether a command declares the action it
   needs for `/help`; `channel switch`; the word for setting a description; arguments with two
   names and the channel as default; what each command does, as listed above.
+- **2026-11-12** — Decided with the maintainer: `channel switch` is a feature of the terminal and
+  went into issue [561](561-the-terminal-shows-one-channel-of-a-session.md); it is no part of
+  this issue.
+- **2026-11-12** — Decided with the maintainer, the plan of the first step, in two parts:
+  1. 1a, without a change of behaviour: `CommandName`, a value of the domain built as `Name` is,
+     its words of `a-z`, `0-9` and `-`; `CommandName::fixed` for the names the code gives, checked
+     by `CommandSet::new`. `Command` gets `aliases`. `parse_input` takes off the slash alone, and
+     the `CommandSet` finds the command a line begins with (`find`) and refuses two that collide;
+     an agent's command must not collide with one of the session. The executor, the user's actor,
+     the REST request (`line` instead of `name` and `args`), the web UI and the terminal pass the
+     line. Events, the history and REST keep the name as a string, the name and not the short form
+     typed.
+  2. 1b: `/add` becomes `participant add` and `/nudge` `participant nudge`, `/wakeup` becomes
+     `agent wakeup` and `/create-agent` `agent create`; `add`, `nudge` and `wakeup` stay as short
+     forms, `create-agent` does not. `/help` stays without a group. The commands of an agent stay
+     as they are in this issue. A component per group (`participant`, `agent`, later `channel`)
+     contributes its commands.
+- **2026-11-12** — Step 1a done, as planned but for one thing: the `CommandExecutor` finds the
+  command a line begins with (`find`, its name and the arguments) and runs it by its name
+  (`execute`), rather than running the line and answering the name, since the user's actor needs
+  the arguments as well for what it announces. The REST request carries `line`. One change of
+  behaviour comes with it: `/ help`, a blank after the slash, runs `/help` rather than being refused
+  as an empty command, since the line is trimmed before the command is sought.
+- **2026-11-12** — Step 1b done: `/participant add` (`/add`), `/participant nudge` (`/nudge`),
+  `/agent create` and `/agent wakeup` (`/wakeup`), contributed by the components of the kinds
+  `participant` and `agent` (`command/participant/`, `command/agent/`), which replace the kinds
+  `add`, `nudge`, `create-agent` and `wakeup`. `/help` shows the short forms, describes a command
+  by either, and lists the commands of a group (`/help agent`). The web UI's completion takes the
+  words of a name typed after the caret when a command is chosen. Renaming the kinds, which the
+  section on stored data above left open, comes with it: a configuration whose `commands` name the
+  old kinds no longer builds and is to be changed, and a stored session or template whose
+  `commands` name them is to be deleted or changed. The history keeps `wakeup` as the name of a
+  wakeup carried out before; it stays readable.
+- **2026-11-12** — Decided with the maintainer, for the group `participant`:
+  1. `participant remove` removes from the channel alone (`ChannelLoop::remove_participant`); a
+     removal from the session has no operation and is left to an issue of its own.
+  2. Removing oneself asks `UpdateChannel` as removing anyone does; leaving without that right is
+     for `channel leave`, which needs a right of its own.
+  3. Neither `participant list` nor `participant remove` has a short form.
+  4. `participant list` shows who takes part now: name, handle, user or agent, an agent's
+     personality; no state, no former participants.
+
+  Step 2 done: `/participant list` (through `ChannelView::participants`, in the issuer's name) and
+  `/participant remove`; the security suite covers what both ask.
+- **2026-11-12** — Decided with the maintainer on the review of step 2: `participant remove` seeks
+  whom it removes among those `participant list` lists, as the issuer reads the channel, so that it
+  also removes a participant that cannot run; and the commands reach the channel's session and the
+  issuer's views of it in one place. Done in two steps:
+  1. Without a change of behaviour: `CommandContext::session_loop`, the session with the views in
+     the issuer's name, for `participant add`, `participant list` and `agent create`; what they
+     do in the issuer's name is asked in the views' context.
+  2. The rule by which a text names a participant is `channel::named`, over the participants it is
+     given; `named_participant` takes them, and `ChannelLoop::participants_named` is gone.
+     `agent wakeup` and `participant nudge` give the actors running, `participant list` and
+     `participant remove` those the issuer reads taking part (`taking_part`).
+- **2026-11-12** — Decided with the maintainer, for the group `agent`:
+  1. `agent list` lists the agents of the session the issuer may read - those taking part in it,
+     in any channel or none, and those lying in its scope or its channels' -, by a new
+     `SessionView::agents`.
+  2. `agent delete` seeks whom it deletes among them, as `participant remove` does among those
+     `participant list` lists; an agent of the issuer or a global one not in the session is
+     deleted in the web UI.
+  3. An agent taking part may be deleted by command: it rests in its channels and can be
+     restored, so nothing is asked again.
+  4. Neither has a short form.
+
+  Step 3 done. How a text names one of several is `value::name::named` in the domain, over
+  anything with a name, the handle being the name's; `command::named_one` - formerly
+  `named_participant` - finds the one a command names and words that it did not, for the
+  participants of a channel and the agents of a session alike. `AgentView` gives its name, handle
+  and personality as `ParticipantView` does, and `Views::agents_of` lists agents by a query, for
+  `Views::agents` and `SessionView::agents`.
+- **2026-11-12** — Decided with the maintainer, for the group `channel`:
+  1. `channel describe [channel]` shows a channel; what it is for is set by `channel summary` and
+     `channel briefing`, its two parts, each keeping the other.
+  2. `channel rename`, `summary` and `briefing` act on the channel they are issued in, and
+     `describe` on it unless a channel is named: no command takes two names in a line.
+  3. `channel create <name>` makes a channel as `ChannelSpec::new` does, with its issuer alone.
+  4. `channel leave` needs a right and an operation of its own: issue
+     [562](562-nobody-can-leave-a-channel.md).
+  5. No command of the group has a short form.
+  6. In two steps: first `list`, `describe`, `rename`, `summary` and `briefing`; then `create`,
+     `delete` and `join`.
+
+  Step 4a done: the first five. `CommandContext::session_view` and `channel_view` give the
+  issuer's view of the session and of the channel, for the groups `participant`, `agent` and
+  `channel` alike. A text that does not fit - a name, a summary, a briefing - is refused before
+  anything is changed. `channel summary` and `briefing` write both parts back, so a change of the
+  other part made at the same moment is lost; the maintainer judged it too rare to change
+  `update_description` for.
+- **2026-11-12** — Decided with the maintainer, for step 4b:
+  1. `channel join` takes the running channel of the name given, not one of those the issuer
+     reads: who may join a channel reads nothing of it before they did. One they may not join, or
+     that does not run, is answered like one that does not exist.
+  2. `channel delete` deletes the channel it is issued in as well; the command runs in the
+     issuer's call, so its answer still reaches them.
+  3. The three ask in the context of the issuer's views, as `agent delete` does.
+
+  Step 4b done: `channel create`, `delete` and `join`. How a command finds a channel the issuer
+  reads by its name is `channel_named` of the group, for `describe` and `delete`. With it the
+  issue is done: `channel switch` is issue
+  [561](561-the-terminal-shows-one-channel-of-a-session.md), `channel leave` issue
+  [562](562-nobody-can-leave-a-channel.md).

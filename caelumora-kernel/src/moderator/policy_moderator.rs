@@ -1500,7 +1500,7 @@ mod tests {
                 (
                     user,
                     ActorEvent::CommandExecuted {
-                        command: "wakeup".to_string(),
+                        command: "agent wakeup".to_string(),
                         args: String::new(),
                         output: "Woke b.".to_string(),
                         to: None,

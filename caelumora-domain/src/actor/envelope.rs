@@ -756,7 +756,7 @@ mod tests {
         let (agent, issuer) = (present.agents[1], present.users[0]);
         let turn_id = Some(TurnId::new());
         let command = |to| ActorEvent::CommandExecuted {
-            command: "wakeup".to_string(),
+            command: "agent wakeup".to_string(),
             args: String::new(),
             output: "Woke b.".to_string(),
             to,

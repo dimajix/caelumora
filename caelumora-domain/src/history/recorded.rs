@@ -480,7 +480,7 @@ mod tests {
                 turn_id: Some(turn_id),
             },
             ActorEvent::CommandExecuted {
-                command: "wakeup".to_string(),
+                command: "agent wakeup".to_string(),
                 args: String::new(),
                 output: "woke".to_string(),
                 to: None,

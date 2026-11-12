@@ -322,6 +322,7 @@ mod tests {
     use caelumora_domain::session::{Session, SessionId};
     use caelumora_domain::store::{EntityKind, Stored};
     use caelumora_domain::template::SessionTemplate;
+    use caelumora_domain::value::command_name::CommandName;
     use caelumora_domain::value::name::ScopedName;
     use caelumora_domain::workspace::Workspace;
 
@@ -455,7 +456,8 @@ mod tests {
         assert!(allows(bob, approve(&hers)).await, "and so do its readers");
         assert!(!allows(carol, approve(&hers)).await, "nobody else");
         let command = |owners_only| Command {
-            name: "x".to_string(),
+            name: CommandName::fixed("x"),
+            aliases: Vec::new(),
             description: String::new(),
             usage: None,
             owners_only,

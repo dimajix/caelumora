@@ -13,11 +13,11 @@ use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::HistoryAccess;
 use caelumora_domain::channel::Participant;
 use caelumora_domain::command::Command;
-use caelumora_domain::mention::{handle_of, MentionDirectory};
+use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::Stored;
-use caelumora_domain::value::name::Name;
+use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{ActionType, SecurityContext};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -388,40 +388,15 @@ impl ChannelLoop {
             .collect()
     }
 
-    /// The agents of the channel `text` names, as a user names one in a
-    /// command (issue 277): those whose name it is - as a `Name`, regardless
-    /// of case and spelling - or, if there are none, those whose handle it
-    /// is, with or without its `@`, normalised as a mention is (`handle_of`).
-    /// Several if it is ambiguous, none if it names no agent; sorted by name.
+    /// The agents of the channel `text` names, as a user names one in a command (issue 277),
+    /// found as `named` finds participants: several if it is ambiguous, none if it names no
+    /// agent.
     pub fn agents_named(&self, text: &str) -> Vec<ChannelParticipant> {
-        Self::named(
+        named(
             self.participants().into_iter().filter(|m| m.id.as_agent_id().is_some()).collect(),
             text,
+            |m| &m.name,
         )
-    }
-
-    /// The participants of the channel `text` names - agents and users -,
-    /// found as `agents_named` finds agents: for a
-    /// command that takes anyone taking part, such as `/nudge` (issue 278).
-    pub fn participants_named(&self, text: &str) -> Vec<ChannelParticipant> {
-        Self::named(self.participants(), text)
-    }
-
-    /// Those of `participants` that `text` names: by name, or else by handle;
-    /// sorted by name.
-    fn named(mut participants: Vec<ChannelParticipant>, text: &str) -> Vec<ChannelParticipant> {
-        participants.sort_by(|l, r| l.name.as_str().cmp(r.name.as_str()));
-        if let Ok(name) = Name::new(text) {
-            let named: Vec<_> = participants.iter().filter(|m| m.name == name).cloned().collect();
-            if !named.is_empty() {
-                return named;
-            }
-        }
-        let handle = handle_of(text);
-        participants
-            .into_iter()
-            .filter(|m| !handle.is_empty() && m.handle.as_deref() == Some(handle.as_str()))
-            .collect()
     }
 
     /// The agents of the channel that carry out commands themselves (issue

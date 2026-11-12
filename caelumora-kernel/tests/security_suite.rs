@@ -16,7 +16,7 @@ use caelumora_api::workspace::WorkspaceError;
 use caelumora_domain::actor::{ActorId, Rejection};
 use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
-use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, LEFT};
+use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant, LEFT};
 use caelumora_domain::command::CommandVisibility;
 use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
@@ -39,10 +39,11 @@ use caelumora_domain::user::{UserId, UserProfile};
 use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::value::text::{Description, Introduction};
 use caelumora_domain::workspace::{CommandStatus, Workspace, WorkspaceId};
+use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::agent::{AgentError, AgentSpec};
 use caelumora_kernel::channel::testing::as_command_error;
-use caelumora_kernel::channel::ChannelError;
+use caelumora_kernel::channel::{ChannelError, ChannelLoop};
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::{GroupError, GroupSpec};
@@ -4577,9 +4578,9 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let bob = main.user_actor(world.bob).unwrap();
 
-    let (reply, asked) = world.asked(bob.execute_command("help", "")).await;
+    let (reply, asked) = world.asked(bob.execute_command("help")).await;
     let text = reply.expect("his to run").output.expect("answered to him");
-    assert!(text.contains("/wakeup") && text.contains("/nudge"), "{text}");
+    assert!(text.contains("/agent wakeup") && text.contains("/participant nudge"), "{text}");
     let about: Vec<&str> =
         asked.iter().filter(|line| line.contains("Command(")).map(String::as_str).collect();
     assert_eq!(
@@ -4587,6 +4588,21 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
         [
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
+            // What /help lists, one for each command: /agent create, delete, list, wakeup,
+            // /channel briefing, create, delete, describe, join, list, rename, summary, /help,
+            // /participant add, list, nudge, remove.
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
+            "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
@@ -4598,10 +4614,10 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// `/add` (issue 555) asks nothing taking someone in does not ask, beside the lookup of the name:
-/// bob, who reads the channel, sees and runs it, and is refused what he may not do - changing the
-/// session. A name that finds nobody is answered alike whether it is nobody's or not the issuer's
-/// to read, and one that finds several equally near is refused with them.
+/// `/participant add` (issue 555) asks nothing taking someone in does not ask, beside the lookup of
+/// the name: bob, who reads the channel, sees and runs it, and is refused what he may not do -
+/// changing the session. A name that finds nobody is answered alike whether it is nobody's or not
+/// the issuer's to read, and one that finds several equally near is refused with them.
 #[tokio::test]
 async fn adding_by_command_asks_what_taking_in_asks() {
     let world = World::new().await;
@@ -4619,11 +4635,11 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         other => panic!("refused as invalid, not {other:?}"),
     };
 
-    let error = alice.execute_command("add", "dave").await.expect_err("two equally near");
+    let error = alice.execute_command("add dave").await.expect_err("two equally near");
     let reason = refused(&error);
     assert!(reason.contains("the user dave and the agent dave"), "{reason}");
 
-    let (error, asked) = world.asked(bob.execute_command("add", "carol")).await;
+    let (error, asked) = world.asked(bob.execute_command("add carol")).await;
     let error = error.expect_err("not his to change");
     assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
     assert_eq!(
@@ -4645,7 +4661,7 @@ async fn adding_by_command_asks_what_taking_in_asks() {
         ]),
         "{asked:#?}"
     );
-    let (reply, asked) = world.asked(alice.execute_command("add", "Carol")).await;
+    let (reply, asked) = world.asked(alice.execute_command("participant add Carol")).await;
     let reply = reply.expect("hers to change");
     assert_eq!(
         asked,
@@ -4683,10 +4699,10 @@ async fn adding_by_command_asks_what_taking_in_asks() {
     let in_main = || world.participants(world.alice, session.id(), main.id());
     assert!(in_main().await.contains(&ActorId::User(world.carol)), "in the channel");
     assert!(session.session().takes_part(ActorId::User(world.carol)), "and in the session");
-    let reply = alice.execute_command("add", "carol").await.expect("nothing to do");
+    let reply = alice.execute_command("add carol").await.expect("nothing to do");
     assert_eq!(reply.output.as_deref(), Some("carol takes part already."));
-    let nobody = refused(&bob.execute_command("add", "zed").await.expect_err("nobody"));
-    let hidden = refused(&bob.execute_command("add", "hers").await.expect_err("not his"));
+    let nobody = refused(&bob.execute_command("add zed").await.expect_err("nobody"));
+    let hidden = refused(&bob.execute_command("add hers").await.expect_err("not his"));
     assert_eq!(
         (nobody.replace("zed", "_"), hidden.replace("hers", "_")),
         (String::from("nobody '_' to add"), String::from("nobody '_' to add")),
@@ -4695,9 +4711,492 @@ async fn adding_by_command_asks_what_taking_in_asks() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// `/create-agent` (issue 555) asks nothing making an agent does not ask, beside the lookup of the
+/// `/participant list` and `/participant remove` (issue 560) ask nothing reading the channel and
+/// taking someone out of it do not ask: bob, who reads the channel, lists who takes part and is
+/// refused removing anyone, which changes the channel; alice removes him from the channel, and he
+/// stays in the session.
+#[tokio::test]
+async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+
+    let (reply, asked) = world.asked(bob.execute_command("participant list")).await;
+    let listed = reply.expect("his to read").output.expect("answered to him");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            // Reading the channel, as its view does.
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert!(listed.contains("- alice (@alice), user\n- bob (@bob), user"), "{listed}");
+
+    let (error, asked) = world.asked(bob.execute_command("participant remove alice")).await;
+    let error = error.expect_err("not his to change");
+    assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            // Whom he names, among those he reads taking part, as `/participant list` ...
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+            // ... then removing, as the store asks it.
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+            "bob: UpdateChannel(alice's) no",
+        ]),
+        "{asked:#?}"
+    );
+
+    let (reply, asked) = world.asked(alice.execute_command("participant remove bob")).await;
+    let reply = reply.expect("hers to change");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: UpdateChannel(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert_eq!(reply.output.as_deref(), Some("Removed bob."));
+    assert_eq!(reply.visibility, CommandVisibility::Private);
+    let in_main = world.participants(world.alice, session.id(), main.id()).await;
+    assert!(!in_main.contains(&ActorId::User(world.bob)), "out of the channel");
+    assert!(session.session().takes_part(ActorId::User(world.bob)), "still in the session");
+
+    // Herself as anyone: she may change the channel, and is answered though her actor leaves.
+    let reply = alice.execute_command("participant remove alice").await.expect("hers to change");
+    assert_eq!(reply.output.as_deref(), Some("Removed alice."));
+    assert!(main.user_actor(world.alice).is_none(), "out of the channel");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/agent list` and `/agent delete` (issue 560) ask nothing reading the session's agents and
+/// deleting one do not ask: bob, who may not read alice's agent made in the session, sees none and
+/// is answered as if there were none to delete; alice lists it and deletes it, and the session has
+/// no agents then.
+#[tokio::test]
+async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_ask() {
+    let world = World::new().await;
+    let plain = world.personality("plain", Some(world.alice), &[]).await;
+    let session = world.shared_session(&[], &[]).await;
+    let in_session = Scope::SessionScope { session_id: session.id() };
+    world.agent_in("scout", in_session, world.alice, &plain).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+
+    let (reply, asked) = world.asked(bob.execute_command("agent list")).await;
+    let listed = reply.expect("his to run").output.expect("answered to him");
+    assert_eq!(listed, "This session has no agents.", "hers is not his to read");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: List(agent) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let (error, asked) = world.asked(bob.execute_command("agent delete scout")).await;
+    let error = error.expect_err("none he may read");
+    assert!(
+        matches!(
+            as_command_error(&error),
+            CommandError::InvalidArguments { reason, .. } if reason == "nobody 'scout' among the agents of this session"
+        ),
+        "{error}"
+    );
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: List(agent) yes",
+        ]),
+        "{asked:#?}"
+    );
+
+    let (reply, asked) = world.asked(alice.execute_command("agent list")).await;
+    let listed = reply.expect("hers to read").output.expect("answered to her");
+    assert!(listed.contains("- scout (@scout), of plain, not taking part"), "{listed}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            "alice: GetSession(alice's) yes",
+            "alice: List(agent) yes",
+            "alice: GetAgent(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let (reply, asked) = world.asked(alice.execute_command("agent delete @scout")).await;
+    let reply = reply.expect("hers to delete");
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            // The session's agents, as `/agent list` reads them ...
+            "alice: GetSession(alice's) yes",
+            "alice: List(agent) yes",
+            "alice: GetAgent(alice's) yes",
+            // ... then deleting the one named, as `AgentManager::delete` asks it.
+            "alice: GetAgent(alice's) yes",
+            "alice: DeleteAgent(alice's) yes",
+            "alice: GetAgent(alice's) yes",
+            "alice: DeleteAgent(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert_eq!(reply.output.as_deref(), Some("Deleted scout; it can be restored."));
+    let listed = alice.execute_command("agent list").await.unwrap().output.unwrap();
+    assert_eq!(listed, "This session has no agents.");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Why `actor` is refused `command` with `name` as an argument it cannot use, `name` left out - so
+/// that two refusals for different names can be compared.
+#[expect(clippy::expect_used, reason = "test code: a helper of the tests below")]
+async fn unusable(actor: &UserActor, command: &str, name: &str) -> String {
+    let error = actor.execute_command(&format!("{command} {name}")).await;
+    match as_command_error(&error.expect_err("unusable")) {
+        CommandError::InvalidArguments { reason, .. } => reason.replace(name, "_"),
+        other => panic!("refused as invalid, not {other:?}"),
+    }
+}
+
+/// A session of alice and bob, opened by both, with its channel "main" of both and a channel
+/// "private" of alice's alone, which bob may not read - for the commands of the group `channel`.
+#[expect(clippy::expect_used, reason = "test code: the fixture of the tests below")]
+async fn with_a_private_channel() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>) {
+    let world = World::new().await;
+    let session = world.shared_session(&[], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let private = ChannelSpec { components: quiet(), ..ChannelSpec::new("private") };
+    session.create_channel(&World::as_user(world.alice), private).await.expect("hers to make");
+    (world, session, main)
+}
+
+/// `/channel list` and `/channel describe` (issue 560) ask nothing reading the session's channels
+/// does not ask: bob lists and describes the channel he reads, and is told nothing of the one he
+/// may not read - not listed, and named as one that does not exist.
+#[tokio::test]
+async fn listing_and_describing_channels_ask_what_reading_them_asks() {
+    let (world, session, main) = with_a_private_channel().await;
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (reply, asked) = world.asked(bob.execute_command("channel list")).await;
+    let listed = reply.expect("his to read").output.expect("answered to him");
+    assert!(listed.contains("- main (here), taking part"), "{listed}");
+    assert!(!listed.contains("private"), "one he may not read is not listed: {listed}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+            // The private channel, which he may not read.
+            "bob: GetChannel(alice's) no",
+        ]),
+        "{asked:#?}"
+    );
+    let (reply, asked) = world.asked(bob.execute_command("channel describe main")).await;
+    let described = reply.expect("his to read").output.expect("answered to him");
+    assert!(described.starts_with("Channel main\n\nSummary: nothing said"), "{described}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert_eq!(
+        unusable(&bob, "channel describe", "private").await,
+        unusable(&bob, "channel describe", "nowhere").await,
+        "one he may not read, as one that does not exist"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/channel rename`, `summary` and `briefing` (issue 560) ask nothing changing the channel does
+/// not ask: bob, who reads it, is refused; alice renames it and says what it is for, each part
+/// keeping the other, also when one is removed.
+#[tokio::test]
+async fn changing_a_channel_by_command_asks_what_changing_it_asks() {
+    let (world, session, main) = with_a_private_channel().await;
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+
+    for line in ["channel rename Lobby", "channel summary For all", "channel briefing Be kind"] {
+        let (error, asked) = world.asked(bob.execute_command(line)).await;
+        let error = error.expect_err("not his to change");
+        assert!(
+            matches!(as_command_error(&error), CommandError::Forbidden { .. }),
+            "/{line}: {error}"
+        );
+        assert_eq!(
+            asked,
+            checks(&[
+                "bob: ShowCommand(alice's) yes",
+                "bob: ExecuteCommand(alice's) yes",
+                "bob: GetChannel(alice's) yes",
+                "bob: JoinChannel(bob) yes",
+                "bob: UpdateChannel(alice's) no",
+            ]),
+            "/{line}: {asked:#?}"
+        );
+    }
+
+    let (reply, asked) = world.asked(alice.execute_command("channel rename Lobby")).await;
+    assert_eq!(
+        reply.expect("hers to change").output.as_deref(),
+        Some("This channel is called Lobby now.")
+    );
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: UpdateChannel(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    alice.execute_command("channel summary For all of us").await.expect("hers to change");
+    alice.execute_command("channel briefing Be kind").await.expect("hers to change");
+    let described = alice.execute_command("channel describe").await.unwrap().output.unwrap();
+    assert!(
+        described.starts_with("Channel Lobby\n\nSummary: For all of us\nBriefing: Be kind"),
+        "each keeps the other: {described}"
+    );
+    alice.execute_command("channel summary").await.expect("hers to remove");
+    let described = alice.execute_command("channel describe Lobby").await.unwrap().output.unwrap();
+    assert!(
+        described.starts_with("Channel Lobby\n\nSummary: nothing said\nBriefing: Be kind"),
+        "removed, the briefing kept: {described}"
+    );
+    let described =
+        alice.execute_command("channel describe private").await.unwrap().output.unwrap();
+    assert!(described.starts_with("Channel private"), "another of hers, named: {described}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/channel create` (issue 560) asks nothing making a channel does not ask: bob, who may not
+/// change the session, is refused; alice makes one, and takes part in it alone.
+#[tokio::test]
+async fn making_a_channel_by_command_asks_what_making_one_asks() {
+    let (world, session, main) = with_a_private_channel().await;
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+
+    let (error, asked) = world.asked(bob.execute_command("channel create side")).await;
+    let error = error.expect_err("not his session to change");
+    assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: CreateChannel(alice's) no",
+        ]),
+        "{asked:#?}"
+    );
+
+    let (reply, asked) = world.asked(alice.execute_command("channel create side")).await;
+    assert_eq!(
+        reply.expect("hers to make").output.as_deref(),
+        Some("Created the channel side; you take part in it.")
+    );
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            // As `SessionLoop::create_channel` asks it, with her alone.
+            "alice: CreateChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: CreateChannel(alice's) yes",
+            "alice: GetSession(alice's) yes",
+            "alice: UpdateSession(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let side = session.channel_named("side").expect("made and running");
+    let in_side: Vec<ActorId> = side.participants().iter().map(|p| p.id).collect();
+    assert_eq!(in_side, [ActorId::User(world.alice)], "she alone");
+    let error = alice.execute_command("channel create side").await.expect_err("the name is taken");
+    assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/channel delete` (issue 560) asks nothing deleting a channel does not ask, beside the lookup of
+/// the name: a channel bob may not read is named as one that does not exist, and one he reads but
+/// does not own is refused; alice deletes hers, and the one the command is issued in alike, whose
+/// answer still reaches her.
+#[tokio::test]
+async fn deleting_a_channel_by_command_asks_what_deleting_one_asks() {
+    let (world, session, main) = with_a_private_channel().await;
+    let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
+
+    assert_eq!(
+        unusable(&bob, "channel delete", "private").await,
+        unusable(&bob, "channel delete", "nowhere").await,
+        "one he may not read, as one that does not exist"
+    );
+    let (error, asked) = world.asked(bob.execute_command("channel delete main")).await;
+    let error = error.expect_err("not his to delete");
+    assert!(matches!(as_command_error(&error), CommandError::Forbidden { .. }), "{error}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            // Finding it ...
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+            // ... then deleting it, as `SessionLoop::delete_channel` asks it.
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+            "bob: DeleteChannel(alice's) no",
+        ]),
+        "{asked:#?}"
+    );
+
+    let (reply, asked) = world.asked(alice.execute_command("channel delete private")).await;
+    assert_eq!(
+        reply.expect("hers to delete").output.as_deref(),
+        Some("Deleted private; it can be restored.")
+    );
+    assert_eq!(
+        asked,
+        checks(&[
+            "alice: ShowCommand(alice's) yes",
+            "alice: ExecuteCommand(alice's) yes",
+            // Finding it, by its name first ...
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            // ... then deleting it, as `SessionLoop::delete_channel` asks it.
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: DeleteChannel(alice's) yes",
+            "alice: GetSession(alice's) yes",
+            "alice: UpdateSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
+            "alice: DeleteChannel(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let reply = alice.execute_command("channel delete main").await.expect("hers to delete");
+    assert_eq!(reply.output.as_deref(), Some("Deleted main; it can be restored."));
+    assert!(session.channels().is_empty(), "both are gone");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// A session of alice and bob, opened by both, with its channel "main" of both, a channel "open"
+/// of alice's alone, which bob may join but not read, and a channel "private" of alice's alone,
+/// which he may neither join nor read - for `/channel join`.
+#[expect(clippy::expect_used, reason = "test code: the fixture of the test below")]
+async fn with_a_channel_to_join() -> (World, Arc<SessionLoop>, Arc<ChannelLoop>) {
+    let world = World::new().await;
+    let (alice, bob) = (Participant::User(world.alice), Participant::User(world.bob));
+    let session = make_session("shared", world.alice);
+    let channel = |name: &str, participants: Vec<Participant>| Channel {
+        participants,
+        ..Channel::build(
+            session.id,
+            ActorId::User(world.alice),
+            Name::new(name).expect("a name"),
+            quiet(),
+            Classification::general(Confidentiality::Internal),
+            None,
+        )
+    };
+    let main = channel("main", vec![alice.clone(), bob.clone()]);
+    let mut open = channel("open", vec![alice.clone()]);
+    open.security_attributes =
+        open.security_attributes.granting(Subject::Actor(ActorId::User(world.bob)), Grant::Join);
+    let private = channel("private", vec![alice.clone()]);
+    let session = Session {
+        participants: vec![alice, bob],
+        channels: vec![main.id, open.id, private.id],
+        ..session
+    };
+    let id = session.id;
+    let as_alice = World::as_user(world.alice);
+    world.manager.create(&as_alice, session, vec![main, open, private]).await.expect("hers");
+    let session = world.manager.open(&as_alice, id).await.expect("she opens it");
+    world.manager.open(&World::as_user(world.bob), id).await.expect("he opens it");
+    let main = session.channel_named("main").expect("running");
+    (world, session, main)
+}
+
+/// `/channel join` (issue 560) asks nothing joining a channel does not ask: bob joins the channel
+/// an entry lets him join, though he reads nothing of it before; one he may not join is named as
+/// one that does not exist, and one he takes part in is told so.
+#[tokio::test]
+async fn joining_a_channel_by_command_asks_what_joining_one_asks() {
+    let (world, session, main) = with_a_channel_to_join().await;
+    let bob = main.user_actor(world.bob).unwrap();
+
+    assert_eq!(
+        unusable(&bob, "channel join", "private").await,
+        unusable(&bob, "channel join", "nowhere").await,
+        "one he may not join, as one that does not exist"
+    );
+    let (reply, asked) = world.asked(bob.execute_command("channel join open")).await;
+    assert_eq!(reply.expect("his to join").output.as_deref(), Some("Joined open."));
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            // Not sought among what he reads: he reads nothing of it before he joined.
+            "bob: JoinChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let open = session.channel_named("open").expect("running");
+    assert!(open.participants().iter().any(|p| p.id == ActorId::User(world.bob)), "he is in it");
+    let reply = bob.execute_command("channel join main").await.expect("he is in it");
+    assert_eq!(reply.output.as_deref(), Some("You take part in main already."));
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/agent create` (issue 555) asks nothing making an agent does not ask, beside the lookup of the
 /// personality: a personality bob may not read is answered as one that does not exist. The agent
-/// lies in the session, and is brought in by `/add`.
+/// lies in the session, and is brought in by `/participant add`.
 #[tokio::test]
 async fn making_an_agent_by_command_asks_what_making_one_asks() {
     // Agents that run, so that the one made can take part.
@@ -4713,7 +5212,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         other => panic!("refused as invalid, not {other:?}"),
     };
 
-    let (error, asked) = world.asked(bob.execute_command("create-agent", "plain")).await;
+    let (error, asked) = world.asked(bob.execute_command("agent create plain")).await;
     assert_eq!(
         asked,
         checks(&[
@@ -4724,10 +5223,10 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         "none of hers is listed to him: {asked:#?}"
     );
     let hidden = refused(&error.expect_err("not his"));
-    let nobody = refused(&bob.execute_command("create-agent", "zed").await.expect_err("nobody"));
+    let nobody = refused(&bob.execute_command("agent create zed").await.expect_err("nobody"));
     assert_eq!(hidden.replace("plain", "_"), nobody.replace("zed", "_"), "alike");
     assert!(hidden.contains("no personality named \"plain\""), "{hidden}");
-    let (reply, asked) = world.asked(alice.execute_command("create-agent", "plain as Scout")).await;
+    let (reply, asked) = world.asked(alice.execute_command("agent create plain as Scout")).await;
     assert_eq!(
         asked,
         checks(&[
@@ -4760,7 +5259,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
         .find(|agent| agent.name.name == "scout")
         .expect("made");
     assert_eq!(scout.name.scope, Scope::SessionScope { session_id: session.id() });
-    alice.execute_command("add", "scout").await.expect("brought in");
+    alice.execute_command("add scout").await.expect("brought in");
     let in_main = world.participants(world.alice, session.id(), main.id()).await;
     assert!(in_main.contains(&ActorId::Agent(scout.id)), "in the channel");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();

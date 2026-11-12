@@ -1371,14 +1371,35 @@ mod tests {
                 .visible(&SecurityContext::default(), &SecurityAttributes::systems())
                 .await
                 .into_iter()
-                .map(|c| c.name)
+                .map(|c| c.name.to_string())
                 .collect::<Vec<_>>()
         };
 
         let session = make_session("plain", UserId::new());
         let executor =
             kernel.new_command_executor(&session).await.expect("the global commands build");
-        assert_eq!(names(executor).await, vec!["add", "create-agent", "help", "nudge", "wakeup"]);
+        assert_eq!(
+            names(executor).await,
+            vec![
+                "agent create",
+                "agent delete",
+                "agent list",
+                "agent wakeup",
+                "channel briefing",
+                "channel create",
+                "channel delete",
+                "channel describe",
+                "channel join",
+                "channel list",
+                "channel rename",
+                "channel summary",
+                "help",
+                "participant add",
+                "participant list",
+                "participant nudge",
+                "participant remove"
+            ]
+        );
 
         // A second /help from the session's own configuration - with the same
         // component id, which is fine across the two configurations.

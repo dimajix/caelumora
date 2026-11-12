@@ -36,6 +36,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::tool::{ToolCall, ToolVisibility};
 use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_kernel::actor::user::ChannelWatch;
@@ -374,7 +375,7 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     AgentCommandProvider::execute(
         skills::<dyn AgentCommandProvider>(&world, json!({})).await.as_ref(),
-        SKILL_COMMAND_NAME,
+        &CommandName::fixed(SKILL_COMMAND_NAME),
         "release-notes",
         &mut turn,
     )
@@ -432,7 +433,7 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     let given = AgentCommandProvider::execute(
         commands.as_ref(),
-        SKILL_COMMAND_NAME,
+        &CommandName::fixed(SKILL_COMMAND_NAME),
         "release-notes",
         &mut turn,
     )
@@ -448,7 +449,7 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
     );
     let again = AgentCommandProvider::execute(
         commands.as_ref(),
-        SKILL_COMMAND_NAME,
+        &CommandName::fixed(SKILL_COMMAND_NAME),
         "release-notes",
         &mut turn,
     )
@@ -534,12 +535,12 @@ async fn a_compaction_gives_again_the_skills_given_in_the_part_it_replaces_that_
     alice.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
     for name in ["quiz-round", "release-notes"] {
-        alice.execute_command(SKILL_COMMAND_NAME, &format!("@helper {name}")).await.expect("hers");
+        alice.execute_command(&format!("{SKILL_COMMAND_NAME} @helper {name}")).await.expect("hers");
         shown(&mut hers, "CommandExecuted").await;
     }
     alice.send_message(Some("@helper next".to_string()), None, Vec::new()).await.unwrap();
     activities_until_the_turn_ends(&mut events, helper).await.1.expect("answered");
-    alice.execute_command("compact", "@helper").await.expect("hers, as its owner");
+    alice.execute_command("compact @helper").await.expect("hers, as its owner");
 
     let told = shown(&mut hers, "CommandExecuted").await;
     assert!(
@@ -785,7 +786,7 @@ async fn an_agent_loads_a_skill_for_its_owner_whoever_asked() {
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .execute_command("skill", "@helper release-notes")
+                .execute_command("skill @helper release-notes")
                 .await
                 .expect("his to give");
             shown(&mut his, "CommandExecuted").await
@@ -848,14 +849,14 @@ async fn a_skill_classified_above_the_channel_is_neither_listed_nor_loaded() {
         .expect("the system's");
     let bob = main.user_actor(world.bob).unwrap();
 
-    bob.execute_command("skills", "@helper").await.expect("his to ask");
+    bob.execute_command("skills @helper").await.expect("his to ask");
     let ActorEvent::CommandExecuted { output, .. } = shown(&mut his, "CommandExecuted").await
     else {
         unreachable!()
     };
     assert!(output.contains("release-notes") && !output.contains("secret-plan"), "{output}");
 
-    bob.execute_command("skill", "@helper secret-plan").await.expect("sent");
+    bob.execute_command("skill @helper secret-plan").await.expect("sent");
     let ActorEvent::CommandFailed { reason, .. } = shown(&mut his, "CommandFailed").await else {
         unreachable!()
     };

@@ -7,6 +7,7 @@ use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandResult, ProvidesCommands};
 use caelumora_domain::command::CommandOutput;
+use caelumora_domain::value::command_name::CommandName;
 
 /// A component facet contributing commands an agent carries out itself
 /// (issue 269) - `/skill`, `/compact` -, of agents run here and elsewhere
@@ -16,15 +17,14 @@ use caelumora_domain::command::CommandOutput;
 /// when it did not. Whom it was asked by is the turn's initiator.
 #[async_trait]
 pub trait AgentCommandProvider: ProvidesCommands {
-    /// Carries out the command `name` with `args`, the rest of the input
-    /// line after the name and the agent's handle, which the command parses
-    /// itself.
+    /// Carries out the command `name` - by its name, whichever it was asked for by - with `args`,
+    /// the rest of the input line after it and the agent's handle, which the command parses itself.
     ///
     /// # Errors
     /// As `ChannelCommandProvider::execute`.
     async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput>;

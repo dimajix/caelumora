@@ -41,6 +41,7 @@ use caelumora_domain::message::{Message, MessageEvent, MessageId};
 use caelumora_domain::question::{Answers, Questions};
 use caelumora_domain::tool::{Tool, ToolParameters};
 use caelumora_domain::user::UserId;
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::work::TurnId;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::testing::*;
@@ -414,16 +415,17 @@ impl ToolProvider for Asking {
     }
 }
 
-/// A component whose agent carries out `/mark [text]` (issue 269): it
-/// notes "marked <text>" and answers the issuer alone - with `fail`, it
-/// notes and then fails, so that nothing of it may stay.
+/// A component whose agent carries out `/mark [text]` (issue 269), also by its short form `/mk`
+/// (issue 560): it notes "marked <text>" and answers the issuer alone - with `fail`, it notes and
+/// then fails, so that nothing of it may stay.
 #[derive(Debug)]
 struct Marking;
 
 impl ProvidesCommands for Marking {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
-            name: "mark".to_string(),
+            name: CommandName::fixed("mark"),
+            aliases: vec![CommandName::fixed("mk")],
             description: "Marks.".to_string(),
             usage: Some("[text]".to_string()),
             owners_only: false,
@@ -435,7 +437,7 @@ impl ProvidesCommands for Marking {
 impl AgentCommandProvider for Marking {
     async fn execute(
         &self,
-        _name: &str,
+        _name: &CommandName,
         args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {

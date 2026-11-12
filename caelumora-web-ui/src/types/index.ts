@@ -983,7 +983,10 @@ export type RetryRefused = 'not_its_answer' | 'not_last' | 'calls_ran' | 'asked_
 
 /** A user command, as `/help` and completion show it (issue 28). */
 export interface Command {
+  /** Its words, from its group to itself (issue 560). */
   name: string;
+  /** The other names it is found by, its short forms (issue 560). */
+  aliases?: string[];
   description: string;
   usage: string | null;
   /** Of an agent's command (issue 269): whether it is for the agent's owners alone. */

@@ -13,23 +13,27 @@
 //! are made of - `ProvidesCommands`, the `CommandSet`, the `CommandError` - is the API's
 //! (`caelumora_api::command`, issue 516).
 
-pub mod add;
-pub mod create_agent;
+pub(crate) mod agent;
+pub(crate) mod channel;
 pub mod help;
-pub mod nudge;
-pub mod wakeup;
+pub(crate) mod participant;
 
 use crate::actor::user::UserActor;
-use crate::channel::{ChannelLoop, ChannelParticipant};
+use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
+use crate::session::SessionLoop;
+use crate::view::{ChannelView, SessionView, Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
 use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_domain::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::store::StoreError;
 use caelumora_domain::type_map::TypeKey;
+use caelumora_domain::value::command_name::CommandName;
+use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -67,13 +71,50 @@ pub struct CommandContext<'a> {
     pub executor: &'a CommandExecutor,
 }
 
+impl CommandContext<'_> {
+    /// The running session the channel belongs to, with the views of it in the issuer's name -
+    /// what the issuer may read there, and the context of the issuer it asks in, which what the
+    /// command does in their name is asked in as well -, for the command `command`.
+    ///
+    /// # Errors
+    /// `CommandError::Failed` if the channel belongs to no session, which a channel a command
+    /// runs in always does.
+    pub(crate) fn session_loop(&self, command: &str) -> CommandResult<(Arc<SessionLoop>, Views)> {
+        let session = self.channel.session_loop().ok_or_else(|| {
+            command_error(command, &Error::msg("the channel belongs to no session"))
+        })?;
+        let views = session.views(Viewer::new(self.issuer.security_context()));
+        Ok((session, views))
+    }
+
+    /// The session the channel belongs to as the issuer reads it, for the command `command`: its
+    /// view, reached through `session_loop`'s views.
+    ///
+    /// # Errors
+    /// `CommandError::Failed` if the channel belongs to no session or the session cannot be read.
+    pub(crate) async fn session_view(&self, command: &str) -> CommandResult<SessionView> {
+        let (session, views) = self.session_loop(command)?;
+        views.session(session.id()).await.map_err(|e| command_error(command, &e.into()))
+    }
+
+    /// The channel the command `command` runs in as the issuer reads it: its view, reached through
+    /// `session_view`.
+    ///
+    /// # Errors
+    /// `CommandError::Failed` if the session or the channel cannot be read.
+    pub(crate) async fn channel_view(&self, command: &str) -> CommandResult<ChannelView> {
+        let session = self.session_view(command).await?;
+        session.channel(self.channel.id()).await.map_err(|e| command_error(command, &e.into()))
+    }
+}
+
 /// A component facet contributing user commands run on the channel -
 /// `/help`, `/wakeup` -, as `ToolProvider` contributes tools: given the
 /// channel, not an agent's turn.
 #[async_trait]
 pub trait ChannelCommandProvider: ProvidesCommands {
-    /// Runs the command `name` with `args`, the rest of the input line after
-    /// the name, which the command parses itself.
+    /// Runs the command `name` - by its name, whichever it was issued by - with `args`, the rest of
+    /// the input line after it, which the command parses itself.
     ///
     /// # Errors
     /// `CommandError::InvalidArguments` for arguments it cannot use,
@@ -81,7 +122,7 @@ pub trait ChannelCommandProvider: ProvidesCommands {
     /// `CommandError::Failed` otherwise.
     async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput>;
@@ -124,9 +165,10 @@ impl CommandExecutor {
         Self { access_policy, commands: CommandSet::empty() }
     }
 
-    /// Whether it has a command `name`, whoever may see it.
-    pub fn has(&self, name: &str) -> bool {
-        self.commands.has(name)
+    /// The command of the session's that `command` collides with, whoever may see it
+    /// (`CommandSet::colliding`): an agent's command must not be hidden by one of the session.
+    pub fn colliding(&self, command: &Command) -> Option<&Command> {
+        self.commands.colliding(command)
     }
 
     /// The commands `issuer` may see in the channel with `channel`
@@ -146,31 +188,31 @@ impl CommandExecutor {
         visible
     }
 
-    /// Runs the command `name` for `context.issuer`: `Empty` for an empty
-    /// name; `Unknown` if there is no such command or the issuer may not see
-    /// it - one they may not see is unknown to them, not refused;
-    /// `Forbidden` if they may see but not run it.
+    /// The name of the command `line` begins with - by its name or an alias - and the rest of
+    /// the line, its arguments (`CommandSet::find`), whoever may see it: running it asks that.
+    pub fn find<'a>(&self, line: &'a str) -> Option<(&CommandName, &'a str)> {
+        self.commands.find(line).map(|(entry, args)| (&entry.command().name, args))
+    }
+
+    /// Runs the command `name` with `args` for `context.issuer`: `Unknown` if there is no such
+    /// command or the issuer may not see it, since one they may not see is unknown to them, not
+    /// refused; `Forbidden` if they may see but not run it.
     ///
     /// # Errors
     /// As above; otherwise whatever the command reports.
     pub async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
-        if name.is_empty() {
-            return Err(CommandError::Empty);
-        }
-        let entry =
-            self.commands.entry(name).ok_or_else(|| CommandError::Unknown(name.to_string()))?;
+        let unknown = || CommandError::Unknown(name.to_string());
+        let entry = self.commands.entry(name.as_str()).ok_or_else(unknown)?;
         let issuer = context.issuer.security_context();
         let channel = context.channel.security_attributes();
         let command = entry.command();
         self.access_policy
-            .require(&issuer, ActionType::ShowCommand { command, channel: &channel }, |_| {
-                CommandError::Unknown(name.to_string())
-            })
+            .require(&issuer, ActionType::ShowCommand { command, channel: &channel }, |_| unknown())
             .await?;
         self.access_policy
             .require(
@@ -183,56 +225,69 @@ impl CommandExecutor {
     }
 }
 
-/// The participant of `channel` - agent, user or any other actor - that the
-/// argument `wanted` of the command `command` names
-/// (`ChannelLoop::participants_named`, issues 277, 278): the one way the
-/// commands of the channel that take someone, `/wakeup` and `/nudge`, find
-/// them and word that they did not.
+/// The one of `among` - participants, agents, anything with a name, which `name` gives - that the
+/// argument `wanted` of the command `command` names (`named`, issues 277, 278, 560): the one way
+/// the commands of the channel that take someone find them and word that they did not - those
+/// who take part `in this channel`, the agents `of this session`, as `place` says. What they are
+/// sought among is the command's: `/agent wakeup` and `/participant nudge` act on an actor, and
+/// seek among those running; `/participant remove` among those the issuer reads taking part;
+/// `/agent delete` among the session's agents the issuer may read.
 ///
 /// # Errors
-/// `CommandError::InvalidArguments` naming the handles of the participants,
-/// if `wanted` names none, or those it names, if it names several: nobody
-/// is picked.
-pub(crate) fn named_participant(
+/// `CommandError::InvalidArguments` naming the handles of `among`, if `wanted` names none, or
+/// those it names, if it names several: nobody is picked.
+pub(crate) fn named_one<T>(
     command: &str,
     wanted: &str,
-    channel: &ChannelLoop,
-) -> CommandResult<ChannelParticipant> {
+    among: Vec<T>,
+    name: impl Fn(&T) -> &Name,
+    place: &str,
+) -> CommandResult<T> {
     let invalid =
         |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
-    match channel.participants_named(wanted).as_slice() {
-        [one] => Ok(one.clone()),
-        [] => {
-            let mut handles: Vec<String> = channel
-                .participants()
-                .into_iter()
-                .filter_map(|m| m.handle)
-                .map(|h| format!("@{h}"))
-                .collect();
-            handles.sort();
-            Err(invalid(format!(
-                "nobody '{}' in this channel; the participants are {}",
-                wanted,
-                names(&handles)
-            )))
+    let mut handles: Vec<String> = among
+        .iter()
+        .map(|m| name(m).handle())
+        .filter(|handle| !handle.is_empty())
+        .map(|handle| format!("@{handle}"))
+        .collect();
+    handles.sort();
+    let mut found = named(among, wanted, &name);
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 if handles.is_empty() => Err(invalid(format!("nobody '{wanted}' {place}"))),
+        0 => {
+            Err(invalid(format!("nobody '{wanted}' {place}; to choose from: {}", names(&handles))))
         }
-        several => {
-            let several: Vec<String> = several.iter().map(|m| m.name.to_string()).collect();
-            Err(invalid(format!("'{}' names several participants: {}", wanted, names(&several))))
+        _ => {
+            let several: Vec<String> = found.iter().map(|m| name(m).to_string()).collect();
+            Err(invalid(format!("'{wanted}' names several {place}: {}", names(&several))))
         }
     }
 }
 
 /// What `error` of an operation the command `command` ran means for its issuer: a refusal is the
-/// command refused (`Forbidden`); anything else is a failure, logged, and described only as far as
+/// command refused (`Forbidden`), a name another has taken an argument that does not fit
+/// (`InvalidArguments`); anything else is a failure, logged, and described only as far as
 /// `user_message` allows (`Failed`).
 pub(crate) fn command_error(command: &str, error: &Error) -> CommandError {
     if let Some(refused) = refusal(error) {
         return CommandError::Forbidden { name: command.to_string(), refused: refused.clone() };
     }
+    if let Some(taken @ StoreError::NameTaken { .. }) = error.downcast_ref() {
+        return CommandError::InvalidArguments {
+            command: command.to_string(),
+            reason: taken.to_string(),
+        };
+    }
     tracing::warn!("/{} failed: {:#}", command, error);
     let reason = user_message(error).unwrap_or_else(|| "see the server log".to_string());
     CommandError::Failed { command: command.to_string(), reason }
+}
+
+/// The first word of `line`, what a command that was not found is told by.
+pub(crate) fn first_word(line: &str) -> &str {
+    line.split_whitespace().next().unwrap_or_default()
 }
 
 /// `names` joined as a sentence: "A, B and C".
@@ -246,11 +301,10 @@ pub(crate) fn names(names: &[String]) -> String {
 
 /// Registers the command kinds with `registry`.
 pub fn register_all(registry: &mut ComponentRegistry) {
-    add::register(registry);
-    create_agent::register(registry);
+    agent::register(registry);
+    channel::register(registry);
     help::register(registry);
-    nudge::register(registry);
-    wakeup::register(registry);
+    participant::register(registry);
 }
 
 #[cfg(test)]
@@ -265,7 +319,8 @@ mod tests {
     impl ProvidesCommands for Named {
         fn commands(&self) -> Vec<Command> {
             vec![Command {
-                name: self.0.to_string(),
+                name: CommandName::fixed(self.0),
+                aliases: Vec::new(),
                 description: String::new(),
                 usage: None,
                 owners_only: false,
@@ -277,7 +332,7 @@ mod tests {
     impl ChannelCommandProvider for Named {
         async fn execute(
             &self,
-            _name: &str,
+            _name: &CommandName,
             _args: &str,
             _context: &CommandContext<'_>,
         ) -> CommandResult<CommandOutput> {
@@ -318,7 +373,7 @@ mod tests {
             .visible(&SecurityContext::default(), &SecurityAttributes::systems())
             .await
             .into_iter()
-            .map(|c| c.name)
+            .map(|c| c.name.to_string())
             .collect();
         assert_eq!(names, vec!["help", "wakeup"], "sorted by name");
     }

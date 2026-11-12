@@ -2,7 +2,7 @@
 //! runs.
 
 use super::{channel_reading, ReadingBasis};
-use super::{ChannelView, Views};
+use super::{AgentView, ChannelView, Views};
 use crate::channel::ChannelError;
 use crate::session::{ChannelRun, Found, SessionLoop};
 use anyhow::Error;
@@ -276,6 +276,31 @@ impl SessionView {
             (lies, (participant, scoped_name))
         });
         innermost(ranked, &place, self.views.context().principal_id.as_user_id())
+    }
+
+    /// The agents of the session the viewer may read (`GetAgent`, issue 560): those taking part in
+    /// it - in any of its channels or in none - and those lying in its scope or its channels'
+    /// (`Filter::lying_within`), as `agent create` makes them; by name. A deleted agent is none.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot list or read them.
+    pub async fn agents(&self) -> ViewResult<Vec<AgentView>> {
+        let scope = Scope::SessionScope { session_id: self.session.id };
+        let mut agents =
+            self.views.agents_of(&Query::filtered(Filter::lying_within(&scope))).await?;
+        for participant in &self.session.participants {
+            let Some(id) = participant.actor_id().as_agent_id() else { continue };
+            if agents.iter().any(|agent| agent.id() == id) {
+                continue;
+            }
+            match self.views.agent(id).await {
+                Ok(agent) => agents.push(agent),
+                Err(ViewError::AgentNotFound(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        agents.sort_by(|l, r| l.name().as_str().cmp(r.name().as_str()));
+        Ok(agents)
     }
 
     /// The channels the viewer may read as a whole, in the order of the

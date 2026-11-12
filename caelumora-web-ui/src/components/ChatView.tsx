@@ -108,7 +108,7 @@ import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
 import {actorKey, actorUuid, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
 import {GROUP_HANDLES, handleOf, mentionQueryAt} from '../mention';
-import {commandQueryAt, parseInput} from '../command';
+import {commandQueryAt, completes, parseInput} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
 
@@ -442,9 +442,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     return {calls: base.calls + used.calls, prompt: base.prompt + used.prompt_tokens, completion: base.completion + used.completion_tokens};
   }, null);
   const mentionQuery = mentionQueryAt(inputText, caret);
-  const commandQuery = commandQueryAt(inputText, caret);
-  // Where the completed token starts; a command always starts at 0.
-  const suggestionStart = commandQuery !== null ? 0 : mentionQuery?.start ?? null;
+  const typedCommand = commandQueryAt(inputText, caret);
   // The commands the agents here carry out (issue 269), by name, with the
   // handles of the agents that do: one is suggested for each of them, and
   // for `@all` where several do.
@@ -459,12 +457,20 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   }
   const agentSuggestions = [...agentCommands.values()].flatMap(({command, handles}) =>
     [...handles, ...(handles.length > 1 ? [GROUP_HANDLES[0]] : [])].map((handle): Suggestion => ({kind: 'command', command, handle})));
+  // A command's name has words (issue 560), so what is typed after the slash is a command being
+  // typed only while a command's name begins with it; past that, a mention may be.
+  const commandSuggestions = typedCommand === null
+    ? []
+    : [...commands.map((command): Suggestion => ({kind: 'command', command})), ...agentSuggestions]
+        .filter(s => s.kind === 'command' && completes(s.command, typedCommand));
+  const commandQuery = commandSuggestions.length > 0 ? typedCommand : null;
+  // Where the completed token starts; a command always starts at 0.
+  const suggestionStart = commandQuery !== null ? 0 : mentionQuery?.start ?? null;
   const mentionText = (mentionQuery?.query ?? '').toLowerCase();
   const suggestions: Suggestion[] = suggestionStart === null || suggestionStart === dismissedMention
     ? []
     : commandQuery !== null
-      ? [...commands.map((command): Suggestion => ({kind: 'command', command})), ...agentSuggestions]
-          .filter(s => s.kind === 'command' && s.command.name.startsWith(commandQuery.toLowerCase()))
+      ? commandSuggestions
       : [
           ...participants
             .filter((m): m is MentionableParticipant =>
@@ -1152,7 +1158,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     const input = parseInput(text);
     try {
       if (input.kind === 'command') {
-        const reply = await api.executeCommand(sessionId, channelId, input.name, input.args);
+        const reply = await api.executeCommand(sessionId, channelId, input.line);
         // An answer for the whole channel arrives on the stream instead.
         if (reply.output !== null) {
           const notice: Message = {
@@ -1187,8 +1193,17 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   };
 
   const selectCommand = (command: Command, handle?: string) => {
-    // The rest of the name typed, and the blanks after it - not a line break.
-    const rest = inputText.slice(caret).replace(/^\S*[^\S\n]*/, '');
+    // The rest of the name typed, and the blanks after it - not a line break: the rest of the word
+    // at the caret, and the words after it as long as the name goes on with them (issue 560).
+    let typed = inputText.slice(0, caret);
+    let rest = inputText.slice(caret);
+    for (let first = true; ; first = false) {
+      const word = /^\S*[^\S\n]*/.exec(rest)?.[0] ?? '';
+      const query = commandQueryAt(typed + word, (typed + word).length);
+      if (!word || (!first && (query === null || !completes(command, query.trimEnd())))) break;
+      typed += word;
+      rest = rest.slice(word.length);
+    }
     const inserted = handle ? `/${command.name} @${handle} ` : `/${command.name} `;
     const newCaret = inserted.length;
     setInputText(inserted + rest);

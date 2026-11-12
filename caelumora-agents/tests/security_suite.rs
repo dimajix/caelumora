@@ -67,10 +67,12 @@ use caelumora_domain::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemp
 use caelumora_domain::tool::{Tool, ToolParameters};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
+use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_domain::work::TurnId;
 use caelumora_domain::workspace::WorkspaceChoice;
 use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::channel::testing::as_command_error;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::project::ProjectSpec;
@@ -3878,7 +3880,8 @@ struct Commanded(Arc<Mutex<Vec<ActorId>>>);
 impl ProvidesCommands for Commanded {
     fn commands(&self) -> Vec<Command> {
         let command = |name: &str, owners_only| Command {
-            name: name.to_string(),
+            name: CommandName::new(name).unwrap(),
+            aliases: Vec::new(),
             description: String::new(),
             usage: None,
             owners_only,
@@ -3891,7 +3894,7 @@ impl ProvidesCommands for Commanded {
 impl AgentCommandProvider for Commanded {
     async fn execute(
         &self,
-        name: &str,
+        name: &CommandName,
         _args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
@@ -3944,6 +3947,83 @@ async fn with_a_commanded_agent(
     (world, session, main, seen, his)
 }
 
+/// `/participant list` (issue 560) tells bob alice's agent with the name of its personality, public
+/// as its introduction is (issue 244), asking nothing beyond reading the channel - nothing of the
+/// personality.
+#[tokio::test]
+async fn a_bystander_lists_an_agent_with_its_personality_but_reads_nothing_of_it() {
+    let (world, session, main, _, _) = with_a_commanded_agent().await;
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (reply, asked) = world.asked(bob.execute_command("participant list")).await;
+    let listed = reply.expect("his to read").output.expect("answered to him");
+    assert!(listed.contains("- helper (@helper), agent of commanded"), "{listed}");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+        ]),
+        "{asked:#?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/agent list` (issue 560) tells alice her agent taking part in the channel, and `/agent delete`
+/// deletes it: it rests in the channel, no longer among those taking part, until it is restored.
+#[tokio::test]
+async fn an_agent_taking_part_is_listed_and_deleted_by_command_and_rests() {
+    let (world, session, main, _, _) = with_a_commanded_agent().await;
+    let alice = main.user_actor(world.alice).unwrap();
+
+    let listed = alice.execute_command("agent list").await.unwrap().output.unwrap();
+    assert!(listed.contains("- helper (@helper), of commanded, in this channel"), "{listed}");
+    let reply = alice.execute_command("agent delete helper").await.expect("hers to delete");
+    assert_eq!(
+        reply.output.as_deref(),
+        Some("Deleted helper; it rests in the channels it took part in until it is restored.")
+    );
+    let taking_part = world.participants(world.alice, session.id(), main.id()).await;
+    assert!(taking_part.iter().all(|actor| actor.as_agent_id().is_none()), "{taking_part:?}");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// An agent taking part that bob may not read (issue 560) is not listed to him by `/agent list`,
+/// though it takes part, and `/agent delete` answers him as if there were no such agent.
+#[tokio::test]
+async fn an_agent_a_bystander_may_not_read_is_neither_listed_nor_deleted_by_him() {
+    let (world, session, main, _, _) = with_a_commanded_agent().await;
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (reply, asked) = world.asked(bob.execute_command("agent list")).await;
+    let listed = reply.expect("his to run").output.expect("answered to him");
+    assert_eq!(listed, "This session has no agents.", "alice's is not his to read");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: GetSession(alice's) yes",
+            // None lies in the session's scope; the one taking part he may not read.
+            "bob: List(agent) yes",
+            "bob: GetAgent(alice's) no",
+        ]),
+        "{asked:#?}"
+    );
+    let error = bob.execute_command("agent delete helper").await.expect_err("none he may read");
+    assert!(
+        matches!(
+            as_command_error(&error),
+            CommandError::InvalidArguments { reason, .. } if reason == "nobody 'helper' among the agents of this session"
+        ),
+        "{error}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
 /// A command of an agent (issue 269) is seen and asked for by whoever may
 /// write in the channel - bob, taking part -, unless it is for the agent's
 /// owners alone: `/seal` bob neither sees nor asks for, alice, the agent's
@@ -3957,7 +4037,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
 
     let ((sent, answer), asked) = world
         .asked(async {
-            let sent = bob.execute_command("mark", "@helper").await;
+            let sent = bob.execute_command("mark @helper").await;
             (sent, shown(&mut his, "CommandExecuted").await)
         })
         .await;
@@ -3977,7 +4057,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
         "what he sees, then the door asking whether he may ask for it"
     );
 
-    let refused = bob.execute_command("seal", "@helper").await.expect_err("not his");
+    let refused = bob.execute_command("seal @helper").await.expect_err("not his");
     assert!(
         matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "seal"),
         "unknown to him: {refused}"
@@ -3985,7 +4065,7 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
     let mut hers = main.user_actor(world.alice).unwrap().watch();
     main.user_actor(world.alice)
         .unwrap()
-        .execute_command("seal", "@helper")
+        .execute_command("seal @helper")
         .await
         .expect("hers, as its owner");
     assert!(
@@ -4003,7 +4083,7 @@ async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
     let (world, session, main, _, mut his) = with_a_commanded_agent().await;
     main.user_actor(world.bob)
         .unwrap()
-        .execute_command("mark", "@helper")
+        .execute_command("mark @helper")
         .await
         .expect("his to ask for");
     shown(&mut his, "CommandExecuted").await;
@@ -4058,7 +4138,7 @@ async fn an_agents_command_runs_for_its_owner_on_the_word_of_whoever_asked() {
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .execute_command("mark", "@helper")
+                .execute_command("mark @helper")
                 .await
                 .expect("his to ask for");
             shown(&mut his, "CommandExecuted").await;

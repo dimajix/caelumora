@@ -387,10 +387,12 @@ it is fetched anew as it starts.
     whoever may change the workspace's files.
 *   **Input.** A line starting with `/` is sent as a command, `//` as a literal slash. Typing `@`
     completes the participants' handles, `/` the commands the user may see - the channel's, and the
-    agents' with each handle that carries one out. An unsent draft survives a forced re-login. A
-    message can be sent while an agent answers: the agent hears it once its turn ends and answers in
-    a turn of its own, if asked to. `Enter` sends, `Shift+Enter` breaks the line. A user's message
-    is shown with its line breaks as typed, an agent's as Markdown.
+    agents' with each handle that carries one out - whose name or short form begins with what is
+    typed after the slash, its words too; the command chosen is put in by its name. An unsent draft
+    survives a forced re-login. A message can be sent while an agent answers: the agent hears it
+    once its turn ends and answers in a turn of its own, if asked to. `Enter` sends, `Shift+Enter`
+    breaks the line. A user's message is shown with its line breaks as typed, an agent's as
+    Markdown.
 *   **Attachments.** The paper clip beside the field, files dropped onto the chat and files pasted
     into the field attach them to the message being written. Each is uploaded at once, classified as
     the release picked as it is attached - a release picked later changes the text's label alone -,

@@ -193,16 +193,18 @@ users:
 #  format: json
 #  file: "local/server.log"
 
-# User commands every session has (`/help`, `/wakeup`, `/nudge`), as components; a
-# session template can add its own under `commands`. Without this section the
-# built-in ones are used; an empty list switches them off.
+# User commands every session has (`/help`, the groups `participant`, `agent` and
+# `channel`), as components; a session template can add its own under `commands`.
+# Without this section the built-in ones are used; an empty list switches them off.
 #commands:
 #  - id: help
 #    kind: help
-#  - id: wakeup
-#    kind: wakeup
-#  - id: nudge
-#    kind: nudge
+#  - id: participant
+#    kind: participant
+#  - id: agent
+#    kind: agent
+#  - id: channel
+#    kind: channel
 
 # Components that replace a built-in default for every personality that does
 # not configure its own (issue 99): of some facets an agent has exactly one -
