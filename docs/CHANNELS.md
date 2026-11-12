@@ -539,8 +539,9 @@ Who takes part in a channel and whether they may is one question, owned by `Part
 356), which the `Kernel` holds once for the instance with the services it is asked with: the
 agents' store, the controllers, the `AccessPolicy` and the `ConfidentialityPolicy`. It resolves a
 participant as a document names it into a `ResolvedParticipant` - what its actor is built from, and
-the place it takes part in - and answers whether it may run, join or leave, lie where it may and is
-cleared for the channel. The session and channel loops and the `SessionManager` ask it alike: when
+the place it takes part in -, which asks nothing, and answers whether it may run, join or leave, lie
+where it may and is cleared for the channel, each a question of its own that whoever needs it asks
+in its order. The session and channel loops and the `SessionManager` ask it alike: when
 a channel is created, restored or built, when someone is taken in or leaves or an agent comes back,
 and when a channel is reclassified.
 
@@ -556,9 +557,10 @@ themselves or their own agent, never someone else.
     for one who joins, the `Join` entries of the session and the channel, in their own context -,
     reading the one taken in - a user to know they exist, an agent so that nobody brings in an agent
     whose tools they may not use -, and whether they may take part in the channel: where an agent
-    lies, and their clearance, an agent's by its owner and its personality. Only the channel is
-    cleared for; joining the session as such asks no clearance, since each of its channels is read
-    by those cleared for it.
+    lies, and their clearance, an agent's by its owner and its personality. For one who joins,
+    whether the one taken in is theirs comes first, then the `Join` entries in their own context,
+    and only then anything else in their name. Only the channel is cleared for; joining the session
+    as such asks no clearance, since each of its channels is read by those cleared for it.
 *   **The session first, then the channel.** One the channel refuses after all stays in the session.
     Who is in the session already is added to a channel by whoever may change the channel alone.
 *   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
@@ -617,16 +619,18 @@ channel's, leaving is everyone's for themselves. Removing and leaving go out by 
 joining and founding come in by one.
 
 *   **Asked as joining is**: the one who leaves is whom the caller acts for, or their own agent
-    (`Participation::require_own_act`), and `LeaveChannel` is asked in their own context, an
-    agent's by its owner. The ownership policy allows it always - leaving takes nothing from anyone,
-    and who may not leave would be held in a conversation -; another policy may refuse it.
+    (`Participation::require_own_act`), before anything is asked in their name, and `LeaveChannel`
+    is asked in their own context, an agent's by its owner. The ownership policy allows it always -
+    leaving takes nothing from anyone, and who may not leave would be held in a conversation -;
+    another policy may refuse it.
 *   **Stored in the kernel's name**, as a join is, kept as removed by whoever left or took their
     agent out, and announced in their name. They stay in the session.
 *   **No rule for the owner or the last one**: the owner leaves as anyone does and keeps the
     channel, to add themselves back; the last one leaves, and the channel stays, empty.
 *   **Coming back** takes an entry granting `Join` that is not used up - for a role, a group or
     everyone - or whoever may change the channel: a personal invitation was used up as they came in.
-*   One that cannot be resolved or run - a deleted agent resting in the channel - cannot leave;
+*   **Whether it could run is not asked**: its owner takes out an agent whose personality was
+    withdrawn. One that no longer exists - a deleted agent resting in the channel - cannot leave;
     whoever may change the channel removes it.
 
 ### How much history a newcomer sees

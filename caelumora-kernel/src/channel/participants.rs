@@ -105,17 +105,19 @@ impl ChannelLoop {
 
     /// Takes `participant` into the channel, on behalf of `context`, seeing as much of the history
     /// as `history` grants, by the way `entry` says: joining is asked once the participant is
-    /// resolved. Stored first (also asked as `ConfidentialityPolicy::cleared`), then its actor
-    /// started (`start_participant`) - the addition rolled back if it cannot be, as the channel had
-    /// them before (`ChannelController::roll_back_participant_addition`) - and the join announced,
-    /// on the event bus and in the channel, in the name of `context`'s caller - who added them, or
-    /// who joined (issue 408). A participant removed shortly before is added only once its old
-    /// actor has ended (`left`, issue 171).
+    /// resolved, before anything in its name - whether it can run (`require_runnable`), where it
+    /// lies and whether it is cleared. Stored first (also asked as
+    /// `ConfidentialityPolicy::cleared`), then its actor started (`start_participant`) - the
+    /// addition rolled back if it cannot be, as the channel had them before
+    /// (`ChannelController::roll_back_participant_addition`) - and the join announced, on the event
+    /// bus and in the channel, in the name of `context`'s caller - who added them, or who joined
+    /// (issue 408). A participant removed shortly before is added only once its old actor has ended
+    /// (`left`, issue 171).
     ///
     /// # Errors
-    /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`,
-    /// `StillLeaving`, `NotCleared` or `Forbidden`; a `StoreError` if
-    /// `context` may not change the channel.
+    /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`, `StillLeaving`,
+    /// `NotCleared` or `Forbidden`; a `StoreError` if `context` may not change the channel,
+    /// `PermissionDenied` for an agent that cannot run.
     async fn take_in(
         &self,
         context: &SecurityContext,
@@ -137,7 +139,6 @@ impl ChannelLoop {
             .resolve(&found)
             .await?
             .ok_or(ChannelError::ParticipantGone { participant, channel: self.id })?;
-        self.participation.require_runnable(&resolved).await?;
         // Joining or founding was permitted; storing is the kernel's.
         let storing = match entry {
             Entry::Added => context.clone(),
@@ -156,6 +157,8 @@ impl ChannelLoop {
             }
             Entry::Founding => SecurityContext::system(),
         };
+        // Whose participant it is first, then anything in its name (issue 562).
+        self.participation.require_runnable(&resolved).await?;
         self.participation.require_admissible(&resolved, context, &self.classification())?;
 
         let from = match entry {
@@ -197,9 +200,10 @@ impl ChannelLoop {
     /// channel by their own act (issue 562), without the right to change it: leaving
     /// (`LeaveChannel`) is asked in the participant's own context, an agent's by its owner, as
     /// joining is (`join`). Stored in the kernel's name once leaving was permitted, kept as removed
-    /// by `context`'s caller; then as [`Self::let_go`] says. A participant that cannot be resolved
-    /// or run - a deleted agent resting in the channel, one whose personality is not its to read -
-    /// cannot leave: whoever may change the channel removes it.
+    /// by `context`'s caller; then as [`Self::let_go`] says. Whether it could run is not asked: an
+    /// agent whose personality was withdrawn is taken out by its owner. One that cannot be
+    /// resolved, a deleted agent resting in the channel, cannot leave: whoever may change the
+    /// channel removes it.
     ///
     /// # Errors
     /// `ChannelError::NotAParticipant`; `ChannelError::Forbidden` if they may not leave; what
@@ -252,7 +256,6 @@ impl ChannelLoop {
                 let Some(resolved) = self.resolve(&found).await? else {
                     return Err(refusal(leaving.refused()).into());
                 };
-                self.participation.require_runnable(&resolved).await?;
                 self.participation.require_own_act(&resolved, context, leaving, refusal).await?;
                 SecurityContext::system()
             }

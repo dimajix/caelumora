@@ -611,9 +611,10 @@ async fn joining_needs_an_entry_that_lets_one_join() {
     assert_eq!(asked, checks(&[
         "bob: JoinSession(alice's) yes",
         "bob: GetUser(system's) yes",
-        "bob: Cleared(bob) yes",
+        // Whose participant it is, and the entries, before anything in his name (issue 562).
         "bob: JoinSession(alice's) yes",
         "bob: JoinChannel(alice's) yes",
+        "bob: Cleared(bob) yes",
         "bob: JoinChannel(alice's) yes",
         "bob: Cleared(bob) yes",
     ]), "joining the session and the channel by the entries in his own name, and his clearance - stored in the kernel's");

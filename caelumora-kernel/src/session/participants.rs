@@ -96,10 +96,11 @@ impl SessionLoop {
     }
 
     /// Takes `actor` into the session on behalf of `context` - by their own act if `joining` -,
-    /// once it is asked whether they may take part in `channel` as well, if one is named
-    /// (`require_to_take_in`), and whether they may join it by themselves.
-    /// Whoever takes them in reads them first, a user to find out that they exist (issue 120).
-    /// The session announces it, and follows an agent taken in (`run`).
+    /// once it is asked whether they may join it, and `channel` if one is named, by themselves,
+    /// and then whether they can be taken in and take part in `channel` as well
+    /// (`require_to_take_in`): whose participant it is first, then anything in its name (issue
+    /// 562). Whoever takes them in reads them first, a user to find out that they exist (issue
+    /// 120). The session announces it, and follows an agent taken in (`run`).
     ///
     /// # Errors
     /// `SessionError::AlreadyParticipant`, `CannotTakeIn`; `StoreError::PermissionDenied` if they
@@ -131,7 +132,6 @@ impl SessionLoop {
             other => return Err(SessionError::CannotTakeIn(other).into()),
         };
         let resolved = self.resolve_to_take_in(&participant, channel).await?;
-        self.require_to_take_in(context, &resolved, channel).await?;
         // Joining was permitted; storing is the kernel's.
         let storing = match (in_session, joining) {
             (true, _) => None,
@@ -159,6 +159,8 @@ impl SessionLoop {
                 )
                 .await?;
         }
+        // Whose participant it is first, then anything in its name (issue 562).
+        self.require_to_take_in(context, &resolved, channel).await?;
         if let Some(storing) = storing {
             self.session_controller.add_participant(&storing, participant).await?;
             info!(session = %self.id, participant = %actor, by = %context.caller_id, "Taken into the session");

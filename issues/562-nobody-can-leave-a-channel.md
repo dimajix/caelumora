@@ -97,3 +97,16 @@ not part of this, and has no operation either.
   channel" and "Take out of channel". Resolving the one who leaves, as joining resolves, asks
   an agent's `GetPersonality` in its own name before it is known to be the caller's; one whose
   personality it may not read cannot leave, as one deleted.
+- **2026-11-12** — Decided with the maintainer, as step 3: `Participation::resolve` loads a
+  participant and asks nothing; whether it can run (`require_runnable`, `GetPersonality`) is asked
+  by whoever needs it, explicitly, as `require_admissible` and `require_own_act` are. Leaving then
+  asks only whether the participant is the caller's own and `LeaveChannel`, and an agent whose
+  personality was withdrawn is taken out by its owner; joining asks whether the participant is the
+  caller's own before anything in the participant's name. In two parts: first the cut, without a
+  change of behaviour; then the order of leaving and joining.
+
+  Step 3 done. 3a: `Participation::resolve` asks nothing, `require_runnable` is asked explicitly
+  where an actor is built or a participant admitted - the channel's build, `take_in`,
+  `follow_agents`, `require_admitted` and the session's `require_to_take_in`, split off
+  `resolve_to_take_in`. 3b: leaving asks no `require_runnable`; joining, in the channel and in the
+  session, asks `require_own_act` before `require_runnable` and the clearance.
