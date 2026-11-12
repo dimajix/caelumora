@@ -208,6 +208,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [503](503-bus-asks-every-stream.md) | done | The event bus decides every event for every open stream of `GET /events` by a full policy check, reading a group from the store each time, so its cost grows with events times streams although an event reaches only a few of them. |
 | [511](511-permission-checks-again-column-inconsistent.md) | done | The column *Again* of the tables in `docs/PERMISSION-CHECKS.md` names `ReadDeleted` asked twice by the store in some rows - the restoring of a session, the purge of a project - and leaves it out in others where the code asks it as often - the restoring of a project, the purge of a session or a workspace -, so the column cannot be read as the list of what is asked again. |
 | [549](549-kernel-takes-an-agents-word-on-a-content-reference.md) | open | `ActorRuntime::load_attachments` and `copy_attachment` take a `ContentRef` from the agent side and act on its key and its label, although a library of the agent side is trusted for nothing, so that it can read content of another channel or copy an attachment under a lower label. |
+| [559](559-labels-of-what-an-agent-writes-are-its-word.md) | open | The kernel bounds what the agent side writes only by the place it writes to; below that, the labels of its messages, of the content it keeps and of what it stages are the word of a library that is trusted for nothing, so that a misbehaving one can put what it read under a lower label. |
 
 ## Audit
 
