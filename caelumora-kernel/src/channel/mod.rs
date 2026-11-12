@@ -12,6 +12,7 @@ pub mod testing;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use participants::named;
 pub(crate) use participation::{Participation, ResolvedKind, ResolvedParticipant};
 
 use crate::actor::approval::ApproverActor;

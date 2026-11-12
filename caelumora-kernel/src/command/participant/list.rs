@@ -1,5 +1,6 @@
 //! The built-in `/participant list` command (issue 560).
 
+use super::taking_part;
 use crate::command::{command_error, CommandContext};
 use anyhow::Error;
 use caelumora_api::command::{CommandError, CommandResult};
@@ -34,16 +35,8 @@ pub(super) async fn execute(
             reason: "it takes no arguments".to_string(),
         });
     }
-    let (session, views) = context.session_loop(LIST_COMMAND_NAME)?;
-    let channel = views
-        .session(session.id())
-        .await
-        .map_err(|e| failed(e.into()))?
-        .channel(context.channel.id())
-        .await
-        .map_err(|e| failed(e.into()))?;
     let mut text = String::from("Taking part in this channel:\n\n");
-    for participant in channel.participants().await {
+    for participant in taking_part(LIST_COMMAND_NAME, context).await? {
         let name = participant.name().unwrap_or("someone who no longer exists");
         let handle = participant.handle().map(|h| format!(" (@{h})")).unwrap_or_default();
         let kind = match participant.id() {

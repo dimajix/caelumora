@@ -87,7 +87,7 @@ the command does is checked on its own as well: `/agent wakeup` asks for `WakeCh
 `/participant nudge` asks nothing more: it asks someone to respond, as an `@`-mention does, which
 asks nothing of the policy either. `/participant add` asks what taking someone in asks
 (`SessionLoop::add_participant`: `UpdateSession` unless they are in the session already,
-`UpdateChannel`), `/participant remove` what taking someone out of the channel asks
+`UpdateChannel`), `/participant remove` what reading the channel and taking someone out of it ask
 (`ChannelLoop::remove_participant`: `UpdateChannel`), and `/agent create` what making an agent asks
 (`AgentManager::create`), so whoever reads the channel sees them, and those without the right are
 refused on running them. `/participant list` asks what reading the channel asks, as its view does.
@@ -106,11 +106,14 @@ issuer alone is routed to them alone.
 
 ### Naming an agent
 
-Every command that names someone taking part in the channel names agents and participants alike
-(`ChannelLoop::agents_named`, `participants_named`). The text is taken as a name first, compared as
-names are; only if it is nobody's name is it taken as a handle, with or without its `@`, normalised
-as a mention is. A handle is coarser than a name, so it can name several; a command then refuses
-with their names rather than picking one.
+Every command that names someone taking part in the channel names agents and participants alike, by
+one rule (`channel::named`, `ChannelLoop::agents_named`). The text is taken as a name first,
+compared as names are; only if it is nobody's name is it taken as a handle, with or without its `@`,
+normalised as a mention is. A handle is coarser than a name, so it can name several; a command then
+refuses with their names rather than picking one. What it is sought among is the command's: `/agent
+wakeup` and `/participant nudge` act on an actor, and seek among those running; `/participant
+remove` seeks among those `/participant list` lists, as the issuer reads the channel, so that it
+also removes one that cannot run - but one that no longer exists, which has no name to be named by.
 
 Who is to be brought into the channel does not take part in it yet, so `/participant add` looks
 further, by the whole name (`SessionView::candidates`, issue

@@ -36,7 +36,8 @@ pub(super) async fn execute(
     if wanted.is_empty() {
         return Err(invalid("name who is to respond"));
     }
-    let participant = named_participant(NUDGE_COMMAND_NAME, wanted, context.channel)?;
+    let participant =
+        named_participant(NUDGE_COMMAND_NAME, wanted, context.channel.participants())?;
     match context.issuer.request_response(participant.id).await {
         Ok(_) => Ok(CommandOutput::private(format!("Asked {} to respond.", participant.name))),
         Err(e) => match e.downcast_ref::<ChannelError>() {

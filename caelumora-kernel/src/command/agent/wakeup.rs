@@ -42,7 +42,8 @@ pub(super) async fn execute(
     }
 
     // Anyone taking part, as `/participant nudge` takes them; only an agent sleeps.
-    let participant = named_participant(WAKEUP_COMMAND_NAME, wanted, context.channel)?;
+    let participant =
+        named_participant(WAKEUP_COMMAND_NAME, wanted, context.channel.participants())?;
     let was_asleep = context
         .channel
         .wakeup_actor(&context.issuer.security_context(), participant.id)

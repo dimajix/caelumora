@@ -4733,7 +4733,11 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
         checks(&[
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
-            // Removing, as the store asks it.
+            // Whom he names, among those he reads taking part, as `/participant list` ...
+            "bob: GetSession(alice's) yes",
+            "bob: GetChannel(alice's) yes",
+            "bob: JoinChannel(bob) yes",
+            // ... then removing, as the store asks it.
             "bob: GetChannel(alice's) yes",
             "bob: JoinChannel(bob) yes",
             "bob: UpdateChannel(alice's) no",
@@ -4748,6 +4752,9 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
         checks(&[
             "alice: ShowCommand(alice's) yes",
             "alice: ExecuteCommand(alice's) yes",
+            "alice: GetSession(alice's) yes",
+            "alice: GetChannel(alice's) yes",
+            "alice: JoinChannel(alice) yes",
             "alice: GetChannel(alice's) yes",
             "alice: JoinChannel(alice) yes",
             "alice: UpdateChannel(alice's) yes",

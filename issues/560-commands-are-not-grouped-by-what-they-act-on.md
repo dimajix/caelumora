@@ -239,3 +239,14 @@ issue of the terminal.
 
   Step 2 done: `/participant list` (through `ChannelView::participants`, in the issuer's name) and
   `/participant remove`; the security suite covers what both ask.
+- **2026-11-12** — Decided with the maintainer on the review of step 2: `participant remove` seeks
+  whom it removes among those `participant list` lists, as the issuer reads the channel, so that it
+  also removes a participant that cannot run; and the commands reach the channel's session and the
+  issuer's views of it in one place. Done in two steps:
+  1. Without a change of behaviour: `CommandContext::session_loop`, the session with the views in
+     the issuer's name, for `participant add`, `participant list` and `agent create`; what they
+     do in the issuer's name is asked in the views' context.
+  2. The rule by which a text names a participant is `channel::named`, over the participants it is
+     given; `named_participant` takes them, and `ChannelLoop::participants_named` is gone.
+     `agent wakeup` and `participant nudge` give the actors running, `participant list` and
+     `participant remove` those the issuer reads taking part (`taking_part`).

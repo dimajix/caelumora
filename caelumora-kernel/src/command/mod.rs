@@ -18,7 +18,7 @@ pub mod help;
 pub(crate) mod participant;
 
 use crate::actor::user::UserActor;
-use crate::channel::{ChannelLoop, ChannelParticipant};
+use crate::channel::{named, ChannelLoop, ChannelParticipant};
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
 use crate::session::SessionLoop;
@@ -202,28 +202,26 @@ impl CommandExecutor {
     }
 }
 
-/// The participant of `channel` - agent, user or any other actor - that the
-/// argument `wanted` of the command `command` names
-/// (`ChannelLoop::participants_named`, issues 277, 278): the one way the
-/// commands of the channel that take someone, `/wakeup` and `/nudge`, find
-/// them and word that they did not.
+/// The one of `participants` - agents, users or any other actors taking part - that the argument
+/// `wanted` of the command `command` names (`channel::named`, issues 277, 278): the one way the
+/// commands of the channel that take someone - `/agent wakeup`, `/participant nudge` among the
+/// actors running, `/participant remove` among those the issuer reads taking part - find them and
+/// word that they did not.
 ///
 /// # Errors
-/// `CommandError::InvalidArguments` naming the handles of the participants,
-/// if `wanted` names none, or those it names, if it names several: nobody
-/// is picked.
+/// `CommandError::InvalidArguments` naming the handles of `participants`, if `wanted` names none,
+/// or those it names, if it names several: nobody is picked.
 pub(crate) fn named_participant(
     command: &str,
     wanted: &str,
-    channel: &ChannelLoop,
+    participants: Vec<ChannelParticipant>,
 ) -> CommandResult<ChannelParticipant> {
     let invalid =
         |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
-    match channel.participants_named(wanted).as_slice() {
+    match named(participants.clone(), wanted).as_slice() {
         [one] => Ok(one.clone()),
         [] => {
-            let mut handles: Vec<String> = channel
-                .participants()
+            let mut handles: Vec<String> = participants
                 .into_iter()
                 .filter_map(|m| m.handle)
                 .map(|h| format!("@{h}"))
