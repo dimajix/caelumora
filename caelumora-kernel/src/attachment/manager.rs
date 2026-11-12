@@ -176,12 +176,12 @@ impl AttachmentManager {
     /// the moment they are kept, and the channel admits what lies in its key space (`lies_in`);
     /// so it is a way of creating of its own, apart from `create`, whose uploads wait. Each is kept
     /// byte for byte, whatever it is, labelled as its first bytes say (`content::media_type`), and
-    /// there are at most as many as a message may carry attachments - checked before any is kept.
-    /// All are kept or none: what was kept before one failed is removed again
-    /// (`roll_back_content`). What is kept is remembered for its caller (`kept_content`).
+    /// what is checked of them is checked before any is kept (`admit_files`, `storage_for`). All
+    /// are kept or none: what was kept before one failed is removed again (`roll_back_content`).
+    /// What is kept is remembered for its caller (`kept_content`).
     ///
     /// # Errors
-    /// As `create`; `TooMany` for more than a message may carry.
+    /// As `admit_files` and `storage_for`; `Content` for a storage that failed.
     pub async fn create_content(
         &self,
         ctx: &SecurityContext,
@@ -189,19 +189,17 @@ impl AttachmentManager {
         classification: Classification,
         files: Vec<ToolContent>,
     ) -> AttachmentResult<Vec<ContentRef>> {
-        let by = uploader(ctx, channel)?;
-        if files.len() > self.max_per_message {
-            return Err(AttachmentError::TooMany(self.max_per_message));
-        }
+        let by = self.admit_files(ctx, channel, &files)?;
+        let storage = self.storage_for(ctx, channel, &classification)?;
         let files = files
             .into_iter()
             .map(|ToolContent { name, bytes }| {
+                // A file's name, as admitted.
                 let name = FileName::new(&name)?;
                 let media_type = content::media_type(&bytes[..bytes.len().min(HEAD)]);
                 Ok((name, media_type, bytes))
             })
             .collect::<AttachmentResult<Vec<_>>>()?;
-        let storage = self.storage_for(ctx, channel, &classification)?;
         self.forget_expired().await;
 
         let mut kept = Vec::with_capacity(files.len());
@@ -229,6 +227,46 @@ impl AttachmentManager {
         drop(remembered);
         debug!(channel = %channel.id, by = %by, count = kept.len(), "Content of a tool kept");
         Ok(kept)
+    }
+
+    /// Whether `create_content` would keep `files` for the caller of `ctx` in `channel`, classified
+    /// `classification` (issue 553): what it checks before it keeps anything (`admit_files`,
+    /// `storage_for`), keeping nothing. A yes holds but for a storage that fails.
+    pub fn can_keep_content(
+        &self,
+        ctx: &SecurityContext,
+        channel: &Channel,
+        classification: &Classification,
+        files: &[ToolContent],
+    ) -> bool {
+        self.admit_files(ctx, channel, files).is_ok()
+            && self.storage_for(ctx, channel, classification).is_ok()
+    }
+
+    /// Who keeps `files` for the caller of `ctx` in `channel`, as `create_content` checks them
+    /// before it keeps any: a participant of it, with at most as many as a message may carry
+    /// attachments, each named as a file and of at most `max_bytes`.
+    ///
+    /// # Errors
+    /// `NotAParticipant`, `TooMany`, `Invalid` for a name that is none, `Content` for content too
+    /// large.
+    fn admit_files(
+        &self,
+        ctx: &SecurityContext,
+        channel: &Channel,
+        files: &[ToolContent],
+    ) -> AttachmentResult<ActorId> {
+        let by = uploader(ctx, channel)?;
+        if files.len() > self.max_per_message {
+            return Err(AttachmentError::TooMany(self.max_per_message));
+        }
+        for file in files {
+            FileName::new(&file.name)?;
+            if file.bytes.len() as u64 > self.max_bytes {
+                return Err(ContentError::TooLarge { limit: self.max_bytes }.into());
+            }
+        }
+        Ok(by)
     }
 
     /// What `create_content` kept as `id` for `by` in `channel`: the reference the kernel made, for
@@ -801,8 +839,14 @@ mod tests {
             "waiting for no message: its result refers to it"
         );
         let before = kept();
+        assert!(
+            attachments.can_keep_content(&hers, &main, &classification, &[png("a.png")]),
+            "what is kept, it can keep (issue 553)"
+        );
 
+        // Each refused as it is kept, and so whether it can be (issue 553), before any is kept.
         let many = vec![png("a.png"); AttachmentsConfig::default().max_per_message + 1];
+        assert!(!attachments.can_keep_content(&hers, &main, &classification, &many));
         assert!(matches!(
             attachments.create_content(&hers, &main, classification.clone(), many).await,
             Err(AttachmentError::TooMany(_))
@@ -811,20 +855,50 @@ mod tests {
         huge.resize(usize::try_from(AttachmentsConfig::default().max_bytes).unwrap() + 1, 0);
         let huge = ToolContent { name: "huge.png".to_string(), bytes: Bytes::from(huge) };
         let too_large = vec![png("a.png"), huge];
+        assert!(!attachments.can_keep_content(&hers, &main, &classification, &too_large));
         assert!(matches!(
             attachments.create_content(&hers, &main, classification.clone(), too_large).await,
             Err(AttachmentError::Content(ContentError::TooLarge { .. }))
         ));
-        assert_eq!(kept(), before, "all or none: what was kept before one failed is gone again");
+        let unnamed = vec![png("a.png"), given("../a.txt", b"a")];
+        assert!(!attachments.can_keep_content(&hers, &main, &classification, &unnamed));
+        assert!(matches!(
+            attachments.create_content(&hers, &main, classification.clone(), unnamed).await,
+            Err(AttachmentError::Invalid(_))
+        ));
         let above = Classification::general(Confidentiality::StrictlyConfidential);
+        assert!(!attachments.can_keep_content(&hers, &main, &above, &[png("a.png")]));
         assert!(matches!(
             attachments.create_content(&hers, &main, above, vec![png("a.png")]).await,
             Err(AttachmentError::ClassificationRefused)
         ));
         let bobs = World::as_user(UserId::new());
+        assert!(!attachments.can_keep_content(&bobs, &main, &classification, &[png("a.png")]));
         assert!(matches!(
             attachments.create_content(&bobs, &main, classification, vec![png("a.png")]).await,
             Err(AttachmentError::NotAParticipant(_))
+        ));
+        assert_eq!(kept(), before, "all or none: nothing of what was refused is kept");
+    }
+
+    /// Issue 553: where no storage is configured, nothing can be kept, as nothing is.
+    #[tokio::test]
+    async fn without_a_storage_nothing_can_be_kept() {
+        let world = World::new().await;
+        let session = world.shared_session(&[], &[]).await;
+        let main = main_of(&session);
+        let hers = World::as_user(world.alice);
+        let config = AttachmentsConfig { keep_in: None, ..AttachmentsConfig::default() };
+        let storages = Arc::new(NamedBackends::default());
+        let confidentiality = Arc::clone(world.kernel.confidentiality());
+        let attachments = AttachmentManager::new(confidentiality, storages, &config).unwrap();
+
+        assert!(!attachments.can_keep_content(&hers, &main, &main.classification, &[png("a")]));
+        assert!(matches!(
+            attachments
+                .create_content(&hers, &main, main.classification.clone(), vec![png("a")])
+                .await,
+            Err(AttachmentError::NotConfigured)
         ));
     }
 

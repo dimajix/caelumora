@@ -275,6 +275,18 @@ impl ActorRuntime for AgentRuntime {
         attachments.create_content(context, &channel, classification, files).await
     }
 
+    fn can_keep_content(
+        &self,
+        initiator: ActorId,
+        classification: &Classification,
+        files: &[ToolContent],
+    ) -> bool {
+        let context = &self.acting_for(initiator);
+        let channel = self.participant.channel();
+        let attachments = self.kernel.attachment_manager();
+        attachments.can_keep_content(context, &channel, classification, files)
+    }
+
     async fn copy_attachment(
         &self,
         initiator: ActorId,

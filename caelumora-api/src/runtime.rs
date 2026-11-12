@@ -140,6 +140,16 @@ pub trait ActorRuntime: Send + Sync + Debug {
         files: Vec<ToolContent>,
     ) -> AttachmentResult<Vec<ContentRef>>;
 
+    /// Whether `create_content` would keep `files`, what a tool gives for a call the agent makes
+    /// for `initiator`, classified `classification` (issue 553): for what a tool keeps only where
+    /// it can. A yes holds but for a storage that fails.
+    fn can_keep_content(
+        &self,
+        initiator: ActorId,
+        classification: &Classification,
+        files: &[ToolContent],
+    ) -> bool;
+
     /// The attachment `id` of message `message` in the agent's channel, as its work for
     /// `initiator` reads it there at `classification`, copied for a message the agent will say
     /// there (issues 282, 549): named, not handed over, so that the copy has the content and the

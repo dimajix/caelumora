@@ -56,7 +56,7 @@ use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::note::NoteChange;
 use caelumora_domain::prompt_catalogue::PromptError;
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::{Tool, ToolContent};
 use caelumora_domain::turn::{StagedChange, TurnState};
 use caelumora_domain::work::TurnId;
 #[cfg(test)]
@@ -158,6 +158,12 @@ impl<'a> Turn<'a> {
     ) -> ViewResult<ContentRef> {
         let (initiator, within) = (self.situation().initiator(), self.situation().classification());
         self.runtime.copy_attachment(initiator, within, message, id).await
+    }
+
+    /// Whether `files`, what a tool gives, classified `classification`, would be kept in the
+    /// turn's name (`ActorRuntime::can_keep_content`, issue 553).
+    pub fn can_keep_content(&self, classification: &Classification, files: &[ToolContent]) -> bool {
+        self.runtime.can_keep_content(self.situation().initiator(), classification, files)
     }
 
     /// Whether a note of the agent in its channel, public or private, may be reclassified, in the

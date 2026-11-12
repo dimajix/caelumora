@@ -34,7 +34,8 @@ struct WebFetchParams {
     #[serde(default)]
     description: Option<String>,
     /// From how many bytes of its text on a page is kept whole, and a preview given in its stead;
-    /// left out, no page is (issue 547).
+    /// left out, no text is (issue 547). The original of an HTML page is kept either way, where it
+    /// can be (issue 553).
     #[serde(default)]
     keep_whole_above_bytes: Option<KeepWholeAbove>,
 }

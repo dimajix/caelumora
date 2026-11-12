@@ -2,7 +2,8 @@
 //! page of the web by its URL and gives it as text, a page at a time (`page_of`, issue 282), public
 //! as anything anyone can fetch. A rule derived from a call is about the pages of its host, not the
 //! one page (`ToolProvider::matcher`). A page above the component's threshold is kept whole beside
-//! a preview of it (issue 547).
+//! a preview of it (issue 547); of an HTML page asked for whole, its body as it came is kept beside
+//! its result too, wherever the turn can keep it (issue 553).
 
 use super::client::{FetchError, Refusal};
 use super::{WebFetchComponent, WEB_FETCH_KIND};
@@ -123,31 +124,44 @@ impl ToolProvider for WebFetchComponent {
         name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        _turn: &mut Turn,
+        turn: &mut Turn,
     ) -> ToolResult<ToolOutput> {
         if name != FETCH_PAGE {
             return Err(ToolError::UnknownTool(name.to_string()));
         }
         let Fetch { url, start_line, start_offset, line_count } = arguments(params)?;
         let page = self.client.fetch(&url).await?;
+        // What a page is classified, and so what is kept of it, as the executor keeps it.
+        let classification = Classification::PUBLIC;
         let whole_asked = start_line.is_none() && start_offset.is_none() && line_count.is_none();
         let kept = whole_asked && self.keep_whole_above.is_some_and(|a| a.keeps(&page.text));
+        let host = page.url.host_str().unwrap_or("page");
+        let mut files = Vec::new();
+        if kept {
+            let name = format!("{host}.txt");
+            files.push(ToolContent { name, bytes: page.text.clone().into() });
+        }
+        // Kept without anyone asking, so only where it would be, with what else is kept (issue
+        // 553); a part is asked for only once the page was fetched whole.
+        if let Some(original) = page.original.filter(|_| whole_asked) {
+            files.push(ToolContent { name: format!("{host}.html"), bytes: original.into() });
+            if !turn.can_keep_content(&classification, &files) {
+                files.pop();
+            }
+        }
         let mut output = if kept {
-            let name = format!("{}.txt", page.url.host_str().unwrap_or("page"));
-            let files = vec![ToolContent { name, bytes: page.text.clone().into() }];
             ToolOutput::kept(Some(&page.text), files, &self.prompts)
         } else {
             let shown = format!("'{}'", redact_endpoint(page.url.as_str()));
             let start = TextPosition::asked(start_line, start_offset);
-            page_of(&page.text, &shown, start, line_count, MAX_PAGE_BYTES)?
-                .value(&self.prompts)
-                .into()
+            let output = page_of(&page.text, &shown, start, line_count, MAX_PAGE_BYTES)?;
+            ToolOutput { files, ..output.value(&self.prompts).into() }
         };
         output.value["url"] = json!(page.url.as_str());
         if let Some(title) = page.title {
             output.value["title"] = json!(title);
         }
-        Ok(ToolOutput { classification: Some(Classification::PUBLIC), ..output })
+        Ok(ToolOutput { classification: Some(classification), ..output })
     }
 
     /// The calls that fetch a page of the same host; as the parameters tell for any other.
@@ -170,7 +184,8 @@ mod tests {
     use axum::Router;
     use caelumora_agents::library::AgentsLibrary;
     use caelumora_agents::testing::{
-        calling, detached_actor_runtime, register_scripted, saying, ONCE_MODEL_KIND,
+        calling, detached_actor_runtime, register_scripted, saying, turn, world as agents_world,
+        ONCE_MODEL_KIND,
     };
     use caelumora_agents::tool::{ApprovalMode, KeepWholeAbove};
     use caelumora_api::component::{ComponentFacets, ComponentKind};
@@ -220,15 +235,50 @@ mod tests {
         component.execute(FETCH_PAGE, &params, None, &mut turn).await
     }
 
-    /// A server of the test on the host itself, with a page of three paragraphs, a text of one
-    /// line longer than a part, and such a text that begins with a control character; its port.
+    /// What `component` gives for each call of `fetch_page` with one of `calls`, each fetched, in a
+    /// turn of an agent in a running session, which can keep what a tool gives.
+    async fn fetched_keeping(component: &WebFetchComponent, calls: &[Value]) -> Vec<ToolOutput> {
+        fetched_in(agents_world().await, component, calls).await
+    }
+
+    /// What `component` gives for each call of `fetch_page` with one of `calls`, each fetched, in a
+    /// turn of an agent in a running session of `world`.
+    async fn fetched_in(
+        world: World,
+        component: &WebFetchComponent,
+        calls: &[Value],
+    ) -> Vec<ToolOutput> {
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let mut outputs = Vec::new();
+        for params in calls {
+            let mut state = AgentChannelState::default();
+            let mut turn = turn(&session, helper, world.alice, &mut state);
+            let output = component.execute(FETCH_PAGE, params, None, &mut turn).await;
+            outputs.push(output.expect("fetched"));
+        }
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+        outputs
+    }
+
+    /// The page of three paragraphs the server of the test gives at `/page`.
+    const PAGE: &str = "<title>Three</title><p>one</p><p>two</p><p>three</p>";
+
+    /// A server of the test on the host itself, with a page of three paragraphs (`PAGE`), a text of
+    /// one line longer than a part, such a text that begins with a control character, and a page of
+    /// HTML whose text is longer than a part; its port.
     async fn server() -> u16 {
-        let page = "<title>Three</title><p>one</p><p>two</p><p>three</p>";
         let long = "x".repeat(MAX_PAGE_BYTES + 1);
         let controls = format!("\u{1}{}", "x".repeat(MAX_PAGE_BYTES));
+        let long_html = format!("<p>{long}</p>");
         let router = Router::new()
-            .route("/page", get(move || async move { ([("content-type", "text/html")], page) }))
+            .route("/page", get(move || async move { ([("content-type", "text/html")], PAGE) }))
             .route("/long", get(move || async move { ([("content-type", "text/plain")], long) }))
+            .route(
+                "/long.html",
+                get(move || async move { ([("content-type", "text/html")], long_html) }),
+            )
             .route(
                 "/controls",
                 get(move || async move { ([("content-type", "text/plain")], controls) }),
@@ -312,15 +362,70 @@ mod tests {
         assert_eq!(kept.bytes[0], 1, "a control character is kept as any other");
     }
 
-    /// A page kept is offered and found in the next step of the very turn that fetched it, though
-    /// the transcript numbered no attachment as the turn began.
+    /// Issue 553: of a page of HTML asked for whole, its body as it came is kept beside its result
+    /// where the turn can keep it - beside its text kept whole too, above the threshold -, and
+    /// nothing of a part asked for, of a text, or where nothing can be kept.
     #[tokio::test]
-    async fn a_page_kept_is_read_in_the_next_step_of_the_turn_that_fetched_it() {
+    async fn the_original_of_an_html_page_asked_whole_is_kept_where_it_can_be() {
         let port = server().await;
-        let url = format!("http://localhost:{port}/long");
+        let page = json!({ "url": format!("http://localhost:{port}/page") });
+        let part = json!({ "url": format!("http://localhost:{port}/page"), "start_line": 1 });
+        let text = json!({ "url": format!("http://localhost:{port}/long") });
+        let outputs = fetched_keeping(&component(), &[page.clone(), part, text]).await;
+        let [whole, part, text] = outputs.as_slice() else { panic!("three: {outputs:?}") };
+        let [original] = whole.files.as_slice() else { panic!("one file: {:?}", whole.files) };
+        assert_eq!(original.name, "localhost.html");
+        assert_eq!(original.bytes, PAGE.as_bytes(), "byte for byte");
+        assert_eq!(whole.value["content"], json!("one\n\ntwo\n\nthree"), "given as before");
+        assert!(part.files.is_empty(), "a part asked for: {:?}", part.files);
+        assert!(text.files.is_empty(), "a text is its own original: {:?}", text.files);
+
+        let nowhere = fetched(&component(), page).await.unwrap();
+        assert!(nowhere.files.is_empty(), "where nothing can be kept: {:?}", nowhere.files);
+        assert_eq!(
+            nowhere.value["content"],
+            json!("one\n\ntwo\n\nthree"),
+            "and fetched all the same"
+        );
+
+        let long = json!({ "url": format!("http://localhost:{port}/long.html") });
+        let outputs = fetched_keeping(&keeping(), &[long]).await;
+        let [kept] = outputs.as_slice() else { panic!("one: {outputs:?}") };
+        let names: Vec<&str> = kept.files.iter().map(|file| file.name.as_str()).collect();
+        assert_eq!(names, ["localhost.txt", "localhost.html"], "its text and its original");
+        assert!(kept.value["next"].as_str().unwrap().contains("attachments"), "{}", kept.value);
+    }
+
+    /// Issue 553: where the original would not be kept with the text kept whole - a message carries
+    /// only one attachment -, the original is left out, not the call failed.
+    #[tokio::test]
+    async fn the_original_is_left_out_where_it_would_not_be_kept_with_the_text() {
+        let port = server().await;
+        let world = World::configured(
+            &[],
+            &[&AgentsLibrary],
+            |_| {},
+            |config| {
+                config.attachments.max_per_message = 1;
+            },
+        )
+        .await;
+        let long = json!({ "url": format!("http://localhost:{port}/long.html") });
+        let outputs = fetched_in(world, &keeping(), &[long]).await;
+        let [kept] = outputs.as_slice() else { panic!("one: {outputs:?}") };
+        let names: Vec<&str> = kept.files.iter().map(|file| file.name.as_str()).collect();
+        assert_eq!(names, ["localhost.txt"], "the text alone");
+    }
+
+    /// What `read_attachment` called with `read` gives in the next step of the very turn that
+    /// fetched the page at `path` of `server` with the component `keeping`, though the transcript
+    /// numbered no attachment as the turn began: its status and its content.
+    async fn read_after_fetching(path: &str, read: Value) -> (ToolResultStatus, String) {
+        let port = server().await;
+        let url = format!("http://localhost:{port}{path}");
         let answers = vec![
             calling("fetch_page", json!({ "url": url })),
-            calling("read_attachment", json!({ "ref": "a1", "start_offset": MAX_PAGE_BYTES })),
+            calling("read_attachment", read),
             saying("read"),
         ];
         let world = World::with(&[], &[&AgentsLibrary, &AttachmentToolLibrary], |registry| {
@@ -374,9 +479,27 @@ mod tests {
         })
         .await
         .expect("the attachment is read");
-        assert_eq!(read.0, ToolResultStatus::Ok, "{}", read.1);
-        assert!(read.1.contains(r#""content":"x""#), "the end of the page kept: {}", read.1);
         world.manager.stop(&alice, session.id()).await.unwrap();
+        read
+    }
+
+    #[tokio::test]
+    async fn a_page_kept_is_read_in_the_next_step_of_the_turn_that_fetched_it() {
+        let read = json!({ "ref": "a1", "start_offset": MAX_PAGE_BYTES });
+        let (status, content) = read_after_fetching("/long", read).await;
+        assert_eq!(status, ToolResultStatus::Ok, "{content}");
+        assert!(content.contains(r#""content":"x""#), "the end of the page kept: {content}");
+    }
+
+    /// Issue 553: the original of an HTML page is kept through the executor, and read as it came.
+    #[tokio::test]
+    async fn the_original_of_a_page_is_read_in_the_next_step_of_the_turn_that_fetched_it() {
+        let (status, content) = read_after_fetching("/page", json!({ "ref": "a1" })).await;
+        assert_eq!(status, ToolResultStatus::Ok, "{content}");
+        assert!(
+            content.contains("<title>Three</title><p>one</p>"),
+            "the HTML as it came: {content}"
+        );
     }
 
     #[tokio::test]

@@ -1413,7 +1413,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
 
 /// M4: what a tool gave its model (issue 512) is kept in the name of whoever made the call, a
 /// participant of the channel, asked of the flow alone as an upload is; for a stranger nothing is
-/// kept, asking nothing.
+/// kept, asking nothing. Whether it can be kept is asked alike (issue 553).
 #[tokio::test]
 async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     use bytes::Bytes;
@@ -1449,6 +1449,19 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
     let (refused, asked) = world.asked(keep(world.carol)).await;
     assert!(matches!(refused, Err(AttachmentError::NotAParticipant(_))), "{refused:?}");
     assert!(asked.is_empty(), "asking nothing: {asked:?}");
+
+    // Whether it can be kept (issue 553): asked as keeping asks, keeping nothing.
+    let before = world.attachments_kept().len();
+    let can_keep = |user: UserId| {
+        let context = World::as_user(user);
+        attachments.can_keep_content(&context, &channel, &channel.classification, &drawn())
+    };
+    let (hers, asked) = world.asked(async { can_keep(world.alice) }).await;
+    assert!(hers, "hers, as she takes part");
+    assert_eq!(asked, checks(&["alice: Publish yes"]), "as keeping asks");
+    let (strangers, asked) = world.asked(async { can_keep(world.carol) }).await;
+    assert!(!strangers && asked.is_empty(), "not a stranger's, asking nothing: {asked:?}");
+    assert_eq!(world.attachments_kept().len(), before, "nothing kept");
 
     // Before the channel has recorded the message of the result (issue 547).
     let kept = keep(world.alice).await.unwrap().remove(0);

@@ -196,6 +196,13 @@ A text above a bound its component is configured with (`keep_whole_above_bytes`,
 is kept this way, beside a preview of 4 KiB whose `next` says how the whole is read
 (`ToolOutput::kept`).
 
+What cannot be kept fails the call, after the tool acted. So a tool that keeps something nobody
+configured it to keep - the original of a page fetched - asks first whether its turn would keep
+it with the files it hands over anyway (`Turn::can_keep_content`): what `create_content` checks
+before it keeps anything - the caller, the number of files, their names and sizes, the
+classification and the storage -, keeping nothing. Where the answer is no, it hands the file not
+over, and the call goes on as if it had none. A yes holds but for a storage that fails.
+
 What a tool gave is seen, not said: the model is given an image with the result as it is given an
 attachment - anything else is reached with the tools for [attachments](#attachments) -, each
 numbered as one and noted after the result's text - its number, name, type and whether it is given
@@ -314,8 +321,13 @@ URL, with the tool `fetch_page`:
     a text the tool gives its model ([content](#content-a-tool-gives-its-model)), named after the
     page's host. Its result is then a preview of 4 KiB, whose `next` says that the whole is kept and
     is reached with the tools for [attachments](#attachments). So a long page is fetched once and
-    read as it was. Whoever sets it gives the agent `attachments` too.
-    Without it, nothing is kept; a storage of content that is missing fails the call.
+    read as it was. Whoever sets it gives the agent `attachments` too, and a storage of content
+    that is missing fails the call. Of a page of HTML asked for whole, whatever its size, the body
+    as the server sent it, before it was decoded, is kept beside its result as well, named
+    `<host>.html` - but only where the turn can keep it, unasked as it is: what the Markdown left
+    out, a table, a link, an attribute, is then found without fetching the page again, which may
+    have changed. It is read with `read_attachment` where it is UTF-8, and copied into the workspace
+    with `copy_attachment` in any charset; the charset the response named is not kept.
 *   **What it reaches.** `http` and `https` alone, at most five redirects. A fetch goes through the
     proxy the environment names (`HTTPS_PROXY`, `NO_PROXY`), as the server reaches the internet.
     Where it connects itself - to an address written in the URL, to a host the proxy is not asked

@@ -176,7 +176,7 @@ impl Client {
     }
 
     /// The page at `url`, read as text, decoded by the charset its type names - as UTF-8 where it
-    /// names none.
+    /// names none -, and of HTML its body as it came (`text::page`).
     ///
     /// # Errors
     /// `InvalidUrl` for what is no URL, `Refused` for one the rules do not follow, `Status` for a
@@ -223,8 +223,7 @@ impl Client {
             }
             body.extend_from_slice(&chunk);
         }
-        let (body, _, _) = encoding.decode(&body);
-        Ok(text::page(url, &media_type, &body))
+        Ok(text::page(url, &media_type, body, encoding))
     }
 }
 
@@ -328,6 +327,7 @@ mod tests {
         assert_eq!(page.url.path(), "/page");
         assert_eq!(page.title.as_deref(), Some("T"));
         assert_eq!(page.text, "# Hi");
+        assert_eq!(page.original.as_deref(), Some(&b"<title>T</title><h1>Hi</h1>"[..]));
         let latin = client.fetch(&format!("http://localhost:{port}/latin")).await.unwrap();
         assert_eq!(latin.text, "ü", "decoded by its charset");
     }
