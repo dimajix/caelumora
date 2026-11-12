@@ -5199,7 +5199,7 @@ async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
     let (world, session, main) = with_a_channel_to_join().await;
     let bob = main.user_actor(world.bob).unwrap();
     let bob_id = ActorId::User(world.bob);
-    let invitation = AclEntry { subject: Subject::Actor(bob_id), grant: Grant::Join };
+    let invitation = AclEntry::invitation(bob_id);
     let open = session.channel_named("open").expect("running");
     assert!(open.security_attributes().acl.contains(&invitation), "invited");
 

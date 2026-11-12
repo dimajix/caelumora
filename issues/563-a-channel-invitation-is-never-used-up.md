@@ -1,6 +1,6 @@
 # 563 — An invitation to a channel is never used up
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -68,3 +68,13 @@ and removed from it by its owner, runs `/channel join open` and is in it again.
   Done: `ChannelController::add_participant` takes the participant in by `Channel::take_in`. The
   store asks nothing new - whoever may change the channel, or the kernel for one who joined, writes
   the access list with it.
+- **2026-11-12** — From the review, decided with the maintainer to do here: one whose actor
+  cannot start after being stored was taken out by `remove_participant`, which kept the used-up
+  invitation used up and made them a former participant they never were. The addition is now
+  rolled back as the channel had them before: `ChannelController::add_participant` answers the
+  channel as it was, and `roll_back_participant_addition` sets back what `Channel::take_in`
+  changed by `Channel::undo_take_in` - out again unless listed before, a former participant again
+  if they were one, their invitation given back - and nothing else, in the kernel's name; nothing
+  if they were let go meanwhile, since whoever removed them decided. Leaving is the
+  document's too, `Channel::let_go`, beside `take_in`; an invitation has a name of its own,
+  `AclEntry::invitation`.

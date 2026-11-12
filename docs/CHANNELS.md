@@ -522,9 +522,14 @@ is permitted and can succeed.
 Participants of the session can be added to and removed from a running channel. Changing the
 participants is an operation of the channel, not of the session (`ChannelLoop::add_participant`,
 `remove_participant`). Like renaming, the change is made by the channel's one writer, the
-`ChannelController`: it recomputes the channel's security attributes from its participants, stores
-the channel (`UpdateChannel` - only the owner) and announces who joined or left. Events only
-announce; nothing changes a channel because an event arrived.
+`ChannelController`, by the rules of the channel's document: who comes in is no longer a former
+participant and has their invitation used up (`Channel::take_in`), who is removed is kept as a
+former participant (`Channel::let_go`, issue 164). It stores the channel - asked as `UpdateChannel`
+of whoever changes it, by default its owner, and in the kernel's name for one who joined or founded
+it -, lets the group of its participants follow and announces who joined or left. One whose actor
+then cannot start has the addition rolled back as the channel had them before
+(`Channel::undo_take_in`), announced as a leave. Events only announce; nothing changes a channel
+because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the

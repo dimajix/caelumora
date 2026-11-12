@@ -48,9 +48,8 @@ impl SecurityAttributes {
     /// (`Join` for `Subject::Actor`), so that they cannot take themselves in again once removed;
     /// one for a role, a group or everyone is a rule, not an invitation, and stays.
     pub fn use_up_invitation(&mut self, actor: ActorId) {
-        self.acl.retain(|entry| {
-            !(entry.grant == Grant::Join && entry.subject == Subject::Actor(actor))
-        });
+        let invitation = AclEntry::invitation(actor);
+        self.acl.retain(|entry| *entry != invitation);
     }
 
     /// These attributes, letting `subjects` read besides.
@@ -92,6 +91,13 @@ impl SecurityAttributes {
 pub struct AclEntry {
     pub subject: Subject,
     pub grant: Grant,
+}
+
+impl AclEntry {
+    /// The invitation of `actor` (issue 221): the entry that lets them alone join.
+    pub const fn invitation(actor: ActorId) -> Self {
+        Self { subject: Subject::Actor(actor), grant: Grant::Join }
+    }
 }
 
 /// Whom an entry of an access list grants something (issue 23). Matched
