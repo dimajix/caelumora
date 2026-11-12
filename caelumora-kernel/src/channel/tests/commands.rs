@@ -400,6 +400,7 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
 async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
     let world = World::new().await;
     let rename_too_long = format!("channel rename {}", "x".repeat(101));
+    let create_too_long = format!("channel create {}", "x".repeat(101));
     let summary_too_long = format!("channel summary {}", "x".repeat(Summary::MAX_CHARS + 1));
     let briefing_too_long = format!("channel briefing {}", "x".repeat(Briefing::MAX_CHARS + 1));
     let session = world.shared_session(&[], &[]).await;
@@ -413,6 +414,12 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
         "agent delete zed",
         "channel list everyone",
         "channel describe nowhere",
+        "channel create",
+        &create_too_long,
+        "channel delete",
+        "channel delete nowhere",
+        "channel join",
+        "channel join nowhere",
         "channel rename",
         &rename_too_long,
         &summary_too_long,
@@ -426,6 +433,7 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
     }
     let in_main = world.participants(world.alice, session.id(), session.channels()[0].id()).await;
     assert_eq!(in_main.len(), 2, "nobody was removed");
+    assert_eq!(session.channels().len(), 1, "no channel was made");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

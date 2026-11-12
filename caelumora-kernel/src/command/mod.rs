@@ -30,6 +30,7 @@ use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCo
 use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_domain::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
+use caelumora_domain::store::StoreError;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{named, Name};
@@ -266,11 +267,18 @@ pub(crate) fn named_one<T>(
 }
 
 /// What `error` of an operation the command `command` ran means for its issuer: a refusal is the
-/// command refused (`Forbidden`); anything else is a failure, logged, and described only as far as
+/// command refused (`Forbidden`), a name another has taken an argument that does not fit
+/// (`InvalidArguments`); anything else is a failure, logged, and described only as far as
 /// `user_message` allows (`Failed`).
 pub(crate) fn command_error(command: &str, error: &Error) -> CommandError {
     if let Some(refused) = refusal(error) {
         return CommandError::Forbidden { name: command.to_string(), refused: refused.clone() };
+    }
+    if let Some(taken @ StoreError::NameTaken { .. }) = error.downcast_ref() {
+        return CommandError::InvalidArguments {
+            command: command.to_string(),
+            reason: taken.to_string(),
+        };
     }
     tracing::warn!("/{} failed: {:#}", command, error);
     let reason = user_message(error).unwrap_or_else(|| "see the server log".to_string());

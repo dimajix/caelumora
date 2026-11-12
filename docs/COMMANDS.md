@@ -96,6 +96,10 @@ its view does, and `/agent list` what reading the session's agents asks (`Sessio
 agent the issuer may not read is neither listed nor deleted by name. `/channel list` and
 `/channel describe` ask what reading the session's channels asks, and `/channel rename`, `summary`
 and `briefing` what changing the channel they are issued in asks (`UpdateChannel`).
+`/channel create` asks what making a channel asks (`SessionLoop::create_channel`: `CreateChannel`,
+`UpdateSession`), with the issuer alone in it, `/channel delete` what reading the channel named and
+deleting it ask (`SessionLoop::delete_channel`: `DeleteChannel`, `UpdateSession`), and
+`/channel join` what joining it asks (`ChannelLoop::join`: `JoinChannel`).
 
 ### Private or channel-wide answers
 
@@ -122,7 +126,12 @@ so that it also removes one that cannot run - but one that no longer exists, whi
 be named by; `/agent delete` seeks among the agents `/agent list` lists, taking part or not. A
 channel is named by its whole name, which is the only one of its session (`/channel describe`,
 `SessionView::channel_named`); one the issuer may not read is answered like one that does not
-exist.
+exist. `/channel delete` deletes the channel it is issued in as well: a command runs in the
+issuer's call, not in the channel, so its answer still reaches them. `/channel join` alone does not
+seek among the channels the issuer reads, since who may join a channel reads nothing of it before
+they did ([SECURITY.md](SECURITY.md#access-lists)): it takes the running channel of that name, and
+answers one the issuer may not join - by its access list, or not cleared for it -, or that does not
+run, like one that does not exist.
 
 Who is to be brought into the channel does not take part in it yet, so `/participant add` looks
 further, by the whole name (`SessionView::candidates`, issue
@@ -207,6 +216,9 @@ external agent alike.
 | `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named. |
 | `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
 | `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |
+| `/channel create` | - | the channel | `channel` | `<name>` | private | Makes a channel of the session, with the user alone in it. |
+| `/channel delete` | - | the channel | `channel` | `<channel>` | private | Deletes the channel of the session named, also this one; it can be restored. |
+| `/channel join` | - | the channel | `channel` | `<channel>` | private | Joins the channel of the session named, if the user may join it. |
 | `/channel rename` | - | the channel | `channel` | `<new name>` | private | Renames this channel. |
 | `/channel summary` | - | the channel | `channel` | `[text]` | private | Says in a line what this channel is for, its briefing kept; without a text, removes it. |
 | `/channel briefing` | - | the channel | `channel` | `[text]` | private | Says what an agent should know before it works in this channel, its summary kept; without a text, removes it. |

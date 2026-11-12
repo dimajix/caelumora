@@ -1,6 +1,6 @@
 # 560 — The commands are not grouped by what they act on
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -285,3 +285,16 @@ issue of the terminal.
   anything is changed. `channel summary` and `briefing` write both parts back, so a change of the
   other part made at the same moment is lost; the maintainer judged it too rare to change
   `update_description` for.
+- **2026-11-12** — Decided with the maintainer, for step 4b:
+  1. `channel join` takes the running channel of the name given, not one of those the issuer
+     reads: who may join a channel reads nothing of it before they did. One they may not join, or
+     that does not run, is answered like one that does not exist.
+  2. `channel delete` deletes the channel it is issued in as well; the command runs in the
+     issuer's call, so its answer still reaches them.
+  3. The three ask in the context of the issuer's views, as `agent delete` does.
+
+  Step 4b done: `channel create`, `delete` and `join`. How a command finds a channel the issuer
+  reads by its name is `channel_named` of the group, for `describe` and `delete`. With it the
+  issue is done: `channel switch` is issue
+  [561](561-the-terminal-shows-one-channel-of-a-session.md), `channel leave` issue
+  [562](562-nobody-can-leave-a-channel.md).

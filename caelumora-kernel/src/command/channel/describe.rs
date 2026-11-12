@@ -1,8 +1,8 @@
 //! The built-in `/channel describe` command (issue 560).
 
-use crate::command::{command_error, CommandContext};
-use caelumora_api::command::{CommandError, CommandResult};
-use caelumora_api::reader::ViewError;
+use super::channel_named;
+use crate::command::CommandContext;
+use caelumora_api::command::CommandResult;
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
 
@@ -20,10 +20,8 @@ pub(super) fn command() -> Command {
 }
 
 /// Runs `/channel describe` with `args`: the channel the command was issued in, or the one of the
-/// session `args` names as the issuer may read it - by its whole name, which is the only one of
-/// the session (`SessionView::channel_named`), a channel they may not read named as one that does
-/// not exist - with its summary, briefing, classification and language, its own or else its
-/// session's. Only the issuer is answered.
+/// session `args` names (`channel_named`) - with its summary, briefing, classification and
+/// language, its own or else its session's. Only the issuer is answered.
 pub(super) async fn execute(
     args: &str,
     context: &CommandContext<'_>,
@@ -31,19 +29,7 @@ pub(super) async fn execute(
     let wanted = args.trim();
     let channel = match wanted {
         "" => context.channel_view(DESCRIBE_COMMAND_NAME).await?,
-        _ => {
-            let session = context.session_view(DESCRIBE_COMMAND_NAME).await?;
-            match session.channel_named(wanted).await {
-                Ok(channel) => channel,
-                Err(e @ ViewError::NoChannelNamed(_)) => {
-                    return Err(CommandError::InvalidArguments {
-                        command: DESCRIBE_COMMAND_NAME.to_string(),
-                        reason: e.to_string(),
-                    })
-                }
-                Err(e) => return Err(command_error(DESCRIBE_COMMAND_NAME, &e.into())),
-            }
-        }
+        _ => channel_named(DESCRIBE_COMMAND_NAME, wanted, context).await?,
     };
     let said = |text: Option<&str>| text.unwrap_or("nothing said").to_string();
     let language = match (channel.language(), channel.effective_language()) {

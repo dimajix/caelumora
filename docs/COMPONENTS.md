@@ -522,7 +522,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `help` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `participant` | `ChannelCommandProvider` | - | The command group `participant`: `/participant list`, `add`, `remove` and `nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `agent` | `ChannelCommandProvider` | - | The command group `agent`: `/agent list`, `create`, `delete` and `wakeup`. Uses the `AgentManager`. |
-| `channel` | `ChannelCommandProvider` | - | The command group `channel`: `/channel list`, `describe`, `rename`, `summary` and `briefing`. |
+| `channel` | `ChannelCommandProvider` | - | The command group `channel`: `/channel list`, `describe`, `create`, `delete`, `join`, `rename`, `summary` and `briefing`. |
 
 `position` is `start`, `before_turn_input`, `end` or `given`
 ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.
