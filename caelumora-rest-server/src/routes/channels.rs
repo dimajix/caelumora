@@ -420,13 +420,21 @@ pub(super) async fn remove_participant(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let context = user.security_context();
-    let participant = actor_in(&channel, aid).ok_or_else(|| {
-        ApiError::not_found(
-            "participant_not_found",
-            format!("{} takes no part in channel {}", aid, cid),
-        )
-    })?;
+    let participant = actor_in(&channel, aid)?;
     channel.remove_participant(&context, participant).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Takes participant `aid` - the authenticated user, or an agent of theirs - out of the channel by
+/// their own act (issue 562), without the right to change it (`ChannelLoop::leave`).
+pub(super) async fn leave(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    let participant = actor_in(&channel, aid)?;
+    channel.leave(&user.security_context(), participant).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -500,12 +508,7 @@ pub(super) async fn retry_turn(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let participant = actor_in(&channel, aid).ok_or_else(|| {
-        ApiError::not_found(
-            "participant_not_found",
-            format!("{} takes no part in channel {}", aid, cid),
-        )
-    })?;
+    let participant = actor_in(&channel, aid)?;
     let span_id = user_actor.request_retry_of_turn(participant, payload.turn_id).await?;
     Span::current().record("span_id", field::display(span_id));
     Ok(StatusCode::OK)
@@ -528,8 +531,16 @@ pub(super) async fn revoke_message(
 
 /// The actor of `channel` whose id is `id`, whatever kind it is - a path
 /// names an actor by its UUID alone.
-fn actor_in(channel: &ChannelLoop, id: Uuid) -> Option<ActorId> {
-    channel.participant_ids().into_iter().find(|actor| actor.id() == id)
+///
+/// # Errors
+/// `participant_not_found` if none of its participants has that id.
+fn actor_in(channel: &ChannelLoop, id: Uuid) -> Result<ActorId, ApiError> {
+    channel.participant_ids().into_iter().find(|actor| actor.id() == id).ok_or_else(|| {
+        ApiError::not_found(
+            "participant_not_found",
+            format!("{} takes no part in channel {}", id, channel.id()),
+        )
+    })
 }
 
 /// The participant of `channel` whose id is `id`, whatever kind it is - or a
@@ -586,12 +597,7 @@ pub(super) async fn cancel_participant(
     user: AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = actor_in(&channel, aid).ok_or_else(|| {
-        ApiError::not_found(
-            "participant_not_found",
-            format!("{} takes no part in channel {}", aid, cid),
-        )
-    })?;
+    let participant = actor_in(&channel, aid)?;
     channel.cancel_actor(&user.security_context(), participant).await?;
     Ok(StatusCode::OK)
 }
@@ -608,12 +614,7 @@ pub(super) async fn interrupt_tool_call(
     Json(payload): Json<TurnRequest>,
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant = actor_in(&channel, aid).ok_or_else(|| {
-        ApiError::not_found(
-            "participant_not_found",
-            format!("{} takes no part in channel {}", aid, cid),
-        )
-    })?;
+    let participant = actor_in(&channel, aid)?;
     channel
         .interrupt_tool_call(&user.security_context(), participant, payload.turn_id, &call_id)
         .await?;

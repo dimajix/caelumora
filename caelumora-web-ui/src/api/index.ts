@@ -309,6 +309,17 @@ export const api = {
     await ensureOk(res, 'Failed to remove the participant');
   },
 
+  /**
+   * Takes `actorUuid` - you, or an agent of yours - out of the channel by your own act (issue 562),
+   * without the right to change it.
+   */
+  async leaveChannel(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/leave`, {
+      method: 'POST',
+    });
+    await ensureOk(res, 'Failed to leave the channel');
+  },
+
   async deleteChannel(sessionId: string, channelId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}`, {
       method: 'DELETE',

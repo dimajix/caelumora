@@ -1390,6 +1390,7 @@ mod tests {
                 "channel delete",
                 "channel describe",
                 "channel join",
+                "channel leave",
                 "channel list",
                 "channel rename",
                 "channel summary",
@@ -1508,6 +1509,8 @@ mod tests {
         // Removed from a channel while it rests: restored, it is not back there.
         assert!(agents.delete(&ctx, helper.id).await.unwrap());
         until(|| !main.participant_ids().contains(&actor), "its actor stops").await;
+        let resting = main.leave(&ctx, actor).await.expect_err("its owner cannot take it out");
+        assert!(is_forbidden(&resting), "it cannot be resolved (issue 562): {resting}");
         main.remove_participant(&ctx, actor).await.expect("removed while it rests");
         assert!(
             main.channel().former.iter().any(|f| f.participant.actor_id() == actor),

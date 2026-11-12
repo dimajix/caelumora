@@ -294,8 +294,10 @@ lose theirs.
     in anyone they may name - and nothing else: who may join reads nothing of it before they did,
     and who reads it may not join by that; a personal `Join` entry is an invitation, used up as it
     is taken (see
-    [CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). Changing the attributes, deleting
-    and reclassifying stay the owner's.
+    [CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). Leaving needs no grant: who takes
+    part leaves a channel, or takes their own agent out of it, by their own act (`LeaveChannel`,
+    see [CHANNELS.md](CHANNELS.md#leaving-a-channel)). Changing the attributes, deleting and
+    reclassifying stay the owner's.
 *   **Subjects**, matched against the context's principal, and for what is read also against its
     caller:
     *   `Actor` - a user. Never an agent, the system or nobody: an agent acts with its owner's
@@ -533,10 +535,10 @@ The store asks again as it stores (rule 2): that pair is the rule, not a double.
 **Actors are controlled only through such operations.** `Actor::cancel`, `retry_turn`,
 `interrupt_tool_call`, `wakeup`, `stop` and `leave` check nothing: they are the consequence of an
 act that was checked - cancelling or waking a channel or an actor, interrupting a tool call,
-removing a participant, deleting a channel, stopping or deleting a session, a request to answer
-again the channel admitted - and know no caller. Only the channel calls them: the `Actor` trait is
-public, so that a kind of agent can be built in a crate of its own (issue 370), but an actor is
-handed out of the kernel to nobody - the `Moderator` trait that is handed actors and
+removing a participant or leaving, deleting a channel, stopping or deleting a session, a request to
+answer again the channel admitted - and know no caller. Only the channel calls them: the `Actor`
+trait is public, so that a kind of agent can be built in a crate of its own (issue 370), but an
+actor is handed out of the kernel to nobody - the `Moderator` trait that is handed actors and
 `ChannelLoop::actor` stay crate-internal, and a frontend reaches its user's actor through
 `ChannelLoop::user_actor` and acts through that actor's own methods, never the control methods.
 

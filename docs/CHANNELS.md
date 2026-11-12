@@ -519,17 +519,17 @@ is permitted and can succeed.
 
 ## Participants
 
-Participants of the session can be added to and removed from a running channel. Changing the
-participants is an operation of the channel, not of the session (`ChannelLoop::add_participant`,
-`remove_participant`). Like renaming, the change is made by the channel's one writer, the
-`ChannelController`, by the rules of the channel's document: who comes in is no longer a former
-participant and has their invitation used up (`Channel::take_in`), who is removed is kept as a
-former participant (`Channel::let_go`, issue 164). It stores the channel - asked as `UpdateChannel`
-of whoever changes it, by default its owner, and in the kernel's name for one who joined or founded
-it -, lets the group of its participants follow and announces who joined or left. One whose actor
-then cannot start has the addition rolled back as the channel had them before
-(`Channel::undo_take_in`), announced as a leave. Events only announce; nothing changes a channel
-because an event arrived.
+Participants of the session can be added to and removed from a running channel, and leave it.
+Changing the participants is an operation of the channel, not of the session
+(`ChannelLoop::add_participant`, `remove_participant`, `leave`). Like renaming, the change is made
+by the channel's one writer, the `ChannelController`, by the rules of the channel's document: who
+comes in is no longer a former participant and has their invitation used up (`Channel::take_in`),
+who is removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the
+channel - asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's
+name for one who joined, founded or left it -, lets the group of its participants follow and
+announces who joined or left. One whose actor then cannot start has the addition rolled back as the
+channel had them before (`Channel::undo_take_in`), announced as a leave. Events only announce;
+nothing changes a channel because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
@@ -539,10 +539,10 @@ Who takes part in a channel and whether they may is one question, owned by `Part
 356), which the `Kernel` holds once for the instance with the services it is asked with: the
 agents' store, the controllers, the `AccessPolicy` and the `ConfidentialityPolicy`. It resolves a
 participant as a document names it into a `ResolvedParticipant` - what its actor is built from, and
-the place it takes part in - and answers whether it may run, join, lie where it may and is cleared
-for the channel. The session and channel loops and the `SessionManager` ask it alike: when a
-channel is created, restored or built, when someone is taken in or an agent comes back, and when a
-channel is reclassified.
+the place it takes part in - and answers whether it may run, join or leave, lie where it may and is
+cleared for the channel. The session and channel loops and the `SessionManager` ask it alike: when
+a channel is created, restored or built, when someone is taken in or leaves or an agent comes back,
+and when a channel is reclassified.
 
 ### Taking someone into the session
 
@@ -608,6 +608,26 @@ resting agent from a channel changes the document alone, and the agent does not 
 Purging it removes its document and its state, its own and in every channel; in the channels it
 rested in it stays a former participant, without when it left. An agent of a session's or a
 channel's scope goes with that session or channel (see [Sessions](#sessions)).
+
+### Leaving a channel
+
+Who takes part leaves a channel by their own act, and takes their own agent out of it the same way
+(`ChannelLoop::leave`), without the right to change it: removing anyone is whoever may change the
+channel's, leaving is everyone's for themselves. Removing and leaving go out by one way, as adding,
+joining and founding come in by one.
+
+*   **Asked as joining is**: the one who leaves is whom the caller acts for, or their own agent
+    (`Participation::require_own_act`), and `LeaveChannel` is asked in their own context, an
+    agent's by its owner. The ownership policy allows it always - leaving takes nothing from anyone,
+    and who may not leave would be held in a conversation -; another policy may refuse it.
+*   **Stored in the kernel's name**, as a join is, kept as removed by whoever left or took their
+    agent out, and announced in their name. They stay in the session.
+*   **No rule for the owner or the last one**: the owner leaves as anyone does and keeps the
+    channel, to add themselves back; the last one leaves, and the channel stays, empty.
+*   **Coming back** takes an entry granting `Join` that is not used up - for a role, a group or
+    everyone - or whoever may change the channel: a personal invitation was used up as they came in.
+*   One that cannot be resolved or run - a deleted agent resting in the channel - cannot leave;
+    whoever may change the channel removes it.
 
 ### How much history a newcomer sees
 
@@ -698,8 +718,9 @@ A removed user's live stream of the channel ends because it is theirs: it is fol
 actor, which ends when it is stopped, and the stream then finds them no longer a participant (issue
 386), so no one has to listen for the announcement.
 
-Every channel response carries `can_change`, so that a client offers adding and removing
-participants only where the user may (see [WEB-UI.md](WEB-UI.md)).
+Every channel response carries `can_change`, and every participant `can_leave`, so that a client
+offers adding and removing participants, and leaving, only where the user may (see
+[WEB-UI.md](WEB-UI.md)).
 
 ## Acting on the channel as a whole
 

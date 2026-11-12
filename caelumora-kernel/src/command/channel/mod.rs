@@ -1,13 +1,14 @@
 //! The built-in command group `channel` (issue 560): the commands on the channels of a session -
-//! `channel list`, `describe`, `create`, `delete`, `join`, `rename`, `summary` and `briefing` -,
-//! contributed by one component, one file per command. Those that change a channel change the one
-//! they are issued in; those that make, delete or join one name it.
+//! `channel list`, `describe`, `create`, `delete`, `join`, `leave`, `rename`, `summary` and
+//! `briefing` -, contributed by one component, one file per command. Those that change or leave a
+//! channel act on the one they are issued in; those that make, delete or join one name it.
 
 mod briefing;
 mod create;
 mod delete;
 mod describe;
 mod join;
+mod leave;
 mod list;
 mod rename;
 mod summary;
@@ -24,8 +25,8 @@ use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
 /// The component of the command group `channel`: `/channel list`, `/channel describe`,
-/// `/channel create`, `/channel delete`, `/channel join`, `/channel rename`, `/channel summary` and
-/// `/channel briefing`.
+/// `/channel create`, `/channel delete`, `/channel join`, `/channel leave`, `/channel rename`,
+/// `/channel summary` and `/channel briefing`.
 #[derive(Debug)]
 pub(crate) struct ChannelGroupComponent;
 
@@ -37,6 +38,7 @@ impl ProvidesCommands for ChannelGroupComponent {
             create::command(),
             delete::command(),
             join::command(),
+            leave::command(),
             rename::command(),
             summary::command(),
             briefing::command(),
@@ -58,6 +60,7 @@ impl ChannelCommandProvider for ChannelGroupComponent {
             create::CREATE_COMMAND_NAME => create::execute(args, context).await,
             delete::DELETE_COMMAND_NAME => delete::execute(args, context).await,
             join::JOIN_COMMAND_NAME => join::execute(args, context).await,
+            leave::LEAVE_COMMAND_NAME => leave::execute(args, context).await,
             rename::RENAME_COMMAND_NAME => rename::execute(args, context).await,
             summary::SUMMARY_COMMAND_NAME => summary::execute(args, context).await,
             briefing::BRIEFING_COMMAND_NAME => briefing::execute(args, context).await,

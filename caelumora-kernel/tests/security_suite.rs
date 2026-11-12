@@ -61,6 +61,7 @@ use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_security::SecurityContext;
 use caelumora_store::testing::record_users;
 use serde_json::json;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -4586,8 +4587,9 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
             // What /help lists, one for each command: /agent create, delete, list, wakeup,
-            // /channel briefing, create, delete, describe, join, list, rename, summary, /help,
-            // /participant add, list, nudge, remove.
+            // /channel briefing, create, delete, describe, join, leave, list, rename, summary,
+            // /help, /participant add, list, nudge, remove.
+            "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
@@ -4782,6 +4784,93 @@ async fn listing_and_removing_by_command_ask_what_reading_and_removing_ask() {
     let reply = alice.execute_command("participant remove alice").await.expect("hers to change");
     assert_eq!(reply.output.as_deref(), Some("Removed alice."));
     assert!(main.user_actor(world.alice).is_none(), "out of the channel");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// Leaving a channel (issue 562) asks `LeaveChannel` in the context of the one who leaves - an
+/// agent's by its owner - and nothing of changing the channel: bob, who may not change alice's
+/// channel, takes his agents out and leaves himself, by command too, and stays in the session; he
+/// takes out neither alice nor her agent, and nothing is asked in their names but what resolving
+/// her agent asks, as joining resolves it. An agent he took out is no longer his to take out.
+#[tokio::test]
+async fn leaving_asks_leave_channel_in_the_context_of_who_leaves() {
+    // Agents that run, so that they take part.
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let bobs = world.personality("his", Some(world.bob), &[]).await;
+    let alices = world.personality("hers", Some(world.alice), &[]).await;
+    let scout = world.agent("scout", world.bob, &bobs).await;
+    let aide = world.agent("aide", world.alice, &alices).await;
+    let runner = world.agent("runner", world.bob, &bobs).await;
+    let session = world.shared_session(&[scout, aide, runner], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let bob = World::as_user(world.bob);
+    let view = world.manager.views(Viewer::new(bob.clone())).session(session.id()).await.unwrap();
+    let participants = view.channel(main.id()).await.unwrap().participants().await;
+    let his: HashSet<ActorId> =
+        participants.iter().filter(|p| p.may_leave()).map(|p| p.id()).collect();
+    let wanted =
+        HashSet::from([ActorId::User(world.bob), ActorId::Agent(scout), ActorId::Agent(runner)]);
+    assert_eq!(his, wanted, "shown as his to take out: himself and his agents");
+
+    // Resolved as one who joins is - an agent runs only with a personality it may read -, then
+    // refused: neither is his.
+    for (other, resolving) in [
+        (ActorId::User(world.alice), checks(&[])),
+        (ActorId::Agent(aide), checks(&["alice as aide: GetPersonality(alice's) yes"])),
+    ] {
+        let (refused, asked) = world.asked(main.leave(&bob, other)).await;
+        let refused = refused.expect_err("not his own");
+        assert!(
+            matches!(refused.downcast_ref(), Some(ChannelError::Forbidden { .. })),
+            "{refused}"
+        );
+        assert_eq!(asked, resolving, "nothing asked but resolving: {asked:#?}");
+    }
+
+    let (left, asked) = world.asked(main.leave(&bob, ActorId::Agent(scout))).await;
+    left.expect("his own agent");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob as scout: GetPersonality(bob's) yes",
+            // In the agent's own context, by its owner.
+            "bob as scout: LeaveChannel(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    let stored = world.entity_store::<Channel>().get(&World::system(), main.id()).await.unwrap();
+    let former = stored.former.iter().find(|f| f.participant.actor_id() == ActorId::Agent(scout));
+    assert_eq!(former.expect("kept").left.by, ActorId::User(world.bob), "removed by bob");
+    let channel = view.channel(main.id()).await.unwrap();
+    let gone = channel.former_participants().await;
+    assert!(
+        gone.iter().any(|p| p.id() == ActorId::Agent(scout) && !p.may_leave()),
+        "a former participant is not shown as his to take out"
+    );
+
+    let leaving = main.user_actor(world.bob).unwrap();
+    let error = leaving.execute_command("channel leave aide").await.expect_err("not his");
+    assert!(matches!(as_command_error(&error), CommandError::InvalidArguments { .. }), "{error}");
+    let reply = leaving.execute_command("channel leave runner").await.expect("his agent");
+    assert_eq!(reply.output.as_deref(), Some("runner left main."));
+    assert!(!main.participant_ids().contains(&ActorId::Agent(runner)), "out of the channel");
+    let (reply, asked) = world.asked(leaving.execute_command("channel leave")).await;
+    let reply = reply.expect("his own act");
+    assert_eq!(
+        asked,
+        checks(&[
+            "bob: ShowCommand(alice's) yes",
+            "bob: ExecuteCommand(alice's) yes",
+            "bob: LeaveChannel(alice's) yes",
+        ]),
+        "{asked:#?}"
+    );
+    assert_eq!(reply.output.as_deref(), Some("You left main."), "answered though he left");
+    assert_eq!(reply.visibility, CommandVisibility::Private);
+    assert!(main.user_actor(world.bob).is_none(), "out of the channel");
+    assert!(session.session().takes_part(ActorId::User(world.bob)), "still in the session");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

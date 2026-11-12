@@ -28,7 +28,7 @@ the UI first.
 The UI shows what the server says and repeats no rule of its own:
 
 *   **Permissions come from the server.** Whether the user may change a channel (`can_change`), see
-    what an agent saw (`can_read_context`), approve, retry, cancel or delete is part of the
+    what an agent saw (`can_read_context`), approve, retry, cancel, leave or delete is part of the
     responses, decided by the kernel's views (see [SECURITY.md](SECURITY.md#views)). The UI offers
     an action only where it is set, and never works it out itself.
 *   **Only lexical rules are mirrored.** Whether a line is a command (`command.ts`, mirroring
@@ -489,13 +489,14 @@ is explained, but not offered for a new channel: it needs a decision model, whic
 not have.
 
 What can be done with a participant is in its menu, each entry only where the participant offers it:
-its profile, its history, its private notes, its tools, removing it from the channel (where
-`can_change` is set, which also offers adding a participant of the session with how much of the
-history they may see - and, for whoever may change the session, someone found by the beginning of
-their name who is not in it yet, marked so and taken into it as well; whoever cannot be added is
-shown with why; or a new agent of a personality, made and then taken in - the user's own, or for
-this session alone, as they choose or as a personality of the session or the channel requires, and
-deleted again if it cannot be taken in),
+its profile, its history, its private notes, its tools, leaving the channel - the user themselves,
+or taking an agent of theirs out of it (where `can_leave` is set) -, removing it from the channel
+(for anyone else, where `can_change` is set, which also offers adding a participant of the session
+with how much of the history they may see - and, for whoever may change the session, someone found
+by the beginning of their name who is not in it yet, marked so and taken into it as well; whoever
+cannot be added is shown with why; or a new agent of a personality, made and then taken in - the
+user's own, or for this session alone, as they choose or as a personality of the session or the
+channel requires, and deleted again if it cannot be taken in),
 and deleting the agent - which asks once more, since the agent leaves every channel it
 takes part in, not only this one, until it is restored.
 

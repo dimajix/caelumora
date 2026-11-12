@@ -269,6 +269,9 @@ pub struct ChannelParticipantSnapshot {
     /// Whether the viewer may delete this participant - only ever an agent, its
     /// owner (`DeleteAgent`, issue 164).
     pub can_delete: bool,
+    /// Whether the viewer may take this participant out of the channel by their own act
+    /// (`LeaveChannel`, issue 562) - themselves, or an agent of theirs, taking part.
+    pub can_leave: bool,
     /// How the participant is introduced (issue 176) - an agent by its
     /// personality, a user by themselves - with `Detail::PROFILE`. Public,
     /// like the name; `None` also for a participant that no longer exists,

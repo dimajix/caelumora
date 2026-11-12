@@ -306,6 +306,10 @@ pub struct ChannelParticipantResponse {
     /// Whether the requesting user may delete this participant - only ever an
     /// agent, its owner (issue 164).
     pub can_delete: bool,
+    /// Whether the requesting user may take this participant out of the channel by their own act
+    /// (`POST …/participants/{aid}/leave`, issue 562) - themselves, or an agent of theirs, taking
+    /// part.
+    pub can_leave: bool,
     /// The turn of the answer the participant is giving now (issue 240): what a
     /// client that connects during an answer shows as under way, as if it
     /// had seen `ResponseStarted`. Absent if none - also for an external
@@ -364,6 +368,7 @@ impl ChannelParticipantResponse {
             usage: view.usage,
             left: view.left,
             can_delete: view.can_delete,
+            can_leave: view.can_leave,
             turn_under_way: view.turn_under_way,
             state: view.state,
             commands: view.commands,
@@ -482,6 +487,7 @@ mod tests {
             pending_questions: Vec::new(),
             left: None,
             can_delete: false,
+            can_leave: false,
             turn_under_way: None,
             state: None,
             commands: Vec::new(),
@@ -608,6 +614,7 @@ mod tests {
             pending_questions: Vec::new(),
             left: None,
             can_delete: false,
+            can_leave: false,
             turn_under_way: None,
             state: None,
             commands: Vec::new(),
@@ -676,6 +683,7 @@ mod tests {
             pending_questions: Vec::new(),
             left,
             can_delete: false,
+            can_leave: false,
             turn_under_way: None,
             state: None,
             commands: Vec::new(),
@@ -742,6 +750,7 @@ mod tests {
             pending_questions: Vec::new(),
             left: None,
             can_delete: false,
+            can_leave: false,
             turn_under_way: None,
             state: None,
             commands: Vec::new(),
@@ -832,6 +841,7 @@ mod tests {
             pending_questions: Vec::new(),
             left: None,
             can_delete: false,
+            can_leave: false,
             turn_under_way: None,
             state: None,
             commands: Vec::new(),

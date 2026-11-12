@@ -13,6 +13,7 @@ import {
   IdCard,
   Languages,
   Lock,
+  LogOut,
   MessageCircleQuestion,
   MessageSquare,
   NotebookPen,
@@ -736,9 +737,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       label: 'Show tools', icon: Wrench, title: `Show the tools of ${participant.name}`,
       onSelect: () => showOf(participant, 'tools'),
     }] : []),
+    // One's own goes by one's own act (issue 562); whoever may change the channel removes anyone.
+    ...(participant.can_leave ? [{
+      label: participant.kind === 'user' ? 'Leave channel' : 'Take out of channel',
+      icon: participant.kind === 'user' ? LogOut : UserMinus, danger: true,
+      title: participant.kind === 'user' ? 'Leave the channel; you stay in the session' : `Take ${participant.name} out of the channel`,
+      onSelect: () => void takeOut(participant, 'leave'),
+    }] : []),
     ...(channel?.can_change ? [{
       label: 'Remove from channel', icon: UserMinus, danger: true, title: `Remove ${participant.name} from the channel`,
-      onSelect: () => void removeParticipant(participant),
+      onSelect: () => void takeOut(participant, 'remove'),
     }] : []),
     ...(participant.can_delete ? [{
       label: 'Delete agent', icon: Trash2, danger: true, confirm: 'Delete agent? It leaves every channel until it is restored',
@@ -759,14 +767,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     onSelect: () => showOf(participant, 'privateNotes'),
   }] : [];
 
-  const removeParticipant = async (participant: ChannelParticipant) => {
+  /** Takes `participant` out of the channel - `leave` by one's own act, or `remove` it. */
+  const takeOut = async (participant: ChannelParticipant, how: 'leave' | 'remove') => {
     const uuid = actorUuid(participant.id);
     if (!uuid) return;
     try {
-      await api.removeParticipant(sessionId, channelId, uuid);
+      await (how === 'leave' ? api.leaveChannel : api.removeParticipant)(sessionId, channelId, uuid);
       setChannel(prev => prev && {...prev, participants: prev.participants.filter(m => !sameActor(m.id, participant.id))});
     } catch (error) {
-      reportError(`Failed to remove ${participant.name}`, error);
+      reportError(`Failed to take ${participant.name} out of the channel`, error);
     }
   };
 

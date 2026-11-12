@@ -420,6 +420,8 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
         "channel delete nowhere",
         "channel join",
         "channel join nowhere",
+        "channel leave zed",
+        "channel leave bob",
         "channel rename",
         &rename_too_long,
         &summary_too_long,

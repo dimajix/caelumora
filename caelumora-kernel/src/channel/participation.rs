@@ -1,5 +1,5 @@
 //! Who takes part in a channel: a participant with what its actor is built from, and whether it
-//! may take part.
+//! may take part - come in, or go out by its own act.
 
 use super::ChannelError;
 use crate::controller::{
@@ -55,8 +55,8 @@ pub(crate) enum ResolvedKind {
 /// `AccessPolicy` and the `ConfidentialityPolicy`. One for the instance,
 /// held by the `Kernel`, asked by the session and channel loops and
 /// the `SessionManager` alike - when a channel is created, restored or
-/// built, when someone joins or is added, when an agent comes back and when
-/// a channel is reclassified.
+/// built, when someone joins or is added, when someone leaves, when an agent
+/// comes back and when a channel is reclassified.
 #[derive(Debug)]
 pub(crate) struct Participation {
     agents: Arc<dyn EntityStore<Agent>>,
@@ -152,7 +152,8 @@ impl Participation {
     }
 
     /// Nothing if `context` may do `action` for `resolved` by its own act - join a session or
-    /// channel (`JOIN`, issue 221): the participant is whom `context` acts for, or owned by them -
+    /// channel (`JOIN`, issue 221), leave a channel (`LeaveChannel`, issue 562): the participant is
+    /// whom `context` acts for, or owned by them -
     /// themselves, or their own agent (issue 341) - and `action` is permitted in the participant's
     /// own context, an agent's by its owner.
     ///

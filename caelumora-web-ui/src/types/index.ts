@@ -164,6 +164,11 @@ export interface ChannelParticipant {
   /** Whether you may delete it - only ever an agent of yours (issue 164). */
   can_delete: boolean;
   /**
+   * Whether you may take it out of the channel by your own act (`leaveChannel`, issue 562): you
+   * yourself, or an agent of yours, taking part.
+   */
+  can_leave: boolean;
+  /**
    * How it is introduced (issues 176, 244): an agent by its personality, a
    * user in their own words. Sent by `getParticipant` only, absent if none.
    */

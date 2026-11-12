@@ -81,6 +81,11 @@ pub enum ActionType<'a> {
     /// Waking a channel's sleeping agents deliberately, as opposed to waking
     /// them by sending them something.
     WakeChannel(&'a SecurityAttributes),
+    /// Taking oneself, or one's own agent, out of a channel by one's own act (issue 562), carrying
+    /// the channel's attributes - asked in the context of the one who leaves, an agent by its
+    /// owner, once the kernel found them the caller's own, as joining is asked. Whoever may change
+    /// the channel removes anyone without it.
+    LeaveChannel(&'a SecurityAttributes),
     /// Asking an agent of a channel to answer again instead of one of its
     /// messages, or of its answer under way (issues 234, 235), carrying the
     /// channel's attributes: an act on the conversation, like cancelling or
@@ -210,6 +215,7 @@ impl<'a> ActionType<'a> {
             ActionType::StopSession(_) => "StopSession".into(),
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
+            ActionType::LeaveChannel(_) => "LeaveChannel".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
             ActionType::AnswerQuestion(_) => "AnswerQuestion".into(),
             ActionType::ModifyMessage { author, .. } => format!("ModifyMessage(of {author})"),
@@ -240,7 +246,7 @@ impl<'a> ActionType<'a> {
             ActionType::ApproveToolCall(_) => "approval",
             ActionType::StopSession(_) => "session",
             ActionType::CancelChannel(_) => "cancel",
-            ActionType::WakeChannel(_) => "channel",
+            ActionType::WakeChannel(_) | ActionType::LeaveChannel(_) => "channel",
             ActionType::RetryMessage(_)
             | ActionType::ModifyMessage { .. }
             | ActionType::RevokeMessage { .. } => "message",

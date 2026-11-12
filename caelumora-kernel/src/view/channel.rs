@@ -972,6 +972,15 @@ impl ParticipantView {
         }
     }
 
+    /// Whether the viewer may take the participant out of the channel by their own act
+    /// (`ChannelLoop::leave`, issue 562): taking part, and the viewer themselves or an agent of
+    /// theirs that exists - whose owner the viewer acts for. Unlike the other questions here, the
+    /// policy is not asked: `LeaveChannel` is asked in the participant's own context, an agent's
+    /// limited by its personality, which the view does not hold; it is asked as they leave.
+    pub fn may_leave(&self) -> bool {
+        !self.former && self.owner().unwrap_or(self.id()) == self.views().context().principal_id
+    }
+
     /// The notes the participant published in the channel (issue 17), with the
     /// digest of their chain - of a channel read entry by entry, those
     /// released to where the viewer reads from; `None` for a participant that
@@ -1141,6 +1150,7 @@ impl ParticipantView {
             can_retry: self.may_retry().await,
             can_cancel: self.may_cancel().await,
             can_delete: self.may_delete().await,
+            can_leave: self.may_leave(),
             turn_under_way: self.turn_under_way(),
             state: self.state(),
             commands: self.commands().await,

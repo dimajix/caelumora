@@ -1,6 +1,6 @@
 # 562 — Nobody can leave a channel by their own act
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Sessions and channels
@@ -88,3 +88,12 @@ not part of this, and has no operation either.
   In two steps: first who removed apart from in whose name it is stored, and the question whether
   a participant is the caller's own apart from joining, without a change of behaviour; then
   leaving.
+
+  Step 1 done: `Participation::require_own_act` asks whether a participant is the caller's own for
+  any action, `ChannelController::remove_participant` is told who removed.
+- **2026-11-12** — Step 2 done: `ActionType::LeaveChannel`, `ChannelLoop::leave` beside
+  `remove_participant`, both by `let_go` with `Exit`; `/channel leave [agent]`;
+  `POST …/participants/{aid}/leave`; `can_leave` of a participant, and the web UI's "Leave
+  channel" and "Take out of channel". Resolving the one who leaves, as joining resolves, asks
+  an agent's `GetPersonality` in its own name before it is known to be the caller's; one whose
+  personality it may not read cannot leave, as one deleted.

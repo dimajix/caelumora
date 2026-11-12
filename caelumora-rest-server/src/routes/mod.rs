@@ -364,6 +364,7 @@ fn session_routes() -> Router<Arc<AppState>> {
             "/sessions/{id}/channels/{cid}/participants/{aid}/cancel",
             post(channels::cancel_participant),
         )
+        .route("/sessions/{id}/channels/{cid}/participants/{aid}/leave", post(channels::leave))
         .route("/sessions/{id}/channels/{cid}/participants/{aid}/retry", post(channels::retry_turn))
         .route(
             "/sessions/{id}/channels/{cid}/participants/{aid}/tool-calls/{call_id}/cancel",
