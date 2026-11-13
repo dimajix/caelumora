@@ -23,7 +23,7 @@ pub enum ActorEvent {
     /// A user's answer to the approval request `id` (issue 567): whether they approve, and their
     /// part alone (`decision`, issue 419). Sent to the approvers, which hold the request: which
     /// agent asked, and whether the user may approve its calls, the approver tells as it counts
-    /// the answer, and an answer it does not count it refuses (`MessageRefused`).
+    /// the answer, and an answer it does not count it refuses (`EventRefused`).
     ApprovalAnswered {
         id: ApprovalId,
         approved: bool,
@@ -394,8 +394,8 @@ pub enum ActorEvent {
     /// `message` the message it was or was about, if any, and `reason` is one of the known few, as
     /// for `MessageRejected` - which tells what the channel did not let in, this what an actor did
     /// not take. Sent by that actor to `to` alone, and recorded to it alone
-    /// (`HistoryEntry::MessageRefused`); what was refused changed nothing there.
-    MessageRefused {
+    /// (`HistoryEntry::EventRefused`); what was refused changed nothing there.
+    EventRefused {
         to: ActorId,
         refused: String,
         message: Option<MessageId>,
@@ -525,7 +525,7 @@ impl ActorEvent {
             | ActorEvent::ChainCutOff { .. }
             | ActorEvent::ResponderUndecided { .. }
             | ActorEvent::MessageRejected { .. }
-            | ActorEvent::MessageRefused { .. }
+            | ActorEvent::EventRefused { .. }
             | ActorEvent::ApprovalAnswered { .. }
             | ActorEvent::MessageGiven { .. }
             | ActorEvent::MessageWithdrawn { .. }
@@ -633,7 +633,7 @@ impl ActorEvent {
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
             ActorEvent::RetryRejected { .. } => "RetryRejected",
             ActorEvent::MessageRejected { .. } => "MessageRejected",
-            ActorEvent::MessageRefused { .. } => "MessageRefused",
+            ActorEvent::EventRefused { .. } => "EventRefused",
             ActorEvent::MessageGiven { .. } => "MessageGiven",
             ActorEvent::MessageWithdrawn { .. } => "MessageWithdrawn",
             ActorEvent::ContextCompacted { .. } => "ContextCompacted",
@@ -642,7 +642,7 @@ impl ActorEvent {
 }
 
 /// Why the channel did not let an event in (`ActorEvent::MessageRejected`, issue 304), or the actor
-/// it went to did not take it (`ActorEvent::MessageRefused`, issue 567) - the approver an answer to
+/// it went to did not take it (`ActorEvent::EventRefused`, issue 567) - the approver an answer to
 /// a request it does not hold as `Invalid`, one of someone who may not approve as `Forbidden` -,
 /// worded for its sender, as the web UI and the TUI word it after "… was not let in:" or "… was
 /// not taken:".

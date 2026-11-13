@@ -397,14 +397,14 @@ flow in:
 | `CommandRequested`, `NudgeRequested` | sent by a user, naming an agent (or, for a nudge, anyone else) taking part |
 | `ApprovalAnswered` | sent by a user, saying their own part alone - which agent asked, and whether they may approve its calls (`ApproveToolCall`), is the approver's to tell, which holds the request (issues 312, 567) |
 | `ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut` | sent by an approver: its decision |
-| `MessageRefused` | sent by an actor in its own name, to someone else in the channel (issue 567) |
+| `EventRefused` | sent by an actor in its own name, to someone else in the channel (issue 567) |
 | `PlanStepStarted`, `CommandExecuted` of a turn, `ActivityStarted`, `ActivityFinished`, `TurnFinished`, `TurnGivenUp` | sent by an agent in its own name: nobody else has turns, and the history records them (issue 284) |
 
 A message is admitted as it arrives, so one said after the channel was lowered below its turn is
 refused. What is refused is written nowhere and delivered to nobody. The channel tells its sender
 alone why, in the system's name (`MessageRejected`, with a `Rejection`), recorded to the sender
 alone (issue 417). What an actor does not take of what was let in and went to it - the approver an
-answer it does not count - it tells its sender alike, in its own name (`MessageRefused`, with a
+answer it does not count - it tells its sender alike, in its own name (`EventRefused`, with a
 `Rejection`, issue 567), recorded to that sender alone. A
 user's actor shows what its user sends before it forwards it, so that the refusal always follows
 what it refuses (see [WEB-UI.md](WEB-UI.md)). What an agent said that the channel refused stays in

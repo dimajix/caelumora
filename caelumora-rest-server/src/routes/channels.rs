@@ -867,6 +867,10 @@ pub(super) async fn agent_components(
     Ok(Json(AgentComponentsResponse { components }))
 }
 
+/// Answers the approval request `approval_id` as the user (`SendApprovalRequest`), naming the
+/// request alone: which agent asked, and whether the user may approve its calls, the approver
+/// tells, which holds the request, and an answer it does not count it refuses on the user's stream
+/// (`EventRefused`, issue 567). Answered `200` once the answer is on its way.
 pub(super) async fn send_approval(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,

@@ -487,7 +487,7 @@ impl ChannelLoop {
     ///   part alone - which agent asked, and whether they may approve its calls (`ApproveToolCall`,
     ///   issues 14, 312), the approver asks, which holds the request (issue 567); a decision comes
     ///   from an approver alone;
-    /// - what an actor did not take (`MessageRefused`, issue 567), from that actor in its own name,
+    /// - what an actor did not take (`EventRefused`, issue 567), from that actor in its own name,
     ///   to someone else in the channel;
     /// - a command for an agent (issue 269) comes from a user, names an agent taking part that
     ///   carries it out, and is one the issuer may see and ask for (`admit_command`, issue 516);
@@ -609,7 +609,7 @@ impl ChannelLoop {
                     .ok_or(Rejection::Invalid)
             }
             // What an actor did not take it tells whom it was of, someone else in the channel.
-            ActorEvent::MessageRefused { to, .. } => (*to != event.context.sender_id
+            ActorEvent::EventRefused { to, .. } => (*to != event.context.sender_id
                 && self.actor(*to).is_some())
             .then_some(())
             .ok_or(Rejection::Invalid),
@@ -1531,7 +1531,7 @@ mod tests {
         let sent = |sender: ActorId, event: ActorEvent| {
             Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
         };
-        let refused = |to| ActorEvent::MessageRefused {
+        let refused = |to| ActorEvent::EventRefused {
             to,
             refused: "MessageModified".to_string(),
             message: None,
@@ -1558,8 +1558,8 @@ mod tests {
             rejected,
             [
                 ("ApprovalAnswered".to_string(), Rejection::Invalid),
-                ("MessageRefused".to_string(), Rejection::Invalid),
-                ("MessageRefused".to_string(), Rejection::Invalid)
+                ("EventRefused".to_string(), Rejection::Invalid),
+                ("EventRefused".to_string(), Rejection::Invalid)
             ],
             "an agent's answer, a refusal to itself or to a stranger: not let in"
         );
@@ -1567,7 +1567,7 @@ mod tests {
         while let Some(envelope) = hers.try_recv().await {
             told.push(envelope.event.kind());
         }
-        assert_eq!(told, ["MessageRefused"], "a refusal to her, let in and delivered to her");
+        assert_eq!(told, ["EventRefused"], "a refusal to her, let in and delivered to her");
     }
 
     #[tokio::test]

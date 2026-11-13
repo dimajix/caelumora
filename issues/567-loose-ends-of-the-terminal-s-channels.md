@@ -304,3 +304,36 @@ collected here, to be taken on one after the other, each a step of its own:
   as they are. Any participant may send `MessageRefused` to any other, as the channel admits it:
   the scope intended. The approver's tests read its private `pending`, a finding that joins
   point 10.
+
+- **2026-11-13** — Step 9, point 8 in the frontends: `SendApprovalRequest` loses `agent_id`, and
+  the web UI's `respondToApproval` sends the request's id alone. The web UI tells a refusal in a
+  notice (`MessageRefused`, live and from the history's `message_refused`), as it tells a
+  rejection, and knows an answer of the user's rule from their `ApprovalAnswered`; its types name
+  both events. The terminal keeps the requests shown until the approver ends them, to find the
+  channel `/approve` answers in and to show them again at `/switch`, and `/approve` sends through
+  the user's actor directly (`Followed::approve` is gone). WEB-UI.md and REST-SERVER.md say so.
+  On the review: a request the user answered - here, on another page of theirs or by a rule of
+  theirs, as their actor shows them their `ApprovalAnswered` - is theirs to answer no longer, in
+  the terminal (taken out of the requests shown) as on the web UI (marked answered), so that
+  neither offers a second answer. The terminal keeps the requests shown, rather than asking the
+  user's actor as for the questions, as point 8 considered: since step 8 no actor of the user's
+  holds approvals - the approver does -, and what the terminal keeps is what the stream showed it,
+  as the web UI keeps it. A refusal names the approver also when read back from the history, and
+  `invalid` is worded so that it fits a request that is over. The REST handler's doc comment says
+  how an answer goes.
+
+- **2026-11-13** — Decided with the maintainer on the review of step 9, and done in it:
+  `MessageRefused` is renamed `EventRefused` - what an actor does not take is an event of any
+  kind, and not every one a request: an answer is none -, with its history entry, the REST API's
+  item (`event_refused`), the web UI's types and the documents; no stored data holds it but on this
+  branch. A refusal names the answer it refuses as its correlation (`EventContext::correlation_id`,
+  the answer's `event_id`), and every page of the user sees their own `ApprovalAnswered`: the web
+  UI remembers which request each answer was to, and where a refusal of it comes, marks the request
+  answered no longer - without a change of the REST interface.
+
+- **2026-11-13** — A point joins the issue, at the maintainer's decision:
+  11. **`MessageRejected` names an event as a message.** What the channel does not let in is an
+  event of any kind (`rejected` names it), as what an actor does not take is (`EventRefused`): it is
+  to be renamed `EventRejected`, with `HistoryEntry::MessageRejected`, the REST API's
+  `message_rejected` and the web UI's notice - which changes stored history entries, so that the
+  stored histories have to be deleted.

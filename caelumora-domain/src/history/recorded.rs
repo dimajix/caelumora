@@ -552,7 +552,7 @@ mod tests {
             ),
             (
                 approver,
-                ActorEvent::MessageRefused {
+                ActorEvent::EventRefused {
                     to: user,
                     refused: "ApprovalAnswered".to_string(),
                     message: None,

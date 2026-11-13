@@ -429,10 +429,11 @@ pub struct AnswerQuestionsRequest {
     pub declined: bool,
 }
 
+/// A user's answer to an approval request (issue 567): the request it answers, by its id alone -
+/// which agent asked the approver tells, which holds the request.
 #[derive(Debug, Deserialize)]
 pub struct SendApprovalRequest {
     pub approval_id: Uuid,
-    pub agent_id: Uuid,
     pub approved: bool,
 }
 

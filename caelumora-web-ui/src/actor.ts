@@ -23,6 +23,9 @@ export function agentIdOf(id: ActorId): string | null {
   return typeof id !== 'string' && 'Agent' in id ? id.Agent : null;
 }
 
+/** The name every approver goes by (`ActorId::APPROVER_NAME`). */
+export const APPROVER_NAME = 'Approver';
+
 /** Whether `id` is an approver. */
 export function isApprover(id: ActorId): boolean {
   return typeof id !== 'string' && 'Approver' in id;

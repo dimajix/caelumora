@@ -187,7 +187,7 @@ it also in someone else's channel. No agent is the system's (issue
 *   An answer enters the channel from its user, with their own part alone; the approver counts it
     only if the request is one it holds and the user may approve the calls of the agent that asked,
     asked in the context the channel admits what they send in (`ChannelLoop::context_of`). Any
-    other answer it refuses and tells its sender (`MessageRefused`, as an actor tells whom an event
+    other answer it refuses and tells its sender (`EventRefused`, as an actor tells whom an event
     went to that it does not take): `Invalid` for a request it does not hold - never asked, decided
     or withdrawn -, `Forbidden` for one who may not approve. A decision - granted, denied, timed
     out - enters the channel only from an approver.

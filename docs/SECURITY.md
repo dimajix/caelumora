@@ -576,7 +576,7 @@ what is refused is answered to its sender alone (`MessageRejected`), recorded to
 refused entered nothing and is not recorded (issue 417). An answer to an approval request names the
 request alone, and the approver, which holds it, asks whether its sender may approve the calls of
 the agent that asked (`ApproveToolCall`), in the context the channel admits them in, and refuses
-it to them alone otherwise (`MessageRefused`, issue 567).
+it to them alone otherwise (`EventRefused`, issue 567).
 
 ## The security suite
 

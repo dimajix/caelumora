@@ -210,7 +210,7 @@ async fn handle_line(
             return Ok(());
         };
         if let Some(actor) = acting(followed) {
-            if let Err(e) = followed.approve(&actor, id, approved).await {
+            if let Err(e) = actor.send_approval(id, approved).await {
                 print_error(&e);
             }
         }

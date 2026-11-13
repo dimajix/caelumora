@@ -249,7 +249,7 @@ impl Chain<Recorded> {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }

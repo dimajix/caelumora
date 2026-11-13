@@ -218,8 +218,8 @@ impl Envelope {
                     at,
                 }
             }
-            ActorEvent::MessageRefused { to, refused, message, reason } => {
-                HistoryEntry::MessageRefused {
+            ActorEvent::EventRefused { to, refused, message, reason } => {
+                HistoryEntry::EventRefused {
                     by: actor,
                     to: *to,
                     refused: refused.clone(),
@@ -360,9 +360,9 @@ impl Envelope {
     }
 
     /// What its receiver sends back where it does not take it, for `reason` (issue 567): a
-    /// `MessageRefused` to its sender, naming its kind and the message it was or was about.
+    /// `EventRefused` to its sender, naming its kind and the message it was or was about.
     pub fn refusal(&self, reason: Rejection) -> ActorEvent {
-        ActorEvent::MessageRefused {
+        ActorEvent::EventRefused {
             to: self.context.sender_id,
             refused: self.event.kind().to_string(),
             message: self.event.subject_message(),
@@ -867,7 +867,7 @@ mod tests {
     fn a_refusal_concerns_whom_it_refuses_alone() {
         let present = Present::new();
         let (user, approver) = (present.users[0], present.approver);
-        let refused = |to| ActorEvent::MessageRefused {
+        let refused = |to| ActorEvent::EventRefused {
             to,
             refused: "ApprovalAnswered".to_string(),
             message: None,

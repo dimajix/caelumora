@@ -87,7 +87,7 @@ import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
-import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -107,7 +107,7 @@ import {AddParticipantDialog} from './AddParticipantDialog';
 import {ApprovalRuleOffer} from './ApprovalRuleOffer';
 import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
-import {actorKey, actorUuid, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
+import {APPROVER_NAME, actorKey, actorUuid, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
 import {GROUP_HANDLES, handleOf, mentionQueryAt} from '../mention';
 import {commandQueryAt, completes, parseInput} from '../command';
 import {openEventStream} from '../stream';
@@ -129,19 +129,25 @@ function retryRefusedText(reason: RetryRefused): string {
   }
 }
 
-/** Why the channel did not let in what the user sent (issue 304), in words. */
+/**
+ * Why the channel did not let in what the user sent (issue 304), or the actor it went to did not
+ * take it (issue 567), in words.
+ */
 function rejectionText(reason: Rejection): string {
   switch (reason) {
     case 'forbidden': return 'you may not do this here';
     case 'classification_refused': return 'it is classified so that the channel does not admit it';
     case 'message_not_found': return 'the message it is about is not in the channel';
     case 'message_unchangeable': return 'the message was taken back or cannot be changed so';
-    case 'invalid': return 'it does not fit the channel as it is';
+    case 'invalid': return 'it does not fit the channel as it is, or what it is about is over';
     default: return 'for a reason this page does not know';
   }
 }
 
-/** What the user sent that the channel did not let in (issue 304), by its kind. */
+/**
+ * What the user sent that the channel did not let in (issue 304), or the actor it went to did not
+ * take (issue 567), by its kind.
+ */
 function rejectedText(kind: string): string {
   switch (kind) {
     case 'CompleteMessageGenerated': return 'Your message';
@@ -152,6 +158,7 @@ function rejectedText(kind: string): string {
     case 'QuestionAnswered': case 'QuestionDeclined': return 'Your answer to the questions';
     case 'CommandRequested': return 'Your command';
     case 'NudgeRequested': return 'Your request to respond';
+    case 'ApprovalAnswered': return 'Your answer to an approval';
     default: return 'What you sent';
   }
 }
@@ -249,8 +256,10 @@ function withCall(usage: TokenUsage | undefined, message: Message): TokenUsage |
  * (issue 164) - to name whose turn was given up (issue 258).
  */
 function nameIn(channel: ChannelResponse | null): (actor: ActorId) => string | undefined {
-  return actor => [...(channel?.participants ?? []), ...(channel?.former_participants ?? [])]
-    .find(m => sameActor(m.id, actor))?.name;
+  return actor => isApprover(actor)
+    ? APPROVER_NAME
+    : [...(channel?.participants ?? []), ...(channel?.former_participants ?? [])]
+      .find(m => sameActor(m.id, actor))?.name;
 }
 
 function withAnswer(answers: Answer[], sender: string, name: string | null, change: (answer: Answer) => Answer): Answer[] {
@@ -356,6 +365,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   const [answeredApprovals, setAnsweredApprovals] = useState<string[]>([]);
   // Of those, the ones a rule of this user's answered (issue 13), by id.
   const [answeredByRule, setAnsweredByRule] = useState<Record<string, string>>({});
+  // The approval each answer of this user's was to, by the answer's event id (issue 567): what a
+  // refusal of it names as its correlation, so that the request it was to is answered no longer.
+  const answersByEvent = useRef<Record<string, string>>({});
   // The rule each card is to add with its answer, by request id.
   const [ruleChoices, setRuleChoices] = useState<Record<string, RuleChoice | null>>({});
   // The questions the agents' calls wait for the answers to (issue 165),
@@ -917,6 +929,25 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
             }
             showOnce(messageRejectedNotice(rejected, reason, envelope.timestamp, position));
           }
+        } else if (actorEvent.EventRefused) {
+          // What the user sent that the actor it went to did not take (issue 567) - the approver
+          // an answer it does not count.
+          const {refused, reason} = actorEvent.EventRefused;
+          const refusedAnswer = answersByEvent.current[envelope.context.correlation_id];
+          if (refusedAnswer) {
+            setAnsweredApprovals(prev => prev.filter(answered => answered !== refusedAnswer));
+            setAnsweredByRule(prev => Object.fromEntries(Object.entries(prev).filter(([answered]) => answered !== refusedAnswer)));
+          }
+          showOnce(eventRefusedNotice(refused, reason, envelope.context.sender_name, envelope.timestamp, position));
+        } else if (actorEvent.ApprovalAnswered) {
+          // This user's own answer, as their actor shows it - on this page, in another of theirs,
+          // or given by a rule of theirs (issue 13).
+          const {id, decision} = actorEvent.ApprovalAnswered;
+          if (userIdOf(envelope.context.sender_id) === user.id) {
+            answersByEvent.current[envelope.context.event_id] = id;
+            setAnsweredApprovals(prev => prev.includes(id) ? prev : [...prev, id]);
+            if (decision.by_rule) setAnsweredByRule(prev => ({...prev, [id]: decision.by_rule!}));
+          }
         } else if (actorEvent.ApprovalRequested) {
           // Asked again by an agent that resumed its turn (issue 172), or
           // already in the snapshot: shown once.
@@ -924,16 +955,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setPendingApprovals(prev => prev.some(req => req.id === requested.id) ? prev : [...prev, requested]);
         } else if (actorEvent.ApprovalGranted || actorEvent.ApprovalDenied || actorEvent.ApprovalTimedOut || actorEvent.ApprovalRequestWithdrawn) {
           // Over only once the approver says so - decided, or no longer
-          // asked for (issue 148); a user's answer alone may not decide it.
+          // asked for (issue 148).
           const sender = envelope.context.sender_id;
           const ended = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied ?? actorEvent.ApprovalTimedOut ?? actorEvent.ApprovalRequestWithdrawn)!.id;
-          // This user's own answer, as their actor shows it: given by a rule
-          // of theirs (issue 13).
-          const byRule = (actorEvent.ApprovalGranted ?? actorEvent.ApprovalDenied)?.decisions?.[0]?.by_rule;
-          if (byRule && userIdOf(sender) === user.id) {
-            setAnsweredApprovals(prev => prev.includes(ended) ? prev : [...prev, ended]);
-            setAnsweredByRule(prev => ({...prev, [ended]: byRule}));
-          }
           if (isApprover(sender)) {
             setPendingApprovals(prev => prev.filter(req => req.id !== ended));
             setAnsweredApprovals(prev => prev.filter(id => id !== ended));
@@ -1420,7 +1444,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // stands.
   const handleApproval = async (approval: ApprovalRequest, approved: boolean) => {
     try {
-      await api.respondToApproval(sessionId, channelId, approval.id, approval.agent_id, approved);
+      await api.respondToApproval(sessionId, channelId, approval.id, approved);
       setAnsweredApprovals(prev => [...prev, approval.id]);
     } catch (e) {
       reportError('Failed to respond to approval', e);
@@ -1588,6 +1612,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         <span>Not let in</span>
       </div>
       <div className="wrap-break-word">{rejectedText(msg.messageRejected.rejected)} was not let into the channel: {rejectionText(msg.messageRejected.reason)}.</div>
+      <MessageFooter message={msg} />
+    </div>
+  ) : msg.eventRefused ? (
+    <div
+      key={key}
+      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
+    >
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
+        <Ban size={14} />
+        <span>Not taken</span>
+      </div>
+      <div className="wrap-break-word">{rejectedText(msg.eventRefused.refused)} was not taken{msg.sender_name ? ` by ${msg.sender_name}` : ''}: {rejectionText(msg.eventRefused.reason)}.</div>
       <MessageFooter message={msg} />
     </div>
   ) : msg.retryRejected ? (

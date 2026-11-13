@@ -1353,10 +1353,9 @@ export const api = {
     await ensureOk(res, 'Failed to answer the questions');
   },
 
-  async respondToApproval(sessionId: string, channelId: string, approvalId: string, agentId: string, approved: boolean): Promise<void> {
+  async respondToApproval(sessionId: string, channelId: string, approvalId: string, approved: boolean): Promise<void> {
     const payload = {
       approval_id: approvalId,
-      agent_id: agentId,
       approved: approved
     };
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/approvals`, {

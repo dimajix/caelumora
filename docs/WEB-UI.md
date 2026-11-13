@@ -368,11 +368,15 @@ it is fetched anew as it starts.
     who may approve the agent's calls (`can_approve`); everybody else is told it waits for whoever
     is responsible for the agent. It disappears only when the approver ends it - decided, timed out
     or withdrawn. The pending approvals come with the snapshot, and a request asked anew after a
-    restart is shown once. Whether this user answered is known only to this page. Unless a rule of
-    the place asked for it, a card offers to add a rule derived from the call with the answer
+    restart is shown once. Whether this user answered is known to every page of theirs open, as
+    their actor shows them their answer (`ApprovalAnswered`), but not after a reload. Unless a rule
+    of the place asked for it, a card offers to add a rule derived from the call with the answer
     ("and from now on") - a command line by how many of the words it was proposed with, which words
     a line has being the server's to read; a value too long for a pattern as it is. Where the server
-    proposes no rule, none is offered. A request a rule of this user's answered says so.
+    proposes no rule, none is offered. A request a rule of this user's answered says so. An answer
+    names the request alone; one the approver does not count is told in a notice (`EventRefused`),
+    as what the channel does not let in is (`MessageRejected`), and the request is no longer marked
+    answered: the refusal names the answer's event as its correlation.
 *   **Questions** an agent's call waits for are shown to everybody the server sends them to, above
     the approvals, with the controls only for the users they are put to. A question may be skipped,
     the whole of them declined; a question's text keeps its line breaks, so that a command of

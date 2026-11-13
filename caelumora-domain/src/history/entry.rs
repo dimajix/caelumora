@@ -187,7 +187,7 @@ pub enum HistoryEntry {
     },
     /// `by`, an actor, did not take what `to` sent it - an event of the kind `refused`, about
     /// `message` if it is one - at `at`, for `reason` (issue 567): told to `to` alone.
-    MessageRefused {
+    EventRefused {
         by: ActorId,
         to: ActorId,
         refused: String,
@@ -288,7 +288,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. } => true,
             HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
@@ -336,7 +336,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
@@ -379,7 +379,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
@@ -432,7 +432,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
@@ -471,7 +471,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
@@ -528,7 +528,7 @@ impl HistoryEntry {
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
             | HistoryEntry::ResponseRequested { .. } => Recipients::NOBODY,
-            HistoryEntry::MessageRefused { to, .. } => Recipients::only(vec![*to]),
+            HistoryEntry::EventRefused { to, .. } => Recipients::only(vec![*to]),
             HistoryEntry::CommandRequested { agent: named, .. }
             | HistoryEntry::RetryRequested { author: named, .. } => Recipients::only(
                 Some(*named)
@@ -627,8 +627,8 @@ impl HistoryEntry {
             HistoryEntry::MessageRejected { rejected, message, reason, .. } => {
                 ActorEvent::MessageRejected { rejected, message, reason }
             }
-            HistoryEntry::MessageRefused { to, refused, message, reason, .. } => {
-                ActorEvent::MessageRefused { to, refused, message, reason }
+            HistoryEntry::EventRefused { to, refused, message, reason, .. } => {
+                ActorEvent::EventRefused { to, refused, message, reason }
             }
             HistoryEntry::ResponseRequested { reason, .. } => {
                 ActorEvent::ResponseRequested { reason }
@@ -705,7 +705,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
@@ -745,7 +745,7 @@ impl HistoryEntry {
             | HistoryEntry::ApprovalRequested { by, .. }
             | HistoryEntry::ApprovalAnswered { by, .. }
             | HistoryEntry::ApprovalDecided { by, .. }
-            | HistoryEntry::MessageRefused { by, .. }
+            | HistoryEntry::EventRefused { by, .. }
             | HistoryEntry::ApprovalRequestWithdrawn { by, .. }
             | HistoryEntry::QuestionRequested { by, .. }
             | HistoryEntry::QuestionClosed { by, .. } => *by,
@@ -791,7 +791,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
-            | HistoryEntry::MessageRefused { .. }
+            | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }

@@ -812,6 +812,9 @@ export interface Message {
   // UI only: the channel did not let in what the user sent (issue 304).
   // Part of the history, also for a message of theirs (issue 417).
   messageRejected?: {rejected: string; reason: Rejection};
+  // UI only: the actor it went to did not take what the user sent (issue 567). Part of the
+  // history.
+  eventRefused?: {refused: string; reason: Rejection};
   // UI only: a step of the plan of the turn `turn_id` began here (issue
   // 263) - not shown itself, but heading the messages of the step.
   planStep?: PlanStep;
@@ -862,6 +865,12 @@ export interface ActorEvent {
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
   ApprovalRequested?: ApprovalRequest;
+  /**
+   * A user's answer to the approval request `id` (issue 567), to the approver alone: shown back to
+   * that user by their actor - with the rule of theirs that gave it, if one did (issue 13).
+   */
+  ApprovalAnswered?: { id: string; approved: boolean; decision: ApprovalDecision };
+  /** The approver's decision. */
   ApprovalGranted?: ApprovalVerdict;
   ApprovalDenied?: ApprovalVerdict;
   ApprovalTimedOut?: ApprovalVerdict;
@@ -966,6 +975,12 @@ export interface ActorEvent {
    * Sent by the channel to its sender alone, never part of the history.
    */
   MessageRejected?: { rejected: string; message: string | null; reason: Rejection };
+  /**
+   * The actor an event of the user's of the kind `refused` went to did not take it (issue 567) -
+   * the approver an answer it does not count -, about the message `message` if it was one, for
+   * `reason`. Sent by that actor to `to` alone, and part of the history.
+   */
+  EventRefused?: { to: ActorId; refused: string; message: string | null; reason: Rejection };
 }
 
 /**
@@ -1318,9 +1333,8 @@ export interface ApprovalVerdict {
   id: string;
   agent_id: string;
   /**
-   * Who decided (issue 419): on a person's answer theirs alone - on your own answers, as your actor
-   * shows them to you, with the rule of yours that gave it (issue 13) -; on the approver's decision
-   * those whose answers made it, none where it timed out or nobody may approve.
+   * Who decided (issue 419): those whose answers made the approver's decision, none where it timed
+   * out or nobody may approve.
    */
   decisions?: ApprovalDecision[];
 }
@@ -1423,6 +1437,8 @@ export type HistoryItemKind<M> =
   | {responder_undecided: {message: string; at: string}}
   /** What the reader sent was not let into the channel (issue 304). */
   | {message_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
+  /** What the reader sent was not taken by `by`, the actor it went to (issue 567). */
+  | {event_refused: {by: ActorId; refused: string; message: string | null; reason: Rejection; at: string}}
   /**
    * The reader was asked to respond, to what `by` said or nudged, for `reason` (issues 278, 417,
    * 439).

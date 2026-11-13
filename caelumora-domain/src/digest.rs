@@ -511,8 +511,8 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.json(&serde_json::json!([message, reason]));
             e.finish()
         }
-        HistoryEntry::MessageRefused { by, to, refused, message, reason, .. } => {
-            let mut e = Encoder::new("caelumora.history-message-refused.v1");
+        HistoryEntry::EventRefused { by, to, refused, message, reason, .. } => {
+            let mut e = Encoder::new("caelumora.history-event-refused.v1");
             e.opt_digest(previous);
             e.str(refused);
             e.json(&serde_json::json!([by, to, message, reason]));

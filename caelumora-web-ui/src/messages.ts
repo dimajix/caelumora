@@ -297,6 +297,14 @@ export function messageRejectedNotice(rejected: string, reason: Rejection, at: s
 }
 
 /**
+ * The notice that what you sent, of the kind `refused`, was not taken by `byName`, the actor it
+ * went to, for `reason` (issue 567).
+ */
+export function eventRefusedNotice(refused: string, reason: Rejection, byName: string | undefined, at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, sender_name: byName, eventRefused: {refused, reason}, timestamp: at};
+}
+
+/**
  * The notice of something an agent does of its own accord (issue 284), as
  * the chat shows it: under way, kept by its turn until it ends - one turn
  * may do it more than once -, then ended with what came of it, `output`,
@@ -396,6 +404,10 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('message_rejected' in item) {
       const {rejected, reason, at} = item.message_rejected;
       return [messageRejectedNotice(rejected, reason, at, item.seq)];
+    }
+    if ('event_refused' in item) {
+      const {by, refused, reason, at} = item.event_refused;
+      return [eventRefusedNotice(refused, reason, nameOf(by), at, item.seq)];
     }
     if ('response_requested' in item) {
       const {by, at} = item.response_requested;

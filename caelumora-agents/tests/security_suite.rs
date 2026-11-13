@@ -1716,7 +1716,7 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
 /// Approving a tool call (issue 14) is for who is responsible for the
 /// agent - its owner and contributors: alice's answer counts, bob's, who
 /// only takes part, is refused by the approver as it counts the answers,
-/// and he is told (`MessageRefused`, issues 312, 567). The approver asks of
+/// and he is told (`EventRefused`, issues 312, 567). The approver asks of
 /// everybody taking part to know whom to wait for; the view offers it to
 /// alice alone.
 #[tokio::test]
@@ -1783,8 +1783,8 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
                 .send_approval(request.id, false)
                 .await
                 .expect("sent");
-            let ActorEvent::MessageRefused { refused, reason, .. } =
-                shown(&mut his, "MessageRefused").await
+            let ActorEvent::EventRefused { refused, reason, .. } =
+                shown(&mut his, "EventRefused").await
             else {
                 unreachable!()
             };

@@ -334,7 +334,7 @@ A channel is followed live only by its participants, through their own actor's o
 (`ChannelView::user_follow`, see [CHANNELS.md](CHANNELS.md#acting-in-a-channel)). The stream is what
 their actor shows: what the moderator routes to the user, what it says for them, why the channel
 did not let in what the user sent (`MessageRejected` with its reason), and why the actor it went
-to did not take it (`MessageRefused` with its reason - the approver an answer it does not count,
+to did not take it (`EventRefused` with its reason - the approver an answer it does not count,
 issue 567). A request that sends
 something into the channel is answered once it is on its way, so a refusal arrives on the stream,
 after what the user sent. Any number of streams may follow one actor - two tabs, two devices; one

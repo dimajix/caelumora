@@ -251,7 +251,7 @@ impl ApproverActor {
     /// calls it enforces (`ApproveToolCall`, issue 312), asked in the context the channel admits
     /// them in. An answer it does not count - to a request it does not hold, decided or never
     /// asked, of an agent it cannot read, or of someone who may not approve - it refuses, and tells
-    /// them (`MessageRefused`).
+    /// them (`EventRefused`).
     async fn handle_answer(&self, answer: &Envelope, output: &dyn EventSender) -> Result<()> {
         let ActorEvent::ApprovalAnswered { id, approved, decision } = &answer.event else {
             return Ok(());
@@ -285,7 +285,7 @@ impl ApproverActor {
         Ok(())
     }
 
-    /// Tells the sender of `answer` that it does not count, for `reason` (`MessageRefused`, issue
+    /// Tells the sender of `answer` that it does not count, for `reason` (`EventRefused`, issue
     /// 567): to them alone, in its own name.
     async fn refuse(
         &self,
@@ -731,7 +731,7 @@ mod tests {
         approving.answer(0, &withdrawn, true).await;
         let refused = approving.next().await;
         assert!(
-            matches!(refused.event, ActorEvent::MessageRefused { reason: Rejection::Invalid, .. }),
+            matches!(refused.event, ActorEvent::EventRefused { reason: Rejection::Invalid, .. }),
             "an answer to it is refused, as no longer held (issue 567): {:?}",
             refused.event
         );
@@ -752,7 +752,7 @@ mod tests {
         assert!(
             matches!(
                 refused.event,
-                ActorEvent::MessageRefused { to, reason: Rejection::Invalid, .. }
+                ActorEvent::EventRefused { to, reason: Rejection::Invalid, .. }
                     if to == ActorId::User(approving.users[0])
             ),
             "{:?}",
@@ -775,7 +775,7 @@ mod tests {
         assert!(
             matches!(
                 refused.event,
-                ActorEvent::MessageRefused { to, reason: Rejection::Forbidden, ref refused, .. }
+                ActorEvent::EventRefused { to, reason: Rejection::Forbidden, ref refused, .. }
                     if to == ActorId::User(approving.users[1]) && refused == "ApprovalAnswered"
             ),
             "refused, and they are told (issue 567): {:?}",

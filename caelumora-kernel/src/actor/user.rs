@@ -591,7 +591,7 @@ impl UserActor {
     /// Sends this user's answer to the approval request `id` (issue 567): whether they approve,
     /// with their part alone - their own, never one of their rules (`ApprovalDecision::by_rule`,
     /// issue 419). Which agent asked, and whether they may approve its calls, the approver tells,
-    /// which holds the request: an answer it does not count it refuses (`MessageRefused`).
+    /// which holds the request: an answer it does not count it refuses (`EventRefused`).
     /// Returns the `span_id`, as `send_message` does.
     ///
     /// # Errors
