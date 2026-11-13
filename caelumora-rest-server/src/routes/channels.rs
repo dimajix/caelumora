@@ -915,7 +915,7 @@ pub(super) async fn answer_questions(
 mod tests {
     use super::*;
     use crate::routes::api;
-    use crate::routes::tests::{login, state};
+    use crate::routes::tests::{login, read_until, state};
     use anyhow::Error;
     use axum::body::{to_bytes, Body, BodyDataStream};
     use axum::http::header::{CONTENT_TYPE, COOKIE};
@@ -1007,22 +1007,6 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         response.into_body().into_data_stream()
-    }
-
-    /// What `stream` sent, read on until `seen` holds of all of it.
-    async fn read_until(
-        stream: &mut BodyDataStream,
-        read: &mut String,
-        seen: impl Fn(&str) -> bool,
-    ) {
-        while !seen(read) {
-            let chunk = time::timeout(Duration::from_secs(5), stream.next())
-                .await
-                .unwrap_or_else(|_| panic!("nothing more came of the stream: {read}"))
-                .unwrap_or_else(|| panic!("the stream ended: {read}"))
-                .unwrap();
-            read.push_str(&String::from_utf8_lossy(&chunk));
-        }
     }
 
     /// Whether channel `channel` of `session` runs.

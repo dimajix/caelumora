@@ -236,3 +236,10 @@ a session is continued - would be the same choice made at start. Nobody has aske
   it says so in the log and follows every channel the user takes part in that it does not follow
   yet, as every subscriber of the bus makes up for a loss (`docs/EVENTS.md`). What happens next is
   what a channel shows or that the user may have joined one (`Happened`).
+- **2026-11-13** — Step 13 done. The global stream of the REST server builds the views in the
+  user's name once (`global_events`), for its first snapshot and every one after a loss, as the
+  channel stream does since step 8, rather than holding the server's state and the user to build
+  them anew for each; the snapshot is read through them (`global_snapshot`), and the stream
+  subscribes in their name, as the terminal does since step 12. The global stream had no test
+  through its route; one shows that it begins with a snapshot of the sessions, before anything
+  the bus tells. The tests of the streams read them by one helper (`routes::tests::read_until`).
