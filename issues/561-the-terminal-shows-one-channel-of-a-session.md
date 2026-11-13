@@ -243,3 +243,17 @@ a session is continued - would be the same choice made at start. Nobody has aske
   subscribes in their name, as the terminal does since step 12. The global stream had no test
   through its route; one shows that it begins with a snapshot of the sessions, before anything
   the bus tells. The tests of the streams read them by one helper (`routes::tests::read_until`).
+- **2026-11-13** — Decided with the maintainer on the questions of the review of step 12: a
+  channel restored is followed as one joined, a step of its own, 15. What a channel joined
+  meanwhile shows before the terminal follows it became issue
+  [565](565-the-terminal-misses-what-a-channel-joined-shows-at-first.md); what the terminal tells
+  at its start and of an approval withdrawn in another channel, issue
+  [566](566-the-terminal-tells-little-at-its-start-and-of-withdrawals.md). That a user's new actor
+  does not know the questions still waiting for them after they left and joined again stays as it
+  is, a corner case.
+- **2026-11-13** — Step 14 done. `ChannelWatch::recv` and `try_recv`, which pass over where the
+  runs of the user's actor begin and end, are for tests alone (`test-support`), as
+  `EventSubscription::recv` and `try_recv` are: whoever follows a channel takes those in
+  (`ChannelWatch::next`), and nothing outside the tests called them. With it, three places that
+  wrote `anyhow::Error` by its path, without another `Error` beside it, import it as the rule of
+  imports has it (`docs/CODING-GUIDELINES.md`).

@@ -36,7 +36,9 @@ use chrono::Utc;
 use std::future;
 use std::sync;
 use std::sync::{Arc, PoisonError};
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+use tokio::sync::broadcast::error::RecvError;
+#[cfg(any(test, feature = "test-support"))]
+use tokio::sync::broadcast::error::TryRecvError;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
@@ -112,10 +114,12 @@ impl ChannelWatch {
         }
     }
 
-    /// The next envelope shown, past where runs begin and end.
+    /// The next envelope shown, past where runs begin and end: for tests alone, since whoever
+    /// follows a channel takes in where its runs begin and end (`next`).
     ///
     /// # Errors
     /// As `next`.
+    #[cfg(any(test, feature = "test-support"))]
     pub async fn recv(&mut self) -> Result<Envelope, Lagged> {
         loop {
             if let Shown::Envelope(envelope) = self.next().await? {
@@ -124,11 +128,12 @@ impl ChannelWatch {
         }
     }
 
-    /// The next envelope shown, if one was, past where runs begin and end;
-    /// `None` if none was.
+    /// The next envelope shown, if one was, past where runs begin and end; `None` if none was: for
+    /// tests alone, as `recv`.
     ///
     /// # Errors
     /// As `next`.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn try_recv(&mut self) -> Result<Option<Envelope>, Lagged> {
         loop {
             match self.shown.try_recv() {

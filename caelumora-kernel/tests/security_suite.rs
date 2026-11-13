@@ -9,6 +9,7 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
+use anyhow::Error;
 use caelumora_api::command::CommandError;
 use caelumora_api::reader::ViewError;
 use caelumora_api::terminal::{CommandState, TerminalError, WorkspacePath};
@@ -4604,7 +4605,7 @@ async fn adding_by_command_asks_what_taking_in_asks() {
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
-    let refused = |error: &anyhow::Error| match as_command_error(error) {
+    let refused = |error: &Error| match as_command_error(error) {
         CommandError::InvalidArguments { reason, .. } => reason.clone(),
         other => panic!("refused as invalid, not {other:?}"),
     };
@@ -5329,7 +5330,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
-    let refused = |error: &anyhow::Error| match as_command_error(error) {
+    let refused = |error: &Error| match as_command_error(error) {
         CommandError::InvalidArguments { reason, .. } => reason.clone(),
         other => panic!("refused as invalid, not {other:?}"),
     };
