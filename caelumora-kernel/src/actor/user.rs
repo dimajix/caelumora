@@ -81,7 +81,9 @@ pub struct UserActor {
 /// actor in it shows - what it is routed and says for them, and where its
 /// runs begin and end -, across its runs: also while the channel does not
 /// run, so that whoever follows it sees it run again. Only a participant
-/// follows a channel live, and only through their actor's outbox.
+/// follows a channel live, and only through their actor's outbox. Any number
+/// may follow - two tabs, two devices (issue 220); without anyone following,
+/// what is shown is dropped.
 pub struct ChannelWatch {
     shown: broadcast::Receiver<Shown>,
     /// Keeps the outbox while no actor runs, so that it never closes: held, never read.
@@ -803,9 +805,10 @@ impl UserActor {
             .await
     }
 
-    /// Follows the channel as this user, from now on: see `ChannelWatch`.
-    /// Any number may follow - two tabs, two devices (issue 220); without
-    /// anyone following, what is shown is dropped.
+    /// Follows the channel as this user, from now on: see `ChannelWatch`. For tests alone: whoever
+    /// follows a channel does so through the views, as the user, where the channel lists them
+    /// (`ChannelView::user_follow`).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn watch(&self) -> ChannelWatch {
         ChannelWatch::of(&self.outbox)
     }

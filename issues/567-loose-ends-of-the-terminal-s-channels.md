@@ -141,3 +141,17 @@ collected here, to be taken on one after the other, each a step of its own:
   private fields of the actor, its queue `user_rx` and its `channel_id`; it runs the actor now and
   reads what it forwards to the channel, waits for nothing else as above, and takes the channel's
   id from the channel of its fixture.
+
+- **2026-11-13** — Decided with the maintainer before step 4: `UserActor::watch` stays for the
+  tests under `test-support`, rather than the tests following through the views - most of them
+  test an actor or an agent, not who may follow, and a fixture of their own through the views
+  would be a second way for tests all the same. Whether a method for tests may stand beside a
+  type's own, as `watch` then does, is point 6's to decide, for it as for the others.
+
+- **2026-11-13** — Step 4, point 4: `UserActor::watch` is guarded by
+  `#[cfg(any(test, feature = "test-support"))]`, as `ChannelWatch::recv` and `try_recv` are since
+  561, and its doc comment says why: whoever follows a channel does so through the views, as the
+  user, where the channel lists them (`ChannelView::user_follow`). That any number may follow,
+  and what is shown is dropped while nobody does, moved from its doc comment to `ChannelWatch`'s,
+  since it holds of every follower. No test changes; the terminal, the REST server and the app
+  build without it.
