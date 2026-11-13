@@ -118,3 +118,17 @@ collected here, to be taken on one after the other, each a step of its own:
   the guidelines describe a crate-private `testing` module as `#[cfg(test)] pub(crate)` only, not
   as a private `#[cfg(test)] mod testing` with `pub(super)` items, as step 1 and five modules
   before it have it.
+
+- **2026-11-13** — Step 2, point 2: `routes::testing` holds three more fixtures. `send` asks the
+  API as whoever a cookie logs in - `Method` and an `Option` of a JSON body, the signature of the
+  `call` of the agents' tests, which, like the `send` of `routes::tests`, is gone. `user_id` is the
+  id `/auth/me` answers for a cookie, and `session_of` a session of a user, made as the system with
+  them in its main channel, started. The attachment test and `stopped_session_of_alice` in
+  `routes/channels.rs` build alice's session with them; the test of a project read by its owner's
+  name in `routes/mod.rs` takes its ids from `user_id`. On the review, at the maintainer's
+  decision, the requests the route tests still built by hand that `send` makes - a message posted
+  in the attachment test and by `say`, `page_of`, the refusal of a stranger following a channel,
+  the plugin's route asked after the login - go through `send` too, and `login` names the header
+  by `CONTENT_TYPE`; the attachment test is short enough now to lose its `expect` of
+  `clippy::too_many_lines` (issue [490](490-functions-longer-than-100-lines-since-rustfmt.md)). No
+  behaviour changes.

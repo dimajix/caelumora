@@ -915,21 +915,17 @@ pub(super) async fn answer_questions(
 mod tests {
     use super::*;
     use crate::routes::api;
-    use crate::routes::testing::{login, read_until, state};
+    use crate::routes::testing::{login, read_until, send, session_of, state, user_id};
     use anyhow::Error;
     use axum::body::{to_bytes, Body, BodyDataStream};
     use axum::http::header::{CONTENT_TYPE, COOKIE};
-    use axum::http::Request;
+    use axum::http::{Method, Request};
     use axum::Router;
     use caelumora_api::command::CommandError;
     use caelumora_api::reader::ViewError;
-    use caelumora_domain::channel::Participant;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::security::Refused;
-    use caelumora_domain::session::testing::make_session;
-    use caelumora_domain::user::UserId;
     use caelumora_kernel::channel::ChannelError;
-    use caelumora_kernel::session::testing::create;
     use caelumora_kernel::view::{AgentContextError, Viewer};
     use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
@@ -974,18 +970,8 @@ mod tests {
     ) -> (Router, String, SessionId, ChannelId) {
         let api = api(Arc::clone(state), &[]);
         let cookie = login(&api, "alice").await;
-        let me = api
-            .clone()
-            .oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let me: Value =
-            serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
-        let alice = UserId(me["id"].as_str().unwrap().parse().unwrap());
-        let mut session = make_session("talk", alice);
-        session.participants = vec![Participant::User(alice)];
-        let (session_id, channel_id) = (session.id, session.channels[0]);
-        create(&state.session_manager, &SecurityContext::system(), session).await.unwrap();
+        let alice = user_id(&api, &cookie).await;
+        let (session_id, channel_id) = session_of(state, alice).await;
         state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
         (api, cookie, session_id, channel_id)
     }
@@ -1017,22 +1003,19 @@ mod tests {
 
     /// The page of a history `uri` names, as whoever `cookie` logs in reads it.
     async fn page_of(api: &Router, cookie: &str, uri: &str) -> Value {
-        let request = Request::get(uri).header(COOKIE, cookie).body(Body::empty()).unwrap();
-        let page = api.clone().oneshot(request).await.unwrap();
-        assert_eq!(page.status(), StatusCode::OK);
-        serde_json::from_slice(&to_bytes(page.into_body(), usize::MAX).await.unwrap()).unwrap()
+        let (status, page) = send(api, cookie, Method::GET, uri, None).await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        page
     }
 
     /// Has whoever `cookie` logs in say `text` in the channel, and waits until its history holds
     /// it - kept, before a stop would lose it on its way (issue 385).
     async fn say(api: &Router, cookie: &str, session: SessionId, channel: ChannelId, text: &str) {
         let channel_uri = format!("/sessions/{}/channels/{}", session.0, channel.0);
-        let sent = Request::post(format!("{channel_uri}/messages"))
-            .header(COOKIE, cookie)
-            .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({ "content": text }).to_string()))
-            .unwrap();
-        assert_eq!(api.clone().oneshot(sent).await.unwrap().status(), StatusCode::OK);
+        let messages = format!("{channel_uri}/messages");
+        let (status, _) =
+            send(api, cookie, Method::POST, &messages, Some(json!({ "content": text }))).await;
+        assert_eq!(status, StatusCode::OK);
         let history = format!("{channel_uri}/history");
         time::timeout(Duration::from_secs(5), async {
             while !page_of(api, cookie, &history).await.to_string().contains(text) {
@@ -1181,12 +1164,8 @@ mod tests {
         let bob = login(&api, "bob").await;
         let uri = format!("/sessions/{}/channels/{}/events", session.0, channel.0);
         for _ in [false, true] {
-            let response = api
-                .clone()
-                .oneshot(Request::get(&uri).header(COOKIE, &bob).body(Body::empty()).unwrap())
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            let (status, _) = send(&api, &bob, Method::GET, &uri, None).await;
+            assert_eq!(status, StatusCode::FORBIDDEN);
             state.session_manager.open(&SecurityContext::system(), session).await.unwrap();
         }
     }

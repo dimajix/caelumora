@@ -167,39 +167,13 @@ async fn readable(
 #[cfg(test)]
 mod tests {
     use crate::routes::api;
-    use crate::routes::testing::{login, state};
-    use axum::body::{to_bytes, Body};
-    use axum::http::header::{CONTENT_TYPE, COOKIE};
-    use axum::http::{Method, Request, StatusCode};
-    use axum::Router;
+    use crate::routes::testing::{login, send, state};
+    use axum::http::{Method, StatusCode};
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::AgentId;
     use caelumora_security::SecurityContext;
-    use serde_json::{json, Value};
+    use serde_json::json;
     use std::sync::Arc;
-    use tower::ServiceExt;
-
-    /// `method` on `uri` as whoever `cookie` logs in, with `body` as JSON if
-    /// given: the status and the JSON answered, `null` for none.
-    async fn call(
-        api: &Router,
-        cookie: &str,
-        method: Method,
-        uri: &str,
-        body: Option<Value>,
-    ) -> (StatusCode, Value) {
-        let request = Request::builder().method(method).uri(uri).header(COOKIE, cookie);
-        let request = match body {
-            Some(body) => {
-                request.header(CONTENT_TYPE, "application/json").body(Body::from(body.to_string()))
-            }
-            None => request.body(Body::empty()),
-        };
-        let response = api.clone().oneshot(request.unwrap()).await.unwrap();
-        let status = response.status();
-        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
-    }
 
     /// Issue 227: an agent is made of a personality the user may read, in
     /// their own scope, read with the channels it takes part in, and
@@ -218,13 +192,13 @@ mod tests {
         let api = api(Arc::clone(&state), &[]);
         let alice = login(&api, "alice").await;
 
-        let (status, personalities) = call(&api, &alice, Method::GET, "/personalities", None).await;
+        let (status, personalities) = send(&api, &alice, Method::GET, "/personalities", None).await;
         assert_eq!(
             (status, personalities[0]["name"].clone(), personalities[0]["scope"].clone()),
             (StatusCode::OK, json!("plain"), json!("global"))
         );
 
-        let (status, made) = call(
+        let (status, made) = send(
             &api,
             &alice,
             Method::POST,
@@ -245,7 +219,7 @@ mod tests {
         assert!(made.get("channels").is_none(), "where it is made or listed, not its channels");
         let id = made["id"].as_str().unwrap().to_string();
 
-        let (status, refused) = call(
+        let (status, refused) = send(
             &api,
             &alice,
             Method::POST,
@@ -258,7 +232,7 @@ mod tests {
             (StatusCode::BAD_REQUEST, json!("invalid_scope"))
         );
 
-        let (status, renamed) = call(
+        let (status, renamed) = send(
             &api,
             &alice,
             Method::PATCH,
@@ -267,22 +241,22 @@ mod tests {
         )
         .await;
         assert_eq!((status, renamed["name"].clone()), (StatusCode::OK, json!("assistant")));
-        let (status, read) = call(&api, &alice, Method::GET, &format!("/agents/{id}"), None).await;
+        let (status, read) = send(&api, &alice, Method::GET, &format!("/agents/{id}"), None).await;
         assert_eq!(
             (status, read["name"].clone(), read["channels"].clone()),
             (StatusCode::OK, json!("assistant"), json!([]))
         );
-        let (_, listed) = call(&api, &alice, Method::GET, "/agents", None).await;
+        let (_, listed) = send(&api, &alice, Method::GET, "/agents", None).await;
         assert_eq!(listed[0]["name"], "assistant");
 
         let unknown = format!("/agents/{}", AgentId::new().0);
-        let (status, missing) = call(&api, &alice, Method::GET, &unknown, None).await;
+        let (status, missing) = send(&api, &alice, Method::GET, &unknown, None).await;
         assert_eq!(
             (status, missing["code"].clone()),
             (StatusCode::NOT_FOUND, json!("agent_not_found"))
         );
         let (status, missing) =
-            call(&api, &alice, Method::PATCH, &unknown, Some(json!({"name": "x"}))).await;
+            send(&api, &alice, Method::PATCH, &unknown, Some(json!({"name": "x"}))).await;
         assert_eq!(
             (status, missing["code"].clone()),
             (StatusCode::NOT_FOUND, json!("agent_not_found"))

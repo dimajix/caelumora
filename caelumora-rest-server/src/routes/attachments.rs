@@ -96,18 +96,14 @@ fn classification_of(
 mod tests {
     use super::*;
     use crate::routes::api;
-    use crate::routes::testing::{login, state_with};
+    use crate::routes::testing::{login, send, session_of, state_with, user_id};
     use axum::body::to_bytes;
     use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE};
-    use axum::http::Request;
-    use caelumora_domain::channel::Participant;
+    use axum::http::{Method, Request};
     use caelumora_domain::config::{AppConfig, BackendConfig, ContentConfig};
-    use caelumora_domain::session::testing::make_session;
-    use caelumora_domain::user::UserId;
-    use caelumora_kernel::session::testing::create;
     use caelumora_kernel::view::Viewer;
     use caelumora_security::SecurityContext;
-    use serde_json::{json, Value};
+    use serde_json::json;
     use std::time::Duration;
     use tokio::time;
     use tower::ServiceExt;
@@ -115,7 +111,6 @@ mod tests {
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nand the rest of it";
 
     #[tokio::test]
-    #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
     async fn a_file_uploaded_for_a_message_is_downloaded_from_it_an_image_shown_inline() {
         let files = tempfile::tempdir().unwrap();
         let content = ContentConfig {
@@ -128,18 +123,8 @@ mod tests {
         let state = state_with(AppConfig { content, ..Default::default() });
         let api = api(Arc::clone(&state), &[]);
         let cookie = login(&api, "alice").await;
-        let me = api
-            .clone()
-            .oneshot(Request::get("/auth/me").header(COOKIE, &cookie).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let me: Value =
-            serde_json::from_slice(&to_bytes(me.into_body(), usize::MAX).await.unwrap()).unwrap();
-        let alice = UserId(me["id"].as_str().unwrap().parse().unwrap());
-        let mut talk = make_session("talk", alice);
-        talk.participants = vec![Participant::User(alice)];
-        let (session, channel) = (talk.id, talk.channels[0]);
-        create(&state.session_manager, &SecurityContext::system(), talk).await.unwrap();
+        let alice = user_id(&api, &cookie).await;
+        let (session, channel) = session_of(&state, alice).await;
         let channel_uri = format!("/sessions/{}/channels/{}", session.0, channel.0);
 
         let upload = |name: &str, content: &'static [u8], length: bool| {
@@ -170,19 +155,10 @@ mod tests {
             "as their bytes say"
         );
 
-        let body = json!({ "attachments": [chart.id, notes.id] }).to_string();
-        let sent = api
-            .clone()
-            .oneshot(
-                Request::post(format!("{channel_uri}/messages"))
-                    .header(COOKIE, &cookie)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(sent.status(), StatusCode::OK, "a message of attachments alone");
+        let body = json!({ "attachments": [chart.id, notes.id] });
+        let (status, _) =
+            send(&api, &cookie, Method::POST, &format!("{channel_uri}/messages"), Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "a message of attachments alone");
         let message =
             time::timeout(Duration::from_secs(5), async {
                 loop {

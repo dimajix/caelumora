@@ -391,17 +391,16 @@ fn session_routes() -> Router<Arc<AppState>> {
 mod tests {
     use super::*;
     use crate::auth::SESSION_COOKIE;
-    use crate::routes::testing::{login, state};
+    use crate::routes::testing::{login, send, state, user_id};
     use anyhow::Result;
-    use axum::body::{to_bytes, Body};
-    use axum::http::header::COOKIE;
-    use axum::http::Request;
+    use axum::body::Body;
+    use axum::http::{Method, Request};
     use caelumora_domain::template::testing::{make_channel_template, make_template};
     use caelumora_domain::template::{ChannelTemplate, SessionTemplate};
     use caelumora_kernel::kernel::KernelBuilder;
     use caelumora_kernel::plugin::Plugin;
     use caelumora_security::SecurityContext;
-    use serde_json::{json, Value};
+    use serde_json::json;
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -434,32 +433,6 @@ mod tests {
         api(state(), plugins)
     }
 
-    /// What `api` answers `method` on `uri` with the JSON `body` - none for `null` - for whoever
-    /// is logged in by `cookie`: its status and its body as JSON, `null` for none.
-    async fn send(
-        api: &Router,
-        cookie: &str,
-        method: &str,
-        uri: &str,
-        body: Value,
-    ) -> (StatusCode, Value) {
-        let body = if body.is_null() { Body::empty() } else { Body::from(body.to_string()) };
-        let request = Request::builder()
-            .method(method)
-            .uri(uri)
-            .header(COOKIE, cookie)
-            .header("content-type", "application/json")
-            .body(body)
-            .unwrap();
-        let answer = api.clone().oneshot(request).await.unwrap();
-        let status = answer.status();
-        (
-            status,
-            serde_json::from_slice(&to_bytes(answer.into_body(), usize::MAX).await.unwrap())
-                .unwrap_or(Value::Null),
-        )
-    }
-
     #[tokio::test]
     async fn a_plugins_routes_are_served_behind_the_login() {
         let api = api_with(&[Box::new(Hello)]);
@@ -469,11 +442,8 @@ mod tests {
 
         let cookie = login(&api, "alice").await;
         assert!(cookie.starts_with(SESSION_COOKIE), "{cookie}");
-        let asked = api
-            .oneshot(Request::get("/hello").header(COOKIE, cookie).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(asked.status(), StatusCode::OK);
+        let (status, _) = send(&api, &cookie, Method::GET, "/hello", None).await;
+        assert_eq!(status, StatusCode::OK);
     }
 
     /// Issue 467: a user makes a shared project, finds, renames, describes, deletes and restores
@@ -485,9 +455,9 @@ mod tests {
         let (status, made) = send(
             &api,
             &cookie,
-            "POST",
+            Method::POST,
             "/projects",
-            json!({ "name": "report", "description": "The yearly report" }),
+            Some(json!({ "name": "report", "description": "The yearly report" })),
         )
         .await;
         assert_eq!(
@@ -496,38 +466,48 @@ mod tests {
             "{made}"
         );
         let id = made["id"].as_str().unwrap().to_string();
-        let (_, listed) = send(&api, &cookie, "GET", "/projects", Value::Null).await;
+        let (_, listed) = send(&api, &cookie, Method::GET, "/projects", None).await;
         assert_eq!(listed[0]["id"], json!(id), "{listed}");
-        let (status, renamed) =
-            send(&api, &cookie, "PATCH", &format!("/projects/{id}"), json!({ "name": "annual" }))
-                .await;
+        let (status, renamed) = send(
+            &api,
+            &cookie,
+            Method::PATCH,
+            &format!("/projects/{id}"),
+            Some(json!({ "name": "annual" })),
+        )
+        .await;
         assert_eq!((status, renamed["name"].clone()), (StatusCode::OK, json!("annual")));
         let (_, described) = send(
             &api,
             &cookie,
-            "PUT",
+            Method::PUT,
             &format!("/projects/{id}/description"),
-            json!({ "description": "The annual report" }),
+            Some(json!({ "description": "The annual report" })),
         )
         .await;
         assert_eq!(described["description"], json!("The annual report"));
-        let (status, refused) =
-            send(&api, &cookie, "POST", "/projects", json!({ "name": "own", "scope": "session" }))
-                .await;
+        let (status, refused) = send(
+            &api,
+            &cookie,
+            Method::POST,
+            "/projects",
+            Some(json!({ "name": "own", "scope": "session" })),
+        )
+        .await;
         assert_eq!(
             (status, refused["code"].clone()),
             (StatusCode::BAD_REQUEST, json!("invalid_scope"))
         );
         let (status, _) =
-            send(&api, &cookie, "DELETE", &format!("/projects/{id}"), Value::Null).await;
+            send(&api, &cookie, Method::DELETE, &format!("/projects/{id}"), None).await;
         assert_eq!(status, StatusCode::NO_CONTENT);
-        let (_, deleted) = send(&api, &cookie, "GET", "/projects?deleted=true", Value::Null).await;
+        let (_, deleted) = send(&api, &cookie, Method::GET, "/projects?deleted=true", None).await;
         assert_eq!(deleted[0]["id"], json!(id), "{deleted}");
         let (status, restored) =
-            send(&api, &cookie, "POST", &format!("/projects/{id}/restore"), Value::Null).await;
+            send(&api, &cookie, Method::POST, &format!("/projects/{id}/restore"), None).await;
         assert_eq!((status, restored["name"].clone()), (StatusCode::OK, json!("annual")));
         let (status, missing) =
-            send(&api, &cookie, "GET", &format!("/projects/{}", Uuid::new_v4()), Value::Null).await;
+            send(&api, &cookie, Method::GET, &format!("/projects/{}", Uuid::new_v4()), None).await;
         assert_eq!(
             (status, missing["code"].clone()),
             (StatusCode::NOT_FOUND, json!("project_not_found"))
@@ -541,28 +521,33 @@ mod tests {
         let api = api_with(&[]);
         let alice = login(&api, "alice").await;
         let bob = login(&api, "bob").await;
-        let (_, alice_id) = send(&api, &alice, "GET", "/auth/me", Value::Null).await;
-        let (_, bob_id) = send(&api, &bob, "GET", "/auth/me", Value::Null).await;
-        assert!(alice_id["id"].is_string() && bob_id["id"].is_string(), "{alice_id} {bob_id}");
-        let (_, made) = send(&api, &alice, "POST", "/projects", json!({ "name": "report" })).await;
+        let alice_id = user_id(&api, &alice).await;
+        let bob_id = user_id(&api, &bob).await;
+        let (_, made) =
+            send(&api, &alice, Method::POST, "/projects", Some(json!({ "name": "report" }))).await;
         let id = made["id"].as_str().unwrap().to_string();
-        let (status, _) =
-            send(&api, &alice, "PUT", &format!("/projects/{id}/members"), json!([bob_id["id"]]))
-                .await;
+        let (status, _) = send(
+            &api,
+            &alice,
+            Method::PUT,
+            &format!("/projects/{id}/members"),
+            Some(json!([bob_id])),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
 
-        let (status, read) = send(&api, &bob, "GET", &format!("/projects/{id}"), Value::Null).await;
+        let (status, read) = send(&api, &bob, Method::GET, &format!("/projects/{id}"), None).await;
         assert_eq!(
             (status, read["scope"].clone(), read["user_id"].clone(), read["user_name"].clone()),
-            (StatusCode::OK, json!("user"), alice_id["id"].clone(), json!("alice")),
+            (StatusCode::OK, json!("user"), json!(alice_id), json!("alice")),
             "{read}"
         );
         let (_, global) = send(
             &api,
             &alice,
-            "POST",
+            Method::POST,
             "/projects",
-            json!({ "name": "handbook", "scope": "global" }),
+            Some(json!({ "name": "handbook", "scope": "global" })),
         )
         .await;
         assert_eq!(
@@ -594,13 +579,13 @@ mod tests {
         let api = api(Arc::clone(&state), &[]);
         let cookie = login(&api, "alice").await;
         let (_, project) =
-            send(&api, &cookie, "POST", "/projects", json!({ "name": "report" })).await;
+            send(&api, &cookie, Method::POST, "/projects", Some(json!({ "name": "report" }))).await;
         let (status, made) = send(
             &api,
             &cookie,
-            "POST",
+            Method::POST,
             "/sessions",
-            json!({ "template_id": template.id, "project_id": project["id"] }),
+            Some(json!({ "template_id": template.id, "project_id": project["id"] })),
         )
         .await;
         assert_eq!(
@@ -611,9 +596,9 @@ mod tests {
         let (_, in_project) = send(
             &api,
             &cookie,
-            "GET",
+            Method::GET,
             &format!("/projects/{}/sessions", project["id"].as_str().unwrap()),
-            Value::Null,
+            None,
         )
         .await;
         assert_eq!(in_project[0]["id"], made["id"], "listed in its project: {in_project}");
@@ -621,9 +606,9 @@ mod tests {
         let (status, refused) = send(
             &api,
             &cookie,
-            "POST",
+            Method::POST,
             "/sessions",
-            json!({ "template_id": template.id, "project_id": Uuid::new_v4() }),
+            Some(json!({ "template_id": template.id, "project_id": Uuid::new_v4() })),
         )
         .await;
         assert_eq!(
@@ -631,7 +616,7 @@ mod tests {
             (StatusCode::NOT_FOUND, json!("project_not_found")),
             "{refused}"
         );
-        let (_, listed) = send(&api, &cookie, "GET", "/sessions", Value::Null).await;
+        let (_, listed) = send(&api, &cookie, Method::GET, "/sessions", None).await;
         assert_eq!(
             listed.as_array().map(Vec::len),
             Some(1),
