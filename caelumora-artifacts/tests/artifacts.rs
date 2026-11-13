@@ -861,7 +861,7 @@ async fn an_artifact_is_published_in_a_channel_for_its_publisher_and_read_by_who
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
-        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
+        async move { views.channel(session_id, main).await.unwrap() }
     };
     let (_, terminal) = terminal_in(&session, main, &alice).await.expect("hers to use");
     let at = WorkspacePath::parse("out/report.csv").unwrap();

@@ -380,15 +380,8 @@ mod tests {
             .send_message(Some("look".to_string()), None, vec![notes.id, chart.id])
             .await
             .unwrap();
-        let view = world
-            .manager
-            .views(Viewer::new(hers))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(main.id())
-            .await
-            .unwrap();
+        let view =
+            world.manager.views(Viewer::new(hers)).channel(session.id(), main.id()).await.unwrap();
         time::timeout(Duration::from_secs(5), async {
             loop {
                 let page = view.history_page(None, 10).await.unwrap();
@@ -616,10 +609,7 @@ mod tests {
         let view = world
             .manager
             .views(Viewer::new(World::as_user(world.alice)))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(main.id())
+            .channel(session.id(), main.id())
             .await
             .unwrap();
         time::timeout(Duration::from_secs(5), async {

@@ -1,9 +1,14 @@
+//! `UserActor`: a user's actor in a channel, through which what they say, run and answer goes,
+//! and through whose outbox a frontend follows the channel for them (`ChannelWatch`, issue 386).
+
 use crate::actor::ChannelAnswering;
 use crate::actor::Shown;
 use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{first_word, CommandContext, CommandReply};
 use crate::controller::{ChannelController, UserController};
 use crate::kernel::ParticipantRuntime;
+#[cfg(any(test, feature = "test-support"))]
+use crate::transport::memory::InMemoryEventSender;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
@@ -28,11 +33,12 @@ use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
 use caelumora_security::{AccessPolicy, AccessQuestions, ActionType, SecurityContext};
 use chrono::Utc;
-use std::collections::HashMap;
 use std::future;
 use std::sync;
 use std::sync::{Arc, PoisonError};
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+use tokio::sync::broadcast::error::RecvError;
+#[cfg(any(test, feature = "test-support"))]
+use tokio::sync::broadcast::error::TryRecvError;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{broadcast, mpsc, Mutex, MutexGuard};
 use tokio_util::sync::CancellationToken;
@@ -65,10 +71,10 @@ pub struct UserActor {
     /// Where its run stands, so that its start and end are shown once each
     /// (issue 386).
     run: sync::Mutex<Run>,
-    /// The questions shown to this user that are open (issue 165), as the
-    /// agents asked them and until they close them: those put to the user
-    /// are what they may answer, and what a message of theirs declines.
-    open_questions: sync::Mutex<HashMap<QuestionId, QuestionRequest>>,
+    /// The questions shown to this user that are open (issue 165), as the agents asked them and
+    /// until they close them, in the order they were first asked: those put to the user are what
+    /// they may answer, and what a message of theirs declines.
+    open_questions: sync::Mutex<Vec<QuestionRequest>>,
 }
 
 /// The channel as a user follows it (issues 104, 220, 386): what their
@@ -78,41 +84,38 @@ pub struct UserActor {
 /// follows a channel live, and only through their actor's outbox.
 pub struct ChannelWatch {
     shown: broadcast::Receiver<Shown>,
-    /// Keeps the outbox while no actor runs.
-    outbox: broadcast::Sender<Shown>,
+    /// Keeps the outbox while no actor runs, so that it never closes: held, never read.
+    _outbox: broadcast::Sender<Shown>,
 }
 
 impl ChannelWatch {
     /// Follows `outbox` from now on.
     pub(crate) fn of(outbox: &broadcast::Sender<Shown>) -> Self {
-        Self { shown: outbox.subscribe(), outbox: outbox.clone() }
-    }
-
-    /// Another watch of the same outbox, from where this one stands.
-    pub fn resubscribe(&self) -> Self {
-        Self { shown: self.shown.resubscribe(), outbox: self.outbox.clone() }
+        Self { shown: outbox.subscribe(), _outbox: outbox.clone() }
     }
 
     /// What is shown next. One that falls `OUTBOX_CAPACITY` items behind
-    /// loses the oldest (`RecvError::Lagged`) rather than stalling the
-    /// actor, which would also stop it from forwarding what the user
-    /// sends.
+    /// loses the oldest (`Lagged`) rather than stalling the actor, which
+    /// would also stop it from forwarding what the user sends.
     ///
     /// # Errors
-    /// `RecvError::Lagged` with how many were lost.
-    pub async fn next(&mut self) -> Result<Shown, RecvError> {
+    /// `Lagged` with how many were lost.
+    pub async fn next(&mut self) -> Result<Shown, Lagged> {
         match self.shown.recv().await {
+            Ok(shown) => Ok(shown),
+            Err(RecvError::Lagged(lost)) => Err(Lagged(lost)),
             // Held by this watch, the outbox is never closed.
             Err(RecvError::Closed) => future::pending().await,
-            shown => shown,
         }
     }
 
-    /// The next envelope shown, past where runs begin and end.
+    /// The next envelope shown, past where runs begin and end: for tests alone, since whoever
+    /// follows a channel takes in where its runs begin and end (`next`).
     ///
     /// # Errors
     /// As `next`.
-    pub async fn recv(&mut self) -> Result<Envelope, RecvError> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn recv(&mut self) -> Result<Envelope, Lagged> {
         loop {
             if let Shown::Envelope(envelope) = self.next().await? {
                 return Ok(envelope);
@@ -120,18 +123,30 @@ impl ChannelWatch {
         }
     }
 
-    /// The next envelope shown, if one was, past where runs begin and end.
+    /// The next envelope shown, if one was, past where runs begin and end; `None` if none was: for
+    /// tests alone, as `recv`.
     ///
     /// # Errors
-    /// `TryRecvError::Empty` if none was, `Lagged` as `next`.
-    pub fn try_recv(&mut self) -> Result<Envelope, TryRecvError> {
+    /// As `next`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn try_recv(&mut self) -> Result<Option<Envelope>, Lagged> {
         loop {
-            if let Shown::Envelope(envelope) = self.shown.try_recv()? {
-                return Ok(envelope);
+            match self.shown.try_recv() {
+                Ok(Shown::Envelope(envelope)) => return Ok(Some(envelope)),
+                Ok(Shown::Started | Shown::Ended) => {}
+                Err(TryRecvError::Lagged(lost)) => return Err(Lagged(lost)),
+                // Held by this watch, the outbox is never closed.
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return Ok(None),
             }
         }
     }
 }
+
+/// What a `ChannelWatch` that fell behind lost of what was shown: how many
+/// (issue 561) - the one way following a channel fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{0} of what was shown were lost")]
+pub struct Lagged(pub u64);
 
 impl UserActor {
     /// The actor of the user `user` - the session's controller of them,
@@ -161,7 +176,7 @@ impl UserActor {
             outbox,
             ended: CancellationToken::new(),
             run: sync::Mutex::new(Run::Before),
-            open_questions: sync::Mutex::new(HashMap::new()),
+            open_questions: sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -180,13 +195,17 @@ impl UserActor {
     /// declines them all.
     fn take_open_questions(&self) -> Vec<(QuestionId, AgentId)> {
         let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-        let asked: Vec<QuestionId> =
-            open.values().filter(|r| r.questions.is_asked(self.id())).map(|r| r.id).collect();
-        asked
-            .iter()
-            .filter_map(|id| open.remove(id))
-            .map(|request| (request.id, request.agent_id))
-            .collect()
+        let (asked, others): (Vec<_>, Vec<_>) =
+            open.drain(..).partition(|request| request.questions.is_asked(self.id()));
+        *open = others;
+        asked.into_iter().map(|request| (request.id, request.agent_id)).collect()
+    }
+
+    /// The open questions put to this user, the oldest first: what they may answer, and what a
+    /// message of theirs declines.
+    pub fn questions_to_answer(&self) -> Vec<QuestionRequest> {
+        let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+        open.iter().filter(|request| request.questions.is_asked(self.id())).cloned().collect()
     }
 
     /// Answers the questions `id` put to this user with `responses`, one per
@@ -212,7 +231,10 @@ impl UserActor {
             |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
             let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-            let request = open.get(&id).ok_or_else(|| refused(QuestionError::NotOpen))?;
+            let request = open
+                .iter()
+                .find(|request| request.id == id)
+                .ok_or_else(|| refused(QuestionError::NotOpen))?;
             if !request.questions.is_asked(self.id()) {
                 return Err(refused(QuestionError::NotAsked).into());
             }
@@ -802,14 +824,17 @@ impl UserActor {
         let answer = match &event.event {
             ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
             ActorEvent::QuestionRequested(request) => {
-                self.open_questions
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(request.id, request.clone());
+                // Asked anew by an agent that resumed its turn: kept where it was first asked.
+                let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+                match open.iter_mut().find(|open| open.id == request.id) {
+                    Some(known) => *known = request.clone(),
+                    None => open.push(request.clone()),
+                }
                 None
             }
             ActorEvent::QuestionClosed { id, .. } => {
-                self.open_questions.lock().unwrap_or_else(PoisonError::into_inner).remove(id);
+                let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+                open.retain(|request| request.id != *id);
                 None
             }
             _ => None,
@@ -966,15 +991,35 @@ impl Actor for UserActor {
     }
 }
 
+/// What the tests of a frontend do with a user's actor, past its own API: hand it what a channel
+/// would route to it.
+#[cfg(any(test, feature = "test-support"))]
+impl UserActor {
+    /// Takes `envelope` in as if the channel had routed it to this actor: shown to whoever follows
+    /// it, a question kept as open. What the actor would send for it - the answer of a rule of the
+    /// user's to an approval - goes nowhere, and the actor takes the channel for gone; so answers
+    /// whether the actor would end.
+    pub async fn take_in_as_routed(&self, envelope: Envelope) -> bool {
+        self.handle_actor_envelope(Some(envelope), &nowhere()).await
+    }
+}
+
+/// Where what an actor sends goes when nothing is to come of it.
+#[cfg(any(test, feature = "test-support"))]
+fn nowhere() -> InMemoryEventSender {
+    InMemoryEventSender::new(mpsc::channel(1).0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::actor::manager::OUTBOX_CAPACITY;
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
-    use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
+    use crate::transport::memory::InMemoryEventReceiver;
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::user::testing::make_user;
     use caelumora_store::testing::record_users;
@@ -1067,7 +1112,7 @@ mod tests {
             channel_inbox.recv().await.expect("forwarded");
         }
         let shown: Vec<&str> =
-            iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
+            iter::from_fn(|| following.try_recv().ok().flatten()).map(|e| e.event.kind()).collect();
         assert_eq!(
             shown,
             ["CompleteMessageGenerated"],
@@ -1080,7 +1125,7 @@ mod tests {
             .unwrap();
         channel_inbox.recv().await.expect("forwarded");
         assert_eq!(
-            following.try_recv().map(|e| e.event.kind()).ok(),
+            following.try_recv().ok().flatten().map(|e| e.event.kind()),
             Some("ApprovalGranted"),
             "everything it sends"
         );
@@ -1132,11 +1177,6 @@ mod tests {
         assert!(ended.is_ok(), "a channel that is gone is an end, not an error: {ended:?}");
     }
 
-    /// Where what the actor sends goes when nothing is to come of it.
-    fn nowhere() -> InMemoryEventSender {
-        InMemoryEventSender::new(mpsc::channel(1).0)
-    }
-
     #[tokio::test]
     async fn envelopes_without_a_subscriber_are_dropped_without_blocking() {
         let (actor, _channel) = user_actor().await;
@@ -1151,6 +1191,37 @@ mod tests {
         );
     }
 
+    /// A question of an agent, put to `addressee`, as the agent's actor routes it.
+    fn asked_of(addressee: ActorId) -> (QuestionRequest, Envelope) {
+        let request =
+            make_question_request(SessionId::new(), ChannelId::new(), AgentId::new(), addressee);
+        let mut envelope = envelope_from(ActorId::Agent(request.agent_id));
+        envelope.event = ActorEvent::QuestionRequested(request.clone());
+        (request, envelope)
+    }
+
+    /// The questions to answer are those put to the user, the oldest first, until they close;
+    /// one asked anew keeps its place.
+    #[tokio::test]
+    async fn the_questions_to_answer_are_those_put_to_the_user_until_they_close() {
+        let (actor, _channel) = user_actor().await;
+        let (first, asked_first) = asked_of(actor.id());
+        let (_, asked_of_another) = asked_of(ActorId::User(Default::default()));
+        let (second, asked_second) = asked_of(actor.id());
+        for envelope in [asked_first.clone(), asked_of_another, asked_second, asked_first] {
+            assert!(!actor.handle_actor_envelope(Some(envelope), &nowhere()).await);
+        }
+        let ids = |actor: &UserActor| -> Vec<QuestionId> {
+            actor.questions_to_answer().iter().map(|request| request.id).collect()
+        };
+        assert_eq!(ids(&actor), [first.id, second.id], "put to the user, the first asked first");
+
+        let mut closed = envelope_from(ActorId::Agent(first.agent_id));
+        closed.event = ActorEvent::QuestionClosed { id: first.id, shown_to: None };
+        assert!(!actor.handle_actor_envelope(Some(closed), &nowhere()).await);
+        assert_eq!(ids(&actor), [second.id], "until it closes");
+    }
+
     #[tokio::test]
     async fn every_subscriber_receives_what_is_routed_and_a_lagging_one_loses_the_oldest() {
         let (actor, _channel) = user_actor().await;
@@ -1158,19 +1229,24 @@ mod tests {
         let (mut first, mut second) = (actor.watch(), actor.watch());
 
         assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
-        assert!(first.try_recv().is_ok() && second.try_recv().is_ok(), "two tabs, both are told");
+        assert!(
+            matches!((first.try_recv(), second.try_recv()), (Ok(Some(_)), Ok(Some(_)))),
+            "two tabs, both are told"
+        );
 
         for _ in 0..(OUTBOX_CAPACITY + 10) {
             assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
         assert!(
-            matches!(first.try_recv(), Err(broadcast::error::TryRecvError::Lagged(10))),
+            matches!(first.try_recv(), Err(Lagged(10))),
             "the oldest are lost, and it learns how many"
         );
         let mut received = 0;
-        while first.try_recv().is_ok() {
+        while let Ok(Some(_)) = first.try_recv() {
             received += 1;
         }
         assert_eq!(received, OUTBOX_CAPACITY, "the newest are kept");
+        assert!(matches!(first.try_recv(), Ok(None)), "and then nothing");
+        assert!(matches!(second.next().await, Err(Lagged(10))), "as the next shown tells");
     }
 }

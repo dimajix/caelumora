@@ -693,10 +693,7 @@ impl World {
         let view = self
             .manager
             .views(Viewer::new(Self::as_user(user)))
-            .session(session)
-            .await
-            .unwrap()
-            .channel(channel)
+            .channel(session, channel)
             .await
             .unwrap();
         view.participants().await.iter().map(|m| m.id()).collect()

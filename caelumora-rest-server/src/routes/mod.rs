@@ -95,16 +95,15 @@ pub async fn session_response(
 }
 
 /// The view of channel `channel_id` of session `session_id` as `user` reaches it (issue 163) -
-/// what a handler reads a channel through, running or not; what it answers with is
-/// `channel_response`.
+/// what a handler reads a channel through, running or not, unless it keeps the views for longer,
+/// as the channel's stream does; what it answers with is `channel_response`.
 pub async fn channel_view(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
     session_id: SessionId,
     channel_id: ChannelId,
 ) -> Result<ChannelView, ApiError> {
-    let session = views(state, user).session(session_id).await?;
-    Ok(session.channel(channel_id).await?)
+    Ok(views(state, user).channel(session_id, channel_id).await?)
 }
 
 /// The views as `user` navigates them (issue 163): what a handler reads
@@ -391,7 +390,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::auth::{Auth, TokenService, SESSION_COOKIE};
     use anyhow::Result;
-    use axum::body::{to_bytes, Body};
+    use axum::body::{to_bytes, Body, BodyDataStream};
     use axum::http::header::{COOKIE, SET_COOKIE};
     use axum::http::Request;
     use caelumora_domain::config::{AppConfig, AuthConfig};
@@ -406,7 +405,10 @@ pub(crate) mod tests {
     use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
     use caelumora_kernel::user_provider::UserManager;
     use caelumora_security::SecurityContext;
+    use futures::StreamExt;
     use serde_json::{json, Value};
+    use std::time::Duration;
+    use tokio::time;
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -472,6 +474,22 @@ pub(crate) mod tests {
     }
 
     /// The cookie `api` answers `username` logging in with.
+    /// What `stream` sent, read on until `seen` holds of all of it.
+    pub(crate) async fn read_until(
+        stream: &mut BodyDataStream,
+        read: &mut String,
+        seen: impl Fn(&str) -> bool,
+    ) {
+        while !seen(read) {
+            let chunk = time::timeout(Duration::from_secs(5), stream.next())
+                .await
+                .unwrap_or_else(|_| panic!("nothing more came of the stream: {read}"))
+                .unwrap_or_else(|| panic!("the stream ended: {read}"))
+                .unwrap();
+            read.push_str(&String::from_utf8_lossy(&chunk));
+        }
+    }
+
     pub(crate) async fn login(api: &Router, username: &str) -> String {
         let body = format!(r#"{{"username":"{username}","password":"x"}}"#);
         let login = Request::post("/auth/login")

@@ -13,6 +13,7 @@ pub use manager::ProjectManager;
 pub use spec::ProjectSpec;
 
 use crate::scoped::ScopeNotEmpty;
+use anyhow::Error;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::user::UserId;
@@ -42,7 +43,7 @@ pub enum ProjectError {
     Store(#[from] StoreError),
     /// A session of the project that could not be deleted, restored or purged with it.
     #[error("a session of the project: {0}")]
-    Session(#[source] anyhow::Error),
+    Session(#[source] Error),
 }
 
 pub type ProjectResult<T> = Result<T, ProjectError>;

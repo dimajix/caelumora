@@ -9,6 +9,7 @@
 //! permissions the action needs. Each test names the scenario or action of
 //! issue 198 it checks; the issue says what is expected and why.
 
+use anyhow::Error;
 use caelumora_api::command::CommandError;
 use caelumora_api::reader::ViewError;
 use caelumora_api::terminal::{CommandState, TerminalError, WorkspacePath};
@@ -40,7 +41,6 @@ use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::value::text::{Description, Introduction};
 use caelumora_domain::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_kernel::actor::user::UserActor;
-use caelumora_kernel::actor::Shown;
 use caelumora_kernel::agent::{AgentError, AgentSpec};
 use caelumora_kernel::channel::testing::as_command_error;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
@@ -49,7 +49,7 @@ use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::{GroupError, GroupSpec};
 use caelumora_kernel::project::{ProjectError, ProjectSpec};
 use caelumora_kernel::scoped::ScopeNotEmpty;
-use caelumora_kernel::session::testing::create;
+use caelumora_kernel::session::testing::{create, ended};
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_kernel::testing::{
     attributes, checks, denied, file, not_found, quiet, read, shown, workspace, Script,
@@ -468,14 +468,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let reach = |user| {
         let manager = &world.manager;
         let (session, channel) = (session.id(), side.id());
-        async move {
-            manager
-                .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await?
-                .channel(channel)
-                .await
-        }
+        async move { manager.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
     };
     let texts = |items: &[HistoryEntry]| {
         items
@@ -589,9 +582,7 @@ async fn the_messages_carrying_attachments_are_read_as_far_as_the_readers_view_g
     let carrying = |user: UserId| async move {
         manager
             .views(Viewer::new(World::as_user(user)))
-            .session(session_id)
-            .await?
-            .channel(channel_id)
+            .channel(session_id, channel_id)
             .await?
             .history_page_of(None, 10, Some(Filter::with_attachments()))
             .await
@@ -658,10 +649,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
         async move {
             manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap()
                 .unread()
@@ -715,14 +703,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     let reach = |user| {
         let manager = &world.manager;
         let (session, channel) = (session.id(), main.id());
-        async move {
-            manager
-                .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await?
-                .channel(channel)
-                .await
-        }
+        async move { manager.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
     };
 
     let (watch, asked) =
@@ -758,11 +739,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     );
 
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
-    let ended = time::timeout(Duration::from_secs(5), async {
-        while !matches!(his.next().await, Ok(Shown::Ended)) {}
-    })
-    .await;
-    assert!(ended.is_ok(), "he is told his actor ended");
+    assert!(ended(&mut his, Duration::from_secs(5)).await, "he is told his actor ended");
     let stopped = reach(world.bob).await.expect("he still takes part");
     assert!(stopped.user_follow().is_some(), "and follows the channel while it does not run");
     assert!(stopped.running().is_none(), "without starting it");
@@ -1110,7 +1087,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
         (Some("hello"), true),
         "he hears what was let in, and nothing of what was not"
     );
-    while let Ok(envelope) = his.try_recv() {
+    while let Ok(Some(envelope)) = his.try_recv() {
         assert_ne!(envelope.event.kind(), "MessageRejected", "nor of the refusal");
     }
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -1285,12 +1262,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     let attachments = world.kernel.attachment_manager();
     let (manager, session_id, channel_id) = (&world.manager, session.id(), main.id());
     let channel_of = |user: UserId| async move {
-        manager
-            .views(Viewer::new(World::as_user(user)))
-            .session(session_id)
-            .await?
-            .channel(channel_id)
-            .await
+        manager.views(Viewer::new(World::as_user(user))).channel(session_id, channel_id).await
     };
 
     let (uploaded, asked) = world
@@ -1502,10 +1474,7 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
         async move {
             manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap()
         }
@@ -1575,15 +1544,7 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
 
     let session = world.shared_session(&[], &[]).await;
     let channel = session.channels()[0].id();
-    let view = world
-        .manager
-        .views(Viewer::new(bob))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(channel)
-        .await
-        .unwrap();
+    let view = world.manager.views(Viewer::new(bob)).channel(session.id(), channel).await.unwrap();
     let participants = view.participants().await;
     let hers = participants.iter().find(|m| m.id() == ActorId::User(world.alice)).unwrap();
     assert_eq!(
@@ -2886,15 +2847,7 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
         .await
         .expect("its owner deletes it though it does not run"));
     assert!(
-        world
-            .manager
-            .views(Viewer::new(alice.clone()))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(side)
-            .await
-            .is_err(),
+        world.manager.views(Viewer::new(alice.clone())).channel(session.id(), side).await.is_err(),
         "gone"
     );
     world.manager.stop(&alice, session.id()).await.unwrap();
@@ -3789,7 +3742,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
-        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
+        async move { views.channel(session_id, main).await.unwrap() }
     };
 
     assert!(
@@ -4280,10 +4233,7 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
         async move {
             manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session_id)
-                .await
-                .unwrap()
-                .channel(channel_id)
+                .channel(session_id, channel_id)
                 .await
                 .is_ok()
         }
@@ -4349,10 +4299,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let main = world
         .manager
         .views(Viewer::new(as_agent))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(session.channels()[0].id())
+        .channel(session.id(), session.channels()[0].id())
         .await
         .unwrap();
     assert!(main.workspace().await.unwrap().is_none());
@@ -4658,7 +4605,7 @@ async fn adding_by_command_asks_what_taking_in_asks() {
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
-    let refused = |error: &anyhow::Error| match as_command_error(error) {
+    let refused = |error: &Error| match as_command_error(error) {
         CommandError::InvalidArguments { reason, .. } => reason.clone(),
         other => panic!("refused as invalid, not {other:?}"),
     };
@@ -5383,7 +5330,7 @@ async fn making_an_agent_by_command_asks_what_making_one_asks() {
     let main = Arc::clone(&session.channels()[0]);
     world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
-    let refused = |error: &anyhow::Error| match as_command_error(error) {
+    let refused = |error: &Error| match as_command_error(error) {
         CommandError::InvalidArguments { reason, .. } => reason.clone(),
         other => panic!("refused as invalid, not {other:?}"),
     };

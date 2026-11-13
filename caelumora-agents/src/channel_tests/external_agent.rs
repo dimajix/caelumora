@@ -29,7 +29,6 @@ use caelumora_domain::session::testing::{bare_session, make_session};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::work::Work;
-use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::kernel::ChannelRuntime;
@@ -2048,9 +2047,10 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         )
         .await
         .unwrap();
-    let mut events = channel.user_actor(alice.id).unwrap().watch();
-    let answered = |events: &mut ChannelWatch| {
-        let mut events = events.resubscribe();
+    let alice_actor = channel.user_actor(alice.id).unwrap();
+    // Following from the moment it is called, as the user would.
+    let answered = || {
+        let mut events = alice_actor.watch();
         async move {
             time::timeout(Duration::from_secs(5), async {
                 loop {
@@ -2067,7 +2067,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         }
     };
 
-    let waiting = answered(&mut events);
+    let waiting = answered();
     channel
         .user_actor(alice.id)
         .unwrap()
@@ -2075,7 +2075,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         .await
         .unwrap();
     waiting.await;
-    let waiting = answered(&mut events);
+    let waiting = answered();
     channel.add_participant(&alice_ctx, ActorId::User(bob.id), HistoryAccess::All).await.unwrap();
     channel
         .user_actor(alice.id)
@@ -2125,7 +2125,7 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         .add_participant(&alice_ctx, ActorId::Agent(hermes.id), HistoryAccess::All)
         .await
         .unwrap();
-    let waiting = answered(&mut events);
+    let waiting = answered();
     channel
         .user_actor(alice.id)
         .unwrap()

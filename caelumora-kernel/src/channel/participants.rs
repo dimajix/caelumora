@@ -961,13 +961,6 @@ mod tests {
         let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
         let owner = ctx.initiator_id.as_user_id().unwrap();
-        async fn ended(watch: &mut ChannelWatch, within: Duration) -> bool {
-            time::timeout(within, async {
-                while !matches!(watch.next().await, Ok(Shown::Ended)) {}
-            })
-            .await
-            .is_ok()
-        }
 
         // Leaving ends it.
         let channel = session.create_channel(&ctx, spec("side", vec![other])).await.unwrap();

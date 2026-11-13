@@ -97,9 +97,9 @@ and when it caught up (`Backlog`), so that a bus falling behind, and memory grow
 is seen before it is felt (issue [508](../issues/508-bus-queue-unbounded.md)).
 
 Each subscription is a broadcast channel of its own, of bounded capacity. A subscriber that falls
-too far behind loses the oldest events, and it is the subscriber that learns so (`Lagged`), not only
-the log. Every subscriber makes up for what it lost by reading anew what it keeps (issue 502) - a
-loss between instances will be the rule, not the exception:
+too far behind loses the oldest events, and it is the subscriber that learns so
+(`RecvError::Lagged`), not only the log. Every subscriber makes up for what it lost by reading anew
+what it keeps (issue 502) - a loss between instances will be the rule, not the exception:
 
 *   the `ControllerManager` reads every live agent, user, workspace and project controller again as
     stored (see [STORAGE.md](STORAGE.md#following-changes));
@@ -110,7 +110,10 @@ loss between instances will be the rule, not the exception:
 *   an approver denies the pending requests of every agent that no longer runs in its channel, and
     decides the others again (see [APPROVALS.md](APPROVALS.md));
 *   the `CommandReaper` checks the commands, as at any event that may concern them;
-*   a stream sends its client a fresh snapshot (see [REST-SERVER.md](REST-SERVER.md#streams)).
+*   a stream sends its client a fresh snapshot (see [REST-SERVER.md](REST-SERVER.md#streams));
+*   the terminal follows every channel of its session its user takes part in that it does not
+    follow yet, and no more those it follows that they no longer take part in (`Channels`,
+    `caelumora-tui`).
 
 So only tests skip a loss: `EventSubscription::recv`, which logs it and goes on, is built for them
 alone (`test-support`).
@@ -164,3 +167,12 @@ The REST server's global stream (`GET /events`) is a subscription of the logged-
 everything, and the web UI's session list follows it. How the stream starts with a snapshot,
 resynchronises and ends with its token is described in [REST-SERVER.md](REST-SERVER.md#streams). A
 channel's stream carries the channel's envelopes, not global events; it is described there too.
+
+The terminal subscribes to its session in its user's name, before it reads the session's channels,
+and follows a channel the user joins (`channel::JOINED`) once they are announced to have joined it,
+and one they take part in once it is announced restored (issue
+[561](../issues/561-the-terminal-shows-one-channel-of-a-session.md)): the user can follow what
+their actor in a channel shows from the moment the channel lists them, whether the actor runs yet
+or not, and is shown what comes after. Where the user is announced to have left a channel
+(`channel::LEFT`), it reads anew whether they still take part in the channels it follows, as it
+does where a run of their actor begins or ends - also for a join taken back, which no run ends.

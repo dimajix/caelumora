@@ -263,7 +263,7 @@ async fn a_nudged_agent_responds_in_the_name_of_who_nudged_it_and_the_history_ke
     );
     let said: Vec<_> = channel.history().await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["hello", "Again.", "Again."], "the nudge leaves nothing in the history");
-    while let Ok(envelope) = following.try_recv() {
+    while let Ok(Some(envelope)) = following.try_recv() {
         assert!(
             !matches!(
                 envelope.event,

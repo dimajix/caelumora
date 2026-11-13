@@ -347,6 +347,10 @@ also while the channel does not run, without starting it. Each run of the actor 
 it (`Shown::Started`, `Shown::Ended`): what a run showed comes after its start and before its end,
 and an actor ended before it ran shows its end alone.
 
+The outbox outlives a run of the actor; the actor does not. So a frontend reaches the user's actor
+where they act - the REST server per request, the terminal per line typed - rather than holding it:
+one held from before talks into a run that ended, as after the user left and joined again.
+
 The channel does not take an actor's word for whose name it speaks in, nor for its rights. Each
 actor is given an `OriginEventSender`, which passes on only an envelope that speaks as the actor:
 as its sender, and as the sender of every message it carries. Anything else is refused and logged
@@ -718,9 +722,15 @@ sender. Each carries the participant's name as it was, so that it reads the same
 A resting agent removed from a channel changes the document alone (above): nothing runs that could
 leave, and nothing is announced in the channel.
 
-A removed user's live stream of the channel ends because it is theirs: it is followed through their
-actor, which ends when it is stopped, and the stream then finds them no longer a participant (issue
-386), so no one has to listen for the announcement.
+A user's live stream of the channel - the REST server's, the terminal's - ends because it is
+theirs: it is followed through their actor, which ends when it is stopped, and where a run of it
+begins or ends, the stream reads whether the channel still lists them (`Views::listed_in`, issue
+386). One who left, was removed, or whose channel was deleted is listed no more, so the stream
+need not listen for the announcement - but for a join taken back after it was announced, because
+the newcomer's actor could not start, which no run ends. The terminal, which follows the event bus
+for the channels its user joins, reads anew at a leave announced as well (issue
+[561](../issues/561-the-terminal-shows-one-channel-of-a-session.md)); a stream of the REST server
+opened in that moment holds no subscription of the bus, and stays open until its token expires.
 
 Every channel response carries `can_change`, and every participant `can_leave`, so that a client
 offers adding and removing participants, and leaving, only where the user may (see

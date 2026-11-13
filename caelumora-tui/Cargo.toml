@@ -39,6 +39,7 @@ clap.workspace = true
 tokio = { workspace = true, features = ["full"] }
 rustyline.workspace = true
 anyhow.workspace = true
+futures.workspace = true
 chrono.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 serde_json.workspace = true
@@ -46,6 +47,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 caelumora-domain = { workspace = true, features = ["test-support"] }
+caelumora-kernel = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 
 [lints]

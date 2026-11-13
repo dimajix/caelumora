@@ -1,3 +1,7 @@
+//! Channels in the API: making, reading, changing, deleting and restoring them, following them
+//! live, and what is done in them - their participants, messages, commands, approvals and
+//! questions.
+
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::error::{Json, Path, Query};
@@ -20,11 +24,11 @@ use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::QuestionId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
-use caelumora_kernel::actor::user::{ChannelWatch, UserActor};
+use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::session::ChannelSpec;
-use caelumora_kernel::view::{ChannelView, ParticipantView, Reached, SessionView, Viewer};
+use caelumora_kernel::view::{ChannelView, ParticipantView, Reached, SessionView, Views};
 use caelumora_rest_api::channel::{
     AddParticipantRequest, AnswerQuestionsRequest, ChannelParticipantResponse, ChannelResponse,
     ChannelSnapshot, CommandReplyResponse, CreateChannelRequest, ExecuteCommandRequest,
@@ -38,11 +42,9 @@ use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::history::{HistoryMessageResponse, HistoryPageResponse, HistoryQuery};
 use caelumora_rest_api::session::DescriptionRequest;
 use caelumora_rest_api::stream::StreamOptions;
-use caelumora_security::SecurityContext;
 use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::field;
 use tracing::Span;
@@ -215,53 +217,6 @@ pub(super) async fn get_notes(
     Ok(Json(notes.into_iter().map(Into::into).collect()))
 }
 
-/// The state of channel `channel_id` of session `session_id` right now,
-/// for a stream that starts with a snapshot (issue 34); `None` if the
-/// channel cannot be described to `viewer` any more - deleted, or no longer
-/// theirs to read - in which case their stream ends.
-async fn channel_snapshot(
-    state: &AppState,
-    session_id: SessionId,
-    channel_id: ChannelId,
-    viewer: &SecurityContext,
-) -> Option<ChannelSnapshot> {
-    let views = state.session_manager.views(Viewer::new(viewer.clone()));
-    let reached = match views.session(session_id).await {
-        Ok(session) => session.channel(channel_id).await,
-        Err(e) => Err(e),
-    };
-    let view = match reached {
-        Ok(view) => view,
-        Err(e) => {
-            tracing::warn!("Cannot describe channel {} for its snapshot: {:#}", channel_id, e);
-            return None;
-        }
-    };
-    let page = match view.history_page(None, SNAPSHOT_ITEMS).await {
-        Ok(page) => page,
-        Err(e) => {
-            tracing::warn!(
-                "Cannot read the history of channel {} for its snapshot: {:#}",
-                channel_id,
-                e
-            );
-            return None;
-        }
-    };
-    // The conversation can be shown without what of it cannot be read.
-    let channel = view
-        .snapshot(
-            Detail::PARTICIPANTS
-                | Detail::USAGE
-                | Detail::NOTES
-                | Detail::APPROVALS
-                | Detail::BRIEFING
-                | Detail::UNREAD,
-        )
-        .await;
-    Some(ChannelSnapshot::of(channel, HistoryPageResponse::of(page, |message, _| message)))
-}
-
 /// Follows a channel live (issues 104, 386): only as one of its
 /// participants, through the user's own actor - and across its stops,
 /// without starting it: nothing new is said in a channel that does not run,
@@ -278,17 +233,16 @@ pub(super) async fn join_channel(
     user: AuthenticatedUser,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, ApiError> {
     let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
-    let channel = channel_view(&state, &user, session_id, channel_id).await?;
+    let views = views(&state, &user);
+    let channel = views.channel(session_id, channel_id).await?;
     let watch = channel.user_follow().ok_or_else(|| not_a_participant(channel_id))?;
-    let shutdown = state.shutdown.clone();
     let follower = ChannelFollower {
-        state,
-        user: user.clone(),
+        views,
         session_id,
         channel_id,
         watch,
         with_snapshot: options.snapshot,
-        shutdown,
+        shutdown: state.shutdown.clone(),
     };
     // Read after the watch began, so that nothing is lost in between; what
     // is in both, clients drop by message id.
@@ -303,8 +257,8 @@ pub(super) async fn join_channel(
 /// user's actor shows, each run of it begun and ended with the channel as
 /// it then is.
 struct ChannelFollower {
-    state: Arc<AppState>,
-    user: AuthenticatedUser,
+    /// The views in the name of the user who follows the channel.
+    views: Views,
     session_id: SessionId,
     channel_id: ChannelId,
     watch: ChannelWatch,
@@ -329,7 +283,7 @@ impl ChannelFollower {
             Ok(Shown::Envelope(envelope)) => data_event(&envelope),
             Ok(Shown::Started) => self.anew("started").await?,
             Ok(Shown::Ended) => self.anew("stopped").await?,
-            Err(RecvError::Lagged(lost)) => {
+            Err(Lagged(lost)) => {
                 tracing::warn!(
                     "SSE client of channel {} fell behind and lost {} events",
                     self.channel_id,
@@ -339,7 +293,6 @@ impl ChannelFollower {
                 resynced
                     .unwrap_or_else(|| Event::default().comment(format!("{} events lost", lost)))
             }
-            Err(RecvError::Closed) => return None,
         };
         Some((Ok(event), self))
     }
@@ -349,9 +302,7 @@ impl ChannelFollower {
     /// `None` if the user no longer takes part in the channel, or cannot
     /// reach it.
     async fn anew(&self, marker: &'static str) -> Option<Event> {
-        let channel =
-            channel_view(&self.state, &self.user, self.session_id, self.channel_id).await.ok()?;
-        if !channel.lists(ActorId::User(self.user.id)) {
+        if !self.views.listed_in(self.session_id, self.channel_id).await {
             return None;
         }
         match self.with_snapshot {
@@ -360,16 +311,45 @@ impl ChannelFollower {
         }
     }
 
-    /// The channel's snapshot as a named event, as it is now.
+    /// The channel's snapshot as a named event, as it is now (issue 34); `None` if the channel
+    /// cannot be described to the user any more - deleted, or no longer theirs to read - in which
+    /// case the stream ends.
     async fn snapshot(&self) -> Option<Event> {
-        channel_snapshot(
-            &self.state,
-            self.session_id,
-            self.channel_id,
-            &self.user.security_context(),
-        )
-        .await
-        .map(|snapshot| named_event("snapshot", &snapshot))
+        let view = match self.views.channel(self.session_id, self.channel_id).await {
+            Ok(view) => view,
+            Err(e) => {
+                tracing::warn!(
+                    "Cannot describe channel {} for its snapshot: {:#}",
+                    self.channel_id,
+                    e
+                );
+                return None;
+            }
+        };
+        let page = match view.history_page(None, SNAPSHOT_ITEMS).await {
+            Ok(page) => page,
+            Err(e) => {
+                tracing::warn!(
+                    "Cannot read the history of channel {} for its snapshot: {:#}",
+                    self.channel_id,
+                    e
+                );
+                return None;
+            }
+        };
+        // The conversation can be shown without what of it cannot be read.
+        let channel = view
+            .snapshot(
+                Detail::PARTICIPANTS
+                    | Detail::USAGE
+                    | Detail::NOTES
+                    | Detail::APPROVALS
+                    | Detail::BRIEFING
+                    | Detail::UNREAD,
+            )
+            .await;
+        let history = HistoryPageResponse::of(page, |message, _| message);
+        Some(named_event("snapshot", &ChannelSnapshot::of(channel, history)))
     }
 }
 
@@ -935,7 +915,7 @@ pub(super) async fn answer_questions(
 mod tests {
     use super::*;
     use crate::routes::api;
-    use crate::routes::tests::{login, state};
+    use crate::routes::tests::{login, read_until, state};
     use anyhow::Error;
     use axum::body::{to_bytes, Body, BodyDataStream};
     use axum::http::header::{CONTENT_TYPE, COOKIE};
@@ -950,7 +930,8 @@ mod tests {
     use caelumora_domain::user::UserId;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::session::testing::create;
-    use caelumora_kernel::view::AgentContextError;
+    use caelumora_kernel::view::{AgentContextError, Viewer};
+    use caelumora_security::SecurityContext;
     use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::time;
@@ -1028,26 +1009,10 @@ mod tests {
         response.into_body().into_data_stream()
     }
 
-    /// What `stream` sent, read on until `seen` holds of all of it.
-    async fn read_until(
-        stream: &mut BodyDataStream,
-        read: &mut String,
-        seen: impl Fn(&str) -> bool,
-    ) {
-        while !seen(read) {
-            let chunk = time::timeout(Duration::from_secs(5), stream.next())
-                .await
-                .unwrap_or_else(|_| panic!("nothing more came of the stream: {read}"))
-                .unwrap_or_else(|| panic!("the stream ended: {read}"))
-                .unwrap();
-            read.push_str(&String::from_utf8_lossy(&chunk));
-        }
-    }
-
     /// Whether channel `channel` of `session` runs.
     async fn runs(state: &AppState, session: SessionId, channel: ChannelId) -> bool {
         let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
-        views.session(session).await.unwrap().channel(channel).await.unwrap().running().is_some()
+        views.channel(session, channel).await.unwrap().running().is_some()
     }
 
     /// The page of a history `uri` names, as whoever `cookie` logs in reads it.
