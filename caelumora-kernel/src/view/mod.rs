@@ -1024,7 +1024,6 @@ impl Debug for Views {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actor::user::ChannelWatch;
     use crate::channel::ChannelLoop;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
@@ -3062,9 +3061,10 @@ mod tests {
             .create_channel(&alice_ctx, spec("talk", vec![ActorId::User(alice.id), agent]))
             .await
             .unwrap();
-        let mut events = channel.user_actor(alice.id).unwrap().watch();
-        let shown = |events: &mut ChannelWatch, wanted: &'static str| {
-            let mut events = events.resubscribe();
+        let alice_actor = channel.user_actor(alice.id).unwrap();
+        // Following from the moment it is called, as the user would.
+        let shown = |wanted: &'static str| {
+            let mut events = alice_actor.watch();
             async move {
                 time::timeout(Duration::from_secs(5), async {
                     loop {
@@ -3093,7 +3093,7 @@ mod tests {
         };
         assert_eq!(participant().await.turn_under_way, None, "nothing under way yet");
 
-        let started = shown(&mut events, "ResponseStarted");
+        let started = shown("ResponseStarted");
         channel
             .user_actor(alice.id)
             .unwrap()
@@ -3107,7 +3107,7 @@ mod tests {
             "the turn its start announced"
         );
 
-        let ended = shown(&mut events, "TurnFinished");
+        let ended = shown("TurnFinished");
         channel.cancel_actor(&alice_ctx, agent).await.unwrap();
         ended.await;
         assert_eq!(participant().await.turn_under_way, None, "over once it ended");

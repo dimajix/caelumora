@@ -84,19 +84,14 @@ pub struct UserActor {
 /// follows a channel live, and only through their actor's outbox.
 pub struct ChannelWatch {
     shown: broadcast::Receiver<Shown>,
-    /// Keeps the outbox while no actor runs.
-    outbox: broadcast::Sender<Shown>,
+    /// Keeps the outbox while no actor runs, so that it never closes: held, never read.
+    _outbox: broadcast::Sender<Shown>,
 }
 
 impl ChannelWatch {
     /// Follows `outbox` from now on.
     pub(crate) fn of(outbox: &broadcast::Sender<Shown>) -> Self {
-        Self { shown: outbox.subscribe(), outbox: outbox.clone() }
-    }
-
-    /// Another watch of the same outbox, from where this one stands.
-    pub fn resubscribe(&self) -> Self {
-        Self { shown: self.shown.resubscribe(), outbox: self.outbox.clone() }
+        Self { shown: outbox.subscribe(), _outbox: outbox.clone() }
     }
 
     /// What is shown next. One that falls `OUTBOX_CAPACITY` items behind

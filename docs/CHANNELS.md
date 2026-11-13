@@ -725,8 +725,12 @@ leave, and nothing is announced in the channel.
 A user's live stream of the channel - the REST server's, the terminal's - ends because it is
 theirs: it is followed through their actor, which ends when it is stopped, and where a run of it
 begins or ends, the stream reads whether the channel still lists them (`Views::listed_in`, issue
-386). One who left, was removed, or whose channel was deleted is listed no more, so no one has to
-listen for the announcement.
+386). One who left, was removed, or whose channel was deleted is listed no more, so the stream
+need not listen for the announcement - but for a join taken back after it was announced, because
+the newcomer's actor could not start, which no run ends. The terminal, which follows the event bus
+for the channels its user joins, reads anew at a leave announced as well (issue
+[561](../issues/561-the-terminal-shows-one-channel-of-a-session.md)); a stream of the REST server
+opened in that moment holds no subscription of the bus, and stays open until its token expires.
 
 Every channel response carries `can_change`, and every participant `can_leave`, so that a client
 offers adding and removing participants, and leaving, only where the user may (see

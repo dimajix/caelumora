@@ -1,6 +1,6 @@
 # 561 — The terminal shows only the first channel of a session
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -257,3 +257,17 @@ a session is continued - would be the same choice made at start. Nobody has aske
   (`ChannelWatch::next`), and nothing outside the tests called them. With it, three places that
   wrote `anyhow::Error` by its path, without another `Error` beside it, import it as the rule of
   imports has it (`docs/CODING-GUIDELINES.md`).
+- **2026-11-13** — Decided with the maintainer on the review of step 14: step 15 takes a leave
+  the event bus tells as well, and `ChannelWatch::resubscribe` goes.
+
+  Step 15 done. Whatever the event bus tells of the channels the user takes part in - that they
+  joined or left one, that one was restored - and a loss of what it would have told have the
+  terminal follow anew (`Happened::TakingPart`, `Channels::follow_anew`): a channel followed the
+  user no longer takes part in is followed no more, and every one they take part in that is not
+  followed yet is followed, as one joined. So a join taken back after it was announced, because
+  the user's actor could not start, which shows no end of a run, no longer leaves its channel
+  followed, also where the bus lost the leave. `ChannelWatch::resubscribe`, which only two tests
+  called and whose doc said it followed from where the watch stood while it followed from then
+  on, is gone: each wait of those tests takes a watch of the user's actor of its own as it begins.
+  The tests of `Channels` take in what the bus has yet to deliver before they act
+  (`EventSubscription::settled`). With it, everything this issue was to do is done.

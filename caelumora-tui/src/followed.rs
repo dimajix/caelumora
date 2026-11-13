@@ -122,7 +122,8 @@ impl Followed {
 
     /// Whether following the channel has ended - the user no longer takes part in it, or it was
     /// deleted, or cannot be read -, as the views read it in their name now: what is asked where a
-    /// run of the user's actor began or ended (`docs/CHANNELS.md`, issue 386).
+    /// run of the user's actor began or ended (`docs/CHANNELS.md`, issue 386), and where the event
+    /// bus tells that the channels the user takes part in may have changed.
     pub(crate) async fn ended(&self) -> bool {
         !self.views.listed_in(self.channel.session_id(), self.channel_id()).await
     }
