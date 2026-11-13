@@ -156,7 +156,7 @@ permission first, then the flow of what it carries.
 | `MessageModified` | the message is there; `ModifyMessage` (E,3); it can be changed so; the flow per part; last, its attachments those it carried or as for a message said | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `ClassificationRefused`, `Invalid` |
 | `MessageRevoked` | there; `RevokeMessage` (E,3); changeable | as above |
 | `MessageReclassified` | there; `Reclassify` of the message (E,1 or 3); `require_publish` of the new classification (E,2); changeable | as above |
-| `RetryRequested` | `RetryMessage` (E,1); a message, not taken back, or a turn, of an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
+| `RetryRequested` | `RetryMessage` (E,1); a message, not taken back, or a turn that can be answered again (`retryable_turn`, issue 567), of an agent taking part | `MessageNotFound`, `Forbidden`, `MessageUnchangeable`, `Invalid` |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` (E,1); whether its sender was asked is the agent's | `Forbidden` |
 | `CommandRequested` | from a user (structural); the agent named takes part and carries the command out (structural); `ShowAgentCommand`, `ExecuteAgentCommand` (E,3) with the agent's attributes and the channel's - asked again, with the issuer's rights as they are then, when the request is read back from the history for the agent (issue 516) | `Invalid`, `Forbidden` |
 | `NudgeRequested` | form only: from a user, naming someone taking part | `Invalid` |

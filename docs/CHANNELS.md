@@ -392,7 +392,7 @@ flow in:
 | a message | it speaks as the actor that acts; each part, the message and its tool results, may flow in as classified (`may_publish`) |
 | `MessageModified`, `MessageRevoked` | the message is in the history; `ModifyMessage`, `RevokeMessage` of its author; it can be changed so; a modification may flow in |
 | `MessageReclassified` | the message is in the history; `Reclassify` of its author; never above the channel; it can be reclassified |
-| `RetryRequested` | `RetryMessage` of the channel; a message, not taken back, or a turn, of an agent taking part |
+| `RetryRequested` | `RetryMessage` of the channel; a message, not taken back, or a turn that can be answered again, of an agent taking part |
 | `QuestionAnswered`, `QuestionDeclined` | `AnswerQuestion` of the channel - whether the sender was asked is the agent's to check |
 | `CommandRequested`, `NudgeRequested` | sent by a user, naming an agent (or, for a nudge, anyone else) taking part |
 | `ApprovalAnswered` | sent by a user, saying their own part alone - which agent asked, and whether they may approve its calls (`ApproveToolCall`), is the approver's to tell, which holds the request (issues 312, 567) |
@@ -491,11 +491,15 @@ it failed, the channel was lowered or it reached the limit of its model calls, w
 followed it. It is a request to the agent, not an operation of the channel: `RetryRequested`,
 naming a message or a turn.
 
-*   **A user** asks through their actor, which refuses at once, without an event, what cannot
-    succeed: a message not there, taken back or no agent's, a turn that is neither the agent's turn
-    under way nor its last turn given up that may be answered again (`ChannelLoop::retryable_turn`).
+*   **A user** asks through their actor, which refuses at once, without an event, a message not
+    there or taken back - what it reads of the channel's history to know whom it asks.
 *   **The channel** admits it (`RetryMessage` - as cancelling and waking, whoever may read the
-    channel), and the moderator routes it to the agent alone, which the channel wakes first. A turn
+    channel) of a message an agent taking part said, or of a turn of such an agent that is either
+    its turn under way or its last turn given up that may be answered again
+    (`ChannelLoop::retryable_turn`), and refuses any other (`MessageRejected`, issue 567) - the
+    actor of the user reaches into no other actor to know. The moderator routes it to the agent
+    alone, which the channel wakes first - ending being quiet, as for a nudge; no
+    `WakeupRequested` goes ahead of it, which would wake every agent. A turn
     under way is ended as the request is delivered (`Actor::retry_turn`), decided in one step under
     the turn's lock. Whether a retry is possible is decided before anything is interrupted: a
     request about an older message never ends the answer under way.
@@ -786,7 +790,8 @@ A single agent is also woken when the moderator asks it to respond: a sleeping a
 request to respond, so the channel wakes everyone a decision asks before it delivers anything of
 that decision. The policies never choose a sleeping agent, so this wakes only agents a message
 mentions; an agent that is not addressed keeps sleeping. It does not end a quiet channel, and in a
-quiet channel, which asks nobody, it wakes nobody - unless a user nudges the agent.
+quiet channel, which asks nobody, it wakes nobody - unless a user nudges the agent or asks it to
+answer again, which ends being quiet as deliberately as a nudge, and wakes that agent alone.
 
 ### Nudging someone
 
@@ -830,6 +835,13 @@ An **actor** is anything that sends and receives events in a channel.
     code, not a boundary (see [SECURITY.md](SECURITY.md#operations-that-check-themselves)). What an
     agent's model saw is read through the views, not asked of its actor (see
     [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw)).
+*   **Actors reach each other through the channel alone** (issue 567): what one has for another
+    it sends as an envelope, and whom it went to answers by one - also a refusal of what it does
+    not take (`EventRefused`). No actor calls into another, nor reads its state, its context or
+    what it holds: what another's state decides - whether a turn can be answered again, whether an
+    agent's actor runs - the channel tells, which holds its actors (`ChannelLoop::runs`,
+    `context_of`), and what enters is decided at its door. Whether an agent asked is answering
+    already is the agent's own to tell; nobody guards it.
 *   **An actor's inbox** (`channel::inbox`, issue 223) is a bounded queue of the envelopes the
     channel delivers live, and behind it the channel's history, which it reads from wherever the
     queue fell short. The channel opens it as the actor starts, at where the actor stands in the

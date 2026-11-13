@@ -35,7 +35,6 @@ use std::time::Instant;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::Semaphore;
 use tokio::time;
-use uuid::Uuid;
 
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
@@ -327,16 +326,8 @@ async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     };
     assert_eq!(channel.turn_of(ActorId::Agent(agent)), Some(turn), "the turn its start announced");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
-    let error = |result: Result<Uuid>| {
-        result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error")
-    };
-    assert!(
-        matches!(
-            error(alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await),
-            ChannelError::TurnNotRetryable { .. }
-        ),
-        "not another turn"
-    );
+    // Not another turn.
+    retry_of_turn_refused(&channel, alice_of(&context), agent, TurnId::new()).await;
 
     alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
     assert!(
@@ -367,13 +358,8 @@ async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     let history: Vec<_> =
         channel.whole_history().await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(history, ["hello", "second"], "nothing of the given-up turn reached the channel");
-    assert!(
-        matches!(
-            error(alice.request_retry_of_turn(ActorId::Agent(agent), turn).await),
-            ChannelError::TurnNotRetryable { .. }
-        ),
-        "and it is over"
-    );
+    // And it is over.
+    retry_of_turn_refused(&channel, alice_of(&context), agent, turn).await;
     running.abort();
 }
 
@@ -1770,14 +1756,8 @@ async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
     .await
     .expect("the message is said");
 
-    let refused = alice.request_retry_of_turn(ActorId::Agent(agent), failed).await;
-    assert!(
-        matches!(
-            refused.expect_err("refused").downcast_ref::<ChannelError>(),
-            Some(ChannelError::TurnNotRetryable { .. })
-        ),
-        "the conversation moved on"
-    );
+    // The conversation moved on.
+    retry_of_turn_refused(&channel, alice_of(&context), agent, failed).await;
     running.abort();
 }
 

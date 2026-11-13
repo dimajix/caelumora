@@ -117,15 +117,6 @@ pub enum ChannelError {
     /// A message taken back cannot be changed any more (issue 234).
     #[error("message {message} of channel {channel} was taken back")]
     MessageRevoked { message: MessageId, channel: ChannelId },
-    /// Only an agent of the channel can be asked to answer again instead
-    /// of its message (issue 234).
-    #[error("message {message} of channel {channel} is not one of an agent in it")]
-    NotAnAgentsMessage { message: MessageId, channel: ChannelId },
-    /// A turn is asked for again only while it is under way (issue 235),
-    /// or as the agent's last turn, given up for a failure or a lowering,
-    /// with nothing after it (issue 259).
-    #[error("turn {turn} can be asked for again in channel {channel} neither as under way nor as the last one given up")]
-    TurnNotRetryable { turn: TurnId, channel: ChannelId },
     /// A tool call is interrupted on its own only while it runs or waits to
     /// run in the turn under way (issue 276).
     #[error("tool call {call} of turn {turn} does not run in channel {channel}")]
@@ -478,9 +469,16 @@ impl ChannelLoop {
         self.actors.load().get(&actor_id).map(|a| Arc::clone(&a.actor))
     }
 
+    /// Whether an actor of `actor_id` runs in the channel: what another actor asks of it, the
+    /// approver whether an agent asking still takes part (issue 567), without being handed the
+    /// actor - actors reach each other through the channel alone.
+    pub(crate) fn runs(&self, actor_id: ActorId) -> bool {
+        self.actors.load().contains_key(&actor_id)
+    }
+
     /// The actor of `actor_id` if it is an agent of this channel - whom a
     /// request to answer again or to carry out a command may name.
-    pub(crate) fn agent_actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
+    fn agent_actor(&self, actor_id: ActorId) -> Option<Arc<dyn Actor>> {
         actor_id.as_agent_id().and_then(|_| self.actor(actor_id))
     }
 
@@ -495,7 +493,7 @@ impl ChannelLoop {
     /// way (issue 235), or `author`'s last turn, given up for a reason that
     /// may be answered again and with nothing after it in the channel's
     /// history (issue 259).
-    pub(crate) async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> bool {
+    async fn retryable_turn(&self, author: ActorId, turn: TurnId) -> bool {
         self.turn_under_way(author) == Some(turn) || self.given_up_last(author, turn).await
     }
 

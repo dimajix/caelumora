@@ -430,55 +430,37 @@ impl UserActor {
     /// may read the channel) is the channel's to decide as it admits the
     /// request, as for `send_message`; it goes to that agent alone: whether it can answer again is
     /// the agent's to decide, by its own transcript, and it says so with `RetryAccepted`
-    /// or `RetryRejected` - this returns once the request is on its way. A
-    /// `WakeupRequested` goes ahead of it, as of a message, so that a quiet
-    /// channel does not swallow it.
+    /// or `RetryRejected` - this returns once the request is on its way. No
+    /// `WakeupRequested` goes ahead of it - that would wake every agent -; the
+    /// channel wakes the one it asks, as for a nudge (issue 567).
     ///
     /// Returns the `span_id` of the envelopes, as `send_message` does.
     ///
     /// # Errors
     /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `MessageRevoked` if it was taken back, `NotAnAgentsMessage` if no agent of the channel said
-    /// it; an error if the channel is gone.
+    /// `MessageRevoked` if it was taken back; an error if the channel is gone. Whether an agent of
+    /// the channel said it the channel decides as it admits the request (issue 567).
     pub async fn request_retry(&self, message: MessageId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
         let author = self.message_to_change(&channel_loop, message).await?.sender_id;
-        if channel_loop.agent_actor(author).is_none() {
-            return Err(
-                ChannelError::NotAnAgentsMessage { message, channel: self.channel_id }.into()
-            );
-        }
         self.send_retry(RetryTarget::Message(message), author).await
     }
 
     /// Asks the agent `author` to answer again instead of its answer under
     /// way, its turn `turn` (issue 235). Whether this user may ask it
-    /// (`RetryMessage`) is the channel's to decide, as for a message; the
-    /// turn is looked at here: the turn under way, or the
+    /// (`RetryMessage`), whether `author` is an agent of the channel, and
+    /// whether the turn can be answered again - the turn under way, or the
     /// agent's last turn given up for a failure or a lowering, with nothing
-    /// after it (issue 259) - the user learns at once if it is neither. The
+    /// after it (issue 259) - the channel decides as it admits the request,
+    /// and tells the user if it does not (`MessageRejected`, issue 567). The
     /// channel ends a turn under way as it delivers the request - if it is
     /// still the one under way, else it drops it - and the agent answers
     /// anew with `RetryAccepted`; this returns once the request is on its
-    /// way, with a `WakeupRequested` ahead of it, as `request_retry` sends.
+    /// way, as `request_retry` sends it.
     ///
     /// # Errors
-    /// `ChannelError::NotAParticipant` if `author` is no agent of the
-    /// channel; `TurnNotRetryable` if `turn` can be asked for again
-    /// neither so;
-    /// an error if the channel is gone.
+    /// An error if the channel is gone.
     pub async fn request_retry_of_turn(&self, author: ActorId, turn: TurnId) -> Result<Uuid> {
-        let channel_loop = self.channel_loop()?;
-        if channel_loop.agent_actor(author).is_none() {
-            return Err(ChannelError::NotAParticipant {
-                participant: author,
-                channel: self.channel_id,
-            }
-            .into());
-        }
-        if !channel_loop.retryable_turn(author, turn).await {
-            return Err(ChannelError::TurnNotRetryable { turn, channel: self.channel_id }.into());
-        }
         self.send_retry(RetryTarget::Turn(turn), author).await
     }
 
@@ -508,12 +490,11 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// Sends the request to `author` to answer again instead of `target`,
-    /// with a `WakeupRequested` ahead of it, as of a message, so that a
-    /// quiet channel does not swallow it. Returns the envelopes' `span_id`.
+    /// Sends the request to `author` to answer again instead of `target`: the
+    /// channel wakes `author` alone for it, as for a nudge (issue 567).
+    /// Returns the envelope's `span_id`.
     async fn send_retry(&self, target: RetryTarget, author: ActorId) -> Result<Uuid> {
         let span_id = Uuid::new_v4();
-        self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
         self.send(self.envelope(ActorEvent::RetryRequested { target, author }, span_id)).await?;
         Ok(span_id)
     }

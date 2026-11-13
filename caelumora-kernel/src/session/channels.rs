@@ -745,7 +745,7 @@ mod tests {
         };
         assert_eq!(approver.strategy, ApprovalStrategy::Majority, "deciding as named");
         assert!(
-            channel.actor(ActorId::Approver(approver.id)).is_some()
+            channel.runs(ActorId::Approver(approver.id))
                 && !participants.contains(&ActorId::Approver(approver.id)),
             "its actor runs, no participant (issue 420)"
         );

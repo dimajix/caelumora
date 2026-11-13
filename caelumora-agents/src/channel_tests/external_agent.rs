@@ -220,15 +220,7 @@ async fn an_external_agent_s_answer_under_way_is_not_asked_for_again() {
     let Stuck { channel, context, agent, running, .. } =
         with_an_external_agent(Arc::clone(&remote)).await;
     assert_eq!(channel.turn_of(ActorId::Agent(agent)), None, "it has no turn here to give up");
-    let refused = channel
-        .user_actor(alice_of(&context))
-        .unwrap()
-        .request_retry_of_turn(ActorId::Agent(agent), TurnId::new())
-        .await;
-    assert!(matches!(
-        refused.expect_err("refused").downcast_ref::<ChannelError>(),
-        Some(ChannelError::TurnNotRetryable { .. })
-    ));
+    retry_of_turn_refused(&channel, alice_of(&context), agent, TurnId::new()).await;
     running.abort();
 }
 

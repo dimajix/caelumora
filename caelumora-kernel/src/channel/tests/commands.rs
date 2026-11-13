@@ -311,6 +311,25 @@ async fn an_agent_in_a_turn_is_asked_as_any() {
     running.abort();
 }
 
+/// Whether a turn can be answered again the channel decides as it admits the request (issue
+/// 567): one that is neither the agent's turn under way nor its last given up is refused, and the
+/// user told - their actor asks nothing of the agent.
+#[tokio::test]
+async fn a_turn_that_cannot_be_answered_again_is_refused_at_the_door() {
+    let Stuck { channel, context, agent, running, .. } = stuck_in_a_turn().await;
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    let mut hers = alice.watch();
+    alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await.expect("on its way");
+    let ActorEvent::MessageRejected { rejected, reason, .. } =
+        shown(&mut hers, "MessageRejected").await
+    else {
+        unreachable!()
+    };
+    assert_eq!((rejected.as_str(), reason), ("RetryRequested", Rejection::Invalid));
+    assert!(channel.turn_of(ActorId::Agent(agent)).is_some(), "its turn goes on");
+    running.abort();
+}
+
 #[tokio::test]
 async fn only_someone_else_in_the_channel_is_nudged() {
     let Stuck { channel, context, running, .. } = stuck_in_a_turn().await;

@@ -709,14 +709,26 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// That what `watch` shows next of a refusal is the channel's of a request to answer again, as it
+/// admits it (issue 567).
+async fn retry_refused(watch: &mut ChannelWatch) {
+    let ActorEvent::MessageRejected { rejected, reason, .. } =
+        shown(watch, "MessageRejected").await
+    else {
+        unreachable!()
+    };
+    assert_eq!((rejected.as_str(), reason), ("RetryRequested", Rejection::Invalid));
+}
+
 /// M2: asking an agent to answer again (issue 234) is an act on the
 /// conversation, like cancelling it: whoever takes part may - bob as well
 /// as alice - asked as `RetryMessage` of the channel by the channel alone,
-/// as it admits the request (issue 304). His actor looks at what it can
-/// see at once - a message no agent said, an answer under way (issue 235)
-/// or the agent's last turn given up (issue 259) that is neither - and asks
-/// nothing. Whether the agent answers again is its own to decide.
-/// It is offered of an agent by the same question (issue 242).
+/// as it admits the request (issue 304). His actor asks nothing; the
+/// channel, after his permission, refuses a message no agent said, or a
+/// turn that is neither an answer under way (issue 235) nor the agent's
+/// last turn given up (issue 259), and tells him (`MessageRejected`, issue
+/// 567). Whether the agent answers again is its own to decide. It is
+/// offered of an agent by the same question (issue 242).
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_domain::actor::ActorEvent;
@@ -766,26 +778,37 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
         }
     };
 
-    let (refused, asked) = world.asked(bob.request_retry(said.id)).await;
-    assert!(matches!(
-        refused.expect_err("no agent said it").downcast_ref::<ChannelError>(),
-        Some(ChannelError::NotAnAgentsMessage { .. })
-    ));
-    assert!(asked.is_empty(), "his actor asks nothing: {asked:?}");
-    let (refused, asked) =
-        world.asked(bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())).await;
-    assert!(matches!(
-        refused.expect_err("no agent answers").downcast_ref::<ChannelError>(),
-        Some(ChannelError::NotAParticipant { .. })
-    ));
-    assert!(asked.is_empty(), "nor of an answer under way: {asked:?}");
-    let (refused, asked) =
-        world.asked(bob.request_retry_of_turn(ActorId::Agent(helper), TurnId::new())).await;
-    assert!(matches!(
-        refused.expect_err("neither under way nor given up").downcast_ref::<ChannelError>(),
-        Some(ChannelError::TurnNotRetryable { .. })
-    ));
-    assert!(asked.is_empty(), "nor of a turn given up (issue 259): {asked:?}");
+    // Whether an agent said it, whether an agent answers, whether its turn can be answered
+    // again: the channel's to decide as it admits the request, after his permission (issue 567).
+    let (_, asked) = world
+        .asked(async {
+            bob.request_retry(said.id).await.expect("on its way");
+            retry_refused(&mut watch).await;
+        })
+        .await;
+    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "no agent said it");
+    let (_, asked) = world
+        .asked(async {
+            bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())
+                .await
+                .expect("on its way");
+            retry_refused(&mut watch).await;
+        })
+        .await;
+    assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "no agent answers");
+    let (_, asked) = world
+        .asked(async {
+            bob.request_retry_of_turn(ActorId::Agent(helper), TurnId::new())
+                .await
+                .expect("on its way");
+            retry_refused(&mut watch).await;
+        })
+        .await;
+    assert_eq!(
+        asked,
+        checks(&["bob: RetryMessage(alice's) yes"]),
+        "neither under way nor given up (issue 259)"
+    );
     let (_, asked) = world
         .asked(async {
             bob.request_retry(answered.id).await.expect("sent: the channel decides");

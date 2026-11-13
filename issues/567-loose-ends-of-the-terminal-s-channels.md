@@ -371,3 +371,29 @@ collected here, to be taken on one after the other, each a step of its own:
   in is asked of one place (`Envelope::in_authority_of`), also by the personality's picks; the drop
   is logged in the request's span; and a test runs the agent end to end: a nudge while it answers
   begins no turn of its own.
+
+- **2026-11-13** — Step 11, the rest of point 10: the user's actor no longer checks whether the
+  agent it asks to answer again takes part, nor whether its turn can be answered again
+  (`request_retry`, `request_retry_of_turn`); the channel's door decides both - it admitted only a
+  message an agent taking part said already, and now admits a turn only if it can be answered
+  again (`retryable_turn`), refusing any other with `MessageRejected` instead of dropping it unsaid
+  as it is delivered - but for one whose turn ended between its admission and its delivery, which
+  is dropped as before. `ChannelError::NotAnAgentsMessage` and `TurnNotRetryable`, with their REST
+  codes, are gone. The approver asks the channel whether an agent's actor runs
+  (`ChannelLoop::runs`) instead of being handed it, and its tests see that it holds a request no
+  longer by the refusal of an answer to it rather than by reading `pending`. CHANNELS.md and
+  PERMISSION-CHECKS.md say so.
+  On the review: `agent_actor` and `retryable_turn` are private to the channel now; the channel's
+  door asks `runs` too where it asked for an actor only to see whether it runs; the REST handler
+  of a turn's retry says that a refusal comes on the stream; the agents' security suite describes
+  what it shows; a test of the kernel shows a turn that cannot be answered again refused at the
+  door; and CHANNELS.md states the rule that actors reach each other through the channel alone.
+
+- **2026-11-13** — Decided with the maintainer on the review of step 11, and done in it: a request
+  to answer again no longer sends a `WakeupRequested` ahead - which wakes every actor of the
+  channel, and now also for a request the door refuses -; it is deliberate as a nudge is, so that
+  the channel ends being quiet as it takes it in and wakes the agent it goes to alone
+  (`send_retry`, `ChannelLoop::enter`). CHANNELS.md says so where it tells of waking and of asking
+  for another answer. The user's actor still reading a message to change it before the door does
+  (`message_to_change`), and resolving whom a command names by the commands other agents hold
+  (`request_command`), stay findings for the maintainer.

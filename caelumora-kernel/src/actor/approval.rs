@@ -177,7 +177,7 @@ impl ApproverActor {
                 .into_iter()
                 .filter(|agent| {
                     let actor = ActorId::Agent(*agent);
-                    !channel.lists(actor) || running.actor(actor).is_none()
+                    !channel.lists(actor) || !running.runs(actor)
                 })
                 .collect();
             drop(channel);
@@ -652,6 +652,21 @@ mod tests {
             self.input.send(self.from(user, event)).await.unwrap();
         }
 
+        /// That the approver holds `request` no longer, as it shows it: an answer to it is
+        /// refused (issue 567).
+        async fn holds_no_longer(&mut self, request: &ApprovalRequest) {
+            self.answer(0, request, true).await;
+            let refused = self.next().await;
+            assert!(
+                matches!(
+                    refused.event,
+                    ActorEvent::EventRefused { reason: Rejection::Invalid, .. }
+                ),
+                "an answer to it is refused, as not held: {:?}",
+                refused.event
+            );
+        }
+
         async fn next(&mut self) -> Envelope {
             time::timeout(Duration::from_secs(2), self.output.recv())
                 .await
@@ -728,13 +743,7 @@ mod tests {
             "not the user's withdrawal: {:?}",
             told.event
         );
-        approving.answer(0, &withdrawn, true).await;
-        let refused = approving.next().await;
-        assert!(
-            matches!(refused.event, ActorEvent::EventRefused { reason: Rejection::Invalid, .. }),
-            "an answer to it is refused, as no longer held (issue 567): {:?}",
-            refused.event
-        );
+        approving.holds_no_longer(&withdrawn).await;
         approving.nothing().await;
     }
 
@@ -819,7 +828,7 @@ mod tests {
             decided.event
         );
         assert!(decided_by(&decided).is_empty(), "by nobody's answer");
-        assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending");
+        approving.holds_no_longer(&request).await;
     }
 
     #[tokio::test]
@@ -887,7 +896,7 @@ mod tests {
             "denied: {:?}",
             decided.event
         );
-        assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending any more");
+        approving.holds_no_longer(&request).await;
     }
 
     /// Issue 502: a leave the approver lost among more events than it holds
@@ -920,6 +929,6 @@ mod tests {
             "denied: {:?}",
             decided.event
         );
-        assert!(approving.approver.pending.lock().await.is_empty(), "nothing pending any more");
+        approving.holds_no_longer(&request).await;
     }
 }

@@ -534,10 +534,6 @@ impl From<ChannelError> for ApiError {
             }
             ChannelError::MessageNotFound { .. } => Self::not_found("message_not_found", detail),
             ChannelError::MessageRevoked { .. } => Self::conflict("message_revoked", detail),
-            ChannelError::NotAnAgentsMessage { .. } => {
-                Self::conflict("not_an_agents_message", detail)
-            }
-            ChannelError::TurnNotRetryable { .. } => Self::conflict("turn_not_retryable", detail),
             ChannelError::ToolCallNotRunning { .. } => {
                 Self::conflict("tool_call_not_running", detail)
             }
@@ -961,14 +957,6 @@ mod tests {
         assert_eq!(
             channel_error(ChannelError::MessageRevoked { message, channel }),
             "message_revoked"
-        );
-        assert_eq!(
-            channel_error(ChannelError::NotAnAgentsMessage { message, channel }),
-            "not_an_agents_message"
-        );
-        assert_eq!(
-            channel_error(ChannelError::TurnNotRetryable { turn: TurnId::new(), channel }),
-            "turn_not_retryable"
         );
         assert_eq!(
             answer(ChannelError::ToolCallNotRunning {

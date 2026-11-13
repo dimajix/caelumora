@@ -476,10 +476,11 @@ pub(super) async fn retry_message(
 
 /// Asks participant `aid`, an agent, to answer again instead of its answer
 /// under way, the turn the body names (issue 235), or anew after its last
-/// turn given up (issue 259). Refused at once if the turn is neither
-/// (`409 turn_not_retryable`); otherwise the channel ends a turn under way
-/// as it delivers the request, and the stream shows `RetryAccepted` and the
-/// new answer.
+/// turn given up (issue 259). Answered once the request is on its way:
+/// whether the turn is either the channel decides as it admits it, and a
+/// refusal comes on the stream (`MessageRejected`); otherwise the channel ends
+/// a turn under way as it delivers the request, and the stream shows
+/// `RetryAccepted` and the new answer.
 pub(super) async fn retry_turn(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,

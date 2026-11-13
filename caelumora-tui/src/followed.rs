@@ -813,10 +813,11 @@ mod tests {
         let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "the last answer: {error}");
 
+        // A turn is asked for again as it is - whether it can be the channel's to decide as it
+        // admits the request (issue 567) -, a message is looked at first.
         let turn_id = TurnId::new();
         followed.take_in(&from(&channel, agent, ActorEvent::ResponseStarted { turn_id }));
-        let error = refused(followed.retry(&actor).await.unwrap_err());
-        assert!(matches!(error, ChannelError::NotAParticipant { .. }), "the turn: {error}");
+        assert!(followed.retry(&actor).await.unwrap(), "the turn, asked for");
 
         followed.take_in(&from(
             &channel,
@@ -831,8 +832,7 @@ mod tests {
             reason: GivenUpReason::Failed { message: "unreachable".to_string() },
         };
         followed.take_in(&from(&channel, agent, given_up));
-        let error = refused(followed.retry(&actor).await.unwrap_err());
-        assert!(matches!(error, ChannelError::NotAParticipant { .. }), "given up: {error}");
+        assert!(followed.retry(&actor).await.unwrap(), "the turn given up, asked for");
 
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "another answer"));
         followed.take_in(&from(&channel, agent, said));

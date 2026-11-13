@@ -306,10 +306,11 @@ impl ChannelLoop {
     /// first, so that the agent finds it given up as it takes the request
     /// in, and only if it is still the turn under way. A turn given up
     /// already is asked for as it is, if it is the agent's last (issue 259).
-    /// Otherwise there is nothing to answer again, and the request is
-    /// dropped, unrecorded: its sender asked before, its users see the
-    /// answer end, and what is not delivered is not recorded, so that the
-    /// history never delivers it either (issue 223).
+    /// Otherwise there is nothing to answer again - the turn ended since its
+    /// admission, which asked whether it could be (issue 567) -, and the
+    /// request is dropped, unrecorded: its users see the answer end, and
+    /// what is not delivered is not recorded, so that the history never
+    /// delivers it either (issue 223).
     async fn enter(
         &self,
         event: Envelope,
@@ -480,7 +481,8 @@ impl ChannelLoop {
     ///   (`Message::modify`, `Message::revoke`); a reclassification (issue 239) by its author or
     ///   the channel's owner (`Reclassify`), never above the channel;
     /// - a request to answer again (`RetryMessage`): of a message, not taken back, or of a turn, of
-    ///   an agent taking part (issue 362);
+    ///   an agent taking part (issue 362), that can be answered again - under way, or its last
+    ///   turn given up with nothing after it (`retryable_turn`, issue 567);
     /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) - whether its sender was
     ///   asked is the agent's to check;
     /// - a user's answer to an approval request (`ApprovalAnswered`), from that user, with their
@@ -577,14 +579,16 @@ impl ChannelLoop {
                     .then_some(())
                     .ok_or(Rejection::Invalid)
             }
-            // Whether the turn is still under way is decided as the request
-            // is delivered, where the turn is ended (`route_event_impl`).
-            ActorEvent::RetryRequested { target: RetryTarget::Turn(_), author } => {
+            // Whether the turn can be answered again is asked here (issue 567); whether it is still
+            // under way as the request is delivered, where the turn is ended (`enter`).
+            ActorEvent::RetryRequested { target: RetryTarget::Turn(turn), author } => {
                 self.policies
                     .access_policy()
                     .require(context, ActionType::RetryMessage(&channel), forbidden)
                     .await?;
-                self.agent_actor(*author).is_some().then_some(()).ok_or(Rejection::Invalid)
+                (self.agent_actor(*author).is_some() && self.retryable_turn(*author, *turn).await)
+                    .then_some(())
+                    .ok_or(Rejection::Invalid)
             }
             ActorEvent::QuestionAnswered { .. } | ActorEvent::QuestionDeclined { .. } => {
                 self.policies
@@ -610,7 +614,7 @@ impl ChannelLoop {
             }
             // What an actor did not take it tells whom it was of, someone else in the channel.
             ActorEvent::EventRefused { to, .. } => (*to != event.context.sender_id
-                && self.actor(*to).is_some())
+                && self.runs(*to))
             .then_some(())
             .ok_or(Rejection::Invalid),
             ActorEvent::CommandRequested { agent, command, .. } => {
@@ -622,7 +626,7 @@ impl ChannelLoop {
             ActorEvent::NudgeRequested { participant } => {
                 (event.context.sender_id.as_user_id().is_some()
                     && *participant != event.context.sender_id
-                    && self.actor(*participant).is_some())
+                    && self.runs(*participant))
                 .then_some(())
                 .ok_or(Rejection::Invalid)
             }
@@ -758,10 +762,14 @@ impl ChannelLoop {
         if matches!(event.event, ActorEvent::WakeupRequested) {
             self.wake_for_delivery();
         }
-        // A nudge is deliberate, as `wakeup_actor` is (issue 278): the
-        // channel is quiet no longer, so that the request it becomes is
-        // delivered, and whom it asks is woken with it (`route_event_impl`).
-        if matches!(event.event, ActorEvent::NudgeRequested { .. }) {
+        // A nudge is deliberate, as `wakeup_actor` is (issue 278), and so is a
+        // request to answer again (issue 567): the channel is quiet no longer,
+        // so that the request is delivered, and whom it asks is woken with it,
+        // alone (`route_event_impl`).
+        if matches!(
+            event.event,
+            ActorEvent::NudgeRequested { .. } | ActorEvent::RetryRequested { .. }
+        ) {
             self.quiet.store(false, Ordering::SeqCst);
         }
 
@@ -2181,13 +2189,6 @@ mod tests {
             error(his.request_retry(MessageId::new()).await),
             ChannelError::MessageNotFound { .. }
         ));
-        assert!(
-            matches!(
-                error(his.request_retry_of_turn(alice_id, TurnId::new()).await),
-                ChannelError::NotAParticipant { .. }
-            ),
-            "no agent answers here"
-        );
     }
 
     #[tokio::test]

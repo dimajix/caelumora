@@ -25,7 +25,7 @@ use caelumora_api::component::ComponentFacets;
 use caelumora_api::component::ComponentKind;
 use caelumora_api::component::Params;
 use caelumora_api::model::{LanguageModelClient, ModelProfileProvider, ModelResult};
-use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, Rejection};
 use caelumora_domain::actor::{EventContext, RetryTarget};
 use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::{AgentId, HearsDuringTurn, Personality};
@@ -49,7 +49,7 @@ use caelumora_kernel::channel::*;
 use caelumora_kernel::command::help::HelpComponent;
 use caelumora_kernel::command::CommandExecutor;
 use caelumora_kernel::component::ComponentRegistry;
-use caelumora_kernel::testing::TestKernel;
+use caelumora_kernel::testing::{shown, TestKernel};
 use caelumora_security::AllowAllPolicy;
 use caelumora_security::{AccessPolicy, ActionType, SecurityContext};
 use caelumora_store::Persistence;
@@ -65,6 +65,21 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
 use tokio::task::JoinHandle;
 use tokio::time;
+
+/// That the request of `user` to answer the turn `turn` of `agent` again is refused by the
+/// channel as it admits it, and they are told (`MessageRejected`, issue 567): no turn of `agent`'s
+/// it can answer again.
+async fn retry_of_turn_refused(channel: &ChannelLoop, user: UserId, agent: AgentId, turn: TurnId) {
+    let actor = channel.user_actor(user).expect("they take part");
+    let mut theirs = actor.watch();
+    actor.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("on its way");
+    let ActorEvent::MessageRejected { rejected, reason, .. } =
+        shown(&mut theirs, "MessageRejected").await
+    else {
+        unreachable!()
+    };
+    assert_eq!((rejected.as_str(), reason), ("RetryRequested", Rejection::Invalid));
+}
 
 /// What the channel shows next of `wanted`'s kind from `agent`.
 async fn shown_by(events: &mut Receiver<Envelope>, agent: AgentId, wanted: &str) -> ActorEvent {
