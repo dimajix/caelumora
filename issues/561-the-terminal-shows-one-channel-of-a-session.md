@@ -229,3 +229,10 @@ a session is continued - would be the same choice made at start. Nobody has aske
   frontend, an envelope is handed to the user's actor as the channel would route it, past its own
   API (`UserActor::take_in_as_routed`, `test-support`); the tests make questions and tool calls
   from fixtures of the domain (`question::testing`, `tool::testing`).
+- **2026-11-13** — Step 12 done. The terminal subscribes to the event bus for its session in the
+  user's name, before it reads the session's channels, and follows a channel the user joins -
+  created with them, joined, or added - once the bus tells they joined it (`channel::JOINED`),
+  telling how to talk there without a switch to it. Where the bus lost what it would have told,
+  it says so in the log and follows every channel the user takes part in that it does not follow
+  yet, as every subscriber of the bus makes up for a loss (`docs/EVENTS.md`). What happens next is
+  what a channel shows or that the user may have joined one (`Happened`).

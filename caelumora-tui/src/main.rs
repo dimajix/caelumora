@@ -137,8 +137,8 @@ async fn run_repl(mut channels: Channels) -> Result<()> {
                 println!("\r--- Ending ---");
                 break;
             }
-            (channel_id, shown) = channels.next() => {
-                for line in channels.take_in(channel_id, shown).await {
+            happened = channels.next() => {
+                for line in channels.take_in(happened).await {
                     println!("\r{line}");
                 }
                 // As the channel that asked them tells; one followed no more has closed them.
@@ -592,9 +592,10 @@ async fn main() -> Result<()> {
     let session_id = session_loop.id();
 
     // Every channel of the session the user takes part in, talking in the first.
-    let channels = Channels::new(&session_loop, views).await.ok_or_else(|| {
-        anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
-    })?;
+    let channels =
+        Channels::new(Arc::clone(&session_loop), views, kernel.event_bus()).await.ok_or_else(
+            || anyhow::anyhow!("The user takes part in no channel of the session {session_id}"),
+        )?;
     let who_answers = match channels.talked_in() {
         Some(followed) => followed.who_answers().await,
         None => None,

@@ -2,36 +2,70 @@
 //! 561).
 
 use crate::followed::Followed;
+use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalId;
-use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{Channel, ChannelId, JOINED};
+use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::question::QuestionId;
+use caelumora_domain::value::name::Name;
 use caelumora_kernel::actor::user::Lagged;
 use caelumora_kernel::actor::Shown;
+use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::Views;
 use futures::future::select_all;
 use std::future;
+use std::sync::Arc;
+use tokio::sync::broadcast::error::RecvError;
+use tracing::warn;
 use uuid::Uuid;
 
-/// The channels of a session the terminal follows for the user - every one they take part in -
-/// and the one they talk in: of the others, it tells what waits for the user.
+/// The channels of a session the terminal follows for the user - every one they take part in,
+/// those they join meanwhile too - and the one they talk in: of the others, it tells what waits
+/// for the user.
 pub(crate) struct Channels {
-    /// The channels followed, in the order of the session.
+    /// The session, where the channels the user joins meanwhile are found.
+    session: Arc<SessionLoop>,
+    /// The views as the user reads them, through which a channel is followed.
+    views: Views,
+    /// What the event bus tells of the session in the user's name: where they joined a channel
+    /// (`channel::JOINED`).
+    joins: EventSubscription,
+    /// The channels followed, in the order of the session, those joined meanwhile after them.
     followed: Vec<Followed>,
     /// The channel talked in; `None` once it ended, until the user switches to another.
     talked_in: Option<ChannelId>,
 }
 
+/// What happens next in the channels followed, or to them.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a value returned once and taken in at once, nearly always what a channel showed, as \
+              `Shown` is"
+)]
+pub(crate) enum Happened {
+    /// What the channel showed.
+    Shown(ChannelId, Result<Shown, Lagged>),
+    /// The user may have joined a channel: the event bus told so, or lost what it would have told.
+    Joined,
+}
+
 impl Channels {
     /// Follows every channel of `session` the user of `views` takes part in, and talks in the first
-    /// of them; `None` if they take part in none.
-    pub(crate) async fn new(session: &SessionLoop, views: Views) -> Option<Self> {
-        let mut followed = Vec::new();
-        for channel in session.channels() {
-            followed.extend(Followed::new(channel, views.clone()).await);
-        }
-        let talked_in = Some(followed.first()?.channel_id());
-        Some(Self { followed, talked_in })
+    /// of them; learns of those they join later from `bus`. `None` if they take part in none.
+    pub(crate) async fn new(
+        session: Arc<SessionLoop>,
+        views: Views,
+        bus: &EventBus,
+    ) -> Option<Self> {
+        // Subscribed first, so that no join is lost between the channels read and the
+        // subscription.
+        let topics = vec![SubscriptionTopic::Session(session.id())];
+        let joins = bus.subscribe(views.context().clone(), topics);
+        let mut channels = Self { session, views, joins, followed: Vec::new(), talked_in: None };
+        channels.follow_the_others().await;
+        channels.talked_in = Some(channels.followed.first()?.channel_id());
+        Some(channels)
     }
 
     /// The channel talked in; `None` once it ended, until the user switches to another.
@@ -80,17 +114,45 @@ impl Channels {
         lines
     }
 
-    /// What one of the channels followed shows next, with the channel; never if none is followed.
-    /// Nothing is lost if it is dropped before it completes.
-    pub(crate) async fn next(&mut self) -> (ChannelId, Result<Shown, Lagged>) {
-        if self.followed.is_empty() {
-            return future::pending().await;
+    /// What happens next in the channels followed, or to them: what one of them shows, or that
+    /// the user may have joined a channel. Nothing is lost if it is dropped before it completes.
+    pub(crate) async fn next(&mut self) -> Happened {
+        let me = self.views.context().caller_id;
+        tokio::select! {
+            (channel_id, shown) = shown(&mut self.followed) => Happened::Shown(channel_id, shown),
+            () = joined(&mut self.joins, me) => Happened::Joined,
         }
-        let next = self.followed.iter_mut().map(|followed| {
-            let channel_id = followed.channel_id();
-            Box::pin(async move { (channel_id, followed.next().await) })
-        });
-        select_all(next).await.0
+    }
+
+    /// Takes in what `happened`, and answers the lines the terminal prints of it: of what a
+    /// channel showed (`take_in_shown`), or the channels the user joined meanwhile, now followed
+    /// too - also those whose join the event bus lost, as every subscriber of it makes up for
+    /// what it lost (`docs/EVENTS.md`). Joining a channel does not switch to it.
+    pub(crate) async fn take_in(&mut self, happened: Happened) -> Vec<String> {
+        match happened {
+            Happened::Shown(channel_id, shown) => self.take_in_shown(channel_id, shown).await,
+            Happened::Joined => {
+                let joined = self.follow_the_others().await;
+                let told = |name: Name| {
+                    format!("--- You take part in channel {name} now: type '/switch {name}' to talk there ---")
+                };
+                joined.into_iter().map(told).collect()
+            }
+        }
+    }
+
+    /// Follows every channel of the session the user takes part in that is not followed yet, and
+    /// answers their names.
+    async fn follow_the_others(&mut self) -> Vec<Name> {
+        let mut followed = Vec::new();
+        for channel in self.session.channels() {
+            if self.followed(channel.id()).is_none() {
+                followed.extend(Followed::new(channel, self.views.clone()).await);
+            }
+        }
+        let names = followed.iter().map(Followed::name).collect();
+        self.followed.extend(followed);
+        names
     }
 
     /// Takes in what the channel `channel_id` showed (`Followed::take_in`), and answers the lines
@@ -98,7 +160,7 @@ impl Channels {
     /// user, marked with the channel's name. Where a run of the user's actor began or ended,
     /// whether they still take part is read anew (`Followed::ended`); a channel they no longer
     /// take part in is followed no more, and told so.
-    pub(crate) async fn take_in(
+    async fn take_in_shown(
         &mut self,
         channel_id: ChannelId,
         shown: Result<Shown, Lagged>,
@@ -154,18 +216,59 @@ impl Channels {
     }
 }
 
+/// What one of `followed` shows next, with its channel; never if there are none. Nothing is lost
+/// if it is dropped before it completes.
+async fn shown(followed: &mut [Followed]) -> (ChannelId, Result<Shown, Lagged>) {
+    if followed.is_empty() {
+        return future::pending().await;
+    }
+    let next = followed.iter_mut().map(|followed| {
+        let channel_id = followed.channel_id();
+        Box::pin(async move { (channel_id, followed.next().await) })
+    });
+    select_all(next).await.0
+}
+
+/// Completes where the user `me` may have joined a channel: `joins` tells that they did, or lost
+/// what it would have told; never once the event bus is gone. Nothing is lost if it is dropped
+/// before it completes.
+async fn joined(joins: &mut EventSubscription, me: ActorId) {
+    loop {
+        match joins.receiver().recv().await {
+            Ok(event) if is_join_of(&event, me) => return,
+            Ok(_) => {}
+            Err(RecvError::Lagged(lost)) => {
+                warn!("The terminal lost {lost} events of its session, and follows anew the channels its user takes part in");
+                return;
+            }
+            Err(RecvError::Closed) => future::pending().await,
+        }
+    }
+}
+
+/// Whether `event` tells that `me` joined a channel.
+fn is_join_of(event: &GlobalEvent, me: ActorId) -> bool {
+    event.about::<Channel>().is_some_and(|(_, change)| change.data::<ActorId>(JOINED) == Some(me))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::followed::testing::{approval, from, message};
-    use caelumora_domain::actor::{ActorEvent, ActorId};
+    use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::channel::{HistoryAccess, LEFT};
     use caelumora_domain::message::Message;
     use caelumora_domain::question::testing::make_question_request;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::user::UserId;
     use caelumora_kernel::channel::ChannelLoop;
-    use caelumora_kernel::session::testing::{running_session_of_a_user, spec, test_kernel};
+    use caelumora_kernel::session::testing::{
+        owned_kernel, running_session_of_a_user, spec, test_kernel,
+    };
     use caelumora_kernel::session::SessionManager;
     use caelumora_kernel::view::Viewer;
+    use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::SecurityContext;
     use std::sync::Arc;
     use std::time::Duration;
@@ -175,14 +278,17 @@ mod tests {
     /// context and the second user of the session: its first channel, `side` of the owner and the
     /// other user, and `theirs` of the other user alone.
     async fn followed() -> (Channels, Arc<SessionLoop>, SecurityContext, ActorId) {
-        let manager = Arc::new(SessionManager::new(test_kernel()));
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
         let side = spec("side", vec![owner.caller_id, other]);
         session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         session_loop.create_channel(&theirs, spec("theirs", vec![])).await.expect("they create it");
         let views = manager.views(Viewer::new(owner.clone()));
-        let channels = Channels::new(&session_loop, views).await.expect("the owner takes part");
+        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("the owner takes part");
         (channels, session_loop, owner, other)
     }
 
@@ -191,8 +297,20 @@ mod tests {
     }
 
     /// What `channel` shows as `sender` sends `event` in it.
-    fn shown(channel: &ChannelLoop, sender: ActorId, event: ActorEvent) -> Result<Shown, Lagged> {
-        Ok(Shown::Envelope(from(channel, sender, event)))
+    fn envelope_shown(channel: &ChannelLoop, sender: ActorId, event: ActorEvent) -> Happened {
+        Happened::Shown(channel.id(), Ok(Shown::Envelope(from(channel, sender, event))))
+    }
+
+    /// Takes in what happens next, until a channel showed something: the lines printed of it.
+    async fn until_shown(channels: &mut Channels) -> Vec<String> {
+        loop {
+            let happened = channels.next().await;
+            let was_shown = matches!(happened, Happened::Shown(..));
+            let lines = channels.take_in(happened).await;
+            if was_shown {
+                return lines;
+            }
+        }
     }
 
     #[tokio::test]
@@ -214,7 +332,9 @@ mod tests {
         theirs.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("said");
         let said = async {
             loop {
-                if let (channel_id, Ok(Shown::Envelope(envelope))) = channels.next().await {
+                if let Happened::Shown(channel_id, Ok(Shown::Envelope(envelope))) =
+                    channels.next().await
+                {
                     if let ActorEvent::CompleteMessageGenerated(message) = envelope.event {
                         return (channel_id, message.content);
                     }
@@ -237,11 +357,11 @@ mod tests {
         let agent = ActorId::Agent(agent_id);
 
         let said = |text| ActorEvent::CompleteMessageGenerated(message(other, text));
-        assert!(channels.take_in(side.id(), shown(&side, other, said("hello"))).await.is_empty());
+        assert!(channels.take_in(envelope_shown(&side, other, said("hello"))).await.is_empty());
         let mentioning = Message { mentions: vec![me], ..message(other, "@owner look") };
         let event = ActorEvent::CompleteMessageGenerated(mentioning);
         assert_eq!(
-            channels.take_in(side.id(), shown(&side, other, event)).await,
+            channels.take_in(envelope_shown(&side, other, event)).await,
             ["[side] other> \x1b[1;36m@owner\x1b[0m look"]
         );
         let theirs = ActorEvent::QuestionRequested(make_question_request(
@@ -250,22 +370,22 @@ mod tests {
             agent_id,
             other,
         ));
-        assert!(channels.take_in(side.id(), shown(&side, agent, theirs)).await.is_empty());
+        assert!(channels.take_in(envelope_shown(&side, agent, theirs)).await.is_empty());
         let request = approval(&side, agent_id);
         let id = request.id;
         let event = ActorEvent::ApprovalRequested(request);
-        let told = channels.take_in(side.id(), shown(&side, agent, event)).await;
+        let told = channels.take_in(envelope_shown(&side, agent, event)).await;
         assert_eq!(
             told.first(),
             Some(&format!("[side] --- Approval requested (id: {}) ---", id.0))
         );
-        let lost = channels.take_in(side.id(), Err(Lagged(3))).await;
+        let lost = channels.take_in(Happened::Shown(side.id(), Err(Lagged(3)))).await;
         assert_eq!(lost, ["[side] [3 events missed]"]);
 
         let first = channels.talked_in().expect("talked in").channel_id();
         let main = session_loop.channel(first).expect("the first channel");
         let event = ActorEvent::CompleteMessageGenerated(message(other, "hello"));
-        assert_eq!(channels.take_in(first, shown(&main, other, event)).await, ["other> hello"]);
+        assert_eq!(channels.take_in(envelope_shown(&main, other, event)).await, ["other> hello"]);
 
         let switched = channels.switch("side").await;
         assert_eq!(switched.first().map(String::as_str), Some("--- Talking in side now ---"));
@@ -299,7 +419,7 @@ mod tests {
         let request = approval(&side, agent_id);
         let id = request.id;
         channels
-            .take_in(side.id(), shown(&side, agent, ActorEvent::ApprovalRequested(request)))
+            .take_in(envelope_shown(&side, agent, ActorEvent::ApprovalRequested(request)))
             .await;
         let questions =
             make_question_request(side.session_id(), side.id(), agent_id, owner.caller_id);
@@ -308,8 +428,7 @@ mod tests {
         let actor = channels.followed(side.id()).and_then(Followed::actor).expect("it runs");
         // As the channel routes it: the user's actor keeps it as open, and shows it.
         actor.take_in_as_routed(asked).await;
-        let (channel_id, shown) = channels.next().await;
-        channels.take_in(channel_id, shown).await;
+        until_shown(&mut channels).await;
 
         assert_eq!(channels.awaiting(id).map(|f| f.channel_id()), Some(side.id()));
         let asking = channels.asking(&question_id.0.to_string()).map(|f| f.channel_id());
@@ -327,21 +446,85 @@ mod tests {
         let (mut channels, session_loop, owner, _) = followed().await;
         let side = named(&session_loop, "side");
         assert!(
-            channels.take_in(side.id(), Ok(Shown::Ended)).await.is_empty(),
+            channels.take_in(Happened::Shown(side.id(), Ok(Shown::Ended))).await.is_empty(),
             "still taking part"
         );
         assert!(session_loop.delete_channel(&owner, side.id()).await.unwrap());
         assert_eq!(
-            channels.take_in(side.id(), Ok(Shown::Ended)).await,
+            channels.take_in(Happened::Shown(side.id(), Ok(Shown::Ended))).await,
             ["--- You no longer take part in channel side, or it was deleted ---"]
         );
         assert!(channels.followed(side.id()).is_none());
 
         let first = channels.talked_in().expect("talked in").channel_id();
         assert!(session_loop.delete_channel(&owner, first).await.unwrap());
-        let told = channels.take_in(first, Ok(Shown::Ended)).await;
+        let told = channels.take_in(Happened::Shown(first, Ok(Shown::Ended))).await;
         assert_eq!(told.len(), 2, "{told:?}");
         assert!(channels.talked_in().is_none(), "talking in none");
         assert_eq!(told.last(), Some(&channels.hint()));
+    }
+
+    /// A channel another adds the user to meanwhile is followed, and told how to talk there,
+    /// without a switch to it: the user learns of it from the event bus, in their own name, under
+    /// the ownership policy.
+    #[tokio::test]
+    async fn a_channel_the_user_is_added_to_meanwhile_is_followed() {
+        let (kernel, manager) = owned_kernel(ConfidentialityRules::default());
+        let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
+        let side = spec("side", vec![owner.caller_id, other]);
+        session_loop.create_channel(&owner, side).await.expect("the owner creates it");
+        let late = spec("late", vec![owner.caller_id]);
+        let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
+        let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
+        let views = manager.views(Viewer::new(theirs));
+        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("they take part");
+        assert!(channels.followed(late.id()).is_none(), "not theirs yet");
+        // What the bus has yet to deliver of the session's making, taken in first.
+        while let Ok(happened) = time::timeout(Duration::from_millis(200), channels.next()).await {
+            channels.take_in(happened).await;
+        }
+        assert!(channels.followed(late.id()).is_none(), "still not theirs");
+
+        late.add_participant(&owner, other, HistoryAccess::All).await.expect("the owner adds them");
+        let told = "--- You take part in channel late now: type '/switch late' to talk there ---";
+        let talked_in = channels.talked_in().map(|f| f.channel_id());
+        let joined = async {
+            loop {
+                let happened = channels.next().await;
+                if channels.take_in(happened).await.iter().any(|line| line == told) {
+                    return;
+                }
+            }
+        };
+        time::timeout(Duration::from_secs(5), joined).await.expect("told in time");
+        assert!(channels.followed(late.id()).is_some());
+        assert_eq!(channels.talked_in().map(|f| f.channel_id()), talked_in, "no switch");
+    }
+
+    /// A join is one of the user's, into a channel; neither another's nor a leave.
+    #[test]
+    fn only_the_users_own_join_counts() {
+        let (me, another) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let at = (SessionId::new(), ChannelId::new());
+        assert!(is_join_of(&GlobalEvent::custom::<Channel>(&at, JOINED, &me), me));
+        assert!(
+            !is_join_of(&GlobalEvent::custom::<Channel>(&at, JOINED, &another), me),
+            "another's"
+        );
+        assert!(!is_join_of(&GlobalEvent::custom::<Channel>(&at, LEFT, &me), me), "a leave");
+    }
+
+    /// Following anew - where the user may have joined a channel - follows every channel the user
+    /// takes part in that is not followed yet, and none twice.
+    #[tokio::test]
+    async fn following_anew_follows_only_what_is_not_followed() {
+        let (mut channels, session_loop, owner, _) = followed().await;
+        assert!(channels.take_in(Happened::Joined).await.is_empty(), "every one followed");
+        let late = spec("late", vec![owner.caller_id]);
+        let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
+        assert_eq!(channels.take_in(Happened::Joined).await.len(), 1, "the one not followed");
+        assert!(channels.followed(late.id()).is_some());
     }
 }
