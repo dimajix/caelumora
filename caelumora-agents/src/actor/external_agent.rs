@@ -256,11 +256,15 @@ impl ExternalAgentActor {
     /// answer ends here - published, or given up with `TurnGivenUp` -, or
     /// its channel stops and it ends with the remote task it waits for
     /// (issue 377); and the state is stored. An error ends the
-    /// answer, never the actor.
+    /// answer, never the actor. Published, it answered a request to respond
+    /// that is the very next event in `rx` too, in its authority, which is
+    /// dropped (`AgentBody::drop_answered`, issue 567), as by an agent run
+    /// here.
     async fn respond(
         &self,
         state: &mut AgentChannelState,
         request: &Envelope,
+        rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) {
         // The work of this exchange, as a turn: bound by the channel as it
@@ -275,6 +279,9 @@ impl ExternalAgentActor {
         let token = self.body.control.token();
         self.go_to(ActorState::Planning, output).await;
         let ending = self.exchange(state, &answering, &mut work, &token, output).await;
+        if matches!(ending, Ok(Ending::Answered(_))) {
+            self.body.drop_answered(state, request.context.initiator_id, rx).await;
+        }
         self.body.store(state).await;
         let events = match ending {
             // A request is always answered, with nothing if need be.
@@ -1078,7 +1085,7 @@ impl Actor for ExternalAgentActor {
                     // One answer to all that was queued, to the last request.
                     if let Some(request) = self.hear(&mut state, received, &mut rx, &*output).await {
                         let span = envelope_span(&request.context, request.event.kind());
-                        self.respond(&mut state, &request, &*output).instrument(span).await;
+                        self.respond(&mut state, &request, &mut rx, &*output).instrument(span).await;
                         self.follow_open_tasks(&mut state, &mut followed, &mut attempted, &*output).await;
                     }
                 }

@@ -46,9 +46,6 @@ pub(super) async fn execute(
     match context.issuer.request_response(participant.id).await {
         Ok(_) => Ok(CommandOutput::private(format!("Asked {} to respond.", participant.name))),
         Err(e) => match e.downcast_ref::<ChannelError>() {
-            Some(ChannelError::AlreadyResponding { .. }) => {
-                Ok(CommandOutput::private(format!("{} is responding already.", participant.name)))
-            }
             Some(ChannelError::NudgesItself { .. }) => Err(invalid("you cannot nudge yourself")),
             _ => Err(command_error(NUDGE_COMMAND_NAME, &e)),
         },

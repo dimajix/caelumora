@@ -5,8 +5,9 @@
 use super::*;
 use crate::command::CommandContext;
 use crate::error::is_forbidden;
-use crate::testing::{attributes, World};
+use crate::testing::{attributes, shown, World};
 use caelumora_api::command::{CommandError, CommandResult};
+use caelumora_domain::actor::Rejection;
 use caelumora_domain::agent::{AgentId, Personality};
 use caelumora_domain::command::{CommandOutput, CommandVisibility};
 use caelumora_domain::query::Query;
@@ -298,26 +299,15 @@ async fn a_nudge_wakes_the_agent_it_names_and_ends_a_quiet_channel() {
     running.abort();
 }
 
+/// Whether an agent asked to respond is answering already is the agent's to tell, not the
+/// issuer's (issue 567): an agent in a turn is asked as any.
 #[tokio::test]
-async fn an_agent_in_a_turn_is_not_nudged_into_a_second_one() {
-    let Stuck { channel, context, agent, running, .. } = stuck_in_a_turn().await;
+async fn an_agent_in_a_turn_is_asked_as_any() {
+    let Stuck { channel, context, running, .. } = stuck_in_a_turn().await;
     let alice = alice_of(&context);
 
     let output = nudge(&channel, alice, "@helper").await.expect("answered, not failed");
-    assert_eq!(output.text, "helper is responding already.");
-    let error = channel
-        .user_actor(alice)
-        .unwrap()
-        .request_response(ActorId::Agent(agent))
-        .await
-        .expect_err("refused");
-    assert!(
-        matches!(
-            error.downcast_ref::<ChannelError>(),
-            Some(ChannelError::AlreadyResponding { .. })
-        ),
-        "{error}"
-    );
+    assert_eq!(output.text, "Asked helper to respond.");
     running.abort();
 }
 
@@ -336,12 +326,15 @@ async fn only_someone_else_in_the_channel_is_nudged() {
         matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NudgesItself { .. })),
         "{error}"
     );
-    let error =
-        actor.request_response(ActorId::Agent(AgentId::new())).await.expect_err("a stranger");
-    assert!(
-        matches!(error.downcast_ref::<ChannelError>(), Some(ChannelError::NotAParticipant { .. })),
-        "{error}"
-    );
+    // Whether whom it asks takes part is the channel's to decide, as it admits the request.
+    let mut hers = actor.watch();
+    actor.request_response(ActorId::Agent(AgentId::new())).await.expect("on its way");
+    let ActorEvent::MessageRejected { rejected, reason, .. } =
+        shown(&mut hers, "MessageRejected").await
+    else {
+        unreachable!()
+    };
+    assert_eq!((rejected.as_str(), reason), ("NudgeRequested", Rejection::Invalid), "a stranger");
     running.abort();
 }
 

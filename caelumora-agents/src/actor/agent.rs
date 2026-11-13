@@ -172,12 +172,21 @@ impl AgentActor {
 
     /// Ends the turn under way in `state`, which came to its end: the step
     /// for what the agent does once a turn is done, before it is taken over.
+    /// A request to respond that is the very next event in `rx`, in the
+    /// turn's authority, it answered too, and it is dropped
+    /// (`AgentBody::drop_answered`, issue 567).
     async fn handle_reflecting(
         &self,
         state: &mut AgentChannelState,
+        rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
-        self.end_turn(state, false, output).await
+        let initiator = state.turn.as_ref().map(|turn| turn.work.event_context.initiator_id);
+        let next = self.end_turn(state, false, output).await?;
+        if let Some(initiator) = initiator {
+            self.body.drop_answered(state, initiator, rx).await;
+        }
+        Ok(next)
     }
 
     /// Ends the turn under way in `state`, which was cancelled: nothing of
@@ -1028,7 +1037,6 @@ impl Actor for AgentActor {
             self.body.announce_state(&*output).await;
             self.body.tell_recorded(&mut state, &*output).await;
             let current_state = self.body.control.state();
-
             // Idle/WaitingForUser/Sleep may consume no event before the actor's
             // input channel closes (Ok(None)) - that's the only way this loop ends.
             // Every other state always produces a next state.
@@ -1091,7 +1099,7 @@ impl Actor for AgentActor {
                         Some(self.handle_cancelling(&mut state, &*output).await?)
                     }
                     ActorState::Reflecting => {
-                        Some(self.handle_reflecting(&mut state, &*output).await?)
+                        Some(self.handle_reflecting(&mut state, &mut rx, &*output).await?)
                     }
                 })
             }

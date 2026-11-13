@@ -520,7 +520,6 @@ impl From<ChannelError> for ApiError {
                 Self::conflict("already_participant", detail)
             }
             ChannelError::StillLeaving { .. } => Self::conflict("still_leaving", detail),
-            ChannelError::AlreadyResponding { .. } => Self::conflict("already_responding", detail),
             ChannelError::NudgesItself { .. } => Self::bad_request("nudges_itself", detail),
             ChannelError::NotAParticipant { .. } | ChannelError::ParticipantGone { .. } => {
                 Self::not_found("participant_not_found", detail)

@@ -337,3 +337,37 @@ collected here, to be taken on one after the other, each a step of its own:
   to be renamed `EventRejected`, with `HistoryEntry::MessageRejected`, the REST API's
   `message_rejected` and the web UI's notice - which changes stored history entries, so that the
   stored histories have to be deleted.
+
+- **2026-11-13** — Point 9 decided against with the maintainer: `askedOf` in the web UI reads
+  which actors the questions are put to from what it was sent - as `Questions::asked` and
+  `is_asked` read the same field -, and decides nothing: whether the user may answer the user's
+  actor checks before it sends, and the asking agent as it takes the answer. A mark in the snapshot
+  would serve a page as it loads alone, since `QuestionRequested` comes to every receiver alike,
+  and leave two ways for one thing. What stays open is the source of the open questions after a
+  user left and joined again, which 561 left as it is.
+
+- **2026-11-13** — Decided with the maintainer before steps 10 and 11, for point 10: whether an
+  agent asked to respond is answering already is the agent's to tell, not a guard's. A request to
+  respond that is the very next event in an agent's inbox as its turn ends - nothing unheard ahead
+  of it, so that the conversation stands as the turn answered it - is answered by that turn and
+  dropped; the user's actor no longer reads the state of whom it nudges, and `AlreadyResponding`
+  goes (step 10). The other checks go to the channel's door, which holds its actors and decides
+  what enters, rather than to the actor asked: a request to answer a message again is admitted
+  there already; whether a turn can be answered again (`retryable_turn`) is admitted there too,
+  refused with `MessageRejected` instead of dropped unsaid; and the approver asks the channel
+  whether an agent's actor runs (`ChannelLoop::runs`) instead of reaching for it, and its tests
+  watch what it sends instead of reading `pending` (step 11).
+
+- **2026-11-13** — Step 10, point 10 for the nudge: an agent drops a request to respond that is
+  the very next event in its inbox as a turn ends as it should, in the turn's authority
+  (`AgentBody::drop_answered`, called by the run loop after a step that reflected on the turn) -
+  as it drops one heard during the turn. `UserActor::request_response` checks no more than that the
+  user does not nudge themselves - whether whom they ask takes part the channel's door admits, as
+  it did - and `ChannelError::AlreadyResponding`, with its REST code `already_responding`, is gone;
+  `/participant nudge` asks an agent in a turn as any. AGENT-TURN.md and CHANNELS.md say so. On
+  the review: the drop happens at the end of `handle_reflecting`, once the turn is taken over as it
+  should - not after a failed one -, rather than in the run loop; an external agent drops so as its
+  answer is published, which the guard had protected too; who began the chain an envelope was sent
+  in is asked of one place (`Envelope::in_authority_of`), also by the personality's picks; the drop
+  is logged in the request's span; and a test runs the agent end to end: a nudge while it answers
+  begins no turn of its own.

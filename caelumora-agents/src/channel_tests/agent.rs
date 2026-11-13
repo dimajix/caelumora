@@ -283,6 +283,39 @@ fn contents_of(state: &AgentChannelState, role: MessageRole) -> Vec<String> {
         .collect()
 }
 
+/// A nudge that comes while the agent answers, in the authority of that answer, is answered by
+/// its turn (issue 567): the agent begins no turn of its own for it - the next call of its model
+/// answers what alice says after, which a turn for the nudge would not have heard.
+#[tokio::test]
+async fn a_nudge_while_the_agent_answers_is_answered_by_its_turn() {
+    let (Stuck { channel, context, agent, mut events, running, .. }, model) =
+        asking_a_gated_model(&["first", "second"]).await;
+    let alice = channel.user_actor(alice_of(&context)).unwrap();
+    alice.request_response(ActorId::Agent(agent)).await.expect("asked");
+    // The nudge is in the agent's inbox once the channel took it in.
+    time::timeout(Duration::from_secs(5), async {
+        while !matches!(
+            events.recv().await.expect("running").event,
+            ActorEvent::NudgeRequested { .. }
+        ) {}
+    })
+    .await
+    .expect("the nudge is taken in");
+
+    model.gate.add_permits(1);
+    answered(&mut events, agent).await;
+    alice.send_message(Some("@helper and now?".to_string()), None, Vec::new()).await.expect("said");
+    model.gate.add_permits(1);
+    asked(&model, 2).await;
+    let seen = model.seen.lock().unwrap().clone();
+    assert!(
+        seen[1].iter().any(|said| said.contains("and now?")),
+        "the second call answers what she said after, not the nudge: {:?}",
+        seen[1]
+    );
+    running.abort();
+}
+
 #[tokio::test]
 async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     let (Stuck { channel, context, agent, mut events, running, .. }, model) =

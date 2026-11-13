@@ -486,30 +486,22 @@ impl UserActor {
     /// channel - to respond to the conversation as it stands (issue 278),
     /// without a message: a `NudgeRequested`, which the moderator turns into
     /// the request to `participant` alone. An agent answers it in a turn with
-    /// this user's authority; a user is shown it. It asks nothing of the
-    /// policy: an `@`-mention in a message asks the same. No
-    /// `WakeupRequested` goes ahead of it - that would wake every agent -;
-    /// the channel wakes the one it asks, and ends being quiet for it.
+    /// this user's authority - or, asked as a turn of its own in this user's
+    /// authority ends, finds it answered by that turn (issue 567); a user is
+    /// shown it. It asks nothing of the
+    /// policy: an `@`-mention in a message asks the same. Whether
+    /// `participant` takes part is the channel's to decide as it admits the
+    /// request. No `WakeupRequested` goes ahead of it - that would wake every
+    /// agent -; the channel wakes the one it asks, and ends being quiet for it.
     ///
     /// Returns the `span_id` of the envelope, as `send_message` does.
     ///
     /// # Errors
-    /// `ChannelError::NotAParticipant` if `participant` takes no part in the
-    /// channel; `NudgesItself` if it is this user; `AlreadyResponding` if it
-    /// is in a turn, which it would otherwise follow with a second one; an
-    /// error if the channel is gone.
+    /// `ChannelError::NudgesItself` if `participant` is this user; an error if
+    /// the channel is gone.
     pub async fn request_response(&self, participant: ActorId) -> Result<Uuid> {
-        let channel_loop = self.channel_loop()?;
-        let actor = channel_loop
-            .actor(participant)
-            .ok_or(ChannelError::NotAParticipant { participant, channel: self.channel_id })?;
         if participant == self.id {
             return Err(ChannelError::NudgesItself { participant, channel: self.channel_id }.into());
-        }
-        if actor.state().in_turn() {
-            return Err(
-                ChannelError::AlreadyResponding { participant, channel: self.channel_id }.into()
-            );
         }
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::NudgeRequested { participant }, span_id)).await?;

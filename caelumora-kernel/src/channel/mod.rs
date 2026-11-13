@@ -100,10 +100,6 @@ pub enum ChannelError {
     AlreadyParticipant { participant: ActorId, channel: ChannelId },
     #[error("{participant} takes no part in channel {channel}")]
     NotAParticipant { participant: ActorId, channel: ChannelId },
-    /// An agent nudged while it is in a turn (issue 278): asked again, it
-    /// would answer twice.
-    #[error("{participant} is responding in channel {channel} already")]
-    AlreadyResponding { participant: ActorId, channel: ChannelId },
     /// A user nudging themselves (issue 278): nobody would be asked.
     #[error("{participant} cannot nudge themselves in channel {channel}")]
     NudgesItself { participant: ActorId, channel: ChannelId },

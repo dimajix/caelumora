@@ -359,6 +359,13 @@ impl Envelope {
         self.event.clone().published().map(|event| Envelope { event, ..self.clone() })
     }
 
+    /// Whether it was sent in the authority of `initiator` - of the chain they began
+    /// (`EventContext::initiator_id`, issues 255, 435): what a turn in their authority hears and
+    /// answers.
+    pub fn in_authority_of(&self, initiator: ActorId) -> bool {
+        self.context.initiator_id == initiator
+    }
+
     /// What its receiver sends back where it does not take it, for `reason` (issue 567): a
     /// `EventRefused` to its sender, naming its kind and the message it was or was about.
     pub fn refusal(&self, reason: Rejection) -> ActorEvent {

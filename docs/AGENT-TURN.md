@@ -42,6 +42,13 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
     free again, not once per request that waited. A sleeping agent ignores the request; only
     `wakeup` ends the sleep. Whether it sleeps is read once everything is taken in, since the
     channel wakes an agent before it delivers the message that asks it.
+*   **Answered by the turn that ended.** A request to respond that is the very next event as a
+    turn ends as it should - nothing unheard ahead of it, in the turn's own authority - is
+    answered by that turn and dropped (`AgentBody::drop_answered`, issue 567): the conversation
+    stands as the turn answered it, as a request heard during the turn is answered by it. Whether
+    an agent is answering already is so its own to tell; nobody who asks it checks. A request
+    behind something unheard, or in another's authority, begins a turn of its own. An external
+    agent drops one so as its answer is published.
 *   **Answer again.** Of the requests to answer again in the batch, the one for the turn the agent
     gave up for it is accepted. Otherwise only the last is judged: if its message is the agent's
     last answer, that answer is taken back with the rest of its turn and a turn begins on the

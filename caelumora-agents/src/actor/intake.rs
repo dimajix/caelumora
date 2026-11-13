@@ -10,7 +10,7 @@ use super::body::AgentBody;
 use crate::message::apply_stage_processors;
 use caelumora_api::logging::envelope_span;
 use caelumora_api::transport::EventReceiver;
-use caelumora_domain::actor::{ActorEvent, Envelope};
+use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, Pick};
 use caelumora_domain::agent::{AgentChannelState, HearsFrom};
 use caelumora_domain::message::Message;
 use caelumora_domain::transcript::TranscriptEntry;
@@ -134,6 +134,31 @@ impl AgentBody {
         }
         state.heard = rx.heard();
         TakenIn { request, retries, command: None }
+    }
+
+    /// Drops the request to respond that is the very next event in `rx` as a turn in the
+    /// authority of `initiator` ended (issue 567): nothing unheard lies ahead of it, so that the
+    /// conversation stands as the turn answered it, and the turn answered the request with it - as
+    /// one taken in during a turn is answered by it. One in another authority waits for a turn in
+    /// its own (issue 435). Writes where the agent stands into `state`, and does not store.
+    pub(super) async fn drop_answered(
+        &self,
+        state: &mut AgentChannelState,
+        initiator: ActorId,
+        rx: &mut Box<dyn EventReceiver>,
+    ) {
+        let answered = |envelope: &Envelope| match envelope.event {
+            ActorEvent::ResponseRequested { .. } if envelope.in_authority_of(initiator) => {
+                Pick::Take
+            }
+            _ => Pick::Stop,
+        };
+        if let Some(request) = rx.try_recv_if(&answered).await {
+            envelope_span(&request.context, request.event.kind()).in_scope(|| {
+                debug!("Dropped {}: answered by the turn that just ended", request.describe());
+            });
+            state.heard = rx.heard();
+        }
     }
 
     /// Takes in what `rx` holds already while a turn is under way in `state`
@@ -442,6 +467,51 @@ mod tests {
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));
+    }
+
+    /// A request to respond that is the very next event as a turn ends, in its authority, is
+    /// answered by that turn and dropped (issue 567); one behind something unheard, or in
+    /// another's authority, stays for a turn of its own.
+    #[tokio::test]
+    async fn a_request_right_after_a_turn_in_its_authority_is_answered_by_it() {
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let in_authority = |initiator, event| {
+            Envelope::new(
+                EventContext { initiator_id: initiator, ..EventContext::default() },
+                event,
+            )
+        };
+        let asked = |initiator| {
+            in_authority(initiator, ActorEvent::ResponseRequested { reason: RequestReason::Nudged })
+        };
+        let left_after = |events: Vec<Envelope>| async move {
+            let (tx, rx) = mpsc::channel(8);
+            let mut rx: Box<dyn EventReceiver> = Box::new(InMemoryEventReceiver::new(rx));
+            for event in events {
+                tx.try_send(event).expect("room");
+            }
+            let body = AgentBody::detached(Vec::new());
+            body.drop_answered(&mut AgentChannelState::default(), alice, &mut rx).await;
+            let mut left = Vec::new();
+            while let Some(event) = rx.try_recv().await {
+                left.push(event.event.kind());
+            }
+            left
+        };
+
+        assert!(left_after(vec![asked(alice)]).await.is_empty(), "answered by the turn");
+        assert_eq!(
+            left_after(vec![asked(alice), asked(alice)]).await,
+            ["ResponseRequested"],
+            "the very next one alone"
+        );
+        assert_eq!(left_after(vec![asked(bob)]).await, ["ResponseRequested"], "another's");
+        let said_since = in_authority(alice, ActorEvent::CompleteMessageGenerated(said("more")));
+        assert_eq!(
+            left_after(vec![said_since, asked(alice)]).await,
+            ["CompleteMessageGenerated", "ResponseRequested"],
+            "behind something unheard: the conversation stands otherwise"
+        );
     }
 
     #[tokio::test]

@@ -112,7 +112,7 @@ impl HearsDuringTurn {
     /// joined or left: unless it hears nobody. Nothing else: a change to a message, a request to
     /// answer again, a command, an approval are taken in an order of their own.
     pub fn takes(&self, work: &Work, envelope: &Envelope) -> bool {
-        let in_its_authority = envelope.context.initiator_id == work.event_context.initiator_id;
+        let in_its_authority = envelope.in_authority_of(work.event_context.initiator_id);
         match &envelope.event {
             ActorEvent::CompleteMessageGenerated(message) => {
                 self.hears_said(work, message)
@@ -157,7 +157,7 @@ impl HearsDuringTurn {
         if self.others != OthersWords::WhenAsked {
             return Pick::Stop;
         }
-        let in_its_authority = envelope.context.initiator_id == work.event_context.initiator_id;
+        let in_its_authority = envelope.in_authority_of(work.event_context.initiator_id);
         match &envelope.event {
             ActorEvent::ResponseRequested { .. } if in_its_authority => {
                 if self.takes(work, envelope) && envelope.context.position.is_some() {
@@ -182,7 +182,7 @@ impl HearsDuringTurn {
             ActorEvent::CompleteMessageGenerated(message) => {
                 self.others == OthersWords::WhenAsked
                     && self.hears_said(work, message)
-                    && envelope.context.initiator_id != work.event_context.initiator_id
+                    && !envelope.in_authority_of(work.event_context.initiator_id)
             }
             _ => false,
         }

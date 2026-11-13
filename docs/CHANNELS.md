@@ -797,7 +797,10 @@ else taking part, and the moderator turns it into the request to respond to them
 message of the user had mentioned them - no policy consulted, no chain between agents counted.
 
 *   **What it asks of whom.** An agent answers it in a turn, with the authority of the user who
-    nudged, as after a message of theirs. A user is shown who asks them to respond - the only way a
+    nudged, as after a message of theirs. Asked while a turn of its own in that authority is under
+    way, it finds the request the very next thing as the turn ends, nothing unheard ahead of it:
+    the turn answered it, and it is dropped (issue 567) - whether an agent is answering already is
+    its own to tell, not the nudger's. A user is shown who asks them to respond - the only way a
     user is asked. An approver takes no such request in.
 *   **No permission of its own.** Whoever may write in the channel can ask anyone to respond by
     mentioning them; the nudge asks the same, so it asks nothing of the policy. Nudging oneself is
@@ -805,8 +808,6 @@ message of the user had mentioned them - no policy consulted, no chain between a
 *   **Deliberate, like a `/wakeup` of an agent.** The channel ends being quiet as it routes the
     nudge, and wakes whom it asks. No `WakeupRequested` goes ahead of it: that would wake every
     agent.
-*   **Not into a second turn.** An agent in a turn would take the request in after it and answer
-    twice, so the nudge is refused while it responds.
 *   **What remains of it** is the request to respond, recorded to the one asked (issue 417), and
     the answer: nobody but the one asked is shown the request, and the command answers the issuer
     alone.
