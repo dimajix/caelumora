@@ -198,7 +198,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_and_its_messages_are_reclassified_by_who_may() {
-        use crate::channel::ChannelError;
         use caelumora_domain::actor::ActorId;
         use caelumora_domain::confidentiality::{Compartment, Compartments, Confidentiality};
         use caelumora_security::confidentiality::ConfidentialityRules;
@@ -264,16 +263,16 @@ mod tests {
             (Some(alices), Rejection::Forbidden),
             "not another's, and he is told (issue 304)"
         );
-        let missing = as_alice
-            .reclassify_message(MessageId::new(), released.clone())
+        let mut alices_events = as_alice.watch();
+        let missing = MessageId::new();
+        as_alice
+            .reclassify_message(missing, released.clone())
             .await
-            .expect_err("no such message");
-        assert!(
-            matches!(
-                missing.downcast_ref::<ChannelError>(),
-                Some(ChannelError::MessageNotFound { .. })
-            ),
-            "{missing}"
+            .expect("sent: the channel decides");
+        assert_eq!(
+            rejection(&mut alices_events).await,
+            (Some(missing), Rejection::MessageNotFound),
+            "no such message, and she is told (issue 567)"
         );
         classified_as(&hr, bobs, &released).await;
 

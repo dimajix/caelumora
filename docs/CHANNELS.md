@@ -383,9 +383,9 @@ approvals and questions.
 **The channel decides what enters it.** Every event an actor sends is admitted or refused by the
 channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) - against the
 channel as it is at that moment, so that nothing changes between a check and the entry. An actor
-asks nothing of the policy for what it sends; it looks only at what it can see at once. The channel
-asks, in the sender's name, first whether the sender may act so, then whether what it carries may
-flow in:
+asks nothing of the policy for what it sends; it reads of the channel only what it needs to build
+what it sends, or to address it. The channel asks, in the sender's name, first whether the sender
+may act so, then whether what it carries may flow in:
 
 | What enters | What the channel asks |
 |---|---|
@@ -461,9 +461,11 @@ What was said can be changed by its author, but never rewritten: a message is *m
 differently from now on, at the place it has - or *taken back*. Nothing forks: the others saw the
 message, and what they said in reply stays.
 
-*   **A user** changes their message through their actor, as they write. The actor looks the message
-    up in the channel's history, so that the user learns at once of one that is not there or was
-    taken back. A modified message speaks as its author, so only the author's actor can send it.
+*   **A user** changes their message through their actor, as they write. A modified message speaks
+    as its author, so only the author's actor can send it: the actor looks the message up in the
+    channel's history to make the modification of, and refuses one not there, or another's. Whether
+    it can be changed - not taken back - the channel decides, as for a revocation or a
+    reclassification, which the actor sends as they are (issue 567).
 *   **The channel admits it** as it admits a message (above): the message is in its history, its
     author may change it, it can be changed so as it stands - not taken back, modified by its own
     sender in its own role - and a modification may flow in. It records the change in its history.
@@ -491,8 +493,9 @@ it failed, the channel was lowered or it reached the limit of its model calls, w
 followed it. It is a request to the agent, not an operation of the channel: `RetryRequested`,
 naming a message or a turn.
 
-*   **A user** asks through their actor, which refuses at once, without an event, a message not
-    there or taken back - what it reads of the channel's history to know whom it asks.
+*   **A user** asks through their actor, which refuses at once, without an event, only a message
+    not there - what it reads of the channel to know whom it asks; one taken back the channel
+    refuses (`MessageRejected`, issue 567).
 *   **The channel** admits it (`RetryMessage` - as cancelling and waking, whoever may read the
     channel) of a message an agent taking part said, or of a turn of such an agent that is either
     its turn under way or its last turn given up that may be answered again

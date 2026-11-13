@@ -165,9 +165,12 @@ permission first, then the flow of what it carries.
 | `EventRefused` | to someone else taking part (structural, issue 567) | `Invalid` |
 | everything else | nothing | - |
 
-Before sending, the `UserActor` refuses only what it can see at once: a message not there or taken
-back, another's message to modify - a modification speaks as its author, which only the author's
-actor can send (issue 228) -, an attachment that is none of the user's uploads for the channel.
+Before sending, the `UserActor` refuses only what it cannot send: a message not there to modify or
+to ask to answer again - it reads it to make the modification of, or to address the request -,
+another's message to modify - a modification speaks as its author, which only the author's actor
+can send (issue 228) -, an attachment that is none of the user's uploads for the channel. Whether a
+message can be changed, taken back, reclassified or answered again the channel decides alone (issue
+567).
 
 ### Tool calls, approvals, commands, secrets
 

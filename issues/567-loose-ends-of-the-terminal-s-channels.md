@@ -397,3 +397,28 @@ collected here, to be taken on one after the other, each a step of its own:
   for another answer. The user's actor still reading a message to change it before the door does
   (`message_to_change`), and resolving whom a command names by the commands other agents hold
   (`request_command`), stay findings for the maintainer.
+
+- **2026-11-13** — A point joins the issue, at the maintainer's decision, and is taken on at once:
+  12. **The user's actor checks what the channel's door checks.** Before it sends a change of a
+  message or a request to answer one again, it reads the message from the channel's history and
+  refuses one taken back (`message_to_change`), and one of another for a modification
+  (`Forbidden`) - which the door checks again as it admits the event, so that one request fails in
+  two ways, at once or on the stream. It is to read only what it needs to build or address what it
+  sends - the message a modification is made of, the author a request to answer again goes to -,
+  and leave whether it may or can be done to the door.
+
+- **2026-11-13** — Step 12, point 12: the user's actor reads a message only to make a
+  modification of it or to address a request to answer it again (`UserActor::message_of`, which
+  refuses one not there); a revocation and a reclassification it sends as they are, and whether a
+  message was taken back the channel's door alone decides for all four, refusing with
+  `MessageRejected`. `ChannelError::MessageRevoked`, with its REST code `message_revoked`, is gone.
+  Another's message to modify the actor still refuses, contrary to what point 12 assumed: a
+  modification speaks as its author, and the transport of an actor passes on only what speaks as it
+  (`OriginEventSender`, issue 228), so that the door would never see it - the check says what the
+  actor cannot send, not what it may not. CHANNELS.md and PERMISSION-CHECKS.md say so.
+
+- **2026-11-13** — The review of step 12, applied: the test of the kernel shows the door refusing a
+  modification, a revocation, a reclassification and a request to answer again of a message taken
+  back (`MessageUnchangeable`); the REST handlers of the four say that a refusal comes on the stream
+  (`MessageRejected`), as that of a turn did already; CHANNELS.md and PERMISSION-CHECKS.md say what
+  the actor reads, and that whether a message can be answered again the door decides.

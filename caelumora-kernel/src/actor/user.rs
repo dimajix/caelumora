@@ -315,26 +315,22 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// Modifies this user's message `message` to read `content` from now on
-    /// (issue 234), with the attachments `attachments` names - those it
-    /// carries that it keeps, and uploads of the user for the channel to add
-    /// (issue 282) -, classified `classification` - as it is classified now
-    /// if `None`. The modified message speaks as its author, as every
-    /// message does, and only its author's actor can send it (issue 228):
-    /// another's is refused here, without asking the policy. Whether they
-    /// may modify it (`ModifyMessage`) and whether it may enter the channel
-    /// so classified is the channel's to decide as it admits the
-    /// modification, as for `send_message`. The message keeps its place;
-    /// nobody is asked to respond to it.
+    /// Modifies this user's message `message` to read `content` from now on (issue 234), with the
+    /// attachments `attachments` names - those it carries that it keeps, and uploads of the user
+    /// for the channel to add (issue 282) -, classified `classification` - as it is classified now
+    /// if `None`. The modified message speaks as its author, as every message does, and only its
+    /// author's actor can send it (issue 228): another's is refused here, without asking the
+    /// policy, as its transport would not pass it on. Whether they may modify it (`ModifyMessage`),
+    /// whether it can be changed - not taken back - and whether it may enter the channel so
+    /// classified is the channel's to decide as it admits the modification, as for `send_message`
+    /// (issue 567). The message keeps its place; nobody is asked to respond to it.
     ///
     /// Returns the `span_id` of the envelope, as `send_message` does.
     ///
     /// # Errors
-    /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `Forbidden` if it is not this user's, `MessageRevoked` if it was
-    /// taken back; `AttachmentError::NotFound` for an attachment that is
-    /// neither the message's nor an upload of the user's for the channel; an
-    /// error if the channel is gone.
+    /// `ChannelError::MessageNotFound` if the channel has no such message, `Forbidden` if it is not
+    /// this user's; `AttachmentError::NotFound` for an attachment that is neither the message's nor
+    /// an upload of the user's for the channel; an error if the channel is gone.
     pub async fn modify_message(
         &self,
         message: MessageId,
@@ -343,7 +339,7 @@ impl UserActor {
         attachments: Vec<ContentId>,
     ) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
-        let original = self.message_to_change(&channel_loop, message).await?;
+        let original = self.message_of(&channel_loop, message).await?;
         if original.sender_id != self.id {
             let refused = ActionType::ModifyMessage {
                 author: original.sender_id,
@@ -380,43 +376,37 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// Takes this user's message `message` back (issue 234): it keeps its
-    /// place, without what it said, and the agents are no longer given it.
-    /// Whether they may (`RevokeMessage`) is the channel's to decide, as for
-    /// `modify_message`. Not a deletion: what was said stays in the record
-    /// of every participant that heard it.
+    /// Takes this user's message `message` back (issue 234): it keeps its place, without what it
+    /// said, and the agents are no longer given it. Whether they may (`RevokeMessage`) is the
+    /// channel's to decide, as for `modify_message`. Not a deletion: what was said stays in the
+    /// record of every participant that heard it.
     ///
     /// # Errors
-    /// As `modify_message`, but for the classification.
+    /// An error if the channel is gone. Whether the message is there and can be taken back the
+    /// channel decides as it admits the revocation (issue 567).
     pub async fn revoke_message(&self, message: MessageId) -> Result<Uuid> {
-        let channel_loop = self.channel_loop()?;
-        self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
         self.send(self.envelope(ActorEvent::MessageRevoked { message, at: Utc::now() }, span_id))
             .await?;
         Ok(span_id)
     }
 
-    /// Reclassifies the message `message` as `classification` (issues 133,
-    /// 239): its author's own, or any in a channel this user owns, never
-    /// above the channel - the channel's to decide as it admits the
-    /// reclassification (`Reclassify`, the flow), as for `send_message`.
-    /// Recorded wherever the message is held, so that the agents' next turns
-    /// are labelled by it as it stands. Nobody is asked to respond.
+    /// Reclassifies the message `message` as `classification` (issues 133, 239): its author's own,
+    /// or any in a channel this user owns, never above the channel - the channel's to decide as it
+    /// admits the reclassification (`Reclassify`, the flow), as for `send_message`. Recorded
+    /// wherever the message is held, so that the agents' next turns are labelled by it as it
+    /// stands. Nobody is asked to respond.
     ///
     /// Returns the `span_id` of the envelope, as `send_message` does.
     ///
     /// # Errors
-    /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `MessageRevoked` if it was taken back; an error if the channel is
-    /// gone.
+    /// An error if the channel is gone. Whether the message is there and can be reclassified the
+    /// channel decides as it admits the reclassification (issue 567).
     pub async fn reclassify_message(
         &self,
         message: MessageId,
         classification: Classification,
     ) -> Result<Uuid> {
-        let channel_loop = self.channel_loop()?;
-        self.message_to_change(&channel_loop, message).await?;
         let span_id = Uuid::new_v4();
         self.send(
             self.envelope(ActorEvent::MessageReclassified { message, classification }, span_id),
@@ -425,24 +415,23 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// Asks the agent that said `message` to answer again instead of it
-    /// (issue 234). Whether this user may ask it (`RetryMessage`, whoever
-    /// may read the channel) is the channel's to decide as it admits the
-    /// request, as for `send_message`; it goes to that agent alone: whether it can answer again is
-    /// the agent's to decide, by its own transcript, and it says so with `RetryAccepted`
-    /// or `RetryRejected` - this returns once the request is on its way. No
-    /// `WakeupRequested` goes ahead of it - that would wake every agent -; the
-    /// channel wakes the one it asks, as for a nudge (issue 567).
+    /// Asks the agent that said `message` to answer again instead of it (issue 234). Whether this
+    /// user may ask it (`RetryMessage`, whoever may read the channel) is the channel's to decide as
+    /// it admits the request, as for `send_message`; it goes to that agent alone: whether it can
+    /// answer again is the agent's to decide, by its own transcript, and it says so with
+    /// `RetryAccepted` or `RetryRejected` - this returns once the request is on its way. No
+    /// `WakeupRequested` goes ahead of it - that would wake every agent -; the channel wakes the
+    /// one it asks, as for a nudge (issue 567).
     ///
     /// Returns the `span_id` of the envelopes, as `send_message` does.
     ///
     /// # Errors
-    /// `ChannelError::MessageNotFound` if the channel has no such message,
-    /// `MessageRevoked` if it was taken back; an error if the channel is gone. Whether an agent of
-    /// the channel said it the channel decides as it admits the request (issue 567).
+    /// `ChannelError::MessageNotFound` if the channel has no such message; an error if the channel
+    /// is gone. Whether it was taken back, and whether an agent of the channel said it, the channel
+    /// decides as it admits the request (issue 567).
     pub async fn request_retry(&self, message: MessageId) -> Result<Uuid> {
         let channel_loop = self.channel_loop()?;
-        let author = self.message_to_change(&channel_loop, message).await?.sender_id;
+        let author = self.message_of(&channel_loop, message).await?.sender_id;
         self.send_retry(RetryTarget::Message(message), author).await
     }
 
@@ -509,19 +498,17 @@ impl UserActor {
             .ok_or_else(|| anyhow!("Channel {} is gone", self.channel_id))
     }
 
-    /// The message `id` of `channel` as it stands, if it can still be
-    /// changed: not taken back. Whether this user may change it is the
-    /// channel's to decide as it admits the change (issue 304).
-    async fn message_to_change(&self, channel: &ChannelLoop, id: MessageId) -> Result<Message> {
+    /// The message `id` of `channel` as it stands: what a modification is made of, and whom a
+    /// request to answer it again goes to. Whether it can be changed, or answered again, the
+    /// channel decides as it admits what is sent (issue 567).
+    ///
+    /// # Errors
+    /// `ChannelError::MessageNotFound` if the channel has no such message.
+    async fn message_of(&self, channel: &ChannelLoop, id: MessageId) -> Result<Message> {
         let message = channel
             .message(id)
             .await
             .ok_or(ChannelError::MessageNotFound { message: id, channel: self.channel_id })?;
-        if message.revoked.is_some() {
-            return Err(
-                ChannelError::MessageRevoked { message: id, channel: self.channel_id }.into()
-            );
-        }
         Ok(message)
     }
 

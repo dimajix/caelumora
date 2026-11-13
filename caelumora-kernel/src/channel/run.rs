@@ -2092,10 +2092,22 @@ mod tests {
                 &actors,
             )
             .await;
+        for event in [
+            revoked(said.id),
+            reclassified(&Classification::PUBLIC),
+            ActorEvent::RetryRequested { target: RetryTarget::Message(said.id), author: alice_id },
+        ] {
+            channel.process_envelope(from(alice_id, event), &actors).await;
+        }
         assert_eq!(
             rejected(&mut alices).await,
-            [kind("MessageModified", Rejection::MessageUnchangeable)],
-            "taken back, it stays so"
+            [
+                kind("MessageModified", Rejection::MessageUnchangeable),
+                kind("MessageRevoked", Rejection::MessageUnchangeable),
+                kind("MessageReclassified", Rejection::MessageUnchangeable),
+                kind("RetryRequested", Rejection::MessageUnchangeable),
+            ],
+            "taken back, it stays so - the door's to tell, not her actor's (issue 567)"
         );
 
         // A request to answer again names an agent taking part, of a
@@ -2148,47 +2160,36 @@ mod tests {
             "an agent that left answers nothing again"
         );
 
-        // Her actor looks at what it can see at once, and asks nothing of the
-        // policy: that is the channel's.
+        // Her actor reads only what it needs to make a modification or to address a request to
+        // answer again - a message not there it cannot -, and leaves whether it may or can be done
+        // to the channel, as above (issue 567): a message taken back is sent all the same.
         let hers = channel.user_actor(alice.id).unwrap();
         let his = channel.user_actor(bob.id).unwrap();
         let error = |result: Result<Uuid>| {
             result.expect_err("refused").downcast::<ChannelError>().expect("a channel's error")
         };
-        his.reclassify_message(MessageId::new(), Classification::PUBLIC)
-            .await
-            .expect_err("never said");
         assert!(
             matches!(
-                error(hers.revoke_message(MessageId::new()).await),
+                error(hers.modify_message(MessageId::new(), None, None, Vec::new()).await),
                 ChannelError::MessageNotFound { .. }
             ),
-            "never said"
+            "nothing to modify"
         );
         assert!(
             matches!(
-                error(
-                    hers.modify_message(said.id, Some("hello".to_string()), None, Vec::new()).await
-                ),
-                ChannelError::MessageRevoked { .. }
+                error(his.request_retry(MessageId::new()).await),
+                ChannelError::MessageNotFound { .. }
             ),
-            "taken back"
+            "nobody to ask"
         );
-        assert!(
-            matches!(
-                error(hers.reclassify_message(said.id, Classification::PUBLIC).await),
-                ChannelError::MessageRevoked { .. }
-            ),
-            "with nothing left to release"
-        );
-        assert!(matches!(
-            error(his.request_retry(said.id).await),
-            ChannelError::MessageRevoked { .. }
-        ));
-        assert!(matches!(
-            error(his.request_retry(MessageId::new()).await),
-            ChannelError::MessageNotFound { .. }
-        ));
+        hers.modify_message(said.id, Some("hello".to_string()), None, Vec::new())
+            .await
+            .expect("taken back, for the channel to refuse");
+        hers.revoke_message(MessageId::new()).await.expect("never said, for the channel to refuse");
+        hers.reclassify_message(said.id, Classification::PUBLIC)
+            .await
+            .expect("taken back, for the channel to refuse");
+        his.request_retry(said.id).await.expect("taken back, for the channel to refuse");
     }
 
     #[tokio::test]

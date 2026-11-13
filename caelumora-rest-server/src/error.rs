@@ -533,7 +533,6 @@ impl From<ChannelError> for ApiError {
                 Self::bad_request("invalid_classification", detail)
             }
             ChannelError::MessageNotFound { .. } => Self::not_found("message_not_found", detail),
-            ChannelError::MessageRevoked { .. } => Self::conflict("message_revoked", detail),
             ChannelError::ToolCallNotRunning { .. } => {
                 Self::conflict("tool_call_not_running", detail)
             }
@@ -953,10 +952,6 @@ mod tests {
         assert_eq!(
             channel_error(ChannelError::MessageNotFound { message, channel }),
             "message_not_found"
-        );
-        assert_eq!(
-            channel_error(ChannelError::MessageRevoked { message, channel }),
-            "message_revoked"
         );
         assert_eq!(
             answer(ChannelError::ToolCallNotRunning {

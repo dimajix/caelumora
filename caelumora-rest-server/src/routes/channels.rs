@@ -433,10 +433,10 @@ pub(super) async fn send_message(
     Ok(StatusCode::OK)
 }
 
-/// Modifies the authenticated user's message `mid` (issue 234): it reads as
-/// `content` from now on, in its place, with the attachments named (issue
-/// 282). Answered once it is on its way; the
-/// channel's stream shows it as `MessageModified`.
+/// Modifies the authenticated user's message `mid` (issue 234): it reads as `content` from now on,
+/// in its place, with the attachments named (issue 282). Answered once it is on its way: whether it
+/// can be changed the channel decides as it admits it, and a refusal comes on the stream
+/// (`MessageRejected`, issue 567); otherwise the stream shows it as `MessageModified`.
 pub(super) async fn modify_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
@@ -457,11 +457,11 @@ pub(super) async fn modify_message(
     Ok(StatusCode::OK)
 }
 
-/// Asks the agent that said message `mid` to answer again instead of it
-/// (issue 234). Answered once the request is on its way: whether the agent
-/// does is its own to decide, and the channel's stream shows its answer as
-/// `RetryAccepted` - followed by the message taken back and the new answer -
-/// or `RetryRejected` with the reason.
+/// Asks the agent that said message `mid` to answer again instead of it (issue 234). Answered once
+/// the request is on its way: whether it may be asked the channel decides as it admits it, and a
+/// refusal comes on the stream (`MessageRejected`, issue 567); whether the agent does is its own to
+/// decide, and the stream shows its answer as `RetryAccepted` - followed by the message taken back
+/// and the new answer - or `RetryRejected` with the reason.
 pub(super) async fn retry_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
@@ -495,9 +495,10 @@ pub(super) async fn retry_turn(
     Ok(StatusCode::OK)
 }
 
-/// Takes the authenticated user's message `mid` back (issue 234): it stays
-/// in its place without what it said, and the agents are no longer given
-/// it - not a deletion. Shown on the channel's stream as `MessageRevoked`.
+/// Takes the authenticated user's message `mid` back (issue 234): it stays in its place without
+/// what it said, and the agents are no longer given it - not a deletion. Answered once it is on its
+/// way: whether it can be taken back the channel decides as it admits it, and a refusal comes on
+/// the stream (`MessageRejected`, issue 567); otherwise the stream shows it as `MessageRevoked`.
 pub(super) async fn revoke_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
@@ -670,10 +671,11 @@ pub(super) async fn update_channel_description(
     Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
-/// Reclassifies a message of the channel (issues 133, 239): its author or
-/// the channel's owner, never above the channel - as a participant, through
-/// their actor, as every change to a message. Answered once it is on its
-/// way; the channel's stream shows it as `MessageReclassified`.
+/// Reclassifies a message of the channel (issues 133, 239): its author or the channel's owner,
+/// never above the channel - as a participant, through their actor, as every change to a message.
+/// Answered once it is on its way: whether it may be the channel decides as it admits it, and a
+/// refusal comes on the stream (`MessageRejected`, issue 567); otherwise the stream shows it as
+/// `MessageReclassified`.
 pub(super) async fn reclassify_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,

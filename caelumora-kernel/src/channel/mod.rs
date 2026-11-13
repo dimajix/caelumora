@@ -114,9 +114,6 @@ pub enum ChannelError {
     ClassificationRefused { classification: Classification, channel: ChannelId },
     #[error("channel {channel} has no message {message}")]
     MessageNotFound { message: MessageId, channel: ChannelId },
-    /// A message taken back cannot be changed any more (issue 234).
-    #[error("message {message} of channel {channel} was taken back")]
-    MessageRevoked { message: MessageId, channel: ChannelId },
     /// A tool call is interrupted on its own only while it runs or waits to
     /// run in the turn under way (issue 276).
     #[error("tool call {call} of turn {turn} does not run in channel {channel}")]
