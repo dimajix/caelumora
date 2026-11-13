@@ -9,29 +9,35 @@ use caelumora_domain::channel::ChannelId;
 use caelumora_domain::mention::{is_group_handle, mention_spans};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::{QuestionId, QuestionRequest};
-use caelumora_domain::session::SessionId;
 use caelumora_domain::turn::GivenUpReason;
+use caelumora_domain::user::UserId;
 use caelumora_domain::work::TurnId;
-use caelumora_kernel::actor::user::UserActor;
+use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
+use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::view::Views;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// A channel the user takes part in, as the terminal follows it: where it lies, the views it is
-/// read through in their name and their actor in it, the approvals and questions open there, and
-/// what `/retry` asks to be given again.
+/// A channel the user takes part in, as the terminal follows it - as the channel stream of the
+/// REST server does (`docs/CHANNELS.md`, issue 386): the channel, the views it is read through in
+/// their name and what their actor in it shows, the approvals and questions open there, and what
+/// `/retry` asks to be given again.
 pub(crate) struct Followed {
-    /// The session of the channel.
-    session_id: SessionId,
-    /// The channel followed.
-    channel_id: ChannelId,
+    /// The channel followed, in which the user's actor is reached where they act: a run of it may
+    /// have ended and another begun since it was followed - they left and joined again. Held, not
+    /// reached anew as the REST server does per request: the terminal keeps its session running,
+    /// in which a channel keeps its loop - but for one deleted and restored, whose following ends
+    /// with its deletion.
+    channel: Arc<ChannelLoop>,
+    /// The user it is followed for.
+    user: UserId,
     /// The views as the user reads them, whose viewer is the user it is followed for: what tells
     /// whether the channel still lists them.
     views: Views,
-    /// The user's actor in the channel, through which what they say, run and answer goes.
-    actor: Arc<UserActor>,
+    /// What the user's actor in the channel shows, across its runs.
+    watch: ChannelWatch,
     /// The handles of the participants, as the channel was followed: what a message's mentions
     /// are highlighted by.
     handles: HashMap<ActorId, String>,
@@ -51,18 +57,19 @@ pub(crate) struct Followed {
 }
 
 impl Followed {
-    /// Follows `channel` for the user `views` are read by, knowing its participants' handles as
-    /// they are now; `None` if the viewer is no user taking part in it.
-    pub(crate) fn new(channel: &ChannelLoop, views: Views) -> Option<Self> {
+    /// Follows `channel` for the user `views` are read by, from now on, as the views let them
+    /// (`ChannelView::user_follow`), knowing its participants' handles as they are now; `None` if
+    /// the viewer is no user the channel lists, or cannot read it.
+    pub(crate) async fn new(channel: Arc<ChannelLoop>, views: Views) -> Option<Self> {
         let ActorId::User(user) = views.context().caller_id else { return None };
-        let actor = channel.user_actor(user)?;
+        let watch = views.channel(channel.session_id(), channel.id()).await.ok()?.user_follow()?;
         let handles =
             channel.participants().into_iter().filter_map(|m| Some((m.id, m.handle?))).collect();
         Some(Self {
-            session_id: channel.session_id(),
-            channel_id: channel.id(),
+            channel,
+            user,
             views,
-            actor,
+            watch,
             handles,
             pending_approvals: HashMap::new(),
             open_questions: Vec::new(),
@@ -74,12 +81,23 @@ impl Followed {
 
     /// The channel followed.
     pub(crate) fn channel_id(&self) -> ChannelId {
-        self.channel_id
+        self.channel.id()
     }
 
-    /// The user's actor in the channel, through which what they say, run and answer goes.
-    pub(crate) fn actor(&self) -> &UserActor {
-        &self.actor
+    /// The user's actor in the channel, through which what they say, run and answer goes, if a run
+    /// of it is under way; `None` between two runs - the user joined and their actor has yet to
+    /// start, or they left and the end of its run is yet to be read -, which a channel followed
+    /// passes through as it goes.
+    pub(crate) fn actor(&self) -> Option<Arc<UserActor>> {
+        self.channel.user_actor(self.user)
+    }
+
+    /// What the channel shows next, as `ChannelWatch::next`.
+    ///
+    /// # Errors
+    /// As `ChannelWatch::next`.
+    pub(crate) async fn next(&mut self) -> Result<Shown, Lagged> {
+        self.watch.next().await
     }
 
     /// Whether following the channel has ended - the user no longer takes part in it, or it was
@@ -87,7 +105,8 @@ impl Followed {
     /// tells so: what is asked where a run of the user's actor began or ended
     /// (`docs/CHANNELS.md`, issue 386).
     pub(crate) async fn ended(&self) -> Option<&'static str> {
-        let taken_part_in = self.views.listed_in(self.session_id, self.channel_id).await;
+        let taken_part_in =
+            self.views.listed_in(self.channel.session_id(), self.channel_id()).await;
         (!taken_part_in).then_some(
             "--- You no longer take part in this channel, or it was deleted: type 'exit' to end ---",
         )
@@ -181,15 +200,21 @@ impl Followed {
         }
     }
 
-    /// Answers approval `id` for the agent waiting for it; `false` if none is pending.
+    /// Answers approval `id` through `actor`, the user's in the channel, for the agent waiting for
+    /// it; `false` if none is pending.
     ///
     /// # Errors
     /// If the answer cannot be sent into the channel.
-    pub(crate) async fn approve(&mut self, id: ApprovalId, approved: bool) -> Result<bool> {
+    pub(crate) async fn approve(
+        &mut self,
+        actor: &UserActor,
+        id: ApprovalId,
+        approved: bool,
+    ) -> Result<bool> {
         let Some(agent_id) = self.pending_approvals.remove(&id) else {
             return Ok(false);
         };
-        self.actor.send_approval(ApprovalResponse::new(id, agent_id), approved).await?;
+        actor.send_approval(ApprovalResponse::new(id, agent_id), approved).await?;
         Ok(true)
     }
 
@@ -211,15 +236,15 @@ impl Followed {
         self.open_questions.iter().any(|q| q.id == id)
     }
 
-    /// Asks for the answer under way, the turn given up or the last answer to be given again;
-    /// `false` if there is none.
+    /// Asks through `actor`, the user's in the channel, for the answer under way, the turn given
+    /// up or the last answer to be given again; `false` if there is none.
     ///
     /// # Errors
     /// As `UserActor::request_retry_of_turn` and `UserActor::request_retry`.
-    pub(crate) async fn retry(&self) -> Result<bool> {
+    pub(crate) async fn retry(&self, actor: &UserActor) -> Result<bool> {
         match (self.under_way.or(self.given_up), self.last_answer) {
-            (Some((agent, turn)), _) => self.actor.request_retry_of_turn(agent, turn).await?,
-            (None, Some(answer)) => self.actor.request_retry(answer).await?,
+            (Some((agent, turn)), _) => actor.request_retry_of_turn(agent, turn).await?,
+            (None, Some(answer)) => actor.request_retry(answer).await?,
             (None, None) => return Ok(false),
         };
         Ok(true)
@@ -227,7 +252,7 @@ impl Followed {
 
     /// The user, as an actor of the channel.
     fn me(&self) -> ActorId {
-        self.views.context().caller_id
+        ActorId::User(self.user)
     }
 
     /// Whether `sender` gives the answer under way.
@@ -420,14 +445,14 @@ mod tests {
     use anyhow::Error;
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::approval::{ApprovalDecision, ApprovalRuleId, ApproverId};
+    use caelumora_domain::channel::HistoryAccess;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::question::{Addressee, Question, Questions};
     use caelumora_domain::tool::ToolCall;
-    use caelumora_domain::user::UserId;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::session::testing::{
-        ended, owned_kernel, running_session_of_a_user, spec, test_kernel,
+        owned_kernel, running_session_of_a_user, spec, test_kernel,
     };
     use caelumora_kernel::session::{SessionLoop, SessionManager};
     use caelumora_kernel::view::Viewer;
@@ -435,6 +460,7 @@ mod tests {
     use caelumora_security::SecurityContext;
     use serde_json::json;
     use std::time::Duration;
+    use tokio::time;
 
     /// A running session of a user, in a kernel of its own, with its manager and the context of
     /// its owner.
@@ -449,8 +475,16 @@ mod tests {
         let (manager, session_loop, ctx) = running().await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let views = manager.views(Viewer::new(ctx.clone()));
-        let followed = Followed::new(&channel, views).expect("the owner takes part");
+        let followed =
+            Followed::new(Arc::clone(&channel), views).await.expect("the owner takes part");
         (followed, channel, ctx.caller_id)
+    }
+
+    /// Whether `followed` shows what `wanted` asks for within five seconds, passing over what it
+    /// shows before.
+    async fn shows(followed: &mut Followed, wanted: fn(&Shown) -> bool) -> bool {
+        let shown = async { while !followed.next().await.is_ok_and(|shown| wanted(&shown)) {} };
+        time::timeout(Duration::from_secs(5), shown).await.is_ok()
     }
 
     /// `event` as `sender` sends it in `channel`.
@@ -526,6 +560,7 @@ mod tests {
     #[tokio::test]
     async fn an_approval_is_pending_until_answered_or_withdrawn() {
         let (mut followed, channel, _) = followed().await;
+        let actor = followed.actor().expect("the owner's actor runs");
         let agent_id = AgentId::new();
         let agent = ActorId::Agent(agent_id);
         let request = approval(&channel, agent_id);
@@ -539,7 +574,7 @@ mod tests {
             [format!("--- Approval {} withdrawn: the turn ended ---", id.0)]
         );
         assert!(followed.take_in(&from(&channel, agent, withdrawn)).is_empty(), "told once");
-        assert!(!followed.approve(id, true).await.unwrap(), "no longer pending");
+        assert!(!followed.approve(&actor, id, true).await.unwrap(), "no longer pending");
 
         // Over once the approver tells the verdict, or that it timed out; another user's answer
         // alone decides nothing.
@@ -555,25 +590,29 @@ mod tests {
             let by_other = ActorEvent::ApprovalGranted(decided(id));
             assert!(followed.take_in(&from(&channel, other, by_other)).is_empty());
             assert!(followed.take_in(&from(&channel, approver, verdict(decided(id)))).is_empty());
-            assert!(!followed.approve(id, true).await.unwrap(), "over");
+            assert!(!followed.approve(&actor, id, true).await.unwrap(), "over");
         }
         let request = approval(&channel, agent_id);
         let id = request.id;
         followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
         let by_other = ActorEvent::ApprovalGranted(decided(id));
         followed.take_in(&from(&channel, other, by_other));
-        assert!(followed.approve(id, true).await.unwrap(), "still pending after another's answer");
+        assert!(
+            followed.approve(&actor, id, true).await.unwrap(),
+            "still pending after another's answer"
+        );
 
         let request = approval(&channel, agent_id);
         let id = request.id;
         followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
-        assert!(followed.approve(id, false).await.unwrap(), "answered");
-        assert!(!followed.approve(id, true).await.unwrap(), "answered once");
+        assert!(followed.approve(&actor, id, false).await.unwrap(), "answered");
+        assert!(!followed.approve(&actor, id, true).await.unwrap(), "answered once");
     }
 
     #[tokio::test]
     async fn an_approval_answered_by_a_rule_of_the_user_is_told_to_them_alone() {
         let (mut followed, channel, me) = followed().await;
+        let actor = followed.actor().expect("the owner's actor runs");
         let agent_id = AgentId::new();
         let request = approval(&channel, agent_id);
         let id = request.id;
@@ -598,7 +637,10 @@ mod tests {
             followed.take_in(&answer(me, Some(ApprovalRuleId::new()))),
             [format!("--- Approval {} answered by your rule ---", id.0)]
         );
-        assert!(!followed.approve(id, true).await.unwrap(), "answered once, as by the user");
+        assert!(
+            !followed.approve(&actor, id, true).await.unwrap(),
+            "answered once, as by the user"
+        );
     }
 
     /// A question of `agent_id` in `channel`, put to `addressee`.
@@ -663,18 +705,19 @@ mod tests {
     #[tokio::test]
     async fn retry_asks_for_the_turn_under_way_or_given_up_before_the_last_answer() {
         let (mut followed, channel, _) = followed().await;
+        let actor = followed.actor().expect("the owner's actor runs");
         let agent = ActorId::Agent(AgentId::new());
-        assert!(!followed.retry().await.unwrap(), "nothing to give again");
+        assert!(!followed.retry(&actor).await.unwrap(), "nothing to give again");
         let refused = |e: Error| e.downcast::<ChannelError>().expect("refused by the channel");
 
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "an answer"));
         followed.take_in(&from(&channel, agent, said));
-        let error = refused(followed.retry().await.unwrap_err());
+        let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "the last answer: {error}");
 
         let turn_id = TurnId::new();
         followed.take_in(&from(&channel, agent, ActorEvent::ResponseStarted { turn_id }));
-        let error = refused(followed.retry().await.unwrap_err());
+        let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::NotAParticipant { .. }), "the turn: {error}");
 
         followed.take_in(&from(
@@ -682,7 +725,7 @@ mod tests {
             agent,
             ActorEvent::TurnFinished { turn_id, messages: Vec::new() },
         ));
-        let error = refused(followed.retry().await.unwrap_err());
+        let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "the last again: {error}");
 
         let given_up = ActorEvent::TurnGivenUp {
@@ -690,12 +733,12 @@ mod tests {
             reason: GivenUpReason::Failed { message: "unreachable".to_string() },
         };
         followed.take_in(&from(&channel, agent, given_up));
-        let error = refused(followed.retry().await.unwrap_err());
+        let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::NotAParticipant { .. }), "given up: {error}");
 
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "another answer"));
         followed.take_in(&from(&channel, agent, said));
-        let error = refused(followed.retry().await.unwrap_err());
+        let error = refused(followed.retry(&actor).await.unwrap_err());
         assert!(matches!(error, ChannelError::MessageNotFound { .. }), "said since: {error}");
     }
 
@@ -703,15 +746,17 @@ mod tests {
     async fn a_channel_is_followed_only_by_who_takes_part() {
         let (manager, session_loop, ctx) = running().await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
-        let views_of = |ctx: SecurityContext| manager.views(Viewer::new(ctx));
+        let followed_by = |ctx: SecurityContext| {
+            Followed::new(Arc::clone(&channel), manager.views(Viewer::new(ctx)))
+        };
         let stranger = SecurityContext::new(
             ActorId::User(UserId::new()),
             session_loop.id(),
             Default::default(),
         );
-        assert!(Followed::new(&channel, views_of(stranger)).is_none(), "a stranger");
-        assert!(Followed::new(&channel, views_of(SecurityContext::system())).is_none(), "no user");
-        let followed = Followed::new(&channel, views_of(ctx)).expect("the owner takes part");
+        assert!(followed_by(stranger).await.is_none(), "a stranger");
+        assert!(followed_by(SecurityContext::system()).await.is_none(), "no user");
+        let followed = followed_by(ctx).await.expect("the owner takes part");
         assert_eq!(followed.channel_id(), channel.id());
     }
 
@@ -725,27 +770,53 @@ mod tests {
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         let views = manager.views(Viewer::new(theirs.clone()));
         let side = |name| spec(name, vec![owner.caller_id, other]);
+        let is_end = |shown: &Shown| matches!(shown, Shown::Ended);
 
         let channel = session_loop.create_channel(&owner, side("left")).await.unwrap();
-        let followed = Followed::new(&channel, views.clone()).expect("they take part");
-        let mut watch = followed.actor().watch();
+        let mut followed =
+            Followed::new(Arc::clone(&channel), views.clone()).await.expect("they take part");
         assert_eq!(followed.ended().await, None, "taking part");
         channel.leave(&theirs, other).await.expect("they may leave");
-        assert!(ended(&mut watch, Duration::from_secs(5)).await, "their actor stopped");
+        assert!(shows(&mut followed, is_end).await, "their actor stopped");
         assert!(followed.ended().await.is_some(), "left");
 
         let channel = session_loop.create_channel(&owner, side("removed")).await.unwrap();
-        let followed = Followed::new(&channel, views.clone()).expect("they take part");
-        let mut watch = followed.actor().watch();
+        let mut followed =
+            Followed::new(Arc::clone(&channel), views.clone()).await.expect("they take part");
         channel.remove_participant(&owner, other).await.expect("the owner may remove them");
-        assert!(ended(&mut watch, Duration::from_secs(5)).await, "their actor stopped");
+        assert!(shows(&mut followed, is_end).await, "their actor stopped");
         assert!(followed.ended().await.is_some(), "removed");
 
         let channel = session_loop.create_channel(&owner, side("deleted")).await.unwrap();
-        let followed = Followed::new(&channel, views.clone()).expect("they take part");
-        let mut watch = followed.actor().watch();
+        let mut followed =
+            Followed::new(Arc::clone(&channel), views.clone()).await.expect("they take part");
         assert!(session_loop.delete_channel(&owner, channel.id()).await.unwrap());
-        assert!(ended(&mut watch, Duration::from_secs(5)).await, "their actor stopped");
+        assert!(shows(&mut followed, is_end).await, "their actor stopped");
         assert!(followed.ended().await.is_some(), "deleted");
+    }
+
+    /// Following a channel outlives a run of the user's actor: who left and was added again is
+    /// shown the new run, and acts through their new actor, not the one that ended.
+    #[tokio::test]
+    async fn following_a_channel_outlives_a_run_of_the_users_actor() {
+        let (_, manager) = owned_kernel(ConfidentialityRules::default());
+        let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
+        let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
+        let views = manager.views(Viewer::new(theirs.clone()));
+        let spec = spec("again", vec![owner.caller_id, other]);
+        let channel = session_loop.create_channel(&owner, spec).await.unwrap();
+        let mut followed =
+            Followed::new(Arc::clone(&channel), views).await.expect("they take part");
+        let first = followed.actor().expect("their actor runs");
+
+        channel.leave(&theirs, other).await.expect("they may leave");
+        assert!(shows(&mut followed, |shown| matches!(shown, Shown::Ended)).await, "it stopped");
+        assert!(followed.actor().is_none(), "none runs between the two runs");
+
+        channel.add_participant(&owner, other, HistoryAccess::All).await.expect("added again");
+        assert!(shows(&mut followed, |shown| matches!(shown, Shown::Started)).await, "a new run");
+        assert_eq!(followed.ended().await, None, "taking part again");
+        let again = followed.actor().expect("their new actor runs");
+        assert!(!Arc::ptr_eq(&first, &again), "not the actor that ended");
     }
 }

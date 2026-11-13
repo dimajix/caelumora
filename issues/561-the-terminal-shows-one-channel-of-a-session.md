@@ -172,3 +172,25 @@ a session is continued - would be the same choice made at start. Nobody has aske
   user's name (`ChannelFollower`), as `Followed` does, rather than the server's state and the user
   to build them anew where a run of the user's actor begins or ends; `join_channel` builds them
   once and reaches the channel through them, and the snapshot is read through them.
+- **2026-11-13** — Decided with the maintainer on the plan of the switch, in three steps: 9,
+  `Followed` follows a channel as the channel stream of the REST server does; 10, following every
+  channel the user takes part in, `/switch`, and the notices; 11, the channels joined meanwhile,
+  from the event bus. `/switch` tells the channel switched to, who answers there and what waits
+  for the user there; events lost in another channel are told with its name. A join is announced
+  on the bus before the newcomer's actor starts (`docs/CHANNELS.md`), but what a user's actor
+  shows goes to an outbox of the user in the channel, the same for every run of it
+  (`ActorManager::outbox`): the views give it as soon as the channel lists them
+  (`ChannelView::user_follow`), whether their actor runs yet or not.
+
+  Step 9 done. `Followed` holds what the user's actor in the channel shows, taken from the views
+  (`Followed::next`), and reaches their actor where they act (`Followed::actor`), as the REST
+  server does per request, rather than holding the actor that ran when the channel was followed:
+  who left and joined again acts through their new actor, not the one that ended - what steps 10
+  and 11 rely on; in this step, following ends once the end of a run reads that the user left.
+  Decided with the maintainer: no actor of the user running in a channel followed is no error but
+  a state it passes through, between two runs (`Followed::actor` answers `None`); only acting
+  then fails. A line typed then is answered that nothing can be done right now, and the terminal
+  goes on, where a message sent into the ended actor ended it; an approval the channel cannot
+  take is answered with an error as well. `/approve` and `/retry` act through the actor the
+  terminal reached for the line. A channel the user cannot read is passed over at the start.
+  What the user may not be told of an error stays in the log, as for a failed command.

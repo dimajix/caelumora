@@ -347,6 +347,10 @@ also while the channel does not run, without starting it. Each run of the actor 
 it (`Shown::Started`, `Shown::Ended`): what a run showed comes after its start and before its end,
 and an actor ended before it ran shows its end alone.
 
+The outbox outlives a run of the actor; the actor does not. So a frontend reaches the user's actor
+where they act - the REST server per request, the terminal per line typed - rather than holding it:
+one held from before talks into a run that ended, as after the user left and joined again.
+
 The channel does not take an actor's word for whose name it speaks in, nor for its rights. Each
 actor is given an `OriginEventSender`, which passes on only an envelope that speaks as the actor:
 as its sender, and as the sender of every message it carries. Anything else is refused and logged

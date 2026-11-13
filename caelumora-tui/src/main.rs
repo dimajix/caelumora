@@ -27,7 +27,7 @@ use caelumora_domain::store::StoreResultExt;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
-use caelumora_kernel::actor::user::{ChannelWatch, Lagged};
+use caelumora_kernel::actor::user::{Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::kernel::{Kernel, KernelBuilder};
@@ -120,9 +120,8 @@ fn response_of(question: &Question, line: &str) -> Response {
 /// once they no longer take part in it, in none.
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 async fn run_repl(followed: Followed) -> Result<()> {
-    // The channel followed, with what the user's actor in it shows, until following it ends.
-    let watch = followed.actor().watch();
-    let mut followed = Some((followed, watch));
+    // The channel followed, until following it ends.
+    let mut followed = Some(followed);
     let mut input_rx = spawn_rustyline_input();
     // The questions being answered, with the responses given so far: while they are, every line
     // answers the next question.
@@ -139,7 +138,7 @@ async fn run_repl(followed: Followed) -> Result<()> {
                 break;
             }
             shown = shown(&mut followed) => {
-                let Some((present, _)) = &mut followed else { continue };
+                let Some(present) = &mut followed else { continue };
                 match shown {
                     Ok(Shown::Envelope(envelope)) => {
                         for line in present.take_in(&envelope) {
@@ -183,7 +182,7 @@ async fn run_repl(followed: Followed) -> Result<()> {
                     break;
                 }
                 match &mut followed {
-                    Some((present, _)) => handle_line(input, present, &mut answering).await?,
+                    Some(present) => handle_line(input, present, &mut answering).await?,
                     None if input.is_empty() => {}
                     None => println!("You take part in no channel here: type 'exit' to end"),
                 }
@@ -197,10 +196,10 @@ async fn run_repl(followed: Followed) -> Result<()> {
 /// What the channel `followed` shows next, if the terminal follows one; never otherwise.
 ///
 /// # Errors
-/// As `ChannelWatch::next`.
-async fn shown(followed: &mut Option<(Followed, ChannelWatch)>) -> Result<Shown, Lagged> {
+/// As `Followed::next`.
+async fn shown(followed: &mut Option<Followed>) -> Result<Shown, Lagged> {
     match followed {
-        Some((_, watch)) => watch.next().await,
+        Some(followed) => followed.next().await,
         None => future::pending().await,
     }
 }
@@ -208,10 +207,11 @@ async fn shown(followed: &mut Option<(Followed, ChannelWatch)>) -> Result<Shown,
 /// Does what the user typed, `input`, in the channel `followed`: answers the next of the
 /// questions being `answering`, or runs one of this terminal's own commands - `/approve`,
 /// `/deny`, `/answer`, `/decline` and `/retry` -, or sends a command or a message to the channel
-/// (issue 28).
+/// (issue 28); between two runs of the user's actor in the channel (`Followed::actor`), only
+/// that nothing can be done right now.
 ///
 /// # Errors
-/// If a message or an approval cannot be sent into the channel.
+/// As [`send_line`].
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 async fn handle_line(
     input: &str,
@@ -221,6 +221,10 @@ async fn handle_line(
     if input.is_empty() {
         return Ok(());
     }
+    let Some(actor) = followed.actor() else {
+        println!("--- No run of yours in this channel right now: try again in a moment ---");
+        return Ok(());
+    };
     let none_named = |rest: &str| match rest.trim() {
         "" => println!("No open questions put to you"),
         id => println!("No open questions put to you with id {id}"),
@@ -231,8 +235,8 @@ async fn handle_line(
         match followed.questions_put_to_user(rest) {
             Some(request) => {
                 *answering = None;
-                if let Err(e) = followed.actor().answer_questions(request.id, None).await {
-                    println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
+                if let Err(e) = actor.answer_questions(request.id, None).await {
+                    print_error(&e);
                 }
             }
             None => none_named(rest),
@@ -263,9 +267,8 @@ async fn handle_line(
                 *answering = Some((request, responses));
             }
             None => {
-                if let Err(e) = followed.actor().answer_questions(request.id, Some(responses)).await
-                {
-                    println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string()));
+                if let Err(e) = actor.answer_questions(request.id, Some(responses)).await {
+                    print_error(&e);
                 }
             }
         }
@@ -274,51 +277,64 @@ async fn handle_line(
     if let Some(rest) = input.strip_prefix("/approve ").or_else(|| input.strip_prefix("/deny ")) {
         let approved = input.starts_with("/approve ");
         match Uuid::parse_str(rest.trim()) {
-            Ok(id) => {
-                if !followed.approve(ApprovalId(id), approved).await? {
-                    println!("No pending approval with id {}", id);
-                }
-            }
+            Ok(id) => match followed.approve(&actor, ApprovalId(id), approved).await {
+                Ok(true) => {}
+                Ok(false) => println!("No pending approval with id {id}"),
+                Err(e) => print_error(&e),
+            },
             Err(_) => println!("Invalid approval id: {}", rest.trim()),
         }
         return Ok(());
     }
     if input == "/retry" {
-        match followed.retry().await {
+        match followed.retry(&actor).await {
             Ok(true) => {}
             Ok(false) => println!("No answer of an agent to give again"),
-            Err(e) => println!("[error] {}", user_message(&e).unwrap_or_else(|| e.to_string())),
+            Err(e) => print_error(&e),
         }
         return Ok(());
     }
     // Every other command goes to the channel.
+    send_line(input, &actor).await
+}
+
+/// Sends what the user typed, `input`, to the channel as a command or a message, through
+/// `actor`, the user's in it.
+///
+/// # Errors
+/// If a message cannot be sent into the channel.
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
+async fn send_line(input: &str, actor: &UserActor) -> Result<()> {
     match parse_input(input) {
-        UserInput::Command(line) => {
-            match followed.actor().execute_command(&line).await {
-                // Also for an answer to the whole channel: its announcement is not routed back to
-                // its sender.
-                Ok(reply) => {
-                    if let Some(output) = reply.output {
-                        println!("{}", output)
-                    }
-                }
-                Err(e) => {
-                    // The line is not logged: what follows the command may be what was said. The
-                    // error names the command.
-                    tracing::warn!("A command failed: {:#}", e);
-                    let message = user_message(&e).unwrap_or_else(|| {
-                        "The command failed; the details are in the log".to_string()
-                    });
-                    println!("[error] {}", message);
+        UserInput::Command(line) => match actor.execute_command(&line).await {
+            // Also for an answer to the whole channel: its announcement is not routed back to its
+            // sender.
+            Ok(reply) => {
+                if let Some(output) = reply.output {
+                    println!("{}", output)
                 }
             }
-        }
+            // The line is not logged: what follows the command may be what was said. The error
+            // names the command.
+            Err(e) => print_error(&e),
+        },
         UserInput::Message(text) => {
-            let span_id = followed.actor().send_message(Some(text), None, Vec::new()).await?;
+            let span_id = actor.send_message(Some(text), None, Vec::new()).await?;
             tracing::debug!(span_id = %span_id, "Message sent");
         }
     }
     Ok(())
+}
+
+/// Prints `error` as the user may be told it (`user_message`); what may not be told stays in the
+/// log, and the user is told where to find it.
+#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
+fn print_error(error: &anyhow::Error) {
+    let message = user_message(error).unwrap_or_else(|| {
+        tracing::warn!("Failed: {:#}", error);
+        "It failed; the details are in the log".to_string()
+    });
+    println!("[error] {message}");
 }
 
 fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
@@ -542,13 +558,15 @@ async fn main() -> Result<()> {
     let session_id = session_loop.id();
 
     // The first channel of the session the user takes part in.
-    let followed = session_loop
-        .channels()
-        .iter()
-        .find_map(|channel| Followed::new(channel, views.clone()))
-        .ok_or_else(|| {
-            anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
-        })?;
+    let mut channels = session_loop.channels().into_iter();
+    let followed = loop {
+        let Some(channel) = channels.next() else {
+            anyhow::bail!("The user takes part in no channel of the session {session_id}")
+        };
+        if let Some(followed) = Followed::new(channel, views.clone()).await {
+            break followed;
+        }
+    };
 
     // Who answers, as the views tell it (issue 174).
     let view = views.channel(session_id, followed.channel_id()).await?;
