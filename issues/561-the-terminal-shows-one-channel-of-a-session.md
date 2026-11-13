@@ -168,3 +168,7 @@ a session is continued - would be the same choice made at start. Nobody has aske
   `channel_view` and channel snapshot; the terminal; and 41 places of tests and their helpers,
   which reached the channel only to test something else. The tests that test
   `SessionView::channel` start from a session they hold, and keep doing so.
+- **2026-11-13** — Step 8 done. The channel stream of the REST server holds the views in the
+  user's name (`ChannelFollower`), as `Followed` does, rather than the server's state and the user
+  to build them anew where a run of the user's actor begins or ends; `join_channel` builds them
+  once and reaches the channel through them, and the snapshot is read through them.

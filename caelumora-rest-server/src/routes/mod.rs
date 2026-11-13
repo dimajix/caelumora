@@ -95,8 +95,8 @@ pub async fn session_response(
 }
 
 /// The view of channel `channel_id` of session `session_id` as `user` reaches it (issue 163) -
-/// what a handler reads a channel through, running or not; what it answers with is
-/// `channel_response`.
+/// what a handler reads a channel through, running or not, unless it keeps the views for longer,
+/// as the channel's stream does; what it answers with is `channel_response`.
 pub async fn channel_view(
     state: &Arc<AppState>,
     user: &AuthenticatedUser,
