@@ -308,7 +308,7 @@ impl Backlog {
 pub struct EventBus {
     // A broadcast channel per subscription rather than an mpsc one: when a
     // subscriber falls behind, it is its receiver that learns so
-    // (`Lagged`), not only the log (issue 38).
+    // (`RecvError::Lagged`), not only the log (issue 38).
     dispatcher: Arc<Dispatcher>,
     /// What is handed to the dispatcher's task, started with the first
     /// subscription.

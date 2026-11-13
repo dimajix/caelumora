@@ -97,9 +97,9 @@ and when it caught up (`Backlog`), so that a bus falling behind, and memory grow
 is seen before it is felt (issue [508](../issues/508-bus-queue-unbounded.md)).
 
 Each subscription is a broadcast channel of its own, of bounded capacity. A subscriber that falls
-too far behind loses the oldest events, and it is the subscriber that learns so (`Lagged`), not only
-the log. Every subscriber makes up for what it lost by reading anew what it keeps (issue 502) - a
-loss between instances will be the rule, not the exception:
+too far behind loses the oldest events, and it is the subscriber that learns so
+(`RecvError::Lagged`), not only the log. Every subscriber makes up for what it lost by reading anew
+what it keeps (issue 502) - a loss between instances will be the rule, not the exception:
 
 *   the `ControllerManager` reads every live agent, user, workspace and project controller again as
     stored (see [STORAGE.md](STORAGE.md#following-changes));

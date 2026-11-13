@@ -27,7 +27,7 @@ use caelumora_domain::store::StoreResultExt;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
-use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::actor::user::{ChannelWatch, Lagged};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::kernel::{Kernel, KernelBuilder};
@@ -72,7 +72,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -163,9 +162,7 @@ async fn run_repl(followed: Followed) -> Result<()> {
                             (followed, answering) = (None, None);
                         }
                     }
-                    Err(RecvError::Lagged(lost)) => println!("\r[{lost} events missed]"),
-                    // Never: the watch holds its outbox.
-                    Err(RecvError::Closed) => break,
+                    Err(Lagged(lost)) => println!("\r[{lost} events missed]"),
                 }
             }
             maybe_input = input_rx.recv() => {
@@ -201,7 +198,7 @@ async fn run_repl(followed: Followed) -> Result<()> {
 ///
 /// # Errors
 /// As `ChannelWatch::next`.
-async fn shown(followed: &mut Option<(Followed, ChannelWatch)>) -> Result<Shown, RecvError> {
+async fn shown(followed: &mut Option<(Followed, ChannelWatch)>) -> Result<Shown, Lagged> {
     match followed {
         Some((_, watch)) => watch.next().await,
         None => future::pending().await,

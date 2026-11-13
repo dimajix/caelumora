@@ -1105,7 +1105,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
         (Some("hello"), true),
         "he hears what was let in, and nothing of what was not"
     );
-    while let Ok(envelope) = his.try_recv() {
+    while let Ok(Some(envelope)) = his.try_recv() {
         assert_ne!(envelope.event.kind(), "MessageRejected", "nor of the refusal");
     }
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();

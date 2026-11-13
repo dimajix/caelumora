@@ -1363,7 +1363,7 @@ async fn sensitive_questions_reach_only_whom_they_are_put_to() {
         .await
         .expect("put to her");
     time::sleep(Duration::from_millis(200)).await;
-    while let Ok(envelope) = his.try_recv() {
+    while let Ok(Some(envelope)) = his.try_recv() {
         assert!(
             !matches!(
                 envelope.event,

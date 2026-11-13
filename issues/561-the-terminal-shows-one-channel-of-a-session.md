@@ -146,3 +146,7 @@ a session is continued - would be the same choice made at start. Nobody has aske
   as it ends the channel stream of the REST server. Two findings become steps of their own before
   the switch: 5, `ChannelWatch` answers only the error that can occur; 6, whether a user still
   takes part in a channel is asked in one place. The switch is step 7.
+- **2026-11-13** — Step 5 done. A `ChannelWatch` holds its outbox, which so never closes: it fails
+  only by falling behind, and answers so (`Lagged`, `caelumora_kernel::actor::user`) rather than
+  tokio's `RecvError`, whose `Closed` every caller handled though it never came. `try_recv`
+  answers `None` where nothing was shown, as `EventSubscription::try_recv` of the event bus does.

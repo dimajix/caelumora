@@ -1,3 +1,6 @@
+//! `UserActor`: a user's actor in a channel, through which what they say, run and answer goes,
+//! and through whose outbox a frontend follows the channel for them (`ChannelWatch`, issue 386).
+
 use crate::actor::ChannelAnswering;
 use crate::actor::Shown;
 use crate::channel::{ChannelError, ChannelLoop};
@@ -94,17 +97,17 @@ impl ChannelWatch {
     }
 
     /// What is shown next. One that falls `OUTBOX_CAPACITY` items behind
-    /// loses the oldest (`RecvError::Lagged`) rather than stalling the
-    /// actor, which would also stop it from forwarding what the user
-    /// sends.
+    /// loses the oldest (`Lagged`) rather than stalling the actor, which
+    /// would also stop it from forwarding what the user sends.
     ///
     /// # Errors
-    /// `RecvError::Lagged` with how many were lost.
-    pub async fn next(&mut self) -> Result<Shown, RecvError> {
+    /// `Lagged` with how many were lost.
+    pub async fn next(&mut self) -> Result<Shown, Lagged> {
         match self.shown.recv().await {
+            Ok(shown) => Ok(shown),
+            Err(RecvError::Lagged(lost)) => Err(Lagged(lost)),
             // Held by this watch, the outbox is never closed.
             Err(RecvError::Closed) => future::pending().await,
-            shown => shown,
         }
     }
 
@@ -112,7 +115,7 @@ impl ChannelWatch {
     ///
     /// # Errors
     /// As `next`.
-    pub async fn recv(&mut self) -> Result<Envelope, RecvError> {
+    pub async fn recv(&mut self) -> Result<Envelope, Lagged> {
         loop {
             if let Shown::Envelope(envelope) = self.next().await? {
                 return Ok(envelope);
@@ -120,18 +123,29 @@ impl ChannelWatch {
         }
     }
 
-    /// The next envelope shown, if one was, past where runs begin and end.
+    /// The next envelope shown, if one was, past where runs begin and end;
+    /// `None` if none was.
     ///
     /// # Errors
-    /// `TryRecvError::Empty` if none was, `Lagged` as `next`.
-    pub fn try_recv(&mut self) -> Result<Envelope, TryRecvError> {
+    /// As `next`.
+    pub fn try_recv(&mut self) -> Result<Option<Envelope>, Lagged> {
         loop {
-            if let Shown::Envelope(envelope) = self.shown.try_recv()? {
-                return Ok(envelope);
+            match self.shown.try_recv() {
+                Ok(Shown::Envelope(envelope)) => return Ok(Some(envelope)),
+                Ok(Shown::Started | Shown::Ended) => {}
+                Err(TryRecvError::Lagged(lost)) => return Err(Lagged(lost)),
+                // Held by this watch, the outbox is never closed.
+                Err(TryRecvError::Empty | TryRecvError::Closed) => return Ok(None),
             }
         }
     }
 }
+
+/// What a `ChannelWatch` that fell behind lost of what was shown: how many
+/// (issue 561) - the one way following a channel fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("{0} of what was shown were lost")]
+pub struct Lagged(pub u64);
 
 impl UserActor {
     /// The actor of the user `user` - the session's controller of them,
@@ -1067,7 +1081,7 @@ mod tests {
             channel_inbox.recv().await.expect("forwarded");
         }
         let shown: Vec<&str> =
-            iter::from_fn(|| following.try_recv().ok()).map(|e| e.event.kind()).collect();
+            iter::from_fn(|| following.try_recv().ok().flatten()).map(|e| e.event.kind()).collect();
         assert_eq!(
             shown,
             ["CompleteMessageGenerated"],
@@ -1080,7 +1094,7 @@ mod tests {
             .unwrap();
         channel_inbox.recv().await.expect("forwarded");
         assert_eq!(
-            following.try_recv().map(|e| e.event.kind()).ok(),
+            following.try_recv().ok().flatten().map(|e| e.event.kind()),
             Some("ApprovalGranted"),
             "everything it sends"
         );
@@ -1158,19 +1172,24 @@ mod tests {
         let (mut first, mut second) = (actor.watch(), actor.watch());
 
         assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
-        assert!(first.try_recv().is_ok() && second.try_recv().is_ok(), "two tabs, both are told");
+        assert!(
+            matches!((first.try_recv(), second.try_recv()), (Ok(Some(_)), Ok(Some(_)))),
+            "two tabs, both are told"
+        );
 
         for _ in 0..(OUTBOX_CAPACITY + 10) {
             assert!(!actor.handle_actor_envelope(Some(envelope_from(agent)), &nowhere()).await);
         }
         assert!(
-            matches!(first.try_recv(), Err(broadcast::error::TryRecvError::Lagged(10))),
+            matches!(first.try_recv(), Err(Lagged(10))),
             "the oldest are lost, and it learns how many"
         );
         let mut received = 0;
-        while first.try_recv().is_ok() {
+        while let Ok(Some(_)) = first.try_recv() {
             received += 1;
         }
         assert_eq!(received, OUTBOX_CAPACITY, "the newest are kept");
+        assert!(matches!(first.try_recv(), Ok(None)), "and then nothing");
+        assert!(matches!(second.next().await, Err(Lagged(10))), "as the next shown tells");
     }
 }

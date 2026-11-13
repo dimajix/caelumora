@@ -1,3 +1,7 @@
+//! Channels in the API: making, reading, changing, deleting and restoring them, following them
+//! live, and what is done in them - their participants, messages, commands, approvals and
+//! questions.
+
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::error::{Json, Path, Query};
@@ -20,7 +24,7 @@ use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::QuestionId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
-use caelumora_kernel::actor::user::{ChannelWatch, UserActor};
+use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::session::ChannelSpec;
@@ -42,7 +46,6 @@ use caelumora_security::SecurityContext;
 use futures::stream::{self, Stream, StreamExt};
 use std::convert::Infallible;
 use std::sync::Arc;
-use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::field;
 use tracing::Span;
@@ -329,7 +332,7 @@ impl ChannelFollower {
             Ok(Shown::Envelope(envelope)) => data_event(&envelope),
             Ok(Shown::Started) => self.anew("started").await?,
             Ok(Shown::Ended) => self.anew("stopped").await?,
-            Err(RecvError::Lagged(lost)) => {
+            Err(Lagged(lost)) => {
                 tracing::warn!(
                     "SSE client of channel {} fell behind and lost {} events",
                     self.channel_id,
@@ -339,7 +342,6 @@ impl ChannelFollower {
                 resynced
                     .unwrap_or_else(|| Event::default().comment(format!("{} events lost", lost)))
             }
-            Err(RecvError::Closed) => return None,
         };
         Some((Ok(event), self))
     }
