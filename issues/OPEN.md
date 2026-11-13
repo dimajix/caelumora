@@ -10,6 +10,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 | [564](564-taking-someone-in-is-rolled-back-in-part.md) | open | low | bug | Taking someone into a session together with a channel stores the session first and keeps it when the channel fails, two takings-in of one participant can race and undo each other, and a join is announced for one already listed; with them, a few loose ends of the same code - visibility, a rollback step not named so, an invitation built by hand. |
+| [565](565-the-terminal-misses-what-a-channel-joined-shows-at-first.md) | open | low | bug | The terminal follows a channel the user joins while it runs once the event bus tells so, and is shown only what comes after; what the channel showed the newcomer in between - an approval to answer, questions put to them - the terminal never tells. |
 
 ## Sessions and channels
 
