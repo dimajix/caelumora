@@ -351,9 +351,7 @@ impl ChannelFollower {
     /// `None` if the user no longer takes part in the channel, or cannot
     /// reach it.
     async fn anew(&self, marker: &'static str) -> Option<Event> {
-        let channel =
-            channel_view(&self.state, &self.user, self.session_id, self.channel_id).await.ok()?;
-        if !channel.lists(ActorId::User(self.user.id)) {
+        if !views(&self.state, &self.user).listed_in(self.session_id, self.channel_id).await {
             return None;
         }
         match self.with_snapshot {

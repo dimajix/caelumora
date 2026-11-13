@@ -87,10 +87,7 @@ impl Followed {
     /// tells so: what is asked where a run of the user's actor began or ended
     /// (`docs/CHANNELS.md`, issue 386).
     pub(crate) async fn ended(&self) -> Option<&'static str> {
-        let taken_part_in = match self.views.session(self.session_id).await {
-            Ok(session) => session.channel(self.channel_id).await.is_ok_and(|c| c.lists(self.me())),
-            Err(_) => false,
-        };
+        let taken_part_in = self.views.listed_in(self.session_id, self.channel_id).await;
         (!taken_part_in).then_some(
             "--- You no longer take part in this channel, or it was deleted: type 'exit' to end ---",
         )

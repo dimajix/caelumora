@@ -150,3 +150,9 @@ a session is continued - would be the same choice made at start. Nobody has aske
   only by falling behind, and answers so (`Lagged`, `caelumora_kernel::actor::user`) rather than
   tokio's `RecvError`, whose `Closed` every caller handled though it never came. `try_recv`
   answers `None` where nothing was shown, as `EventSubscription::try_recv` of the event bus does.
+- **2026-11-13** — Step 6 done. Whether a channel lists the viewer, as they may read it, is asked
+  in one place, `Views::listed_in`: by the channel stream of the REST server and by the terminal
+  alike, where a run of the user's actor began or ended. Not named after taking part, which the
+  views mean without a deleted agent resting in a channel (`ChannelView::takes_part`). The
+  approver's catching up (`ApproverActor::catch_up`) asks something else - whether an agent still
+  runs in the channel, a resting one counting as gone - and keeps its own check.

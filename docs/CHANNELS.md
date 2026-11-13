@@ -720,8 +720,9 @@ leave, and nothing is announced in the channel.
 
 A user's live stream of the channel - the REST server's, the terminal's - ends because it is
 theirs: it is followed through their actor, which ends when it is stopped, and where a run of it
-ends, the stream reads whether the channel still lists them (issue 386). One who left, was removed,
-or whose channel was deleted is listed no more, so no one has to listen for the announcement.
+begins or ends, the stream reads whether the channel still lists them (`Views::listed_in`, issue
+386). One who left, was removed, or whose channel was deleted is listed no more, so no one has to
+listen for the announcement.
 
 Every channel response carries `can_change`, and every participant `can_leave`, so that a client
 offers adding and removing participants, and leaving, only where the user may (see

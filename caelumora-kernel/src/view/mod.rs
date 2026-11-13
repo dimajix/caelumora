@@ -374,6 +374,20 @@ impl Views {
         }
     }
 
+    /// Whether channel `channel` of session `session` lists the viewer among its participants,
+    /// resting included (`ChannelView::lists`): what a frontend that follows the channel for a user
+    /// asks where a run of their actor began or ended (`ChannelWatch`, issue 386). `false` if the
+    /// viewer cannot read the channel, also where reading it failed.
+    pub async fn listed_in(&self, session: SessionId, channel: ChannelId) -> bool {
+        match self.session(session).await {
+            Ok(session) => {
+                let viewer = self.viewer.context().caller_id;
+                session.channel(channel).await.is_ok_and(|channel| channel.lists(viewer))
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Whether session `id` was deleted and the viewer could read it were
     /// it there.
     async fn gone_session<T>(&self, id: SessionId) -> ViewResult<Reached<T>> {
@@ -1328,6 +1342,29 @@ mod tests {
         assert!(manager.stop(&SecurityContext::system(), id).await.unwrap(), "it ran");
         check("stopped").await;
         assert!(manager.running(id).is_none(), "reaching a session does not start it");
+    }
+
+    /// Whether a channel lists the viewer: while they take part in it; not once they left it -
+    /// though they may still read it -, nor in a channel that is not there, nor for whom the
+    /// session cannot be read.
+    #[tokio::test]
+    async fn a_channel_lists_the_viewer_while_they_take_part_in_it() {
+        let (_, manager) = owned_kernel(Default::default());
+        let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
+        let session = session_loop.id();
+        let views = manager.views(Viewer::new(owner.clone()));
+        let side = spec("side", vec![owner.caller_id, other]);
+        let channel =
+            session_loop.create_channel(&owner, side).await.expect("the owner creates it");
+        let id = channel.id();
+        assert!(views.listed_in(session, id).await, "listed");
+        assert!(!views.listed_in(session, ChannelId::new()).await, "no such channel");
+        let strangers = manager.views(as_user(UserId::new()));
+        assert!(!strangers.listed_in(session, id).await, "the session cannot be read");
+        channel.leave(&owner, owner.caller_id).await.expect("the owner may leave");
+        let read = views.session(session).await.unwrap().channel(id).await;
+        assert!(read.is_ok(), "the owner still reads it");
+        assert!(!views.listed_in(session, id).await, "left");
     }
 
     #[tokio::test]
