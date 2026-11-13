@@ -96,7 +96,7 @@ fn classification_of(
 mod tests {
     use super::*;
     use crate::routes::api;
-    use crate::routes::tests::{login, state_with};
+    use crate::routes::testing::{login, state_with};
     use axum::body::to_bytes;
     use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE, COOKIE};
     use axum::http::Request;

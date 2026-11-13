@@ -167,7 +167,7 @@ async fn readable(
 #[cfg(test)]
 mod tests {
     use crate::routes::api;
-    use crate::routes::tests::{login, state};
+    use crate::routes::testing::{login, state};
     use axum::body::{to_bytes, Body};
     use axum::http::header::{CONTENT_TYPE, COOKIE};
     use axum::http::{Method, Request, StatusCode};

@@ -77,7 +77,7 @@ async fn global_snapshot(views: &Views) -> Option<GlobalSnapshot> {
 mod tests {
     use super::*;
     use crate::routes::api;
-    use crate::routes::tests::{login, read_until, state};
+    use crate::routes::testing::{login, read_until, state};
     use axum::body::Body;
     use axum::http::header::COOKIE;
     use axum::http::{Request, StatusCode};

@@ -11,6 +11,8 @@ mod profile;
 mod projects;
 mod sessions;
 mod templates;
+#[cfg(test)]
+mod testing;
 mod workspaces;
 
 use crate::auth::{require_auth, require_stream_auth, router, AuthenticatedUser};
@@ -386,29 +388,20 @@ fn session_routes() -> Router<Arc<AppState>> {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
-    use crate::auth::{Auth, TokenService, SESSION_COOKIE};
+    use crate::auth::SESSION_COOKIE;
+    use crate::routes::testing::{login, state};
     use anyhow::Result;
-    use axum::body::{to_bytes, Body, BodyDataStream};
-    use axum::http::header::{COOKIE, SET_COOKIE};
+    use axum::body::{to_bytes, Body};
+    use axum::http::header::COOKIE;
     use axum::http::Request;
-    use caelumora_domain::config::{AppConfig, AuthConfig};
     use caelumora_domain::template::testing::{make_channel_template, make_template};
     use caelumora_domain::template::{ChannelTemplate, SessionTemplate};
-    use caelumora_kernel::event::EventBus;
     use caelumora_kernel::kernel::KernelBuilder;
     use caelumora_kernel::plugin::Plugin;
-    use caelumora_kernel::project::ProjectManager;
-    use caelumora_kernel::session::SessionManager;
-    use caelumora_kernel::testing::TestKernel;
-    use caelumora_kernel::user_provider::accept_any::AcceptAnyUserProvider;
-    use caelumora_kernel::user_provider::UserManager;
     use caelumora_security::SecurityContext;
-    use futures::StreamExt;
     use serde_json::{json, Value};
-    use std::time::Duration;
-    use tokio::time;
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -439,71 +432,6 @@ pub(crate) mod tests {
     /// The API with `plugins`, which lets anybody log in.
     fn api_with(plugins: &[Box<dyn RestPlugin>]) -> Router {
         api(state(), plugins)
-    }
-
-    /// The state of an API that lets anybody log in and permits everything, on a kernel of memory
-    /// stores.
-    pub(crate) fn state() -> Arc<AppState> {
-        state_with(AppConfig::default())
-    }
-
-    /// The state `state` makes, of a kernel configured by `config`.
-    pub(crate) fn state_with(config: AppConfig) -> Arc<AppState> {
-        let kernel = TestKernel { config, plugins: Vec::new(), ..Default::default() }.build();
-        let users = Arc::clone(&kernel.entity_stores().users);
-        let auth = Arc::new(Auth {
-            tokens: TokenService::new(b"0123456789abcdef0123456789abcdef", &AuthConfig::default())
-                .unwrap(),
-            users: Arc::new(UserManager::new(
-                vec![Arc::new(AcceptAnyUserProvider::new(Arc::clone(&users)))],
-                users,
-                Arc::<EventBus>::clone(kernel.event_bus()),
-            )),
-            controllers: Arc::clone(kernel.controller_manager()),
-        });
-        let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-        let project_manager = Arc::new(ProjectManager::new(Arc::clone(&session_manager)));
-        Arc::new(AppState {
-            auth,
-            kernel,
-            session_manager,
-            project_manager,
-            compartments: Default::default(),
-            shutdown: Default::default(),
-        })
-    }
-
-    /// The cookie `api` answers `username` logging in with.
-    /// What `stream` sent, read on until `seen` holds of all of it.
-    pub(crate) async fn read_until(
-        stream: &mut BodyDataStream,
-        read: &mut String,
-        seen: impl Fn(&str) -> bool,
-    ) {
-        while !seen(read) {
-            let chunk = time::timeout(Duration::from_secs(5), stream.next())
-                .await
-                .unwrap_or_else(|_| panic!("nothing more came of the stream: {read}"))
-                .unwrap_or_else(|| panic!("the stream ended: {read}"))
-                .unwrap();
-            read.push_str(&String::from_utf8_lossy(&chunk));
-        }
-    }
-
-    pub(crate) async fn login(api: &Router, username: &str) -> String {
-        let body = format!(r#"{{"username":"{username}","password":"x"}}"#);
-        let login = Request::post("/auth/login")
-            .header("content-type", "application/json")
-            .body(Body::from(body))
-            .unwrap();
-        let logged_in = api.clone().oneshot(login).await.unwrap();
-        logged_in
-            .headers()
-            .get(SET_COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(';').next())
-            .unwrap()
-            .to_string()
     }
 
     /// What `api` answers `method` on `uri` with the JSON `body` - none for `null` - for whoever

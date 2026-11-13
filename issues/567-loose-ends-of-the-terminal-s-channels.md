@@ -1,6 +1,6 @@
 # 567 — Loose ends of the work on the terminal's channels
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -101,3 +101,20 @@ collected here, to be taken on one after the other, each a step of its own:
 - **2026-11-13** — Opened from the findings of issue
   [561](561-the-terminal-shows-one-channel-of-a-session.md) that its steps did not take on, at the
   maintainer's request: one issue for all of them, taken on one after the other.
+
+- **2026-11-13** — Step 1, point 1: the fixtures the tests of several route files share - `state`,
+  `state_with`, `login`, `read_until` - live in `routes::testing`
+  (`caelumora-rest-server/src/routes/testing.rs`), `pub(super)` and guarded by `#[cfg(test)]` like
+  the crate-private `testing` modules elsewhere; `routes::tests` is private again and keeps what
+  only its own tests use. The doc comment of `login`, which stood above `read_until` since 561,
+  is back at `login`. No behaviour changes.
+
+- **2026-11-13** — Decided with the maintainer on the review of step 1: three findings of it join
+  the points above. To point 2: `send` in the tests of `routes/mod.rs` and `call` in those of
+  `routes/agents.rs` are one helper written twice - a request with a JSON body as whoever a cookie
+  logs in, answering the status and the JSON -, to be one in `routes::testing`. To point 6:
+  `ApiError::status` and `code` (`caelumora-rest-server/src/error.rs`) are `#[cfg(test)] pub`
+  beside the type's own API, not named apart from it, for the tests of `routes/channels.rs`; and
+  the guidelines describe a crate-private `testing` module as `#[cfg(test)] pub(crate)` only, not
+  as a private `#[cfg(test)] mod testing` with `pub(super)` items, as step 1 and five modules
+  before it have it.

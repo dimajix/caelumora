@@ -915,7 +915,7 @@ pub(super) async fn answer_questions(
 mod tests {
     use super::*;
     use crate::routes::api;
-    use crate::routes::tests::{login, read_until, state};
+    use crate::routes::testing::{login, read_until, state};
     use anyhow::Error;
     use axum::body::{to_bytes, Body, BodyDataStream};
     use axum::http::header::{CONTENT_TYPE, COOKIE};
