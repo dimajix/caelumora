@@ -28,14 +28,15 @@ use caelumora_domain::store::StoreResultExt;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
-use caelumora_kernel::channel::ChannelLoop;
+use caelumora_kernel::actor::user::ChannelWatch;
+use caelumora_kernel::actor::Shown;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::kernel::{Kernel, KernelBuilder};
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
 use caelumora_kernel::user_provider::Credential;
-use caelumora_kernel::view::Viewer;
+use caelumora_kernel::view::{Viewer, Views};
 use caelumora_logging::{init, LogTarget};
 use caelumora_memory::library::MemoryLibrary;
 use caelumora_memory::plugin::MemoryPlugin;
@@ -117,11 +118,13 @@ fn response_of(question: &Question, line: &str) -> Response {
     }
 }
 
-/// Has the user talk in `channel`, line by line, until they end it or a signal does.
+/// Has `user` talk in the channel `followed`, line by line, until they end it or a signal does;
+/// once they no longer take part in it, as `views` read it in their name, in none.
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
-    let mut followed = Followed::new(&channel, user)?;
-    let mut receiver = followed.actor().watch();
+async fn run_repl(views: &Views, followed: Followed, user: UserId) -> Result<()> {
+    // The channel followed, with what the user's actor in it shows, until following it ends.
+    let watch = followed.actor().watch();
+    let mut followed = Some((followed, watch));
     let mut input_rx = spawn_rustyline_input();
     let me = ActorId::User(user);
     // The questions being answered, with the responses given so far: while they are, every line
@@ -138,20 +141,33 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                 println!("\r--- Ending ---");
                 break;
             }
-            received = receiver.recv() => {
-                let envelope = match received {
-                    Ok(envelope) => envelope,
-                    Err(RecvError::Lagged(lost)) => {
-                        println!("\r[{} events missed]", lost);
-                        continue;
+            shown = shown(&mut followed) => {
+                let Some((present, _)) = &mut followed else { continue };
+                match shown {
+                    Ok(Shown::Envelope(envelope)) => {
+                        for line in present.take_in(&envelope) {
+                            println!("\r{line}");
+                        }
+                        if let Some((request, _)) =
+                            answering.take_if(|(q, _)| !present.is_open(q.id))
+                        {
+                            println!(
+                                "\r--- Questions {} closed before you answered ---",
+                                request.id.0
+                            );
+                        }
                     }
+                    // Where a run of the user's actor began or ended, whether they still take part
+                    // is read anew (`docs/CHANNELS.md`, issue 386).
+                    Ok(Shown::Started | Shown::Ended) => {
+                        if let Some(line) = present.ended(views).await {
+                            println!("\r{line}");
+                            (followed, answering) = (None, None);
+                        }
+                    }
+                    Err(RecvError::Lagged(lost)) => println!("\r[{lost} events missed]"),
+                    // Never: the watch holds its outbox.
                     Err(RecvError::Closed) => break,
-                };
-                for line in followed.take_in(&envelope) {
-                    println!("\r{line}");
-                }
-                if let Some((request, _)) = answering.take_if(|(q, _)| !followed.is_open(q.id)) {
-                    println!("\r--- Questions {} closed before you answered ---", request.id.0);
                 }
             }
             maybe_input = input_rx.recv() => {
@@ -171,12 +187,27 @@ async fn run_repl(channel: Arc<ChannelLoop>, user: UserId) -> Result<()> {
                 if input == "exit" || input == "quit" {
                     break;
                 }
-                handle_line(input, &mut followed, &mut answering, me).await?;
+                match &mut followed {
+                    Some((present, _)) => handle_line(input, present, &mut answering, me).await?,
+                    None if input.is_empty() => {}
+                    None => println!("You take part in no channel here: type 'exit' to end"),
+                }
             }
         }
     }
 
     Ok(())
+}
+
+/// What the channel `followed` shows next, if the terminal follows one; never otherwise.
+///
+/// # Errors
+/// As `ChannelWatch::next`.
+async fn shown(followed: &mut Option<(Followed, ChannelWatch)>) -> Result<Shown, RecvError> {
+    match followed {
+        Some((_, watch)) => watch.next().await,
+        None => future::pending().await,
+    }
 }
 
 /// Does what the user typed, `input`, in the channel `followed`: answers the next of the
@@ -516,15 +547,17 @@ async fn main() -> Result<()> {
     };
     let session_id = session_loop.id();
 
-    // The template's first channel, whatever it is called.
-    let channel = session_loop
+    // The first channel of the session the user takes part in.
+    let followed = session_loop
         .channels()
-        .into_iter()
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("The session {session_id} has no channel"))?;
+        .iter()
+        .find_map(|channel| Followed::new(channel, owner))
+        .ok_or_else(|| {
+            anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
+        })?;
 
     // Who answers, as the views tell it (issue 174).
-    let view = views.session(session_id).await?.channel(channel.id()).await?;
+    let view = views.session(session_id).await?.channel(followed.channel_id()).await?;
     let unknown = || "from a bundle".to_string();
     println!(
         "Moderator: {}, responders: {}",
@@ -535,7 +568,7 @@ async fn main() -> Result<()> {
     // Start the interactive loop; however it ends, the session is shut
     // down in order (issue 297): its actors keep what they are in the
     // middle of, and only what does not outlive the process ends with it.
-    let ran = run_repl(channel, owner).await;
+    let ran = run_repl(&views, followed, owner).await;
     session_manager.shutdown().await;
     ran
 }

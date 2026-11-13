@@ -718,9 +718,10 @@ sender. Each carries the participant's name as it was, so that it reads the same
 A resting agent removed from a channel changes the document alone (above): nothing runs that could
 leave, and nothing is announced in the channel.
 
-A removed user's live stream of the channel ends because it is theirs: it is followed through their
-actor, which ends when it is stopped, and the stream then finds them no longer a participant (issue
-386), so no one has to listen for the announcement.
+A user's live stream of the channel - the REST server's, the terminal's - ends because it is
+theirs: it is followed through their actor, which ends when it is stopped, and where a run of it
+ends, the stream reads whether the channel still lists them (issue 386). One who left, was removed,
+or whose channel was deleted is listed no more, so no one has to listen for the announcement.
 
 Every channel response carries `can_change`, and every participant `can_leave`, so that a client
 offers adding and removing participants, and leaving, only where the user may (see

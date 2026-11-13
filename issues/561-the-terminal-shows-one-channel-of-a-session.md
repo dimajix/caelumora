@@ -127,3 +127,13 @@ a session is continued - would be the same choice made at start. Nobody has aske
   answer in the user's name and the terminal passed over all it sent so; it lets that answer
   through, and no longer tells another user's answer by a rule as the user's. As in the web UI,
   a rule's answer is the user's: it cannot be given again, as after `/approve`.
+- **2026-11-13** — Step 3 done. The terminal starts in the first channel of the session the user
+  takes part in, and refuses to start if there is none; `Followed::new` answers `None` for a
+  channel the user takes no part in. Following a channel ends as the channel stream of the REST
+  server ends (`ChannelFollower`, `docs/CHANNELS.md`, issue 386): where a run of the user's actor
+  began or ended (`Shown::Started`, `Shown::Ended`), the terminal asks the views in the user's
+  name whether the channel still lists them (`Followed::ended`). If not - they left, were removed,
+  or the channel was deleted -, it says so and talks in no channel; a line typed then, but `exit`,
+  `quit` or an empty one, is answered that it takes part in none. A first plan followed the event
+  bus for it; the maintainer decided for the pattern of the REST server on review. The bus is left
+  to step 5, for the channels joined meanwhile.

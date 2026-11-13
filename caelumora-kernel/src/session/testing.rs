@@ -12,6 +12,7 @@
 pub use crate::testing::participant_runtime_in;
 
 use crate::actor::user::ChannelWatch;
+use crate::actor::Shown;
 use crate::channel::ChannelLoop;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::session::{ChannelSpec, SessionLoop, SessionManager};
@@ -164,6 +165,14 @@ pub async fn rejection(events: &mut ChannelWatch) -> (Option<MessageId>, Rejecti
     })
     .await
     .expect("the channel tells why it did not let it in")
+}
+
+/// Whether `watch` shows within `within` that a run of its user's actor ended (`Shown::Ended`,
+/// issue 386).
+pub async fn ended(watch: &mut ChannelWatch, within: Duration) -> bool {
+    time::timeout(within, async { while !matches!(watch.next().await, Ok(Shown::Ended)) {} })
+        .await
+        .is_ok()
 }
 
 pub async fn history_of(channel: &ChannelLoop, count: usize) -> Vec<Message> {

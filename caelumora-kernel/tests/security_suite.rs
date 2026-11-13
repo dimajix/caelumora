@@ -40,7 +40,6 @@ use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::value::text::{Description, Introduction};
 use caelumora_domain::workspace::{CommandStatus, Workspace, WorkspaceId};
 use caelumora_kernel::actor::user::UserActor;
-use caelumora_kernel::actor::Shown;
 use caelumora_kernel::agent::{AgentError, AgentSpec};
 use caelumora_kernel::channel::testing::as_command_error;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
@@ -49,7 +48,7 @@ use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::{GroupError, GroupSpec};
 use caelumora_kernel::project::{ProjectError, ProjectSpec};
 use caelumora_kernel::scoped::ScopeNotEmpty;
-use caelumora_kernel::session::testing::create;
+use caelumora_kernel::session::testing::{create, ended};
 use caelumora_kernel::session::{ChannelSpec, SessionError, SessionLoop, SessionSpec};
 use caelumora_kernel::testing::{
     attributes, checks, denied, file, not_found, quiet, read, shown, workspace, Script,
@@ -758,11 +757,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     );
 
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
-    let ended = time::timeout(Duration::from_secs(5), async {
-        while !matches!(his.next().await, Ok(Shown::Ended)) {}
-    })
-    .await;
-    assert!(ended.is_ok(), "he is told his actor ended");
+    assert!(ended(&mut his, Duration::from_secs(5)).await, "he is told his actor ended");
     let stopped = reach(world.bob).await.expect("he still takes part");
     assert!(stopped.user_follow().is_some(), "and follows the channel while it does not run");
     assert!(stopped.running().is_none(), "without starting it");
