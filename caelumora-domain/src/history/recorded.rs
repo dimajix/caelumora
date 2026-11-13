@@ -238,7 +238,7 @@ mod tests {
     use super::*;
     use crate::actor::{ActorEvent, Rejection, RequestReason, RetryTarget};
     use crate::agent::{AgentId, RetryRefused};
-    use crate::approval::{ApprovalRequest, ApprovalResponse};
+    use crate::approval::{ApprovalDecision, ApprovalRequest, ApprovalVerdict};
     use crate::confidentiality::Classification;
     use crate::context::FrameRef;
     use crate::digest;
@@ -417,7 +417,7 @@ mod tests {
             tool_call: call.clone(),
             description: "test".to_string(),
         };
-        let response = ApprovalResponse::new(approval.id, agent_id);
+        let response = ApprovalVerdict::new(approval.id, agent_id);
         let questions = |sensitive| QuestionRequest {
             id: QuestionId::new(),
             session_id: Default::default(),
@@ -537,9 +537,28 @@ mod tests {
                 user,
                 ActorEvent::RetryRequested { target: RetryTarget::Turn(turn_id), author: agent },
             ),
-            (user, ActorEvent::ApprovalGranted(response.clone())),
-            (user, ActorEvent::ApprovalDenied(response.clone())),
-            (user, ActorEvent::ApprovalTimedOut(response.clone())),
+            (
+                user,
+                ActorEvent::ApprovalAnswered {
+                    id: approval.id,
+                    approved: true,
+                    decision: ApprovalDecision {
+                        by: user,
+                        name: "user".to_string(),
+                        by_rule: None,
+                        at: Default::default(),
+                    },
+                },
+            ),
+            (
+                approver,
+                ActorEvent::MessageRefused {
+                    to: user,
+                    refused: "ApprovalAnswered".to_string(),
+                    message: None,
+                    reason: Rejection::Forbidden,
+                },
+            ),
             (approver, ActorEvent::ApprovalRequested(approval.clone())),
             (approver, ActorEvent::ApprovalRequestWithdrawn { id: approval.id }),
             (approver, ActorEvent::ApprovalGranted(response.clone())),
@@ -683,7 +702,7 @@ mod tests {
             .collect();
         assert_eq!(
             delivered_alone.len(),
-            16,
+            14,
             "the requests, approvals and questions: {:?}",
             delivered_alone.iter().map(|(_, event)| event.kind()).collect::<Vec<_>>()
         );

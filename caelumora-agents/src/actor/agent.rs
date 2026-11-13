@@ -21,7 +21,7 @@ use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, RetryTarget,
 };
 use caelumora_domain::agent::{AgentChannelState, RetryRefused};
-use caelumora_domain::approval::{ApprovalResponse, ApprovalStatus};
+use caelumora_domain::approval::{ApprovalStatus, ApprovalVerdict};
 use caelumora_domain::command::Command;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Visibility};
@@ -548,7 +548,7 @@ impl AgentActor {
     fn decided(
         &self,
         turn: &mut Turn<'_>,
-        response: ApprovalResponse,
+        response: ApprovalVerdict,
         decision: ApprovalStatus,
     ) -> Option<Vec<ActorEvent>> {
         let id = response.id;

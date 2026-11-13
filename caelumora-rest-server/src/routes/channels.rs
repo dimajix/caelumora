@@ -15,7 +15,7 @@ use axum::response::{IntoResponse, Response, Sse};
 use axum::{extract::State, http::StatusCode};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
-use caelumora_domain::approval::{ApprovalId, ApprovalResponse, ApprovalRule};
+use caelumora_domain::approval::{ApprovalId, ApprovalRule};
 use caelumora_domain::channel::{moderation_components, ChannelId};
 use caelumora_domain::command::{Command, CommandVisibility};
 use caelumora_domain::confidentiality::{Classification, LabelCauses};
@@ -875,10 +875,8 @@ pub(super) async fn send_approval(
 ) -> Result<StatusCode, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
-    let response =
-        ApprovalResponse::new(ApprovalId(payload.approval_id), AgentId(payload.agent_id));
     let span_id = user_actor
-        .send_approval(response, payload.approved)
+        .send_approval(ApprovalId(payload.approval_id), payload.approved)
         .await
         .map_err(|e| ApiError::internal("approval_not_sent", "sending the approval", &e))?;
     Span::current().record("span_id", field::display(span_id));

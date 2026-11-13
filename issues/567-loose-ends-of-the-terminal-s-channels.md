@@ -247,3 +247,60 @@ collected here, to be taken on one after the other, each a step of its own:
   channel restored and a loss on the bus are what it follows anew at (`changes_taking_part`);
   EVENTS.md says that the terminal learns of a leave from the end of the run, and CHANNELS.md no
   longer names the terminal's reading at a leave.
+
+- **2026-11-13** — Decided with the maintainer before step 8, after a first attempt that looked
+  the agent up in the agents' stored turns was dropped uncommitted: actors communicate through the
+  channel alone, never by reaching into each other. A user's answer to an approval names the
+  request alone - `ActorEvent::ApprovalAnswered { id, approved, decision }`, apart from the
+  approver's decision (`ApprovalGranted`, `ApprovalDenied`, `ApprovalTimedOut`) -; the user's actor
+  sends it through the channel, which no longer asks `ApproveToolCall` for it; the approver, which
+  holds the request, resolves the agent, asks whether the user may approve its calls and counts the
+  answer. An answer it does not count it tells the user of with a new event every actor may send
+  back to whom an event of theirs went to and was not taken: `MessageRefused`, beside the channel's
+  `MessageRejected`, with a history entry of its own, so that no stored entry changes. The
+  frontends follow in a step of their own.
+
+- **2026-11-13** — A point joins the issue, from a review of the code at the maintainer's request:
+  10. **Actors reach into each other.** The user's actor checks before it sends whether the agent
+  it asks to answer again exists and whether its turn is under way (`UserActor::request_retry`,
+  `request_retry_of_turn`, through `ChannelLoop::agent_actor` and `retryable_turn`), and reads the
+  state of the participant it nudges (`request_response`, `actor.state().in_turn()`); the approver
+  reads the security context of the users' actors (`approvers_of`) and whether an agent's actor
+  runs (`catch_up`). Actors communicate through the channel alone: the checks go to the actor
+  asked, which refuses what it does not take (`MessageRefused`), and what the approver needs it
+  takes from the channel's participants. The approver's reading of the users' contexts goes with
+  step 8.
+
+- **2026-11-13** — Step 8, point 8 in the kernel, as decided: a user's answer is
+  `ActorEvent::ApprovalAnswered { id, approved, decision }`, recorded as
+  `HistoryEntry::ApprovalAnswered` to the approvers; `ApprovalGranted`, `ApprovalDenied` and
+  `ApprovalTimedOut` - `HistoryEntry::ApprovalDecided` - are the approver's decision alone.
+  `UserActor::send_approval(id, approved)` and an answer by a rule of the user's send it. The
+  channel lets it in from its user with their own part alone and asks nothing more of it; the
+  approver counts it if it holds the request and the user may approve the calls of the agent that
+  asked (`ApproverActor::handle_answer`), asked in the context the channel admits the user in
+  (`ChannelLoop::context_of`) - as `approvers_of` now asks too, no longer reading the users'
+  actors -, and refuses any other with `MessageRefused` to the user alone: `Invalid` for a request
+  it does not hold, `Forbidden` for one who may not approve. `MessageRefused { to, refused, message,
+  reason }`, with `HistoryEntry::MessageRefused`, is what any actor sends back to whom an event of
+  theirs went to that it does not take; the channel lets it in to someone else taking part, and
+  the REST API's history gives it as an item. The terminal and the REST server pass the id alone;
+  the rest of the frontends is step 9. APPROVALS.md, CHANNELS.md, PERMISSION-CHECKS.md and
+  SECURITY.md say so. No stored data has to be deleted: an answer a user gave before is kept as an
+  `ApprovalDecided` of theirs, which still goes to the approvers as it was recorded, who no longer
+  take it. On the review: the approver enforces `ApproveToolCall` with `Enforcement::require`, as
+  the owner of the act (SECURITY.md rule 4, PERMISSION-CHECKS.md), and asks `may_approve` only to
+  know whom to wait for; an agent it cannot read is refused as `Invalid`, as the channel answered
+  it before. A refusal is made of the envelope refused (`Envelope::refusal`), naming its kind and
+  its message, for every actor that will send one. The doc comments of `ApprovalResponse` and
+  `Rejection` say what they are now, the history's fixture covers the two new events, the channel's
+  admission of both is tested, and the terminal tells a refusal (`[refused] … did not take your
+  …`), so that a refused `/approve` is not silent before step 9; REST-SERVER.md names it among what
+  a stream carries.
+
+- **2026-11-13** — Decided with the maintainer on the review of step 8, and done in it:
+  `ApprovalResponse`, which now carries the approver's decision alone, is renamed
+  `ApprovalVerdict`, in the code and in the web UI's types; its fields, and so what is stored, stay
+  as they are. Any participant may send `MessageRefused` to any other, as the channel admits it:
+  the scope intended. The approver's tests read its private `pending`, a finding that joins
+  point 10.

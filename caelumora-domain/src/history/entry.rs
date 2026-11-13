@@ -5,7 +5,9 @@
 use super::Recipients;
 use crate::actor::{ActorEvent, ActorId, Rejection, RequestReason, RetryTarget};
 use crate::agent::RetryRefused;
-use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse, ApprovalStatus};
+use crate::approval::{
+    ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalStatus, ApprovalVerdict,
+};
 use crate::chain::Position;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
@@ -183,6 +185,16 @@ pub enum HistoryEntry {
         reason: Rejection,
         at: DateTime<Utc>,
     },
+    /// `by`, an actor, did not take what `to` sent it - an event of the kind `refused`, about
+    /// `message` if it is one - at `at`, for `reason` (issue 567): told to `to` alone.
+    MessageRefused {
+        by: ActorId,
+        to: ActorId,
+        refused: String,
+        message: Option<MessageId>,
+        reason: Rejection,
+        at: DateTime<Utc>,
+    },
     /// Whom it went to was asked to respond at `at` (issue 417) - to what
     /// `by` said or nudged -, as the moderator decided and for `reason`
     /// (issue 439): in the system's name, to those asked.
@@ -205,11 +217,19 @@ pub enum HistoryEntry {
     /// `by` asked at `at` for a decision on `request` (issues 81, 223): an
     /// agent, of the approvers; an approver, of the users.
     ApprovalRequested { request: ApprovalRequest, by: ActorId, at: DateTime<Utc> },
-    /// `by` answered the request `response.id` with `status` at `at`
-    /// (issues 81, 419, 223): a user, to the approvers; an approver, its
-    /// decision, to the users and the agent that asked.
+    /// `by`, a user, answered the request `id` at `at` (issues 81, 419, 567): whether they approve,
+    /// with their part (`decision`) - to the approvers, which hold the request.
+    ApprovalAnswered {
+        id: ApprovalId,
+        approved: bool,
+        decision: ApprovalDecision,
+        by: ActorId,
+        at: DateTime<Utc>,
+    },
+    /// `by`, an approver, decided the request `response.id` with `status` at `at` (issues 81, 419,
+    /// 223): to the users and the agent that asked.
     ApprovalDecided {
-        response: ApprovalResponse,
+        response: ApprovalVerdict,
         status: ApprovalStatus,
         by: ActorId,
         at: DateTime<Utc>,
@@ -268,6 +288,7 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. } => true,
             HistoryEntry::Reclassified { .. }
             | HistoryEntry::Modified { .. }
@@ -279,6 +300,7 @@ impl HistoryEntry {
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
             | HistoryEntry::QuestionClosed { .. } => false,
@@ -314,11 +336,13 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
             | HistoryEntry::QuestionClosed { .. } => false,
@@ -355,11 +379,13 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
             | HistoryEntry::QuestionClosed { .. } => None,
@@ -406,11 +432,13 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
             | HistoryEntry::QuestionClosed { .. } => false,
@@ -443,11 +471,13 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
             | HistoryEntry::QuestionClosed { .. } => None,
@@ -498,6 +528,7 @@ impl HistoryEntry {
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
             | HistoryEntry::ResponseRequested { .. } => Recipients::NOBODY,
+            HistoryEntry::MessageRefused { to, .. } => Recipients::only(vec![*to]),
             HistoryEntry::CommandRequested { agent: named, .. }
             | HistoryEntry::RetryRequested { author: named, .. } => Recipients::only(
                 Some(*named)
@@ -511,9 +542,9 @@ impl HistoryEntry {
                 ActorId::Approver(_) => Recipients::participants(false),
                 _ => Recipients::NOBODY,
             },
-            HistoryEntry::ApprovalDecided { response, status, by, .. } => match by {
-                // A timeout is the approver's alone.
-                ActorId::User(_) if *status != ApprovalStatus::Timeout => Recipients::APPROVERS,
+            HistoryEntry::ApprovalAnswered { by: ActorId::User(_), .. } => Recipients::APPROVERS,
+            HistoryEntry::ApprovalAnswered { .. } => Recipients::NOBODY,
+            HistoryEntry::ApprovalDecided { response, by, .. } => match by {
                 ActorId::Approver(_) => Recipients {
                     named: vec![ActorId::Agent(response.agent_id)],
                     ..Recipients::participants(false)
@@ -596,6 +627,9 @@ impl HistoryEntry {
             HistoryEntry::MessageRejected { rejected, message, reason, .. } => {
                 ActorEvent::MessageRejected { rejected, message, reason }
             }
+            HistoryEntry::MessageRefused { to, refused, message, reason, .. } => {
+                ActorEvent::MessageRefused { to, refused, message, reason }
+            }
             HistoryEntry::ResponseRequested { reason, .. } => {
                 ActorEvent::ResponseRequested { reason }
             }
@@ -607,6 +641,9 @@ impl HistoryEntry {
             }
             HistoryEntry::ApprovalRequested { request, .. } => {
                 ActorEvent::ApprovalRequested(request)
+            }
+            HistoryEntry::ApprovalAnswered { id, approved, decision, .. } => {
+                ActorEvent::ApprovalAnswered { id, approved, decision }
             }
             HistoryEntry::ApprovalDecided {
                 response, status: ApprovalStatus::Approved, ..
@@ -668,11 +705,13 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
             | HistoryEntry::QuestionClosed { .. } => Some(self.clone()),
@@ -704,7 +743,9 @@ impl HistoryEntry {
             | HistoryEntry::CommandRequested { by, .. }
             | HistoryEntry::RetryRequested { by, .. }
             | HistoryEntry::ApprovalRequested { by, .. }
+            | HistoryEntry::ApprovalAnswered { by, .. }
             | HistoryEntry::ApprovalDecided { by, .. }
+            | HistoryEntry::MessageRefused { by, .. }
             | HistoryEntry::ApprovalRequestWithdrawn { by, .. }
             | HistoryEntry::QuestionRequested { by, .. }
             | HistoryEntry::QuestionClosed { by, .. } => *by,
@@ -750,11 +791,13 @@ impl HistoryEntry {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
             | HistoryEntry::ApprovalDecided { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
             | HistoryEntry::QuestionClosed { .. } => None,

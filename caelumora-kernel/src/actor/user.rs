@@ -17,7 +17,7 @@ use caelumora_domain::actor::{
 };
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{
-    ApprovalDecision, ApprovalRequest, ApprovalResponse, ApprovalRule, ApprovalRuleId, RuleDecision,
+    ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalRule, ApprovalRuleId, RuleDecision,
 };
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::command::{Command, CommandVisibility};
@@ -588,23 +588,20 @@ impl UserActor {
         }
     }
 
-    /// Sends this user's decision on an approval. Returns the `span_id`, as
-    /// `send_message` does. A decision sent so is the user's own, never one
-    /// of their rules (`ApprovalDecision::by_rule`): whatever `response` says
-    /// of who decided is replaced by this user, now (issue 419).
-    pub async fn send_approval(&self, response: ApprovalResponse, approved: bool) -> Result<Uuid> {
-        let response = ApprovalResponse { decisions: vec![self.decision(None)], ..response };
+    /// Sends this user's answer to the approval request `id` (issue 567): whether they approve,
+    /// with their part alone - their own, never one of their rules (`ApprovalDecision::by_rule`,
+    /// issue 419). Which agent asked, and whether they may approve its calls, the approver tells,
+    /// which holds the request: an answer it does not count it refuses (`MessageRefused`).
+    /// Returns the `span_id`, as `send_message` does.
+    ///
+    /// # Errors
+    /// An error if the channel is gone.
+    pub async fn send_approval(&self, id: ApprovalId, approved: bool) -> Result<Uuid> {
+        let decision = self.decision(None);
         let span_id = Uuid::new_v4();
-        self.send(self.envelope(Self::answer(response, approved), span_id)).await?;
+        let answer = ActorEvent::ApprovalAnswered { id, approved, decision };
+        self.send(self.envelope(answer, span_id)).await?;
         Ok(span_id)
-    }
-
-    fn answer(response: ApprovalResponse, approved: bool) -> ActorEvent {
-        if approved {
-            ActorEvent::ApprovalGranted(response)
-        } else {
-            ActorEvent::ApprovalDenied(response)
-        }
     }
 
     /// This user's part in an approval, now - by their rule `by_rule` if
@@ -657,11 +654,9 @@ impl UserActor {
         }
         let approved = decision == RuleDecision::Allow;
         info!(rule = %rule_id, approved, "UserActor {} answers approval {} by a rule", self.id(), request.id);
-        let response = ApprovalResponse {
-            decisions: vec![self.decision(Some(rule_id))],
-            ..ApprovalResponse::new(request.id, request.agent_id)
-        };
-        Some(self.envelope(Self::answer(response, approved), envelope.context.span_id))
+        let decision = self.decision(Some(rule_id));
+        let answer = ActorEvent::ApprovalAnswered { id: request.id, approved, decision };
+        Some(self.envelope(answer, envelope.context.span_id))
     }
 
     /// Issues the user command `line` - the line after the slash - on behalf of this user (issue
@@ -1145,14 +1140,11 @@ mod tests {
             "what it said, as it forwarded it, not the request to wake the channel (issue 220)"
         );
 
-        actor
-            .send_approval(ApprovalResponse::new(Default::default(), Default::default()), true)
-            .await
-            .unwrap();
+        actor.send_approval(Default::default(), true).await.unwrap();
         channel_inbox.recv().await.expect("forwarded");
         assert_eq!(
             following.try_recv().ok().flatten().map(|e| e.event.kind()),
-            Some("ApprovalGranted"),
+            Some("ApprovalAnswered"),
             "everything it sends"
         );
 

@@ -2,7 +2,7 @@
 //! (`EventContext`), whom it goes to and what is kept of it - and what an actor does with one it
 //! looks at in its inbox (`Pick`).
 
-use super::{ActorEvent, ActorId};
+use super::{ActorEvent, ActorId, Rejection};
 use crate::approval::ApprovalStatus;
 use crate::chain::Position;
 use crate::channel::ChannelId;
@@ -218,6 +218,16 @@ impl Envelope {
                     at,
                 }
             }
+            ActorEvent::MessageRefused { to, refused, message, reason } => {
+                HistoryEntry::MessageRefused {
+                    by: actor,
+                    to: *to,
+                    refused: refused.clone(),
+                    message: *message,
+                    reason: *reason,
+                    at,
+                }
+            }
             ActorEvent::ResponseRequested { reason } => {
                 HistoryEntry::ResponseRequested { by: actor, reason: *reason, at }
             }
@@ -288,6 +298,15 @@ impl Envelope {
             ActorEvent::ApprovalRequested(request) => {
                 HistoryEntry::ApprovalRequested { request: request.clone(), by: actor, at }
             }
+            ActorEvent::ApprovalAnswered { id, approved, decision } => {
+                HistoryEntry::ApprovalAnswered {
+                    id: *id,
+                    approved: *approved,
+                    decision: decision.clone(),
+                    by: actor,
+                    at,
+                }
+            }
             ActorEvent::ApprovalGranted(response) => HistoryEntry::ApprovalDecided {
                 response: response.clone(),
                 status: ApprovalStatus::Approved,
@@ -338,6 +357,17 @@ impl Envelope {
     /// delivers.
     pub fn published(&self) -> Option<Envelope> {
         self.event.clone().published().map(|event| Envelope { event, ..self.clone() })
+    }
+
+    /// What its receiver sends back where it does not take it, for `reason` (issue 567): a
+    /// `MessageRefused` to its sender, naming its kind and the message it was or was about.
+    pub fn refusal(&self, reason: Rejection) -> ActorEvent {
+        ActorEvent::MessageRefused {
+            to: self.context.sender_id,
+            refused: self.event.kind().to_string(),
+            message: self.event.subject_message(),
+            reason,
+        }
     }
 
     /// Whom the envelope goes to by the rule every channel delivers by
@@ -832,12 +862,27 @@ mod tests {
         );
     }
 
+    /// Issue 567: what an actor did not take goes back to whom it was of, alone - whoever refused.
+    #[test]
+    fn a_refusal_concerns_whom_it_refuses_alone() {
+        let present = Present::new();
+        let (user, approver) = (present.users[0], present.approver);
+        let refused = |to| ActorEvent::MessageRefused {
+            to,
+            refused: "ApprovalAnswered".to_string(),
+            message: None,
+            reason: Rejection::Forbidden,
+        };
+        assert_eq!(present.concerned(approver, refused(user)), HashSet::from([user]));
+        assert_eq!(present.concerned(present.agents[0], refused(user)), HashSet::from([user]));
+    }
+
     /// Issues 81, 148: an approval goes through the approvers - the
     /// agent's request to them, theirs to the users, a user's answer to
     /// them, their decision to the users and the agent that asked.
     #[test]
     fn an_approval_concerns_the_approvers_and_through_them_the_users() {
-        use crate::approval::{ApprovalRequest, ApprovalResponse};
+        use crate::approval::{ApprovalDecision, ApprovalRequest, ApprovalVerdict};
         use crate::tool::ToolCall;
         let present = Present::new();
         let (agent, user, approver) = (present.agents[0], present.users[0], present.approver);
@@ -861,7 +906,7 @@ mod tests {
             })
         };
         let withdrawn = || ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
-        let response = || ApprovalResponse::new(Default::default(), agent_id);
+        let response = || ApprovalVerdict::new(Default::default(), agent_id);
 
         for asked in [request(), withdrawn()] {
             let kind = asked.kind();
@@ -882,15 +927,25 @@ mod tests {
             present.concerned(user, withdrawn()).is_empty(),
             "only an agent and the approver withdraw"
         );
+        let decision = ApprovalDecision {
+            by: user,
+            name: "user".to_string(),
+            by_rule: None,
+            at: Default::default(),
+        };
+        let answered =
+            ActorEvent::ApprovalAnswered { id: Default::default(), approved: true, decision };
         assert_eq!(
-            present.concerned(user, ActorEvent::ApprovalGranted(response())),
+            present.concerned(user, answered),
             HashSet::from([approver]),
             "a user's answer, to the approver alone"
         );
-        assert!(
-            present.concerned(user, ActorEvent::ApprovalTimedOut(response())).is_empty(),
-            "a timeout is the approver's alone"
-        );
+        for decision in
+            [ActorEvent::ApprovalGranted(response()), ActorEvent::ApprovalTimedOut(response())]
+        {
+            let kind = decision.kind();
+            assert!(present.concerned(user, decision).is_empty(), "{kind}: the approver's alone");
+        }
         let decided = present.users().into_iter().chain([agent]).collect::<HashSet<_>>();
         for decision in [
             ActorEvent::ApprovalGranted(response()),

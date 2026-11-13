@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope};
-use caelumora_domain::approval::{ApprovalId, ApprovalRequest, ApprovalResponse};
+use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::mention::{is_group_handle, mention_spans};
 use caelumora_domain::message::{Message, MessageId};
@@ -200,19 +200,13 @@ impl Followed {
             }
             // The user's own answer, given by a rule of theirs: no longer theirs to give, as after
             // `/approve`, though only the approver tells when the approval is over.
-            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response)
-                if sender_id == self.me() =>
-            {
-                self.take_pending(response.id);
-                vec![format!("--- Approval {} answered by your rule ---", response.id.0)]
+            ActorEvent::ApprovalAnswered { id, .. } if sender_id == self.me() => {
+                self.take_pending(*id);
+                vec![format!("--- Approval {} answered by your rule ---", id.0)]
             }
-            // Another user's answer alone does not decide it.
-            ActorEvent::ApprovalGranted(_) | ActorEvent::ApprovalDenied(_)
-                if !matches!(sender_id, ActorId::Approver(_)) =>
-            {
-                Vec::new()
-            }
-            // The approval is over: decided, or no longer asked for.
+            // Another's answer alone decides nothing; it goes to the approver alone.
+            ActorEvent::ApprovalAnswered { .. } => Vec::new(),
+            // The approval is over: the approver decided, or it is no longer asked for.
             ActorEvent::ApprovalGranted(response)
             | ActorEvent::ApprovalDenied(response)
             | ActorEvent::ApprovalTimedOut(response) => {
@@ -253,10 +247,10 @@ impl Followed {
         id: ApprovalId,
         approved: bool,
     ) -> Result<bool> {
-        let Some(request) = self.take_pending(id) else {
+        if self.take_pending(id).is_none() {
             return Ok(false);
-        };
-        actor.send_approval(ApprovalResponse::new(id, request.agent_id), approved).await?;
+        }
+        actor.send_approval(id, approved).await?;
         Ok(true)
     }
 
@@ -328,12 +322,7 @@ impl Followed {
 
 /// Whether `event` is an answer to an approval that a rule gave (`ApprovalDecision::by_rule`).
 fn answered_by_rule(event: &ActorEvent) -> bool {
-    match event {
-        ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response) => {
-            response.decisions.iter().any(|decision| decision.by_rule.is_some())
-        }
-        _ => false,
-    }
+    matches!(event, ActorEvent::ApprovalAnswered { decision, .. } if decision.by_rule.is_some())
 }
 
 /// The lines the terminal prints of `envelope` that the user's commands need nothing of, by the
@@ -358,6 +347,11 @@ fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<String>
         // What this user sent that the channel did not let in (issue 304), told to them alone.
         ActorEvent::MessageRejected { rejected, reason, .. } => {
             Some(format!("[refused] the channel did not let in your {rejected}: {reason}"))
+        }
+        // What this user sent that the actor it went to did not take (issue 567), told to them
+        // alone: the approver an answer it does not count.
+        ActorEvent::MessageRefused { refused, reason, .. } => {
+            Some(format!("[refused] {sender} did not take your {refused}: {reason}"))
         }
         // Told to its issuer alone (issue 299).
         ActorEvent::CommandStarted { command, .. } => {
@@ -567,8 +561,11 @@ mod tests {
     use super::testing::{approval, from, message, routed};
     use super::*;
     use anyhow::Error;
+    use caelumora_domain::actor::Rejection;
     use caelumora_domain::agent::AgentId;
-    use caelumora_domain::approval::{ApprovalDecision, ApprovalRuleId, ApproverId};
+    use caelumora_domain::approval::{
+        ApprovalDecision, ApprovalRuleId, ApprovalVerdict, ApproverId,
+    };
     use caelumora_domain::channel::HistoryAccess;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
@@ -631,6 +628,26 @@ mod tests {
         assert_eq!(printed(message(Some(""), Vec::new())), None, "nothing said");
     }
 
+    /// What an actor did not take of the user's is told to them, by whom (issue 567).
+    #[tokio::test]
+    async fn a_refusal_is_told_by_whom() {
+        let (mut followed, channel, me) = followed().await;
+        let approver = ActorId::Approver(ApproverId::new());
+        let refused = ActorEvent::MessageRefused {
+            to: me,
+            refused: "ApprovalAnswered".to_string(),
+            message: None,
+            reason: Rejection::Forbidden,
+        };
+        let told = followed.take_in(&from(&channel, approver, refused));
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(
+            told[0].starts_with("[refused] ")
+                && told[0].contains("did not take your ApprovalAnswered"),
+            "{told:?}"
+        );
+    }
+
     #[tokio::test]
     async fn what_the_user_said_is_not_printed_again() {
         let (mut followed, channel, me) = followed().await;
@@ -663,23 +680,30 @@ mod tests {
         // alone decides nothing.
         let approver = ActorId::Approver(ApproverId::new());
         let other = ActorId::User(UserId::new());
-        let decided = |id| ApprovalResponse::new(id, agent_id);
-        let over: [fn(ApprovalResponse) -> ActorEvent; 3] =
+        let decided = |id| ApprovalVerdict::new(id, agent_id);
+        let answered = |id| {
+            let decision = ApprovalDecision {
+                by: other,
+                name: "other".to_string(),
+                by_rule: None,
+                at: Default::default(),
+            };
+            ActorEvent::ApprovalAnswered { id, approved: true, decision }
+        };
+        let over: [fn(ApprovalVerdict) -> ActorEvent; 3] =
             [ActorEvent::ApprovalGranted, ActorEvent::ApprovalDenied, ActorEvent::ApprovalTimedOut];
         for verdict in over {
             let request = approval(&channel, agent_id);
             let id = request.id;
             followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
-            let by_other = ActorEvent::ApprovalGranted(decided(id));
-            assert!(followed.take_in(&from(&channel, other, by_other)).is_empty());
+            assert!(followed.take_in(&from(&channel, other, answered(id))).is_empty());
             assert!(followed.take_in(&from(&channel, approver, verdict(decided(id)))).is_empty());
             assert!(!followed.approve(&actor, id, true).await.unwrap(), "over");
         }
         let request = approval(&channel, agent_id);
         let id = request.id;
         followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
-        let by_other = ActorEvent::ApprovalGranted(decided(id));
-        followed.take_in(&from(&channel, other, by_other));
+        followed.take_in(&from(&channel, other, answered(id)));
         assert!(
             followed.approve(&actor, id, true).await.unwrap(),
             "still pending after another's answer"
@@ -704,11 +728,7 @@ mod tests {
         let answer = |by: ActorId, by_rule: Option<ApprovalRuleId>| {
             let name = by.to_string();
             let decision = ApprovalDecision { by, name, by_rule, at: Default::default() };
-            let response = ApprovalResponse {
-                decisions: vec![decision],
-                ..ApprovalResponse::new(id, agent_id)
-            };
-            from(&channel, by, ActorEvent::ApprovalGranted(response))
+            from(&channel, by, ActorEvent::ApprovalAnswered { id, approved: true, decision })
         };
         let other = ActorId::User(UserId::new());
         assert!(followed.take_in(&answer(me, None)).is_empty(), "typed by the user");

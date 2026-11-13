@@ -5,7 +5,7 @@
 
 use super::{ActorId, ActorState};
 use crate::agent::{AgentId, RetryRefused};
-use crate::approval::{ApprovalId, ApprovalRequest, ApprovalResponse};
+use crate::approval::{ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalVerdict};
 use crate::chain::Position;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
@@ -20,9 +20,19 @@ use std::fmt;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorEvent {
     ApprovalRequested(ApprovalRequest),
-    ApprovalGranted(ApprovalResponse),
-    ApprovalDenied(ApprovalResponse),
-    ApprovalTimedOut(ApprovalResponse),
+    /// A user's answer to the approval request `id` (issue 567): whether they approve, and their
+    /// part alone (`decision`, issue 419). Sent to the approvers, which hold the request: which
+    /// agent asked, and whether the user may approve its calls, the approver tells as it counts
+    /// the answer, and an answer it does not count it refuses (`MessageRefused`).
+    ApprovalAnswered {
+        id: ApprovalId,
+        approved: bool,
+        decision: ApprovalDecision,
+    },
+    /// The approver's decision on a request, to the users and the agent that asked.
+    ApprovalGranted(ApprovalVerdict),
+    ApprovalDenied(ApprovalVerdict),
+    ApprovalTimedOut(ApprovalVerdict),
     /// The agent no longer waits for the decision on its request `id`: the
     /// turn that made the call ended first (issue 148). Sent by the agent to
     /// the approvers, which take it only from the agent that asked, and by
@@ -380,6 +390,17 @@ pub enum ActorEvent {
         message: Option<MessageId>,
         reason: Rejection,
     },
+    /// The actor an event of `to`'s went to does not take it (issue 567): `refused` names its kind,
+    /// `message` the message it was or was about, if any, and `reason` is one of the known few, as
+    /// for `MessageRejected` - which tells what the channel did not let in, this what an actor did
+    /// not take. Sent by that actor to `to` alone, and recorded to it alone
+    /// (`HistoryEntry::MessageRefused`); what was refused changed nothing there.
+    MessageRefused {
+        to: ActorId,
+        refused: String,
+        message: Option<MessageId>,
+        reason: Rejection,
+    },
 }
 
 /// Why a moderator asks an actor to respond (issue 439). Ordered by how much
@@ -504,6 +525,8 @@ impl ActorEvent {
             | ActorEvent::ChainCutOff { .. }
             | ActorEvent::ResponderUndecided { .. }
             | ActorEvent::MessageRejected { .. }
+            | ActorEvent::MessageRefused { .. }
+            | ActorEvent::ApprovalAnswered { .. }
             | ActorEvent::MessageGiven { .. }
             | ActorEvent::MessageWithdrawn { .. }
             | ActorEvent::ContextCompacted { .. } => false,
@@ -570,6 +593,7 @@ impl ActorEvent {
     pub fn kind(&self) -> &'static str {
         match self {
             ActorEvent::ApprovalRequested(_) => "ApprovalRequested",
+            ActorEvent::ApprovalAnswered { .. } => "ApprovalAnswered",
             ActorEvent::ApprovalGranted(_) => "ApprovalGranted",
             ActorEvent::ApprovalDenied(_) => "ApprovalDenied",
             ActorEvent::ApprovalTimedOut(_) => "ApprovalTimedOut",
@@ -609,6 +633,7 @@ impl ActorEvent {
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
             ActorEvent::RetryRejected { .. } => "RetryRejected",
             ActorEvent::MessageRejected { .. } => "MessageRejected",
+            ActorEvent::MessageRefused { .. } => "MessageRefused",
             ActorEvent::MessageGiven { .. } => "MessageGiven",
             ActorEvent::MessageWithdrawn { .. } => "MessageWithdrawn",
             ActorEvent::ContextCompacted { .. } => "ContextCompacted",
@@ -616,9 +641,11 @@ impl ActorEvent {
     }
 }
 
-/// Why the channel did not let an event in (`ActorEvent::MessageRejected`,
-/// issue 304), worded for its sender, as the web UI and the TUI word it
-/// after "… was not let in:".
+/// Why the channel did not let an event in (`ActorEvent::MessageRejected`, issue 304), or the actor
+/// it went to did not take it (`ActorEvent::MessageRefused`, issue 567) - the approver an answer to
+/// a request it does not hold as `Invalid`, one of someone who may not approve as `Forbidden` -,
+/// worded for its sender, as the web UI and the TUI word it after "… was not let in:" or "… was
+/// not taken:".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
 pub enum Rejection {

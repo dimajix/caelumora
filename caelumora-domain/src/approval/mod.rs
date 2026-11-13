@@ -1,6 +1,6 @@
 //! The approval of tool calls: who is asked and how their answers decide (`Approver`,
 //! `ApprovalStrategy`), and a request with its answers and how it stands (`ApprovalRequest`,
-//! `ApprovalResponse`, `ApprovalDecision`, `ApprovalStatus`). The standing decisions on calls - the
+//! `ApprovalVerdict`, `ApprovalDecision`, `ApprovalStatus`). The standing decisions on calls - the
 //! rules - are `rule`'s, the reading of a command line for them `shell`'s.
 
 mod rule;
@@ -125,24 +125,22 @@ pub struct ApprovalRequest {
     pub suggested: Option<ToolMatcher>,
 }
 
-/// An answer to the approval `id` of the call of agent `agent_id`, or the
-/// approver's decision on it - which `agent_id` routes to the agent and
-/// whose permission it is checked by.
+/// The approver's decision on the approval `id` of the call of agent `agent_id` (issue 567: a
+/// user's answer is `ActorEvent::ApprovalAnswered`, which names the request alone) - which
+/// `agent_id` routes to the agent that asked.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalResponse {
+pub struct ApprovalVerdict {
     pub id: ApprovalId,
     pub agent_id: AgentId,
-    /// Who decided (issue 419): a person's answer holds theirs alone, set by
-    /// their actor - the channel lets in no other -; the approver's decision
-    /// those whose answers made it, as it counted them, empty where nobody's
-    /// did: it timed out, or nobody may approve.
+    /// Who decided (issue 419): those whose answers made the decision, as the approver counted
+    /// them, empty where nobody's did: it timed out, or nobody may approve.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decisions: Vec<ApprovalDecision>,
 }
 
-impl ApprovalResponse {
-    /// An answer to the request `id` of agent `agent_id`, before the actor
-    /// that sends it says whose it is.
+impl ApprovalVerdict {
+    /// A decision on the request `id` of agent `agent_id`, before the approver says whose answers
+    /// made it.
     pub fn new(id: ApprovalId, agent_id: AgentId) -> Self {
         Self { id, agent_id, decisions: Vec::new() }
     }

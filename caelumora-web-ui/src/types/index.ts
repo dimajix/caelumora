@@ -862,9 +862,9 @@ export interface ActorEvent {
   PartialMessageGenerated?: Message;
   CompleteMessageGenerated?: Message;
   ApprovalRequested?: ApprovalRequest;
-  ApprovalGranted?: ApprovalResponse;
-  ApprovalDenied?: ApprovalResponse;
-  ApprovalTimedOut?: ApprovalResponse;
+  ApprovalGranted?: ApprovalVerdict;
+  ApprovalDenied?: ApprovalVerdict;
+  ApprovalTimedOut?: ApprovalVerdict;
   /**
    * The agent no longer waits for the decision on request `id`: its turn
    * ended first (issue 148). Nobody is asked any longer.
@@ -1314,7 +1314,7 @@ export interface ApprovalRule {
   expires_at?: string;
 }
 
-export interface ApprovalResponse {
+export interface ApprovalVerdict {
   id: string;
   agent_id: string;
   /**

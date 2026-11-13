@@ -457,13 +457,13 @@ asks what, in whose name and by which reason is mapped, check by check, in
     channel](#what-enters-a-channel)). Actors ask nothing for what they send.
 4.  **Every act has one owner, and only the owner asks, once**: a tool call the `ToolExecutor` as it
     admits it, a command of an agent the agent as it carries it out, a command of the session the
-    `CommandExecutor`, a secret the `SecretManager`, a skill the `SkillManager`. An answer to an
-    approval request is something that enters a channel: the channel asks whether its sender may
-    approve the calls of the agent it names (rule 3), the approver only counts it (issue 312). A
-    component owns the acts on what it keeps - reclassifying a note - and asks for those itself, in
-    the turn's context; reading beyond its channel it leaves to the views, and what a system
-    service keeps - an entry of the agent's memory - to the service, which decides as its writer
-    commits it.
+    `CommandExecutor`, a secret the `SecretManager`, a skill the `SkillManager`, an answer to an
+    approval request the approver, which holds the request: the channel lets it in by its form
+    alone (rule 3), and the approver asks whether its sender may approve the calls of the agent
+    that asked as it counts it (issues 312, 567). A component owns the acts on what it keeps -
+    reclassifying a note - and asks for those itself, in the turn's context; reading beyond its
+    channel it leaves to the views, and what a system service keeps - an entry of the agent's
+    memory - to the service, which decides as its writer commits it.
 5.  **Offering is not permitting.** The views, a snapshot's flags, the filters of lists, the
     approver's choice of whom to wait for, the visible commands and the event bus ask to decide what
     to show or whom to wait for, never to permit; the act asks again when it is done, and that is no
@@ -570,11 +570,13 @@ as it is then, so that nothing changes between the check and the entry, and in a
 channel builds for the sender itself, from its participants as the controllers hold them now,
 with the initiator the event names (issue 516): an envelope carries none, and an actor's word on
 its rights is never taken. The actor that sends asks nothing of the policy. So a message, a change
-of one, a reclassification, a request to answer again, an answer to questions and an answer to an
-approval request are each asked once, in the sender's name - first whether it may act so, then the
-flow of what it carries -, and what is refused is answered to its sender alone
-(`MessageRejected`), recorded to it alone; what was refused entered nothing and is not recorded
-(issue 417).
+of one, a reclassification, a request to answer again and an answer to questions are each asked
+once, in the sender's name - first whether it may act so, then the flow of what it carries -, and
+what is refused is answered to its sender alone (`MessageRejected`), recorded to it alone; what was
+refused entered nothing and is not recorded (issue 417). An answer to an approval request names the
+request alone, and the approver, which holds it, asks whether its sender may approve the calls of
+the agent that asked (`ApproveToolCall`), in the context the channel admits them in, and refuses
+it to them alone otherwise (`MessageRefused`, issue 567).
 
 ## The security suite
 

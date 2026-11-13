@@ -249,10 +249,12 @@ impl Chain<Recorded> {
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::MessageRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }

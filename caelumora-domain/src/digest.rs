@@ -511,6 +511,13 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.json(&serde_json::json!([message, reason]));
             e.finish()
         }
+        HistoryEntry::MessageRefused { by, to, refused, message, reason, .. } => {
+            let mut e = Encoder::new("caelumora.history-message-refused.v1");
+            e.opt_digest(previous);
+            e.str(refused);
+            e.json(&serde_json::json!([by, to, message, reason]));
+            e.finish()
+        }
         HistoryEntry::ResponseRequested { by, reason, .. } => {
             let mut e = Encoder::new("caelumora.history-response-requested.v2");
             e.opt_digest(previous);
@@ -538,6 +545,12 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             let mut e = Encoder::new("caelumora.history-approval-requested.v1");
             e.opt_digest(previous);
             e.json(&serde_json::json!([request, by]));
+            e.finish()
+        }
+        HistoryEntry::ApprovalAnswered { id, approved, decision, by, .. } => {
+            let mut e = Encoder::new("caelumora.history-approval-answered.v1");
+            e.opt_digest(previous);
+            e.json(&serde_json::json!([id, approved, decision, by]));
             e.finish()
         }
         HistoryEntry::ApprovalDecided { response, status, by, .. } => {

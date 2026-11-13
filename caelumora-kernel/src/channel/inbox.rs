@@ -412,7 +412,7 @@ impl EventReceiver for InboxReceiver {
 mod tests {
     use super::*;
     use caelumora_domain::actor::{ActorEvent, EventContext, RequestReason};
-    use caelumora_domain::approval::ApprovalResponse;
+    use caelumora_domain::approval::ApprovalVerdict;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::Message;
     use caelumora_domain::question::QuestionId;
@@ -555,7 +555,7 @@ mod tests {
     async fn a_search_takes_ahead_and_leaves_the_rest_in_order() {
         let history = Arc::new(History::default());
         let (inbox, mut rx) = open(&history, Heard::default());
-        let response = ApprovalResponse::new(Default::default(), Default::default());
+        let response = ApprovalVerdict::new(Default::default(), Default::default());
         for n in 0..CAPACITY + 50 {
             let event = if n == CAPACITY + 20 {
                 ActorEvent::ApprovalGranted(response.clone())

@@ -7,16 +7,16 @@ use anyhow::Result;
 use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
 use caelumora_api::transport::{is_closed, EventReceiver, EventSender};
-use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope};
+use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, Rejection};
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{
-    ApprovalDecision, ApprovalId, ApprovalResponse, ApprovalStatus, ApprovalStrategy, Approver,
+    ApprovalDecision, ApprovalId, ApprovalStatus, ApprovalStrategy, ApprovalVerdict, Approver,
 };
 use caelumora_domain::channel::{self, Channel, Participant};
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::value::name::Name;
-use caelumora_security::{AccessPolicy, AccessQuestions};
+use caelumora_security::{AccessPolicy, AccessQuestions, ActionType, Enforcement};
 use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, HashSet};
 use std::future;
@@ -115,10 +115,10 @@ impl ApproverActor {
         }
     }
 
-    /// The users taking part who may approve the calls of `agent`
-    /// (`ApproveToolCall`, issue 14), each asked in the context of their own
-    /// actor - the one their answers come with. Nobody while the channel
-    /// does not run or the agent cannot be read.
+    /// The users taking part who may approve the calls of `agent` (`ApproveToolCall`, issue 14),
+    /// each asked in the context the channel admits what they send in, read from the channel, not
+    /// from their actors (`ChannelLoop::context_of`, issue 567). Nobody while the channel does not
+    /// run or the agent cannot be read.
     async fn approvers_of(&self, agent: AgentId) -> Vec<ActorId> {
         let (Some(running), Some(attributes)) =
             (self.participant_runtime.channel_loop(), self.attributes_of(agent).await)
@@ -129,8 +129,8 @@ impl ApproverActor {
         let mut approvers = Vec::new();
         for participant in &channel.participants {
             let Participant::User(user) = participant else { continue };
-            let Some(actor) = running.user_actor(*user) else { continue };
-            if self.access_policy.may_approve(&actor.security_context(), &attributes).await {
+            let context = running.context_of(ActorId::User(*user));
+            if self.access_policy.may_approve(&context, &attributes).await {
                 approvers.push(ActorId::User(*user));
             }
         }
@@ -204,14 +204,7 @@ impl ApproverActor {
     async fn handle_envelope(&self, env: Envelope, output: &dyn EventSender) -> Result<()> {
         match env.event {
             ActorEvent::ApprovalRequested(_) => self.handle_request(env, output).await,
-            ActorEvent::ApprovalGranted(res) => {
-                self.handle_response(env.context.sender_id, res, ApprovalStatus::Approved, output)
-                    .await
-            }
-            ActorEvent::ApprovalDenied(res) => {
-                self.handle_response(env.context.sender_id, res, ApprovalStatus::Denied, output)
-                    .await
-            }
+            ActorEvent::ApprovalAnswered { .. } => self.handle_answer(&env, output).await,
             ActorEvent::ApprovalRequestWithdrawn { id } => {
                 self.handle_withdrawal(env.context.sender_id, id, output).await
             }
@@ -253,39 +246,54 @@ impl ApproverActor {
         self.answering(&envelope).send(ActorEvent::ApprovalRequested(request.clone()), output).await
     }
 
-    /// Counts the answer of `user_id` to the request it names, with their
-    /// part in it (issue 419). Whether they may approve the calls of the
-    /// agent it names was asked as the channel admitted it
-    /// (`ApproveToolCall`, issue 312), and a refusal told them
-    /// (`MessageRejected`); so was that it holds their part alone. An answer
-    /// naming another agent than the one that asked is left out.
-    async fn handle_response(
-        &self,
-        user_id: ActorId,
-        response: ApprovalResponse,
-        status: ApprovalStatus,
-        output: &dyn EventSender,
-    ) -> Result<()> {
-        let mut pending = self.pending.lock().await;
-        let Some(p) = pending.get_mut(&response.id) else { return Ok(()) };
-        if response.agent_id != p.agent_id {
-            warn!("ApproverActor: {} answered approval {} for agent {}, not for agent {} that asked; its answer is left out", user_id, response.id, response.agent_id, p.agent_id);
-            return Ok(());
-        }
-        let Some(decision) = response.decisions.into_iter().find(|decision| decision.by == user_id)
-        else {
-            warn!("ApproverActor: the answer of {} to approval {} does not say it is theirs; it is left out", user_id, response.id);
+    /// Counts `answer`, a user's to the request it names, with their part in it (issue 419): the
+    /// request it holds tells which agent asked (issue 567), and whether the user may approve its
+    /// calls it enforces (`ApproveToolCall`, issue 312), asked in the context the channel admits
+    /// them in. An answer it does not count - to a request it does not hold, decided or never
+    /// asked, of an agent it cannot read, or of someone who may not approve - it refuses, and tells
+    /// them (`MessageRefused`).
+    async fn handle_answer(&self, answer: &Envelope, output: &dyn EventSender) -> Result<()> {
+        let ActorEvent::ApprovalAnswered { id, approved, decision } = &answer.event else {
             return Ok(());
         };
-        p.responses.insert(user_id, (status, decision));
+        let user = answer.context.sender_id;
+        let mut pending = self.pending.lock().await;
+        let Some(p) = pending.get_mut(id) else {
+            return self.refuse(answer, Rejection::Invalid, output).await;
+        };
+        // Its agent's attributes, as stored; the user asked as the channel admits them in.
+        let Some(attributes) = self.attributes_of(p.agent_id).await else {
+            return self.refuse(answer, Rejection::Invalid, output).await;
+        };
+        let Some(running) = self.participant_runtime.channel_loop() else { return Ok(()) };
+        let approving = ActionType::ApproveToolCall(&attributes);
+        let forbidden = |_| Rejection::Forbidden;
+        if let Err(reason) =
+            self.access_policy.require(&running.context_of(user), approving, forbidden).await
+        {
+            return self.refuse(answer, reason, output).await;
+        }
+        let status = if *approved { ApprovalStatus::Approved } else { ApprovalStatus::Denied };
+        p.responses.insert(user, (status, decision.clone()));
 
         let approvers = self.approvers_of(p.agent_id).await;
         if let Some((status, decided_by)) = p.decision(&approvers) {
-            if let Some(p) = pending.remove(&response.id) {
+            if let Some(p) = pending.remove(id) {
                 self.send_decision(p, status, decided_by, output).await?;
             }
         }
         Ok(())
+    }
+
+    /// Tells the sender of `answer` that it does not count, for `reason` (`MessageRefused`, issue
+    /// 567): to them alone, in its own name.
+    async fn refuse(
+        &self,
+        answer: &Envelope,
+        reason: Rejection,
+        output: &dyn EventSender,
+    ) -> Result<()> {
+        self.answering(answer).send(answer.refusal(reason), output).await
     }
 
     /// Forgets the request `id` that `sender` withdrew (issue 148) - only the
@@ -340,7 +348,7 @@ impl ApproverActor {
         output: &dyn EventSender,
     ) -> Result<()> {
         let response =
-            ApprovalResponse { decisions: decided_by, ..ApprovalResponse::new(p.id, p.agent_id) };
+            ApprovalVerdict { decisions: decided_by, ..ApprovalVerdict::new(p.id, p.agent_id) };
 
         let event = match status {
             ApprovalStatus::Approved => ActorEvent::ApprovalGranted(response),
@@ -384,8 +392,7 @@ impl Actor for ApproverActor {
         |event| {
             matches!(
                 event.event,
-                ActorEvent::ApprovalGranted(_)
-                    | ActorEvent::ApprovalDenied(_)
+                ActorEvent::ApprovalAnswered { .. }
                     | ActorEvent::ApprovalRequested(_)
                     | ActorEvent::ApprovalRequestWithdrawn { .. }
             )
@@ -641,16 +648,8 @@ mod tests {
                 by_rule: None,
                 at: Utc::now(),
             };
-            let response = ApprovalResponse {
-                decisions: vec![part],
-                ..ApprovalResponse::new(request.id, self.agent)
-            };
-            let event = if approved {
-                ActorEvent::ApprovalGranted(response)
-            } else {
-                ActorEvent::ApprovalDenied(response)
-            };
-            self.input.send(self.from(ActorId::User(self.users[n]), event)).await.unwrap();
+            let event = ActorEvent::ApprovalAnswered { id: request.id, approved, decision: part };
+            self.input.send(self.from(user, event)).await.unwrap();
         }
 
         async fn next(&mut self) -> Envelope {
@@ -730,7 +729,35 @@ mod tests {
             told.event
         );
         approving.answer(0, &withdrawn, true).await;
+        let refused = approving.next().await;
+        assert!(
+            matches!(refused.event, ActorEvent::MessageRefused { reason: Rejection::Invalid, .. }),
+            "an answer to it is refused, as no longer held (issue 567): {:?}",
+            refused.event
+        );
         approving.nothing().await;
+    }
+
+    /// An answer to a request the approver does not hold - never asked, or over - is refused, and
+    /// its sender told (issue 567): the approver holds what an answer can be to.
+    #[tokio::test]
+    async fn an_answer_to_a_request_not_held_is_refused() {
+        let mut approving = approving(ApprovalStrategy::Any, 1, |users| {
+            SecurityAttributes::owned_by(ActorId::User(users[0]))
+        })
+        .await;
+        let unasked = approving.request();
+        approving.answer(0, &unasked, true).await;
+        let refused = approving.next().await;
+        assert!(
+            matches!(
+                refused.event,
+                ActorEvent::MessageRefused { to, reason: Rejection::Invalid, .. }
+                    if to == ActorId::User(approving.users[0])
+            ),
+            "{:?}",
+            refused.event
+        );
     }
 
     #[tokio::test]
@@ -744,15 +771,16 @@ mod tests {
         approving.ask(&request).await;
 
         approving.answer(1, &request, false).await;
-        approving.nothing().await;
-        // An answer that does not say it is theirs is left out (issue 419).
-        let unsaid =
-            ActorEvent::ApprovalGranted(ApprovalResponse::new(request.id, approving.agent));
-        approving
-            .input
-            .send(approving.from(ActorId::User(approving.users[0]), unsaid))
-            .await
-            .unwrap();
+        let refused = approving.next().await;
+        assert!(
+            matches!(
+                refused.event,
+                ActorEvent::MessageRefused { to, reason: Rejection::Forbidden, ref refused, .. }
+                    if to == ActorId::User(approving.users[1]) && refused == "ApprovalAnswered"
+            ),
+            "refused, and they are told (issue 567): {:?}",
+            refused.event
+        );
         approving.nothing().await;
         approving.answer(0, &request, true).await;
         let decided = approving.next().await;

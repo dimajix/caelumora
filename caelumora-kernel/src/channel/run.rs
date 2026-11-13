@@ -418,6 +418,13 @@ impl ChannelLoop {
         }
     }
 
+    /// The context of `participant` acting for itself, as the channel knows it now
+    /// (`security_context_of`): what the approver asks in whether a user may approve (issue 567),
+    /// as the channel admits what they send.
+    pub(crate) fn context_of(&self, participant: ActorId) -> SecurityContext {
+        self.security_context_of(participant, participant)
+    }
+
     /// The context `event` is admitted in: its sender's, as the channel knows it now, for the
     /// initiator the event names (`security_context_of`).
     fn admitted_in(&self, event: &Envelope) -> SecurityContext {
@@ -476,9 +483,12 @@ impl ChannelLoop {
     ///   an agent taking part (issue 362);
     /// - an answer to an agent's questions (`AnswerQuestion`, issue 165) - whether its sender was
     ///   asked is the agent's to check;
-    /// - a user's answer to an approval request, by whoever may approve the calls of the agent it
-    ///   names (`ApproveToolCall`, issues 14, 312) - whether that agent asked is the approver's to
-    ///   check; a decision comes from an approver alone;
+    /// - a user's answer to an approval request (`ApprovalAnswered`), from that user, with their
+    ///   part alone - which agent asked, and whether they may approve its calls (`ApproveToolCall`,
+    ///   issues 14, 312), the approver asks, which holds the request (issue 567); a decision comes
+    ///   from an approver alone;
+    /// - what an actor did not take (`MessageRefused`, issue 567), from that actor in its own name,
+    ///   to someone else in the channel;
     /// - a command for an agent (issue 269) comes from a user, names an agent taking part that
     ///   carries it out, and is one the issuer may see and ask for (`admit_command`, issue 516);
     ///   a nudge (issue 278) comes from a user and names someone else taking part;
@@ -582,24 +592,14 @@ impl ChannelLoop {
                     .require(context, ActionType::AnswerQuestion(&channel), forbidden)
                     .await
             }
-            ActorEvent::ApprovalGranted(response) | ActorEvent::ApprovalDenied(response)
-                if event.context.sender_id.as_user_id().is_some() =>
-            {
-                // A person's answer says their part alone (issue 419): who
-                // decided is the approver's to say, from their answers.
-                if !matches!(response.decisions.as_slice(), [decision] if decision.by == event.context.sender_id)
-                {
-                    return Err(Rejection::Invalid);
-                }
-                let agent = self
-                    .controllers
-                    .agent_attributes(response.agent_id)
-                    .await
-                    .map_err(|_| Rejection::Invalid)?;
-                self.policies
-                    .access_policy()
-                    .require(context, ActionType::ApproveToolCall(&agent), forbidden)
-                    .await
+            // A person's answer says their part alone (issue 419): who decided is the approver's to
+            // say, from their answers - and which agent asked, and whether they may approve its
+            // calls, which the approver asks, holding the request (issue 567).
+            ActorEvent::ApprovalAnswered { decision, .. } => {
+                let sender = event.context.sender_id;
+                (sender.as_user_id().is_some() && decision.by == sender)
+                    .then_some(())
+                    .ok_or(Rejection::Invalid)
             }
             ActorEvent::ApprovalGranted(_)
             | ActorEvent::ApprovalDenied(_)
@@ -608,6 +608,11 @@ impl ChannelLoop {
                     .then_some(())
                     .ok_or(Rejection::Invalid)
             }
+            // What an actor did not take it tells whom it was of, someone else in the channel.
+            ActorEvent::MessageRefused { to, .. } => (*to != event.context.sender_id
+                && self.actor(*to).is_some())
+            .then_some(())
+            .ok_or(Rejection::Invalid),
             ActorEvent::CommandRequested { agent, command, .. } => {
                 event.context.sender_id.as_user_id().ok_or(Rejection::Invalid)?;
                 self.admit_command(context, *agent, command).await
@@ -1445,13 +1450,12 @@ mod tests {
         );
     }
 
-    /// Issue 419: a person's answer to an approval says their own part
-    /// alone - who decided is the approver's to say -, so one that says
-    /// nobody's, or someone else's too, is not let in, before anything is
-    /// asked of it.
+    /// Issues 419, 567: a person's answer to an approval says their own part alone - who decided is
+    /// the approver's to say -, so one that says someone else's is not let in, before anything is
+    /// asked of it; nor is a decision from anyone but an approver.
     #[tokio::test]
     async fn an_answer_to_an_approval_says_its_senders_part_alone() {
-        use caelumora_domain::approval::{ApprovalDecision, ApprovalResponse};
+        use caelumora_domain::approval::{ApprovalDecision, ApprovalVerdict};
         let alice = make_user("alice");
         let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
         let (her, bob) = (ActorId::User(alice.id), ActorId::User(UserId::new()));
@@ -1475,15 +1479,18 @@ mod tests {
             by_rule: None,
             at: Utc::now(),
         };
-        let answer = |decisions| ApprovalResponse {
-            decisions,
-            ..ApprovalResponse::new(Default::default(), AgentId::new())
+        let answered = |decision| ActorEvent::ApprovalAnswered {
+            id: Default::default(),
+            approved: true,
+            decision,
         };
-
-        for decisions in [Vec::new(), vec![part(bob)], vec![part(her), part(bob)]] {
-            channel
-                .process_envelope(from_her(ActorEvent::ApprovalGranted(answer(decisions))), &actors)
-                .await;
+        // A decision is the approver's alone.
+        let decided = ActorEvent::ApprovalGranted(ApprovalVerdict {
+            decisions: vec![part(her)],
+            ..ApprovalVerdict::new(Default::default(), AgentId::new())
+        });
+        for event in [answered(part(bob)), decided] {
+            channel.process_envelope(from_her(event), &actors).await;
         }
 
         let mut rejected = Vec::new();
@@ -1494,9 +1501,73 @@ mod tests {
         }
         assert_eq!(
             rejected,
-            vec![("ApprovalGranted".to_string(), Rejection::Invalid); 3],
-            "nobody's, someone else's, or more than hers: none let in"
+            [
+                ("ApprovalAnswered".to_string(), Rejection::Invalid),
+                ("ApprovalGranted".to_string(), Rejection::Invalid)
+            ],
+            "someone else's answer, or a decision of hers: not let in"
         );
+    }
+
+    /// Issue 567: an answer to an approval comes from a user; what an actor did not take goes to
+    /// someone else taking part - not back to itself, nor to someone who takes no part.
+    #[tokio::test]
+    async fn an_answer_comes_from_a_user_and_a_refusal_goes_to_someone_else_taking_part() {
+        use caelumora_domain::approval::ApprovalDecision;
+        let alice = make_user("alice");
+        let channel = channel_with(&[&alice], Arc::new(AllowAllPolicy::new())).await;
+        let her = ActorId::User(alice.id);
+        let (agent, stranger) = (ActorId::Agent(AgentId::new()), ActorId::User(UserId::new()));
+        let running = |id, inbox| RunningActor {
+            id,
+            abort_handle: tokio::spawn(async {}).abort_handle(),
+            task: TaskTracker::new(),
+            inbox: Some(inbox),
+            leaving: None,
+        };
+        let ((to_her, mut hers), (to_agent, mut agents)) = (opened(), opened());
+        let actors =
+            HashMap::from([(her, running(her, to_her)), (agent, running(agent, to_agent))]);
+        let sent = |sender: ActorId, event: ActorEvent| {
+            Envelope::new(EventContext { sender_id: sender, ..EventContext::default() }, event)
+        };
+        let refused = |to| ActorEvent::MessageRefused {
+            to,
+            refused: "MessageModified".to_string(),
+            message: None,
+            reason: Rejection::Invalid,
+        };
+        let decision =
+            ApprovalDecision { by: agent, name: String::new(), by_rule: None, at: Utc::now() };
+        let answered =
+            ActorEvent::ApprovalAnswered { id: Default::default(), approved: true, decision };
+
+        channel.process_envelope(sent(agent, answered), &actors).await;
+        for to in [agent, stranger] {
+            channel.process_envelope(sent(agent, refused(to)), &actors).await;
+        }
+        channel.process_envelope(sent(agent, refused(her)), &actors).await;
+
+        let mut rejected = Vec::new();
+        while let Some(envelope) = agents.try_recv().await {
+            if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
+                rejected.push((kind, reason));
+            }
+        }
+        assert_eq!(
+            rejected,
+            [
+                ("ApprovalAnswered".to_string(), Rejection::Invalid),
+                ("MessageRefused".to_string(), Rejection::Invalid),
+                ("MessageRefused".to_string(), Rejection::Invalid)
+            ],
+            "an agent's answer, a refusal to itself or to a stranger: not let in"
+        );
+        let mut told = Vec::new();
+        while let Some(envelope) = hers.try_recv().await {
+            told.push(envelope.event.kind());
+        }
+        assert_eq!(told, ["MessageRefused"], "a refusal to her, let in and delivered to her");
     }
 
     #[tokio::test]

@@ -16,9 +16,10 @@ waits.
     `ApproverActor` only, which passes it on to the users - to everybody, so that all see what the
     agent waits for; only who may approve is asked. A request nobody taking part may approve is
     denied at once.
-3.  **Answers.** A user approves or denies through their `UserActor`; the moderator routes the
-    answer to the approver only. A rule of the user's may answer for them (see [Rules of a
-    person](#rules-of-a-person)).
+3.  **Answers.** A user approves or denies through their `UserActor`, naming the request alone
+    (`ApprovalAnswered`, issue 567); the moderator routes the answer to the approver only, which
+    holds the request: it tells which agent asked, and whether the user may approve its calls. A
+    rule of the user's may answer for them (see [Rules of a person](#rules-of-a-person)).
 4.  **Decision.** The approver decides by its `ApprovalStrategy` (`Any`, `Majority`, `All`),
     counting only those who may approve, and decides again when users join or leave. A request
     nobody decides times out after ten minutes. The approver's decision is the only way a decision
@@ -32,8 +33,8 @@ A denial or a timeout finishes the call at once, with `denied` or `timed_out`.
 ### What is recorded of an approval
 
 Who decided is recorded at the call, for the readers of its message (issue 419). Every answer says
-whose it is (`ApprovalResponse::decisions`): a person's answer their own part alone - who, named
-as then, the rule of theirs that answered if one did, and when (`ApprovalDecision`) -, set by their
+whose it is: a person's answer their own part alone (`ApprovalAnswered::decision`) - who, named as
+then, the rule of theirs that answered if one did, and when (`ApprovalDecision`) -, set by their
 actor; the channel lets in no answer of a person that says anything else. The approver keeps each
 part with the answer, and its decision says whose answers made it: every counted answer that agrees
 with it - the first who approved under `Any`, the majority under `Majority`, all who approved
@@ -175,19 +176,21 @@ words with quoting and escapes removed. A word that expands - a glob, a `~` - eq
 
 ### Who may approve
 
-Who may approve a call is the `AccessPolicy`'s to decide, and the channel enforces it as it
-admits an answer (issue 312): `ApproveToolCall` carries the attributes of the agent the answer
-names, loaded, never taken from the answer or the request. The ownership policy grants it the
-agent's owner and whom the agent's access list lets read it, who are responsible for it also in
-someone else's channel. No agent is the system's (issue
+Who may approve a call is the `AccessPolicy`'s to decide, and the approver enforces it as it counts
+an answer (issues 312, 567): `ApproveToolCall` carries the attributes of the agent that asked, as
+the request the approver holds names it, loaded, never taken from the answer. The ownership policy
+grants it the agent's owner and whom the agent's access list lets read it, who are responsible for
+it also in someone else's channel. No agent is the system's (issue
 [477](../issues/477-only-the-system-acts-as-the-system.md)), nor nobody's (issue
 [491](../issues/491-every-entity-has-an-owner.md)).
 
-*   An answer enters the channel only if its sender may approve, asked in the context the answer
-    came with; any other is refused and its sender told (`MessageRejected`), as everything the
-    channel does not let in. The approver counts an answer only for the agent that asked; one
-    naming another agent is left out and logged. A decision - granted, denied, timed out - enters
-    the channel only from an approver.
+*   An answer enters the channel from its user, with their own part alone; the approver counts it
+    only if the request is one it holds and the user may approve the calls of the agent that asked,
+    asked in the context the channel admits what they send in (`ChannelLoop::context_of`). Any
+    other answer it refuses and tells its sender (`MessageRefused`, as an actor tells whom an event
+    went to that it does not take): `Invalid` for a request it does not hold - never asked, decided
+    or withdrawn -, `Forbidden` for one who may not approve. A decision - granted, denied, timed
+    out - enters the channel only from an approver.
 *   The strategies count only those taking part who may approve, now. An answer of someone who left
     or may no longer approve does not count, either way. With nobody left who may approve, the
     request is denied.

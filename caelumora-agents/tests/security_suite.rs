@@ -1412,10 +1412,10 @@ async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
                 ActorEvent::ApprovalRequested(request) if from_approver => {
                     asked.request = Some(request)
                 }
-                ActorEvent::ApprovalGranted(answer) | ActorEvent::ApprovalDenied(answer)
+                ActorEvent::ApprovalAnswered { decision, .. }
                     if envelope.context.sender_id == ActorId::User(user) =>
                 {
-                    asked.by_rule = answer.decisions.first().and_then(|decision| decision.by_rule);
+                    asked.by_rule = decision.by_rule;
                 }
                 ActorEvent::ApprovalGranted(decided) if from_approver => {
                     (asked.approved, asked.decided_by) = (Some(true), decided.decisions);
@@ -1715,15 +1715,14 @@ async fn a_rule_that_denies_a_command_asks_for_a_line_it_cannot_judge() {
 
 /// Approving a tool call (issue 14) is for who is responsible for the
 /// agent - its owner and contributors: alice's answer counts, bob's, who
-/// only takes part, is refused by the channel as it admits it, and he is
-/// told (`MessageRejected`, issue 312). The approver asks of everybody
-/// taking part to know whom to wait for; the view offers it to alice
-/// alone.
+/// only takes part, is refused by the approver as it counts the answers,
+/// and he is told (`MessageRefused`, issues 312, 567). The approver asks of
+/// everybody taking part to know whom to wait for; the view offers it to
+/// alice alone.
 #[tokio::test]
 #[expect(clippy::too_many_lines, reason = "to be split, longer since rustfmt (issue 490)")]
 async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     use caelumora_domain::actor::ActorEvent;
-    use caelumora_domain::approval::ApprovalResponse;
 
     let (world, session, main, helper) = with_a_call_to_approve().await;
     let mut watch = main.user_actor(world.alice).expect("she takes part").watch();
@@ -1776,28 +1775,27 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
         ["alice: ApproveToolCall(alice's) yes", "bob: ApproveToolCall(alice's) no"]
     );
 
-    let response = ApprovalResponse::new(request.id, helper);
     let mut his = main.user_actor(world.bob).unwrap().watch();
     let (decided_by, asked) = world
         .asked(async {
             main.user_actor(world.bob)
                 .unwrap()
-                .send_approval(response.clone(), false)
+                .send_approval(request.id, false)
                 .await
                 .expect("sent");
-            let ActorEvent::MessageRejected { rejected, reason, .. } =
-                shown(&mut his, "MessageRejected").await
+            let ActorEvent::MessageRefused { refused, reason, .. } =
+                shown(&mut his, "MessageRefused").await
             else {
                 unreachable!()
             };
             assert_eq!(
-                (rejected.as_str(), reason),
-                ("ApprovalDenied", Rejection::Forbidden),
-                "his answer is refused, and he is told"
+                (refused.as_str(), reason),
+                ("ApprovalAnswered", Rejection::Forbidden),
+                "his answer is refused by the approver, and he is told"
             );
             main.user_actor(world.alice)
                 .unwrap()
-                .send_approval(response.clone(), true)
+                .send_approval(request.id, true)
                 .await
                 .expect("sent");
             time::timeout(Duration::from_secs(5), async {
@@ -1837,9 +1835,9 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
     assert_eq!(
         approving,
         [
-            // bob answers; the channel refuses it.
+            // bob answers; the approver, which holds the request, refuses it (issue 567).
             "bob: ApproveToolCall(alice's) no",
-            // alice answers, the channel admits it; whom to wait for: her alone.
+            // alice answers, the approver counts it; whom to wait for: her alone.
             "alice: ApproveToolCall(alice's) yes",
             "alice: ApproveToolCall(alice's) yes",
             "bob: ApproveToolCall(alice's) no",

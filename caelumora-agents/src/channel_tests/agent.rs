@@ -15,7 +15,7 @@ use caelumora_api::model::{LanguageModelClient, ModelError, ModelProfileProvider
 use caelumora_domain::agent::{
     AgentChannelState, AgentId, HearsDuringTurn, HearsFrom, RetryRefused,
 };
-use caelumora_domain::approval::{ApprovalRequest, ApprovalResponse};
+use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::ModelProfile;
@@ -2318,8 +2318,7 @@ async fn a_turn_waiting_for_approval_can_be_decided_after_a_restart() {
             _ => None,
         })
         .expect("alice");
-    let response = ApprovalResponse::new(asked.id, agent);
-    restarted.user_actor(alice).unwrap().send_approval(response, true).await.unwrap();
+    restarted.user_actor(alice).unwrap().send_approval(asked.id, true).await.unwrap();
     let said: Vec<_> =
         answered(&mut events, agent).await.iter().filter_map(|m| m.content.clone()).collect();
     assert_eq!(said, ["Done."], "the call runs and the turn goes on");

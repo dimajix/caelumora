@@ -140,6 +140,14 @@ pub enum HistoryItemResponse<M> {
         reason: Rejection,
         at: DateTime<Utc>,
     },
+    /// What the reader sent was not taken by `by`, the actor it went to (issue 567).
+    MessageRefused {
+        by: ActorId,
+        refused: String,
+        message: Option<MessageId>,
+        reason: Rejection,
+        at: DateTime<Utc>,
+    },
     /// The reader was asked to respond, to what `by` said or nudged, for
     /// `reason` (issues 278, 417, 439).
     ResponseRequested {
@@ -242,6 +250,9 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::MessageRejected { rejected, message, reason, at } => {
                 Some(Self::MessageRejected { rejected, message, reason, at })
             }
+            HistoryEntry::MessageRefused { by, refused, message, reason, at, .. } => {
+                Some(Self::MessageRefused { by, refused, message, reason, at })
+            }
             HistoryEntry::ResponseRequested { by, reason, at } => {
                 Some(Self::ResponseRequested { by, reason, at })
             }
@@ -256,6 +267,7 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::CommandRequested { .. }
             | HistoryEntry::RetryRequested { .. }
             | HistoryEntry::ApprovalRequested { .. }
+            | HistoryEntry::ApprovalAnswered { .. }
             | HistoryEntry::ApprovalDecided { .. }
             | HistoryEntry::ApprovalRequestWithdrawn { .. }
             | HistoryEntry::QuestionRequested { .. }
