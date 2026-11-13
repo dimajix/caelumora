@@ -1059,14 +1059,27 @@ mod tests {
 
     #[tokio::test]
     async fn send_message_asks_for_a_wakeup_and_returns_the_span_of_all_its_envelopes() {
-        let (actor, _channel) = user_actor().await;
+        let (actor, channel) = user_actor().await;
+        let actor = Arc::new(actor);
+        let (_inbox, rx) = mpsc::channel(1);
+        let (output, mut channel_inbox) = mpsc::channel(10);
+        let running = tokio::spawn({
+            let actor = Arc::clone(&actor);
+            async move {
+                actor
+                    .run(
+                        Box::new(InMemoryEventReceiver::new(rx)),
+                        Box::new(InMemoryEventSender::new(output)),
+                    )
+                    .await
+            }
+        });
 
         let span_id =
             actor.send_message(Some("hello".to_string()), None, Vec::new()).await.unwrap();
 
-        let mut rx = actor.user_rx.lock().await;
-        let wakeup = rx.recv().await.expect("WakeupRequested");
-        let complete = rx.recv().await.expect("CompleteMessageGenerated");
+        let wakeup = channel_inbox.recv().await.expect("WakeupRequested");
+        let complete = channel_inbox.recv().await.expect("CompleteMessageGenerated");
         assert!(
             matches!(wakeup.event, ActorEvent::WakeupRequested),
             "the wakeup first, so that the agents are awake when the message comes"
@@ -1075,13 +1088,16 @@ mod tests {
             matches!(&complete.event, ActorEvent::CompleteMessageGenerated(m) if m.turn_id.is_none()),
             "said outside of any turn, answered by itself (issue 258)"
         );
-        assert!(rx.try_recv().is_err(), "and nothing else: there is no turn to end");
+        let more = time::timeout(Duration::from_millis(100), channel_inbox.recv()).await;
+        assert!(more.is_err(), "and nothing else: there is no turn to end");
         for envelope in [&wakeup, &complete] {
             assert_eq!(envelope.context.span_id, span_id, "one user action, one span");
             assert_eq!(envelope.context.sender_id, actor.id());
-            assert_eq!(envelope.context.channel_id, actor.channel_id);
+            assert_eq!(envelope.context.channel_id, channel.id());
         }
         assert_ne!(wakeup.context.event_id, complete.context.event_id, "two events, two event ids");
+        actor.stop();
+        running.await.unwrap().unwrap();
     }
 
     #[tokio::test]
@@ -1150,10 +1166,8 @@ mod tests {
         let ran = actor
             .run(Box::new(InMemoryEventReceiver::new(mpsc::channel(1).1)), Box::new(nowhere()))
             .await;
-        assert!(
-            ran.is_ok() && following.shown.try_recv().is_err(),
-            "and nothing more: it does not run"
-        );
+        let more = time::timeout(Duration::from_millis(100), following.next()).await;
+        assert!(ran.is_ok() && more.is_err(), "and nothing more: it does not run");
     }
 
     #[tokio::test]

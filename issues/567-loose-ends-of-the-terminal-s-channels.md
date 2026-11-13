@@ -132,3 +132,12 @@ collected here, to be taken on one after the other, each a step of its own:
   by `CONTENT_TYPE`; the attachment test is short enough now to lose its `expect` of
   `clippy::too_many_lines` (issue [490](490-functions-longer-than-100-lines-since-rustfmt.md)). No
   behaviour changes.
+
+- **2026-11-13** — Step 3, point 3: `an_actor_ended_before_it_ran_shows_its_end_alone` sees that
+  nothing more is shown through the watch's API - a `timeout` of 100 ms on `next()` that runs out,
+  as the tests of the locks and the approver wait for nothing to come - instead of reading the
+  private `shown`. No other test reads a field of the watch. On the review, at the maintainer's
+  decision: `send_message_asks_for_a_wakeup_and_returns_the_span_of_all_its_envelopes` read two
+  private fields of the actor, its queue `user_rx` and its `channel_id`; it runs the actor now and
+  reads what it forwards to the channel, waits for nothing else as above, and takes the channel's
+  id from the channel of its fixture.
