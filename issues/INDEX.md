@@ -357,6 +357,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [560](560-commands-are-not-grouped-by-what-they-act-on.md) | done | The commands of a channel are single words, one per operation, so that every new operation needs a word of its own that says neither what it acts on nor which commands belong with it, and beyond `/add` and `/create-agent` nobody can manage the channels, participants and agents of a session by command. |
 | [561](561-the-terminal-shows-one-channel-of-a-session.md) | open | `caelumora-tui` always talks in the first channel of a session and cannot change to another, so whoever takes part in several channels of a session can reach only one of them from the terminal, and does not learn what happens in the others - not even that an approval waits there. |
 | [565](565-the-terminal-misses-what-a-channel-joined-shows-at-first.md) | open | The terminal follows a channel the user joins while it runs once the event bus tells so, and is shown only what comes after; what the channel showed the newcomer in between - an approval to answer, questions put to them - the terminal never tells. |
+| [566](566-the-terminal-tells-little-at-its-start-and-of-withdrawals.md) | open | At its start the terminal tells only who answers in the channel it talks in - not which channel that is, nor the others the user takes part in; and of a channel it does not talk in, it tells an approval requested but not that it was withdrawn. |
 
 ## Context and knowledge
 
