@@ -65,7 +65,13 @@ impl Followed {
     /// the viewer is no user the channel lists, or cannot read it.
     pub(crate) async fn new(channel: Arc<ChannelLoop>, views: Views) -> Option<Self> {
         let ActorId::User(user) = views.context().caller_id else { return None };
-        let watch = views.channel(channel.session_id(), channel.id()).await.ok()?.user_follow()?;
+        let watch = views
+            .channel(channel.session_id(), channel.id())
+            .await
+            .ok()?
+            .user_follow()
+            .await
+            .ok()??;
         let handles =
             channel.participants().into_iter().filter_map(|m| Some((m.id, m.handle?))).collect();
         Some(Self {

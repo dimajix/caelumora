@@ -23,7 +23,7 @@ use caelumora_domain::snapshot::{
     CandidateRefusal, CandidateSnapshot, DeletedSnapshot, Detail, ParticipantSnapshot,
     SessionSnapshot,
 };
-use caelumora_domain::store::{StoreError, Stored};
+use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
 use caelumora_domain::user::UserField;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::value::name::{NameMatch, ScopedName};
@@ -385,11 +385,49 @@ impl SessionView {
         .await
     }
 
-    /// The document of channel `id`, if the session has it, with its loop if it runs. Read in the
-    /// kernel's name: reaching the session was permitted, and whether the channel may be read is
-    /// asked of it.
-    async fn document(&self, id: ChannelId) -> ViewResult<Option<Document>> {
-        match &self.running {
+    /// The document of channel `id`, if the session has it, with its loop if it runs, as the view
+    /// reached the session (`document_in`).
+    pub(super) async fn document(&self, id: ChannelId) -> ViewResult<Option<Document>> {
+        self.document_in(self.running.as_ref(), id).await
+    }
+
+    /// The document of channel `id` as it stands now: through the session's loop if it runs now -
+    /// not the one the view reached, which a stop or a deletion leaves behind -, else from the
+    /// store (`document_in`); none once the session is deleted, which hides its channels with it.
+    /// For a channel already reached, whose reading is not asked again.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot be read.
+    pub(super) async fn document_now(&self, id: ChannelId) -> ViewResult<Option<Document>> {
+        let running = self.views.running.running(self.id());
+        if running.is_none() {
+            let session = self
+                .views
+                .stores()
+                .sessions
+                .get(&SecurityContext::system(), self.id())
+                .await
+                .optional()
+                .map_err(|e| ViewError::failed(e, format!("reading session {}", self.id())))?;
+            if session.is_none() {
+                return Ok(None);
+            }
+        }
+        self.document_in(running.as_ref(), id).await
+    }
+
+    /// The document of channel `id`, if the session has it, with its loop if `running`. Read in
+    /// the kernel's name: reaching the session was permitted, and whether the channel may be read
+    /// is asked of it by who reaches it. A channel the store no longer has is none.
+    ///
+    /// # Errors
+    /// `Failed` if the store cannot be read.
+    async fn document_in(
+        &self,
+        running: Option<&Arc<SessionLoop>>,
+        id: ChannelId,
+    ) -> ViewResult<Option<Document>> {
+        match running {
             Some(session_loop) => {
                 Ok(session_loop.listed_channel(id).map(|(channel, run)| (channel, Some(run))))
             }
@@ -400,8 +438,9 @@ impl SessionView {
                     .channels
                     .get(&SecurityContext::system(), id)
                     .await
+                    .optional()
                     .map_err(|e| ViewError::failed(e, format!("reading channel {id}")))?;
-                Ok(Some((Arc::new(channel), None)))
+                Ok(channel.map(|channel| (Arc::new(channel), None)))
             }
             None => Ok(None),
         }

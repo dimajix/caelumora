@@ -196,15 +196,20 @@ impl ChannelView {
         }
     }
 
-    /// The channel as the viewer follows it, from now on (`ChannelWatch`,
-    /// issues 104, 386): what their own actor in it shows, across its runs,
-    /// whether the channel runs or not; it is not started for this. `None`
-    /// if the viewer is no user taking part in it.
-    pub fn user_follow(&self) -> Option<ChannelWatch> {
-        let viewer @ ActorId::User(_) = self.views().context().caller_id else { return None };
-        self.lists(viewer).then(|| {
-            ChannelWatch::of(&self.views().actor_manager().outbox(self.channel.id, viewer))
-        })
+    /// The channel as the viewer follows it, from now on (`ChannelWatch`, issues 104, 386): what
+    /// their own actor in it shows, across its runs, whether the channel runs or not; it is not
+    /// started for this. Whether the channel lists them is read as it stands once the watch began
+    /// (`SessionView::document_now`), not as this view read it, so that one who left meanwhile is
+    /// not followed past the end their actor showed before (issue 567); nothing is asked again.
+    /// `None` if the viewer is no user taking part in it, or the channel or its session is gone.
+    ///
+    /// # Errors
+    /// `Failed` if the channel cannot be read.
+    pub async fn user_follow(&self) -> ViewResult<Option<ChannelWatch>> {
+        let viewer @ ActorId::User(_) = self.views().context().caller_id else { return Ok(None) };
+        let watch = ChannelWatch::of(&self.views().actor_manager().outbox(self.channel.id, viewer));
+        let listed = self.session.document_now(self.channel.id).await?;
+        Ok(listed.filter(|(channel, _)| channel.lists(viewer)).map(|_| watch))
     }
 
     /// Whether the viewer may read an entry of the channel classified

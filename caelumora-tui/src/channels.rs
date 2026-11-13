@@ -4,7 +4,7 @@
 use crate::followed::Followed;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalId;
-use caelumora_domain::channel::{Channel, ChannelId, JOINED, LEFT};
+use caelumora_domain::channel::{Channel, ChannelId, JOINED};
 use caelumora_domain::event::{EntityChange, GlobalEvent};
 use caelumora_domain::question::QuestionId;
 use caelumora_domain::value::name::Name;
@@ -28,8 +28,8 @@ pub(crate) struct Channels {
     session: Arc<SessionLoop>,
     /// The views as the user reads them, through which a channel is followed.
     views: Views,
-    /// What the event bus tells of the session in the user's name: where they joined or left a
-    /// channel, or one was restored.
+    /// What the event bus tells of the session in the user's name: where they joined a channel,
+    /// or one was restored.
     session_events: EventSubscription,
     /// The channels followed, in the order of the session, those joined meanwhile after them.
     followed: Vec<Followed>,
@@ -47,8 +47,8 @@ pub(crate) enum Happened {
     /// What the channel showed.
     Shown(ChannelId, Result<Shown, Lagged>),
     /// The channels the user takes part in may have changed: the event bus told that they joined
-    /// or left one - also where their join was taken back, which no run of their actor ends -, or
-    /// that one was restored, or lost what it would have told.
+    /// one, or that one was restored, or lost what it would have told. That they left one, the
+    /// channel shows as the end of their actor's run.
     TakingPart,
 }
 
@@ -286,12 +286,12 @@ async fn taking_part(session_events: &mut EventSubscription, me: ActorId) {
     }
 }
 
-/// Whether `event` may change the channels the user `me` takes part in: they joined or left one,
-/// or one was restored.
+/// Whether `event` may add to the channels the user `me` takes part in: they joined one, or one
+/// was restored. A leave needs no event: the channel shows the end of their actor's run, where
+/// following reads anew whether it lists them (`Followed::ended`).
 fn changes_taking_part(event: &GlobalEvent, me: ActorId) -> bool {
     let Some((_, change)) = event.about::<Channel>() else { return false };
-    let theirs = |name| change.data::<ActorId>(name) == Some(me);
-    theirs(JOINED) || theirs(LEFT) || matches!(change, EntityChange::Restored)
+    change.data::<ActorId>(JOINED) == Some(me) || matches!(change, EntityChange::Restored)
 }
 
 #[cfg(test)]
@@ -300,7 +300,7 @@ mod tests {
     use crate::followed::testing::{approval, from, message};
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::AgentId;
-    use caelumora_domain::channel::{HistoryAccess, AGENT_STATE_CHANGED};
+    use caelumora_domain::channel::{HistoryAccess, AGENT_STATE_CHANGED, LEFT};
     use caelumora_domain::message::Message;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::SessionId;
@@ -551,18 +551,17 @@ mod tests {
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), talked_in, "no switch");
     }
 
-    /// What may change the channels the user takes part in: their own join and leave, and a
-    /// channel restored; not another's.
+    /// What may add to the channels the user takes part in: their own join and a channel
+    /// restored; not another's join, nor a leave, which the end of a run shows.
     #[test]
-    fn the_users_own_joins_and_leaves_and_restored_channels_count() {
+    fn the_users_own_joins_and_restored_channels_count() {
         let (me, another) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
         let at = (SessionId::new(), ChannelId::new());
         let event = |name, who: ActorId| GlobalEvent::custom::<Channel>(&at, name, &who);
         assert!(changes_taking_part(&event(JOINED, me), me));
-        assert!(changes_taking_part(&event(LEFT, me), me));
         assert!(changes_taking_part(&GlobalEvent::restored::<Channel>(&at), me));
         assert!(!changes_taking_part(&event(JOINED, another), me), "another's join");
-        assert!(!changes_taking_part(&event(LEFT, another), me), "another's leave");
+        assert!(!changes_taking_part(&event(LEFT, me), me), "their own leave");
     }
 
     /// A channel restored that the user takes part in is followed again, as one joined: the user
@@ -581,8 +580,7 @@ mod tests {
         assert!(channels.followed(side.id()).is_some());
     }
 
-    /// Following anew drops a channel the user no longer takes part in - also one no run of
-    /// their actor ends, as a join taken back.
+    /// Following anew drops a channel the user no longer takes part in.
     #[tokio::test]
     async fn following_anew_drops_a_channel_the_user_left() {
         let (mut channels, session_loop, owner, _) = followed().await;

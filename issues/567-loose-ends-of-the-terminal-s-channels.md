@@ -210,3 +210,40 @@ collected here, to be taken on one after the other, each a step of its own:
   the history it holds through `ChannelLoop::reading_history` of `channel::testing` instead of its
   state. The crate-root `testing` modules of `caelumora-model` and `caelumora-compaction` give
   their items as `pub(super)`, as the guidelines describe a private one.
+
+- **2026-11-13** — Decided with the maintainer before step 7: of the three options - the kernel
+  showing an end where it takes a join back, the stream subscribing to the bus, or leaving it -
+  the first, so that every follower ends through its watch, as at the end of any run.
+
+- **2026-11-13** — Decided anew with the maintainer on the review of that change: its premise does
+  not hold for users. A user's actor is never refused as it is built (`UserActor::new` has no step
+  that fails), so the rollback of an addition does not reach a user but in the race of two takings
+  in at once that issue [564](564-taking-someone-in-is-rolled-back-in-part.md) takes on - and only
+  a user is followed by a frontend. The point as this issue states it came of a wrong reading in
+  561. The change was dropped before it was committed. The gap the review found instead is taken
+  on: a frontend followed a channel by the listing of the view it had read, and subscribed to the
+  outbox only after it - one who left in between was followed past the end their actor showed
+  before the watch began, a stream of the REST server until its token expired.
+
+- **2026-11-13** — Step 7, point 7 as decided anew: `ChannelView::user_follow` begins the watch
+  first and then reads whether the channel lists the viewer as it stands
+  (`SessionView::document_now`): through the session's loop if it runs now - not the loop the view
+  reached, which a stop or a deletion leaves behind -, else from the store, and as none once the
+  session is deleted, which hides its channels with it; nothing is asked of the policy again. So a
+  follower who left, or whose session went, before the watch began is not followed past the end
+  their actor showed. It is `async` now and passes on a store that cannot be read
+  (`ViewResult<Option<ChannelWatch>>`), which the REST server answers as a server error rather than
+  as one who takes no part; the terminal and the security suite await it. Reading a channel of a
+  stopped session that its store no longer has is now no channel rather than a failure, for every
+  reader of `SessionView::document`. CHANNELS.md says so where it describes a user's live stream,
+  and no longer gives the join taken back as a case no run ends, nor does EVENTS.md or the
+  terminal's `Happened::TakingPart`. A join taken back in the race issue 564 takes on still ends no
+  run; that is 564's to record when it is worked on.
+
+- **2026-11-13** — Decided with the maintainer on the review of step 7, and done in it: the
+  terminal no longer reads anew at a leave announced on the bus. Neither reason given for it in
+  561 holds: a user's join is not taken back, and following now reads the channel as it stands once
+  the watch began, so that the end of the user's actor's run tells every leave. Its own join, a
+  channel restored and a loss on the bus are what it follows anew at (`changes_taking_part`);
+  EVENTS.md says that the terminal learns of a leave from the end of the run, and CHANNELS.md no
+  longer names the terminal's reading at a leave.

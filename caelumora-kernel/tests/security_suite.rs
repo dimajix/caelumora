@@ -706,8 +706,11 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
         async move { manager.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
     };
 
-    let (watch, asked) =
-        world.asked(async { reach(world.bob).await.expect("he takes part").user_follow() }).await;
+    let (watch, asked) = world
+        .asked(async {
+            reach(world.bob).await.expect("he takes part").user_follow().await.expect("read")
+        })
+        .await;
     assert_eq!(
         asked,
         checks(&[
@@ -741,7 +744,10 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     assert!(ended(&mut his, Duration::from_secs(5)).await, "he is told his actor ended");
     let stopped = reach(world.bob).await.expect("he still takes part");
-    assert!(stopped.user_follow().is_some(), "and follows the channel while it does not run");
+    assert!(
+        stopped.user_follow().await.expect("read").is_some(),
+        "and follows the channel while it does not run"
+    );
     assert!(stopped.running().is_none(), "without starting it");
 }
 

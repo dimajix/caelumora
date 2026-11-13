@@ -1359,6 +1359,37 @@ mod tests {
         assert!(matches!(unread, Err(ViewError::SessionNotFound(_))), "the session is not theirs");
     }
 
+    /// A user follows a channel while it lists them, read as it stands once the watch began - not
+    /// as the view read it, nor through the loop it reached: a view read before they left, or
+    /// before the session was deleted, gives them no watch, since the end their actor showed came
+    /// before it; one read before the session stopped follows it as stored (issue 567).
+    #[tokio::test]
+    async fn a_user_follows_a_channel_as_it_stands_once_the_watch_began() {
+        let (_, manager) = owned_kernel(Default::default());
+        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let session = session_loop.id();
+        let views = manager.views(Viewer::new(owner.clone()));
+        let side = spec("side", vec![owner.caller_id]);
+        let channel =
+            session_loop.create_channel(&owner, side).await.expect("the owner creates it");
+        let read_before = views.channel(session, channel.id()).await.expect("the owner reads it");
+        assert!(read_before.user_follow().await.unwrap().is_some(), "followed while listed");
+
+        channel.leave(&owner, owner.caller_id).await.expect("the owner may leave");
+        assert!(read_before.lists(owner.caller_id), "listed as the view read it");
+        assert!(read_before.user_follow().await.unwrap().is_none(), "not followed: they left");
+
+        // The session stopped since the view read it: read from the store, as it stands.
+        let main = session_loop.channels()[0].id();
+        let main_before = views.channel(session, main).await.expect("the owner reads it");
+        manager.stop(&owner, session).await.expect("the owner stops it");
+        assert!(main_before.user_follow().await.unwrap().is_some(), "still listed, stopped");
+
+        // Deleted since: not the loop the view reached, which still lists them.
+        manager.delete(&owner, session).await.expect("the owner deletes it");
+        assert!(main_before.user_follow().await.unwrap().is_none(), "not followed: it is gone");
+    }
+
     /// Whether a channel lists the viewer: while they take part in it; not once they left it -
     /// though they may still read it -, nor in a channel that is not there, nor for whom the
     /// session cannot be read.

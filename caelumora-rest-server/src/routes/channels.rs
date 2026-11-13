@@ -235,7 +235,7 @@ pub(super) async fn join_channel(
     let (session_id, channel_id) = (SessionId(id), ChannelId(cid));
     let views = views(&state, &user);
     let channel = views.channel(session_id, channel_id).await?;
-    let watch = channel.user_follow().ok_or_else(|| not_a_participant(channel_id))?;
+    let watch = channel.user_follow().await?.ok_or_else(|| not_a_participant(channel_id))?;
     let follower = ChannelFollower {
         views,
         session_id,
