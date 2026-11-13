@@ -4,13 +4,14 @@
 use crate::followed::Followed;
 use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::question::{QuestionId, QuestionRequest};
+use caelumora_domain::question::QuestionId;
 use caelumora_kernel::actor::user::Lagged;
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::Views;
 use futures::future::select_all;
 use std::future;
+use uuid::Uuid;
 
 /// The channels of a session the terminal follows for the user - every one they take part in -
 /// and the one they talk in: of the others, it tells what waits for the user.
@@ -48,18 +49,16 @@ impl Channels {
         self.followed.iter_mut().find(|followed| followed.is_pending(id))
     }
 
-    /// The open questions put to the user that `arg` names by id, in whichever channel, or without
-    /// one the last put to them in the channel talked in.
-    pub(crate) fn questions_put_to_user(&self, arg: &str) -> Option<&QuestionRequest> {
+    /// The channel whose questions `arg` names: the one that printed questions of that id, or
+    /// without one the channel talked in.
+    pub(crate) fn asking(&self, arg: &str) -> Option<&Followed> {
         match arg.trim() {
-            "" => self.talked_in()?.questions_put_to_user(""),
-            id => self.followed.iter().find_map(|followed| followed.questions_put_to_user(id)),
+            "" => self.talked_in(),
+            id => {
+                let id = QuestionId(Uuid::parse_str(id).ok()?);
+                self.followed.iter().find(|followed| followed.printed(id))
+            }
         }
-    }
-
-    /// Whether questions `id` are open in a channel followed.
-    pub(crate) fn is_open(&self, id: QuestionId) -> bool {
-        self.followed.iter().any(|followed| followed.is_open(id))
     }
 
     /// Talks in the channel followed of the whole name `name` from now on, and answers the lines
@@ -158,10 +157,11 @@ impl Channels {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::followed::testing::{approval, asked_of, from, message};
+    use crate::followed::testing::{approval, from, message};
     use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::message::Message;
+    use caelumora_domain::question::testing::make_question_request;
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::session::testing::{running_session_of_a_user, spec, test_kernel};
     use caelumora_kernel::session::SessionManager;
@@ -244,7 +244,12 @@ mod tests {
             channels.take_in(side.id(), shown(&side, other, event)).await,
             ["[side] other> \x1b[1;36m@owner\x1b[0m look"]
         );
-        let theirs = ActorEvent::QuestionRequested(asked_of(&side, agent_id, other));
+        let theirs = ActorEvent::QuestionRequested(make_question_request(
+            side.session_id(),
+            side.id(),
+            agent_id,
+            other,
+        ));
         assert!(channels.take_in(side.id(), shown(&side, agent, theirs)).await.is_empty());
         let request = approval(&side, agent_id);
         let id = request.id;
@@ -296,16 +301,23 @@ mod tests {
         channels
             .take_in(side.id(), shown(&side, agent, ActorEvent::ApprovalRequested(request)))
             .await;
-        let questions = asked_of(&side, agent_id, owner.caller_id);
+        let questions =
+            make_question_request(side.session_id(), side.id(), agent_id, owner.caller_id);
         let question_id = questions.id;
-        let event = ActorEvent::QuestionRequested(questions);
-        channels.take_in(side.id(), shown(&side, agent, event)).await;
+        let asked = from(&side, agent, ActorEvent::QuestionRequested(questions));
+        let actor = channels.followed(side.id()).and_then(Followed::actor).expect("it runs");
+        // As the channel routes it: the user's actor keeps it as open, and shows it.
+        actor.take_in_as_routed(asked).await;
+        let (channel_id, shown) = channels.next().await;
+        channels.take_in(channel_id, shown).await;
 
         assert_eq!(channels.awaiting(id).map(|f| f.channel_id()), Some(side.id()));
-        let named = channels.questions_put_to_user(&question_id.0.to_string()).map(|q| q.id);
-        assert_eq!(named, Some(question_id), "by id, in another channel");
-        assert!(channels.questions_put_to_user("").is_none(), "none in the channel talked in");
-        assert!(channels.is_open(question_id));
+        let asking = channels.asking(&question_id.0.to_string()).map(|f| f.channel_id());
+        assert_eq!(asking, Some(side.id()), "by id, in another channel");
+        let talked_in = channels.talked_in().map(|f| f.channel_id());
+        assert_eq!(channels.asking("").map(|f| f.channel_id()), talked_in, "without one");
+        let named = channels.followed(side.id()).and_then(|f| f.questions_put_to_user(""));
+        assert_eq!(named.map(|q| q.id), Some(question_id));
     }
 
     /// A channel the user no longer takes part in is followed no more, and told so; if it was the

@@ -217,3 +217,15 @@ a session is continued - would be the same choice made at start. Nobody has aske
   awaited beside what the user types, and whether a channel ended, asked when it was shown, must
   not be dropped with it. An approval is answered in the channel where it is pending
   (`Channels::awaiting`), through the user's actor there, as step 9 decided.
+- **2026-11-13** — Step 11 done. The open questions put to the user are kept by their actor alone
+  (`UserActor::questions_to_answer`, the oldest first), which decides what may be answered: the
+  terminal offers those for `/answer` and `/decline` and shows them on `/switch`, and keeps only
+  which questions it printed, so that questions asked anew are printed once, and so that
+  `/answer` and `/decline` with an id find the channel that asked them (`Channels::asking`).
+  Between two runs of the user's actor in that channel, they are answered as any act then is,
+  that nothing can be done there right now; questions being answered are kept until a run of the
+  actor in the channel that asked them tells they closed. After the user left and joined again,
+  the terminal no longer offers questions their new actor would refuse. For the tests of a
+  frontend, an envelope is handed to the user's actor as the channel would route it, past its own
+  API (`UserActor::take_in_as_routed`, `test-support`); the tests make questions and tool calls
+  from fixtures of the domain (`question::testing`, `tool::testing`).

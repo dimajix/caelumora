@@ -389,6 +389,40 @@ fn has_duplicates(labels: &[&str]) -> bool {
     labels.iter().enumerate().any(|(i, label)| labels[..i].contains(label))
 }
 
+/// Questions for the tests of this crate and of others.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::*;
+    use crate::tool::testing::make_tool_call;
+
+    /// What agent `agent_id` asks in channel `channel_id` of session `session_id` by a call of
+    /// `ask`: one question without choices, put to `addressee`.
+    pub fn make_question_request(
+        session_id: SessionId,
+        channel_id: ChannelId,
+        agent_id: AgentId,
+        addressee: ActorId,
+    ) -> QuestionRequest {
+        QuestionRequest {
+            id: QuestionId::new(),
+            session_id,
+            channel_id,
+            agent_id,
+            tool_call: make_tool_call("ask"),
+            questions: Questions {
+                questions: vec![Question {
+                    header: "Name".to_string(),
+                    question: "Who?".to_string(),
+                    choices: Vec::new(),
+                    multi_select: false,
+                }],
+                ask: vec![Addressee::Actor(addressee)],
+                sensitive: false,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

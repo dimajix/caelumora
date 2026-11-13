@@ -7,6 +7,8 @@ use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{first_word, CommandContext, CommandReply};
 use crate::controller::{ChannelController, UserController};
 use crate::kernel::ParticipantRuntime;
+#[cfg(any(test, feature = "test-support"))]
+use crate::transport::memory::InMemoryEventSender;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
@@ -31,7 +33,6 @@ use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
 use caelumora_security::{AccessPolicy, AccessQuestions, ActionType, SecurityContext};
 use chrono::Utc;
-use std::collections::HashMap;
 use std::future;
 use std::sync;
 use std::sync::{Arc, PoisonError};
@@ -68,10 +69,10 @@ pub struct UserActor {
     /// Where its run stands, so that its start and end are shown once each
     /// (issue 386).
     run: sync::Mutex<Run>,
-    /// The questions shown to this user that are open (issue 165), as the
-    /// agents asked them and until they close them: those put to the user
-    /// are what they may answer, and what a message of theirs declines.
-    open_questions: sync::Mutex<HashMap<QuestionId, QuestionRequest>>,
+    /// The questions shown to this user that are open (issue 165), as the agents asked them and
+    /// until they close them, in the order they were first asked: those put to the user are what
+    /// they may answer, and what a message of theirs declines.
+    open_questions: sync::Mutex<Vec<QuestionRequest>>,
 }
 
 /// The channel as a user follows it (issues 104, 220, 386): what their
@@ -175,7 +176,7 @@ impl UserActor {
             outbox,
             ended: CancellationToken::new(),
             run: sync::Mutex::new(Run::Before),
-            open_questions: sync::Mutex::new(HashMap::new()),
+            open_questions: sync::Mutex::new(Vec::new()),
         })
     }
 
@@ -194,13 +195,17 @@ impl UserActor {
     /// declines them all.
     fn take_open_questions(&self) -> Vec<(QuestionId, AgentId)> {
         let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-        let asked: Vec<QuestionId> =
-            open.values().filter(|r| r.questions.is_asked(self.id())).map(|r| r.id).collect();
-        asked
-            .iter()
-            .filter_map(|id| open.remove(id))
-            .map(|request| (request.id, request.agent_id))
-            .collect()
+        let (asked, others): (Vec<_>, Vec<_>) =
+            open.drain(..).partition(|request| request.questions.is_asked(self.id()));
+        *open = others;
+        asked.into_iter().map(|request| (request.id, request.agent_id)).collect()
+    }
+
+    /// The open questions put to this user, the oldest first: what they may answer, and what a
+    /// message of theirs declines.
+    pub fn questions_to_answer(&self) -> Vec<QuestionRequest> {
+        let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+        open.iter().filter(|request| request.questions.is_asked(self.id())).cloned().collect()
     }
 
     /// Answers the questions `id` put to this user with `responses`, one per
@@ -226,7 +231,10 @@ impl UserActor {
             |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
             let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-            let request = open.get(&id).ok_or_else(|| refused(QuestionError::NotOpen))?;
+            let request = open
+                .iter()
+                .find(|request| request.id == id)
+                .ok_or_else(|| refused(QuestionError::NotOpen))?;
             if !request.questions.is_asked(self.id()) {
                 return Err(refused(QuestionError::NotAsked).into());
             }
@@ -816,14 +824,17 @@ impl UserActor {
         let answer = match &event.event {
             ActorEvent::ApprovalRequested(request) => self.answer_by_rule(&event, request).await,
             ActorEvent::QuestionRequested(request) => {
-                self.open_questions
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .insert(request.id, request.clone());
+                // Asked anew by an agent that resumed its turn: kept where it was first asked.
+                let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+                match open.iter_mut().find(|open| open.id == request.id) {
+                    Some(known) => *known = request.clone(),
+                    None => open.push(request.clone()),
+                }
                 None
             }
             ActorEvent::QuestionClosed { id, .. } => {
-                self.open_questions.lock().unwrap_or_else(PoisonError::into_inner).remove(id);
+                let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+                open.retain(|request| request.id != *id);
                 None
             }
             _ => None,
@@ -980,15 +991,35 @@ impl Actor for UserActor {
     }
 }
 
+/// What the tests of a frontend do with a user's actor, past its own API: hand it what a channel
+/// would route to it.
+#[cfg(any(test, feature = "test-support"))]
+impl UserActor {
+    /// Takes `envelope` in as if the channel had routed it to this actor: shown to whoever follows
+    /// it, a question kept as open. What the actor would send for it - the answer of a rule of the
+    /// user's to an approval - goes nowhere, and the actor takes the channel for gone; so answers
+    /// whether the actor would end.
+    pub async fn take_in_as_routed(&self, envelope: Envelope) -> bool {
+        self.handle_actor_envelope(Some(envelope), &nowhere()).await
+    }
+}
+
+/// Where what an actor sends goes when nothing is to come of it.
+#[cfg(any(test, feature = "test-support"))]
+fn nowhere() -> InMemoryEventSender {
+    InMemoryEventSender::new(mpsc::channel(1).0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::actor::manager::OUTBOX_CAPACITY;
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
-    use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
+    use crate::transport::memory::InMemoryEventReceiver;
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::user::testing::make_user;
     use caelumora_store::testing::record_users;
@@ -1146,11 +1177,6 @@ mod tests {
         assert!(ended.is_ok(), "a channel that is gone is an end, not an error: {ended:?}");
     }
 
-    /// Where what the actor sends goes when nothing is to come of it.
-    fn nowhere() -> InMemoryEventSender {
-        InMemoryEventSender::new(mpsc::channel(1).0)
-    }
-
     #[tokio::test]
     async fn envelopes_without_a_subscriber_are_dropped_without_blocking() {
         let (actor, _channel) = user_actor().await;
@@ -1163,6 +1189,37 @@ mod tests {
             actor.handle_actor_envelope(None, &nowhere()).await,
             "a closed input ends the actor"
         );
+    }
+
+    /// A question of an agent, put to `addressee`, as the agent's actor routes it.
+    fn asked_of(addressee: ActorId) -> (QuestionRequest, Envelope) {
+        let request =
+            make_question_request(SessionId::new(), ChannelId::new(), AgentId::new(), addressee);
+        let mut envelope = envelope_from(ActorId::Agent(request.agent_id));
+        envelope.event = ActorEvent::QuestionRequested(request.clone());
+        (request, envelope)
+    }
+
+    /// The questions to answer are those put to the user, the oldest first, until they close;
+    /// one asked anew keeps its place.
+    #[tokio::test]
+    async fn the_questions_to_answer_are_those_put_to_the_user_until_they_close() {
+        let (actor, _channel) = user_actor().await;
+        let (first, asked_first) = asked_of(actor.id());
+        let (_, asked_of_another) = asked_of(ActorId::User(Default::default()));
+        let (second, asked_second) = asked_of(actor.id());
+        for envelope in [asked_first.clone(), asked_of_another, asked_second, asked_first] {
+            assert!(!actor.handle_actor_envelope(Some(envelope), &nowhere()).await);
+        }
+        let ids = |actor: &UserActor| -> Vec<QuestionId> {
+            actor.questions_to_answer().iter().map(|request| request.id).collect()
+        };
+        assert_eq!(ids(&actor), [first.id, second.id], "put to the user, the first asked first");
+
+        let mut closed = envelope_from(ActorId::Agent(first.agent_id));
+        closed.event = ActorEvent::QuestionClosed { id: first.id, shown_to: None };
+        assert!(!actor.handle_actor_envelope(Some(closed), &nowhere()).await);
+        assert_eq!(ids(&actor), [second.id], "until it closes");
     }
 
     #[tokio::test]

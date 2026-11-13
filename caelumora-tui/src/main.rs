@@ -141,7 +141,11 @@ async fn run_repl(mut channels: Channels) -> Result<()> {
                 for line in channels.take_in(channel_id, shown).await {
                     println!("\r{line}");
                 }
-                if let Some((request, _)) = answering.take_if(|(q, _)| !channels.is_open(q.id)) {
+                // As the channel that asked them tells; one followed no more has closed them.
+                let closed = |(q, _): &mut (QuestionRequest, Vec<Response>)| {
+                    channels.followed(q.channel_id).is_none_or(|f| !f.is_to_answer(q.id))
+                };
+                if let Some((request, _)) = answering.take_if(closed) {
                     println!("\r--- Questions {} closed before you answered ---", request.id.0);
                 }
             }
@@ -230,9 +234,10 @@ async fn handle_line(
 }
 
 /// Answers `input` if it is about questions put to the user: declines them (`/decline`), begins
-/// to answer them (`/answer`) - questions named by id in whichever of the `channels`, else the last
-/// in the channel talked in -, or answers the next of the questions being `answering`, in the
-/// channel that asked them; `false` if it is about none.
+/// to answer them (`/answer`) - questions named by id in whichever of the `channels` printed them,
+/// else the last in the channel talked in, as the user's actor there tells -, or answers the next
+/// of the questions being `answering`, in the channel that asked them; `false` if it is about none.
+/// Between two runs of the user's actor in that channel, only that nothing can be done there now.
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 async fn answer_line(
     input: &str,
@@ -243,29 +248,35 @@ async fn answer_line(
         "" => println!("No open questions put to you"),
         id => println!("No open questions put to you with id {id}"),
     };
+    // The questions `rest` names, with the user's actor in the channel that asked them - which
+    // tells which are open -; `None`, telling why, if there are none, or no run of it.
+    let named = |rest: &str| {
+        let Some(asking) = channels.asking(rest) else {
+            none_named(rest);
+            return None;
+        };
+        let actor = acting(asking)?;
+        let request = asking.questions_put_to_user(rest);
+        if request.is_none() {
+            none_named(rest);
+        }
+        Some((request?, actor))
+    };
     if let Some(rest) = after(input, "/decline") {
-        match channels.questions_put_to_user(rest) {
-            Some(request) => {
-                if let Some(actor) = channels.followed(request.channel_id).and_then(acting) {
-                    *answering = None;
-                    if let Err(e) = actor.answer_questions(request.id, None).await {
-                        print_error(&e);
-                    }
-                }
+        if let Some((request, actor)) = named(rest) {
+            *answering = None;
+            if let Err(e) = actor.answer_questions(request.id, None).await {
+                print_error(&e);
             }
-            None => none_named(rest),
         }
         return true;
     }
     if let Some(rest) = after(input, "/answer") {
-        match channels.questions_put_to_user(rest) {
-            Some(request) => {
-                if let Some(first) = request.questions.questions.first() {
-                    println!("{}", prompt_of(0, first));
-                    *answering = Some((request.clone(), Vec::new()));
-                }
+        if let Some((request, _)) = named(rest) {
+            if let Some(first) = request.questions.questions.first() {
+                println!("{}", prompt_of(0, first));
+                *answering = Some((request, Vec::new()));
             }
-            None => none_named(rest),
         }
         return true;
     }

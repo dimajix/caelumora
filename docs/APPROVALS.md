@@ -229,7 +229,11 @@ the record of the answers, nothing raw.
     asked answer.
 3.  **Answers.** The user's actor refuses what cannot count - questions not open or not put to them,
     responses not as the questions ask - before anything is sent; whether the user may answer in the
-    channel at all (`AnswerQuestion`) the channel decides as it admits the answer. The answer goes
+    channel at all (`AnswerQuestion`) the channel decides as it admits the answer. Which questions
+    are open and put to the user is the actor's to tell (`UserActor::questions_to_answer`): a
+    frontend in the kernel's process, as the terminal is, offers those to be answered, rather than
+    keeping a list beside it; a client of the REST API learns them from the channel's snapshot and
+    stream. The answer goes
     to the asking agent alone, which takes it only if its sender was asked and the questions are
     still open, and checks the responses again; who answered it takes from the envelope, never from
     what was said. The first answer that counts settles the call.

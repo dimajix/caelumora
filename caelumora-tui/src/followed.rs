@@ -16,14 +16,14 @@ use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::view::Views;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
 /// A channel the user takes part in, as the terminal follows it - as the channel stream of the
 /// REST server does (`docs/CHANNELS.md`, issue 386): the channel, the views it is read through in
-/// their name and what their actor in it shows, the approvals and questions open there, and what
-/// `/retry` asks to be given again.
+/// their name and what their actor in it shows, the approvals pending there, which questions it
+/// printed, and what `/retry` asks to be given again.
 pub(crate) struct Followed {
     /// The channel followed, in which the user's actor is reached where they act: a run of it may
     /// have ended and another begun since it was followed - they left and joined again. Held, not
@@ -46,8 +46,10 @@ pub(crate) struct Followed {
     /// both plan proposals and regular tool calls - both flow through the same generic
     /// `ApprovalRequested` event.
     pending_approvals: Vec<ApprovalRequest>,
-    /// The questions open (issue 165), in the order they were asked.
-    open_questions: Vec<QuestionRequest>,
+    /// The questions printed (issue 165), until they close: so that questions asked anew by an
+    /// agent that resumed its turn are printed once. Which are open is their actor's to tell
+    /// (`UserActor::questions_to_answer`).
+    printed_questions: HashSet<QuestionId>,
     /// The last answer of an agent shown, which `/retry` asks it to give again (issue 234) unless
     /// one of the two below is known.
     last_answer: Option<MessageId>,
@@ -73,7 +75,7 @@ impl Followed {
             watch,
             handles,
             pending_approvals: Vec::new(),
-            open_questions: Vec::new(),
+            printed_questions: HashSet::new(),
             last_answer: None,
             under_way: None,
             given_up: None,
@@ -140,7 +142,8 @@ impl Followed {
     /// the open questions put to them.
     pub(crate) fn waiting(&self) -> Vec<String> {
         let approvals = self.pending_approvals.iter().flat_map(approval_shown);
-        let put_to_user = self.put_to_user().flat_map(|q| questions_shown(q, self.me()));
+        let put_to_user = self.put_to_user();
+        let put_to_user = put_to_user.iter().flat_map(|q| questions_shown(q, self.me()));
         approvals.chain(put_to_user).collect()
     }
 
@@ -219,15 +222,13 @@ impl Followed {
             }
             // Asked anew by an agent that resumed its turn: shown once.
             ActorEvent::QuestionRequested(request) => {
-                if self.is_open(request.id) {
-                    return Vec::new();
+                match self.printed_questions.insert(request.id) {
+                    true => questions_shown(request, self.me()),
+                    false => Vec::new(),
                 }
-                let lines = questions_shown(request, self.me());
-                self.open_questions.push(request.clone());
-                lines
             }
             ActorEvent::QuestionClosed { id, .. } => {
-                self.open_questions.retain(|q| q.id != *id);
+                self.printed_questions.remove(id);
                 Vec::new()
             }
             _ => shown(envelope, &self.handles),
@@ -258,9 +259,9 @@ impl Followed {
     }
 
     /// The open questions put to the user that `arg` names by id, or without one the last put to
-    /// them.
-    pub(crate) fn questions_put_to_user(&self, arg: &str) -> Option<&QuestionRequest> {
-        let mut put_to_user = self.put_to_user();
+    /// them, as their actor tells; none between two runs of it.
+    pub(crate) fn questions_put_to_user(&self, arg: &str) -> Option<QuestionRequest> {
+        let mut put_to_user = self.put_to_user().into_iter();
         match arg.trim() {
             "" => put_to_user.next_back(),
             id => {
@@ -269,9 +270,16 @@ impl Followed {
         }
     }
 
-    /// Whether questions `id` are still open.
-    pub(crate) fn is_open(&self, id: QuestionId) -> bool {
-        self.open_questions.iter().any(|q| q.id == id)
+    /// Whether questions `id` of this channel are still the user's to answer, as their actor
+    /// tells; between two runs of it, as if they were, so that what is being answered is kept until
+    /// a run tells.
+    pub(crate) fn is_to_answer(&self, id: QuestionId) -> bool {
+        self.actor().is_none_or(|actor| actor.questions_to_answer().iter().any(|q| q.id == id))
+    }
+
+    /// Whether questions `id` were printed of this channel, and are not closed.
+    pub(crate) fn printed(&self, id: QuestionId) -> bool {
+        self.printed_questions.contains(&id)
     }
 
     /// Asks through `actor`, the user's in the channel, for the answer under way, the turn given
@@ -299,9 +307,10 @@ impl Followed {
         Some(self.pending_approvals.remove(at))
     }
 
-    /// The open questions put to the user, in the order they were asked.
-    fn put_to_user(&self) -> impl DoubleEndedIterator<Item = &QuestionRequest> {
-        self.open_questions.iter().filter(|q| q.questions.is_asked(self.me()))
+    /// The open questions put to the user, in the order they were asked, as their actor tells
+    /// (`UserActor::questions_to_answer`); none between two runs of it.
+    fn put_to_user(&self) -> Vec<QuestionRequest> {
+        self.actor().map(|actor| actor.questions_to_answer()).unwrap_or_default()
     }
 
     /// Whether `sender` gives the answer under way.
@@ -493,15 +502,28 @@ pub(crate) mod testing {
     //! What the tests of the terminal show a channel followed: envelopes, messages, approvals and
     //! questions, as a channel would send them.
 
+    use super::Followed;
     use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, EventContext};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{Message, MessageId};
-    use caelumora_domain::question::{Addressee, Question, QuestionId, QuestionRequest, Questions};
-    use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_kernel::actor::Shown;
     use caelumora_kernel::channel::ChannelLoop;
-    use serde_json::json;
+
+    /// Routes `envelope` to the user's actor in the channel `followed` follows, as the channel
+    /// would (`UserActor::take_in_as_routed`), and takes in what the actor shows of it, passing
+    /// over where a run of it begins or ends: the lines the terminal prints.
+    pub(crate) async fn routed(followed: &mut Followed, envelope: Envelope) -> Vec<String> {
+        let actor = followed.actor().expect("the user's actor runs");
+        actor.take_in_as_routed(envelope).await;
+        loop {
+            if let Ok(Shown::Envelope(shown)) = followed.next().await {
+                return followed.take_in(&shown);
+            }
+        }
+    }
 
     /// `event` as `sender` sends it in `channel`.
     pub(crate) fn from(channel: &ChannelLoop, sender: ActorId, event: ActorEvent) -> Envelope {
@@ -519,16 +541,6 @@ pub(crate) mod testing {
         }
     }
 
-    fn tool_call() -> ToolCall {
-        ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: "test_tool".to_string(),
-            arguments: json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        }
-    }
-
     pub(crate) fn approval(channel: &ChannelLoop, agent_id: AgentId) -> ApprovalRequest {
         ApprovalRequest {
             suggested: None,
@@ -537,40 +549,15 @@ pub(crate) mod testing {
             session_id: channel.session_id(),
             channel_id: channel.id(),
             agent_id,
-            tool_call: tool_call(),
+            tool_call: make_tool_call("test_tool"),
             description: "test".to_string(),
-        }
-    }
-
-    /// A question of `agent_id` in `channel`, put to `addressee`.
-    pub(crate) fn asked_of(
-        channel: &ChannelLoop,
-        agent_id: AgentId,
-        addressee: ActorId,
-    ) -> QuestionRequest {
-        QuestionRequest {
-            id: QuestionId::new(),
-            session_id: channel.session_id(),
-            channel_id: channel.id(),
-            agent_id,
-            tool_call: tool_call(),
-            questions: Questions {
-                questions: vec![Question {
-                    header: "Name".to_string(),
-                    question: "Who?".to_string(),
-                    choices: Vec::new(),
-                    multi_select: false,
-                }],
-                ask: vec![Addressee::Actor(addressee)],
-                sensitive: false,
-            },
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::testing::{approval, asked_of, from, message};
+    use super::testing::{approval, from, message, routed};
     use super::*;
     use anyhow::Error;
     use caelumora_domain::agent::AgentId;
@@ -578,6 +565,7 @@ mod tests {
     use caelumora_domain::channel::HistoryAccess;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::question::testing::make_question_request;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::session::testing::{
         owned_kernel, running_session_of_a_user, spec, test_kernel,
@@ -736,16 +724,17 @@ mod tests {
         let (mut followed, channel, me) = followed().await;
         let agent_id = AgentId::new();
         let agent = ActorId::Agent(agent_id);
-        let request = asked_of(&channel, agent_id, me);
+        let request = make_question_request(channel.session_id(), channel.id(), agent_id, me);
         let id = request.id;
         let asked = from(&channel, agent, ActorEvent::QuestionRequested(request));
-        assert!(!followed.take_in(&asked).is_empty());
-        assert!(followed.take_in(&asked).is_empty(), "asked anew");
-        assert!(followed.is_open(id));
+        assert!(!routed(&mut followed, asked.clone()).await.is_empty());
+        assert!(routed(&mut followed, asked).await.is_empty(), "asked anew");
+        assert!(followed.is_to_answer(id));
         assert_eq!(followed.questions_put_to_user("").map(|q| q.id), Some(id), "the last");
         assert_eq!(followed.questions_put_to_user(&id.0.to_string()).map(|q| q.id), Some(id));
-        followed.take_in(&from(&channel, agent, ActorEvent::QuestionClosed { id, shown_to: None }));
-        assert!(!followed.is_open(id));
+        let closed = from(&channel, agent, ActorEvent::QuestionClosed { id, shown_to: None });
+        routed(&mut followed, closed).await;
+        assert!(!followed.is_to_answer(id));
         assert!(followed.questions_put_to_user("").is_none());
     }
 
@@ -755,13 +744,19 @@ mod tests {
         let (mut followed, channel, me) = followed().await;
         let agent_id = AgentId::new();
         let agent = ActorId::Agent(agent_id);
-        let mine = asked_of(&channel, agent_id, me);
-        let elsewhere = asked_of(&channel, agent_id, ActorId::User(UserId::new()));
+        let mine = make_question_request(channel.session_id(), channel.id(), agent_id, me);
+        let elsewhere = make_question_request(
+            channel.session_id(),
+            channel.id(),
+            agent_id,
+            ActorId::User(UserId::new()),
+        );
         let (id, other_id) = (mine.id, elsewhere.id);
         for request in [mine, elsewhere] {
-            followed.take_in(&from(&channel, agent, ActorEvent::QuestionRequested(request)));
+            routed(&mut followed, from(&channel, agent, ActorEvent::QuestionRequested(request)))
+                .await;
         }
-        assert!(followed.is_open(other_id), "open, though put to another");
+        assert!(!followed.is_to_answer(other_id), "not the user's to answer");
         let put_to_user = |arg: &str| followed.questions_put_to_user(arg).map(|q| q.id);
         assert_eq!(put_to_user(&other_id.0.to_string()), None, "put to another");
         assert_eq!(put_to_user(""), Some(id), "the last put to the user, asked before");
@@ -778,8 +773,8 @@ mod tests {
         let agent = ActorId::Agent(agent_id);
         let other = ActorId::User(UserId::new());
         let request = approval(&channel, agent_id);
-        let mine = asked_of(&channel, agent_id, me);
-        let theirs = asked_of(&channel, agent_id, other);
+        let mine = make_question_request(channel.session_id(), channel.id(), agent_id, me);
+        let theirs = make_question_request(channel.session_id(), channel.id(), agent_id, other);
         let ids = [request.id.0, mine.id.0, theirs.id.0].map(|id| id.to_string());
         let mentioning = Message { mentions: vec![me], ..message(other, "@owner look") };
         let asked = [
@@ -794,12 +789,12 @@ mod tests {
         for event in asked {
             let envelope = from(&channel, agent, event);
             assert!(followed.waits_for_user(&envelope), "{:?}", envelope.event);
-            followed.take_in(&envelope);
+            routed(&mut followed, envelope).await;
         }
         for event in not_asked {
             let envelope = from(&channel, agent, event);
             assert!(!followed.waits_for_user(&envelope), "{:?}", envelope.event);
-            followed.take_in(&envelope);
+            routed(&mut followed, envelope).await;
         }
         let waiting = followed.waiting().join("\n");
         assert!(waiting.contains(&ids[0]) && waiting.contains(&ids[1]), "{waiting}");
@@ -900,7 +895,8 @@ mod tests {
     }
 
     /// Following a channel outlives a run of the user's actor: who left and was added again is
-    /// shown the new run, and acts through their new actor, not the one that ended.
+    /// shown the new run, and acts through their new actor, not the one that ended - which knows
+    /// none of the questions put to the one before.
     #[tokio::test]
     async fn following_a_channel_outlives_a_run_of_the_users_actor() {
         let (_, manager) = owned_kernel(ConfidentialityRules::default());
@@ -912,6 +908,16 @@ mod tests {
         let mut followed =
             Followed::new(Arc::clone(&channel), views).await.expect("they take part");
         let first = followed.actor().expect("their actor runs");
+        let request =
+            make_question_request(channel.session_id(), channel.id(), AgentId::new(), other);
+        let id = request.id;
+        let asked = from(
+            &channel,
+            ActorId::Agent(request.agent_id),
+            ActorEvent::QuestionRequested(request),
+        );
+        routed(&mut followed, asked).await;
+        assert_eq!(followed.questions_put_to_user("").map(|q| q.id), Some(id), "theirs to answer");
 
         channel.leave(&theirs, other).await.expect("they may leave");
         assert!(shows(&mut followed, |shown| matches!(shown, Shown::Ended)).await, "it stopped");
@@ -922,5 +928,9 @@ mod tests {
         assert!(!followed.ended().await, "taking part again");
         let again = followed.actor().expect("their new actor runs");
         assert!(!Arc::ptr_eq(&first, &again), "not the actor that ended");
+        assert!(
+            followed.questions_put_to_user("").is_none() && !followed.is_to_answer(id),
+            "none the new actor would refuse"
+        );
     }
 }
