@@ -17,7 +17,6 @@ use caelumora_artifacts::library::ArtifactsLibrary;
 use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
-use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::config::AppConfig;
@@ -36,7 +35,7 @@ use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
 use caelumora_kernel::user_provider::Credential;
-use caelumora_kernel::view::{Viewer, Views};
+use caelumora_kernel::view::Viewer;
 use caelumora_logging::{init, LogTarget};
 use caelumora_memory::library::MemoryLibrary;
 use caelumora_memory::plugin::MemoryPlugin;
@@ -118,15 +117,14 @@ fn response_of(question: &Question, line: &str) -> Response {
     }
 }
 
-/// Has `user` talk in the channel `followed`, line by line, until they end it or a signal does;
-/// once they no longer take part in it, as `views` read it in their name, in none.
+/// Has the user talk in the channel `followed`, line by line, until they end it or a signal does;
+/// once they no longer take part in it, in none.
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-async fn run_repl(views: &Views, followed: Followed, user: UserId) -> Result<()> {
+async fn run_repl(followed: Followed) -> Result<()> {
     // The channel followed, with what the user's actor in it shows, until following it ends.
     let watch = followed.actor().watch();
     let mut followed = Some((followed, watch));
     let mut input_rx = spawn_rustyline_input();
-    let me = ActorId::User(user);
     // The questions being answered, with the responses given so far: while they are, every line
     // answers the next question.
     let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
@@ -160,7 +158,7 @@ async fn run_repl(views: &Views, followed: Followed, user: UserId) -> Result<()>
                     // Where a run of the user's actor began or ended, whether they still take part
                     // is read anew (`docs/CHANNELS.md`, issue 386).
                     Ok(Shown::Started | Shown::Ended) => {
-                        if let Some(line) = present.ended(views).await {
+                        if let Some(line) = present.ended().await {
                             println!("\r{line}");
                             (followed, answering) = (None, None);
                         }
@@ -188,7 +186,7 @@ async fn run_repl(views: &Views, followed: Followed, user: UserId) -> Result<()>
                     break;
                 }
                 match &mut followed {
-                    Some((present, _)) => handle_line(input, present, &mut answering, me).await?,
+                    Some((present, _)) => handle_line(input, present, &mut answering).await?,
                     None if input.is_empty() => {}
                     None => println!("You take part in no channel here: type 'exit' to end"),
                 }
@@ -222,7 +220,6 @@ async fn handle_line(
     input: &str,
     followed: &mut Followed,
     answering: &mut Option<(QuestionRequest, Vec<Response>)>,
-    me: ActorId,
 ) -> Result<()> {
     if input.is_empty() {
         return Ok(());
@@ -234,7 +231,7 @@ async fn handle_line(
     if let Some(rest) =
         input.strip_prefix("/decline").filter(|r| r.is_empty() || r.starts_with(' '))
     {
-        match followed.questions_named(rest) {
+        match followed.questions_put_to_user(rest) {
             Some(request) => {
                 *answering = None;
                 if let Err(e) = followed.actor().answer_questions(request.id, None).await {
@@ -247,7 +244,7 @@ async fn handle_line(
     }
     if let Some(rest) = input.strip_prefix("/answer").filter(|r| r.is_empty() || r.starts_with(' '))
     {
-        match followed.questions_named(rest).filter(|q| q.questions.is_asked(me)) {
+        match followed.questions_put_to_user(rest) {
             Some(request) => {
                 if let Some(first) = request.questions.questions.first() {
                     println!("{}", prompt_of(0, first));
@@ -551,7 +548,7 @@ async fn main() -> Result<()> {
     let followed = session_loop
         .channels()
         .iter()
-        .find_map(|channel| Followed::new(channel, owner))
+        .find_map(|channel| Followed::new(channel, views.clone()))
         .ok_or_else(|| {
             anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
         })?;
@@ -568,7 +565,7 @@ async fn main() -> Result<()> {
     // Start the interactive loop; however it ends, the session is shut
     // down in order (issue 297): its actors keep what they are in the
     // middle of, and only what does not outlive the process ends with it.
-    let ran = run_repl(&views, followed, owner).await;
+    let ran = run_repl(followed).await;
     session_manager.shutdown().await;
     ran
 }

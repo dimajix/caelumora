@@ -137,3 +137,12 @@ a session is continued - would be the same choice made at start. Nobody has aske
   `quit` or an empty one, is answered that it takes part in none. A first plan followed the event
   bus for it; the maintainer decided for the pattern of the REST server on review. The bus is left
   to step 5, for the channels joined meanwhile.
+- **2026-11-13** — Step 4 done. `Followed` holds the views in the user's name, whose viewer is the
+  user it follows the channel for (`Followed::new(channel, views)`), and answers which open
+  questions are put to them (`Followed::questions_put_to_user`), for `/answer` and `/decline`
+  alike: `/decline` of questions put to others is answered in the terminal, as `/answer` was,
+  instead of being refused by the user's actor. The terminal no longer knows the user beside
+  `Followed`. Decided with the maintainer: a view that cannot be read ends following the channel,
+  as it ends the channel stream of the REST server. Two findings become steps of their own before
+  the switch: 5, `ChannelWatch` answers only the error that can occur; 6, whether a user still
+  takes part in a channel is asked in one place. The switch is step 7.

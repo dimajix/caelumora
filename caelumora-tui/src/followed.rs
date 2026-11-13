@@ -11,7 +11,6 @@ use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::{QuestionId, QuestionRequest};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::turn::GivenUpReason;
-use caelumora_domain::user::UserId;
 use caelumora_domain::work::TurnId;
 use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::channel::ChannelLoop;
@@ -20,17 +19,17 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// A channel the user takes part in, as the terminal follows it: where it lies, whose actor in it
-/// the terminal acts through, the approvals and questions open there, and what `/retry` asks to be
-/// given again.
+/// A channel the user takes part in, as the terminal follows it: where it lies, the views it is
+/// read through in their name and their actor in it, the approvals and questions open there, and
+/// what `/retry` asks to be given again.
 pub(crate) struct Followed {
     /// The session of the channel.
     session_id: SessionId,
     /// The channel followed.
     channel_id: ChannelId,
-    /// The user it is followed for: whom the questions name when they are put to them, and whom
-    /// the channel is to list while it is followed.
-    user: UserId,
+    /// The views as the user reads them, whose viewer is the user it is followed for: what tells
+    /// whether the channel still lists them.
+    views: Views,
     /// The user's actor in the channel, through which what they say, run and answer goes.
     actor: Arc<UserActor>,
     /// The handles of the participants, as the channel was followed: what a message's mentions
@@ -52,16 +51,17 @@ pub(crate) struct Followed {
 }
 
 impl Followed {
-    /// Follows `channel` for `user`, knowing its participants' handles as they are now; `None` if
-    /// `user` takes no part in it.
-    pub(crate) fn new(channel: &ChannelLoop, user: UserId) -> Option<Self> {
+    /// Follows `channel` for the user `views` are read by, knowing its participants' handles as
+    /// they are now; `None` if the viewer is no user taking part in it.
+    pub(crate) fn new(channel: &ChannelLoop, views: Views) -> Option<Self> {
+        let ActorId::User(user) = views.context().caller_id else { return None };
         let actor = channel.user_actor(user)?;
         let handles =
             channel.participants().into_iter().filter_map(|m| Some((m.id, m.handle?))).collect();
         Some(Self {
             session_id: channel.session_id(),
             channel_id: channel.id(),
-            user,
+            views,
             actor,
             handles,
             pending_approvals: HashMap::new(),
@@ -83,11 +83,11 @@ impl Followed {
     }
 
     /// Whether following the channel has ended - the user no longer takes part in it, or it was
-    /// deleted, or cannot be read -, as `views` read it in their name now, with the line that
+    /// deleted, or cannot be read -, as the views read it in their name now, with the line that
     /// tells so: what is asked where a run of the user's actor began or ended
     /// (`docs/CHANNELS.md`, issue 386).
-    pub(crate) async fn ended(&self, views: &Views) -> Option<&'static str> {
-        let taken_part_in = match views.session(self.session_id).await {
+    pub(crate) async fn ended(&self) -> Option<&'static str> {
+        let taken_part_in = match self.views.session(self.session_id).await {
             Ok(session) => session.channel(self.channel_id).await.is_ok_and(|c| c.lists(self.me())),
             Err(_) => false,
         };
@@ -196,13 +196,16 @@ impl Followed {
         Ok(true)
     }
 
-    /// The open questions `arg` names by id, or without one the last put to the user.
-    pub(crate) fn questions_named(&self, arg: &str) -> Option<&QuestionRequest> {
+    /// The open questions put to the user that `arg` names by id, or without one the last put to
+    /// them.
+    pub(crate) fn questions_put_to_user(&self, arg: &str) -> Option<&QuestionRequest> {
+        let mut put_to_user =
+            self.open_questions.iter().filter(|q| q.questions.is_asked(self.me()));
         match arg.trim() {
-            "" => self.open_questions.iter().rev().find(|q| q.questions.is_asked(self.me())),
-            id => Uuid::parse_str(id)
-                .ok()
-                .and_then(|id| self.open_questions.iter().find(|q| q.id == QuestionId(id))),
+            "" => put_to_user.next_back(),
+            id => {
+                Uuid::parse_str(id).ok().and_then(|id| put_to_user.find(|q| q.id == QuestionId(id)))
+            }
         }
     }
 
@@ -227,7 +230,7 @@ impl Followed {
 
     /// The user, as an actor of the channel.
     fn me(&self) -> ActorId {
-        ActorId::User(self.user)
+        self.views.context().caller_id
     }
 
     /// Whether `sender` gives the answer under way.
@@ -424,6 +427,7 @@ mod tests {
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::question::{Addressee, Question, Questions};
     use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::user::UserId;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::session::testing::{
         ended, owned_kernel, running_session_of_a_user, spec, test_kernel,
@@ -435,24 +439,20 @@ mod tests {
     use serde_json::json;
     use std::time::Duration;
 
-    /// A running session of a user, in a kernel of its own, with the context of its owner.
-    async fn running() -> (Arc<SessionLoop>, SecurityContext) {
-        let manager = SessionManager::new(test_kernel());
+    /// A running session of a user, in a kernel of its own, with its manager and the context of
+    /// its owner.
+    async fn running() -> (Arc<SessionManager>, Arc<SessionLoop>, SecurityContext) {
+        let manager = Arc::new(SessionManager::new(test_kernel()));
         let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
-        (session_loop, ctx)
-    }
-
-    /// The user `ctx` acts for.
-    fn user_of(ctx: &SecurityContext) -> UserId {
-        let ActorId::User(user) = ctx.caller_id else { panic!("the session is a user's") };
-        user
+        (manager, session_loop, ctx)
     }
 
     /// A channel followed by the owner of a running session, the first of their session.
     async fn followed() -> (Followed, Arc<ChannelLoop>, ActorId) {
-        let (session_loop, ctx) = running().await;
+        let (manager, session_loop, ctx) = running().await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
-        let followed = Followed::new(&channel, user_of(&ctx)).expect("the owner takes part");
+        let views = manager.views(Viewer::new(ctx.clone()));
+        let followed = Followed::new(&channel, views).expect("the owner takes part");
         (followed, channel, ctx.caller_id)
     }
 
@@ -604,12 +604,9 @@ mod tests {
         assert!(!followed.approve(id, true).await.unwrap(), "answered once, as by the user");
     }
 
-    #[tokio::test]
-    async fn questions_asked_anew_are_shown_once_and_open_until_closed() {
-        let (mut followed, channel, me) = followed().await;
-        let agent_id = AgentId::new();
-        let agent = ActorId::Agent(agent_id);
-        let request = QuestionRequest {
+    /// A question of `agent_id` in `channel`, put to `addressee`.
+    fn asked_of(channel: &ChannelLoop, agent_id: AgentId, addressee: ActorId) -> QuestionRequest {
+        QuestionRequest {
             id: QuestionId::new(),
             session_id: channel.session_id(),
             channel_id: channel.id(),
@@ -622,20 +619,48 @@ mod tests {
                     choices: Vec::new(),
                     multi_select: false,
                 }],
-                ask: vec![Addressee::Actor(me)],
+                ask: vec![Addressee::Actor(addressee)],
                 sensitive: false,
             },
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn questions_asked_anew_are_shown_once_and_open_until_closed() {
+        let (mut followed, channel, me) = followed().await;
+        let agent_id = AgentId::new();
+        let agent = ActorId::Agent(agent_id);
+        let request = asked_of(&channel, agent_id, me);
         let id = request.id;
         let asked = from(&channel, agent, ActorEvent::QuestionRequested(request));
         assert!(!followed.take_in(&asked).is_empty());
         assert!(followed.take_in(&asked).is_empty(), "asked anew");
         assert!(followed.is_open(id));
-        assert_eq!(followed.questions_named("").map(|q| q.id), Some(id), "the last put to me");
-        assert_eq!(followed.questions_named(&id.0.to_string()).map(|q| q.id), Some(id));
+        assert_eq!(followed.questions_put_to_user("").map(|q| q.id), Some(id), "the last");
+        assert_eq!(followed.questions_put_to_user(&id.0.to_string()).map(|q| q.id), Some(id));
         followed.take_in(&from(&channel, agent, ActorEvent::QuestionClosed { id, shown_to: None }));
         assert!(!followed.is_open(id));
-        assert!(followed.questions_named("").is_none());
+        assert!(followed.questions_put_to_user("").is_none());
+    }
+
+    /// What `/answer` and `/decline` name: questions put to the user alone, by id or the last.
+    #[tokio::test]
+    async fn only_questions_put_to_the_user_are_named_for_answer_and_decline() {
+        let (mut followed, channel, me) = followed().await;
+        let agent_id = AgentId::new();
+        let agent = ActorId::Agent(agent_id);
+        let mine = asked_of(&channel, agent_id, me);
+        let elsewhere = asked_of(&channel, agent_id, ActorId::User(UserId::new()));
+        let (id, other_id) = (mine.id, elsewhere.id);
+        for request in [mine, elsewhere] {
+            followed.take_in(&from(&channel, agent, ActorEvent::QuestionRequested(request)));
+        }
+        assert!(followed.is_open(other_id), "open, though put to another");
+        let put_to_user = |arg: &str| followed.questions_put_to_user(arg).map(|q| q.id);
+        assert_eq!(put_to_user(&other_id.0.to_string()), None, "put to another");
+        assert_eq!(put_to_user(""), Some(id), "the last put to the user, asked before");
+        assert_eq!(put_to_user(&id.0.to_string()), Some(id));
+        assert_eq!(put_to_user("no id"), None);
     }
 
     #[tokio::test]
@@ -679,10 +704,17 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_is_followed_only_by_who_takes_part() {
-        let (session_loop, ctx) = running().await;
+        let (manager, session_loop, ctx) = running().await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
-        assert!(Followed::new(&channel, UserId::new()).is_none(), "a stranger");
-        let followed = Followed::new(&channel, user_of(&ctx)).expect("the owner takes part");
+        let views_of = |ctx: SecurityContext| manager.views(Viewer::new(ctx));
+        let stranger = SecurityContext::new(
+            ActorId::User(UserId::new()),
+            session_loop.id(),
+            Default::default(),
+        );
+        assert!(Followed::new(&channel, views_of(stranger)).is_none(), "a stranger");
+        assert!(Followed::new(&channel, views_of(SecurityContext::system())).is_none(), "no user");
+        let followed = Followed::new(&channel, views_of(ctx)).expect("the owner takes part");
         assert_eq!(followed.channel_id(), channel.id());
     }
 
@@ -695,29 +727,28 @@ mod tests {
         let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         let views = manager.views(Viewer::new(theirs.clone()));
-        let user = other.as_user_id().expect("a user");
         let side = |name| spec(name, vec![owner.caller_id, other]);
 
         let channel = session_loop.create_channel(&owner, side("left")).await.unwrap();
-        let followed = Followed::new(&channel, user).expect("they take part");
+        let followed = Followed::new(&channel, views.clone()).expect("they take part");
         let mut watch = followed.actor().watch();
-        assert_eq!(followed.ended(&views).await, None, "taking part");
+        assert_eq!(followed.ended().await, None, "taking part");
         channel.leave(&theirs, other).await.expect("they may leave");
         assert!(ended(&mut watch, Duration::from_secs(5)).await, "their actor stopped");
-        assert!(followed.ended(&views).await.is_some(), "left");
+        assert!(followed.ended().await.is_some(), "left");
 
         let channel = session_loop.create_channel(&owner, side("removed")).await.unwrap();
-        let followed = Followed::new(&channel, user).expect("they take part");
+        let followed = Followed::new(&channel, views.clone()).expect("they take part");
         let mut watch = followed.actor().watch();
         channel.remove_participant(&owner, other).await.expect("the owner may remove them");
         assert!(ended(&mut watch, Duration::from_secs(5)).await, "their actor stopped");
-        assert!(followed.ended(&views).await.is_some(), "removed");
+        assert!(followed.ended().await.is_some(), "removed");
 
         let channel = session_loop.create_channel(&owner, side("deleted")).await.unwrap();
-        let followed = Followed::new(&channel, user).expect("they take part");
+        let followed = Followed::new(&channel, views.clone()).expect("they take part");
         let mut watch = followed.actor().watch();
         assert!(session_loop.delete_channel(&owner, channel.id()).await.unwrap());
         assert!(ended(&mut watch, Duration::from_secs(5)).await, "their actor stopped");
-        assert!(followed.ended(&views).await.is_some(), "deleted");
+        assert!(followed.ended().await.is_some(), "deleted");
     }
 }
