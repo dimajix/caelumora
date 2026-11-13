@@ -310,7 +310,7 @@ impl ToolProvider for AttachmentsComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prompts;
+    use crate::testing::prompts;
     use bytes::Bytes;
     use caelumora_agents::testing::{self, agent_runtime};
     use caelumora_api::terminal::ByteStream;

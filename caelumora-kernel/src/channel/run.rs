@@ -1420,13 +1420,15 @@ mod tests {
         let recorded = channel.history_entries().await;
         assert!(matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { .. }, HistoryEntry::MessageRejected { .. }, HistoryEntry::MessageRejected { .. }]),
             "after her own join, nothing of it is recorded, only that it was not let in (issue 417): {recorded:?}");
-        let state = channel.state.lock().await;
-        assert!(
-            state.history.entries().skip(1).all(|node| node.entry.sender == ActorId::System
-                && node.entry.recipients == Recipients::only(vec![her])),
-            "told to her alone, in the system's name"
-        );
-        drop(state);
+        let to_her_alone = channel
+            .reading_history(|history| {
+                history.entries().skip(1).all(|node| {
+                    node.entry.sender == ActorId::System
+                        && node.entry.recipients == Recipients::only(vec![her])
+                })
+            })
+            .await;
+        assert!(to_her_alone, "told to her alone, in the system's name");
         let mut rejected = Vec::new();
         while let Some(envelope) = hers.try_recv().await {
             if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
@@ -1671,7 +1673,8 @@ mod tests {
                 &actors,
             )
             .await;
-        let entries = || async { channel.state.lock().await.history.all_entries().len() };
+        let entries =
+            || async { channel.reading_history(|history| history.all_entries().len()).await };
 
         channel
             .process_envelope(
@@ -1858,10 +1861,9 @@ mod tests {
                 .process_envelope(from(ActorEvent::CompleteMessageGenerated(said(n))), &actors)
                 .await;
         }
-        let (base, end, digest) = {
-            let state = channel.state.lock().await;
-            (state.history.base(), state.history.end(), state.history.digest())
-        };
+        let (base, end, digest) = channel
+            .reading_history(|history| (history.base(), history.end(), history.digest()))
+            .await;
         assert_eq!(
             (base, end),
             (end.before(WINDOW), Position::new(251)),
@@ -2354,7 +2356,7 @@ mod tests {
         };
         start_all(&mut running, &mut join_set).await;
         let (newcomer, mut taken_in) = Listener::new(ActorId::User(UserId::new()));
-        let from = channel.state.lock().await.history.end();
+        let from = channel.reading_history(|history| history.end()).await;
 
         // Taken in, but `run` has not started it yet: what is said meanwhile
         // has no inbox to go to.
@@ -2516,13 +2518,14 @@ mod tests {
             )
         };
         let recorded = |channel: Arc<ChannelLoop>| async move {
-            let state = channel.state.lock().await;
-            let said = state
-                .history
-                .entries()
-                .find(|node| node.entry.entry.said().is_some())
-                .map(|node| (node.entry.sender, node.entry.recipients.clone()));
-            said
+            channel
+                .reading_history(|history| {
+                    history
+                        .entries()
+                        .find(|node| node.entry.entry.said().is_some())
+                        .map(|node| (node.entry.sender, node.entry.recipients.clone()))
+                })
+                .await
         };
 
         let everybody = channel_with(&[&alice, &bob], Arc::new(AllowAllPolicy::new())).await;
@@ -2541,10 +2544,13 @@ mod tests {
             Some((ActorId::User(alice.id), Recipients::only(vec![ActorId::User(bob.id)]))),
             "to whom the moderator named"
         );
-        let state = to_bob.state.lock().await;
-        let asked = state.history.last().map(|node| {
-            (node.entry.entry.clone(), node.entry.sender, node.entry.recipients.clone())
-        });
+        let asked = to_bob
+            .reading_history(|history| {
+                history.last().map(|node| {
+                    (node.entry.entry.clone(), node.entry.sender, node.entry.recipients.clone())
+                })
+            })
+            .await;
         assert!(
             matches!(asked, Some((HistoryEntry::ResponseRequested { by, reason: RequestReason::Mentioned, .. }, ActorId::System, ref recipients)) if by == ActorId::User(alice.id) && *recipients == Recipients::only(vec![ActorId::User(bob.id)])),
             "and whom it asked to respond, after it, in the system's name, and why: {asked:?}"
@@ -2590,19 +2596,23 @@ mod tests {
             )
             .await;
 
-        let state = channel.state.lock().await;
-        let at = |position: Option<Position>| {
-            position.and_then(|seq| state.history.at(seq)).map(|node| node.entry.entry.clone())
-        };
         let delivered = rx.try_recv().await.expect("delivered");
+        let asked = rx.try_recv().await.expect("and he is asked");
+        let (said_at, asked_at) = channel
+            .reading_history(|history| {
+                let at = |position: Option<Position>| {
+                    position.and_then(|seq| history.at(seq)).map(|node| node.entry.entry.clone())
+                };
+                (at(delivered.context.position), at(asked.context.position))
+            })
+            .await;
         assert!(
-            matches!(at(delivered.context.position), Some(HistoryEntry::Said { .. })),
+            matches!(said_at, Some(HistoryEntry::Said { .. })),
             "the message, at its entry: {:?}",
             delivered.context.position
         );
-        let asked = rx.try_recv().await.expect("and he is asked");
         assert!(
-            matches!(at(asked.context.position), Some(HistoryEntry::ResponseRequested { .. })),
+            matches!(asked_at, Some(HistoryEntry::ResponseRequested { .. })),
             "the request, at its own: {:?}",
             asked.context.position
         );
@@ -2682,8 +2692,9 @@ mod tests {
             other => panic!("expected a message, got {}", other.kind()),
         };
         let recorded = || async {
-            let state = channel.state.lock().await;
-            let last = state.history.last().expect("recorded").entry.clone();
+            let last = channel
+                .reading_history(|history| history.last().expect("recorded").entry.clone())
+                .await;
             (
                 last.entry
                     .said()

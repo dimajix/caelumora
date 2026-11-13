@@ -164,7 +164,7 @@ impl ToolProvider for ImageGenerationComponent {
 mod tests {
     use super::*;
     use crate::component::ImageGenerationParams;
-    use crate::prompts;
+    use crate::testing::prompts;
     use bytes::Bytes;
     use caelumora_agents::testing::detached_actor_runtime;
     use caelumora_api::component::{ComponentResult, Params};

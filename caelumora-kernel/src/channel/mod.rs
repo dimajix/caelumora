@@ -429,12 +429,6 @@ impl ChannelLoop {
         let _ = self.changes_tx.send(ActorChange::Start(adopted, from, joined));
     }
 
-    /// Every event the channel takes in from now on (see `observed`).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn observe(&self) -> broadcast::Receiver<Envelope> {
-        self.observed.subscribe()
-    }
-
     pub fn id(&self) -> ChannelId {
         self.id
     }

@@ -9,6 +9,8 @@
 )]
 
 use crate::channel::ChannelLoop;
+#[cfg(test)]
+use crate::channel::ResolvedParticipant;
 use crate::controller::SessionController;
 use crate::kernel::{ChannelRuntime, Kernel, ParticipantRuntime};
 use crate::testing::shown;
@@ -21,10 +23,12 @@ use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalStrategy, Approver};
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::testing::{founded, make_channel};
+#[cfg(test)]
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::channel::{Channel, InternalActor, Participant};
 use caelumora_domain::content::ContentId;
 use caelumora_domain::history::testing::{items_of, messages_of};
-use caelumora_domain::history::{HistoryEntry, Reader};
+use caelumora_domain::history::{History, HistoryEntry, Reader};
 use caelumora_domain::message::Message;
 use caelumora_domain::message::MessageId;
 use caelumora_domain::security::SecurityAttributes;
@@ -167,11 +171,31 @@ pub fn alice_of(context: &SecurityContext) -> UserId {
     }
 }
 
+/// What the tests make of a participant past its own API: an approver, to look an actor up by.
+#[cfg(test)]
+impl ResolvedParticipant {
+    /// An approver of channel `channel_id` of session `session_id` - in
+    /// tests, as the participant of an actor of whatever kind the channel
+    /// only looks up.
+    pub(crate) fn approver(session_id: SessionId, channel_id: ChannelId) -> Self {
+        Self::internal(
+            &InternalActor::Approver(Approver::new(ApprovalStrategy::default())),
+            session_id,
+            channel_id,
+        )
+    }
+}
+
 /// What the tests of a channel read of it and do to it past what its
 /// users may (issue 370): its internals, behind the feature `test-support`
 /// alone, under names of their own - the channel's API is not widened by
 /// them.
 impl ChannelLoop {
+    /// Every event the channel takes in from now on (see `observed`).
+    pub fn observe(&self) -> broadcast::Receiver<Envelope> {
+        self.observed.subscribe()
+    }
+
     /// The actor of `actor` in the channel (`ChannelLoop::actor`).
     pub fn actor_of(&self, actor: ActorId) -> Option<Arc<dyn Actor>> {
         self.actor(actor)
@@ -181,6 +205,12 @@ impl ChannelLoop {
     /// a test of the channel looks at.
     pub(crate) async fn history(&self) -> Vec<Message> {
         messages_of(&self.state.lock().await.history)
+    }
+
+    /// What `read` makes of the history the channel holds in memory, as it was recorded: its
+    /// entries with their senders and recipients, where it begins and ends.
+    pub async fn reading_history<R>(&self, read: impl FnOnce(&History) -> R) -> R {
+        read(&self.state.lock().await.history)
     }
 
     /// The whole history, whoever may see it (`ChannelLoop::history`).

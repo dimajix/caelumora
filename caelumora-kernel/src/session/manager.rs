@@ -409,49 +409,6 @@ impl SessionManager {
         }
     }
 
-    /// Creates a brand-new session with its `channels`, as a template would: asks to create it
-    /// (`CreateSession`) before anything else. Its results go to a project of its own, made with
-    /// it, whatever project it names (issue 467). The participants the channels name join them as
-    /// their founders once the session runs, as a template's do (issue 420).
-    ///
-    /// # Errors
-    /// `SessionError::OwnerNotAUser` if the session is not a user's; otherwise as `establish`.
-    #[cfg(any(test, feature = "test-support"))]
-    pub async fn create(
-        &self,
-        context: &SecurityContext,
-        mut session: Session,
-        mut channels: Vec<Channel>,
-    ) -> Result<Arc<SessionLoop>> {
-        self.refuse_while_shutting_down()?;
-        self.policies
-            .access_policy()
-            .require(
-                context,
-                ActionType::create(Session::KIND, &session.security_attributes),
-                StoreError::PermissionDenied,
-            )
-            .await?;
-        let own = session
-            .new_own_project()
-            .ok_or(SessionError::OwnerNotAUser(session.security_attributes.owner_id))?;
-        session.project = own.id;
-        let founders: Vec<(ChannelId, Vec<Participant>)> = channels
-            .iter_mut()
-            .map(|channel| (channel.id, mem::take(&mut channel.participants)))
-            .collect();
-        let session_loop = self.establish(context, session, own, channels).await?;
-        for (channel, participants) in founders {
-            let channel = session_loop
-                .channel(channel)
-                .ok_or(SessionError::ChannelNotFound { session: session_loop.id(), channel })?;
-            for participant in participants {
-                channel.found(context, participant.actor_id()).await?;
-            }
-        }
-        Ok(session_loop)
-    }
-
     /// Establishes the brand-new `session` with its own project `own` and its `channels`, whose
     /// creation `context` was asked for (`CreateSession`) before anything was found or made for
     /// it: persists them (`persist`), announces their existence, then starts the session. The
@@ -1120,6 +1077,53 @@ impl SessionManager {
     }
 }
 
+/// How the tests make a session past the manager's own API: from its document and its channels,
+/// as a template would.
+#[cfg(any(test, feature = "test-support"))]
+impl SessionManager {
+    /// Creates a brand-new session with its `channels`, as a template would: asks to create it
+    /// (`CreateSession`) before anything else. Its results go to a project of its own, made with
+    /// it, whatever project it names (issue 467). The participants the channels name join them as
+    /// their founders once the session runs, as a template's do (issue 420).
+    ///
+    /// # Errors
+    /// `SessionError::OwnerNotAUser` if the session is not a user's; otherwise as `establish`.
+    pub async fn create(
+        &self,
+        context: &SecurityContext,
+        mut session: Session,
+        mut channels: Vec<Channel>,
+    ) -> Result<Arc<SessionLoop>> {
+        self.refuse_while_shutting_down()?;
+        self.policies
+            .access_policy()
+            .require(
+                context,
+                ActionType::create(Session::KIND, &session.security_attributes),
+                StoreError::PermissionDenied,
+            )
+            .await?;
+        let own = session
+            .new_own_project()
+            .ok_or(SessionError::OwnerNotAUser(session.security_attributes.owner_id))?;
+        session.project = own.id;
+        let founders: Vec<(ChannelId, Vec<Participant>)> = channels
+            .iter_mut()
+            .map(|channel| (channel.id, mem::take(&mut channel.participants)))
+            .collect();
+        let session_loop = self.establish(context, session, own, channels).await?;
+        for (channel, participants) in founders {
+            let channel = session_loop
+                .channel(channel)
+                .ok_or(SessionError::ChannelNotFound { session: session_loop.id(), channel })?;
+            for participant in participants {
+                channel.found(context, participant.actor_id()).await?;
+            }
+        }
+        Ok(session_loop)
+    }
+}
+
 /// The scopes session `id` holds, and what lies in them goes with it: its own, with its channels',
 /// and the scope of `own`, its own project, while it is there (issue 467).
 fn held_by<'a>(id: SessionId, own: impl IntoIterator<Item = &'a Project>) -> Vec<Scope> {
@@ -1238,7 +1242,7 @@ mod tests {
 
         // It is now persisted and running.
         assert!(kernel.entity_stores().sessions.get(&ctx, session_id).await.is_ok());
-        assert!(manager.sessions.contains_key(&session_id));
+        assert!(manager.running(session_id).is_some());
 
         manager.stop(&SecurityContext::system(), session_id).await.unwrap();
     }
@@ -1273,7 +1277,7 @@ mod tests {
         assert!(stopped < ch_deleted && ch_deleted < deleted, "wrong order: {:?}", events);
 
         assert!(kernel.entity_stores().sessions.get(&ctx, session_id).await.is_err());
-        assert!(!manager.sessions.contains_key(&session_id));
+        assert!(!manager.running(session_id).is_some());
     }
 
     #[tokio::test]
@@ -1358,7 +1362,7 @@ mod tests {
         manager.spawn_session(session, channels.to_vec(), None).await.unwrap();
         drop(starting);
         assert!(stopping.await.unwrap(), "the stop stopped what the start started");
-        assert!(!manager.sessions.contains_key(&session_id));
+        assert!(!manager.running(session_id).is_some());
     }
 
     #[tokio::test]
@@ -2376,7 +2380,7 @@ mod tests {
             manager.delete(&as_user(bob), id).await.expect_err("a contributor may not delete it");
         assert!(is_forbidden(&refused), "{refused}");
         assert!(
-            manager.sessions.contains_key(&id),
+            manager.running(id).is_some(),
             "a refused deletion must not stop the session on the way"
         );
 
@@ -2388,12 +2392,12 @@ mod tests {
         let refused =
             manager.stop(&as_user(bob), id).await.expect_err("a contributor may not stop it");
         assert!(is_forbidden(&refused), "{refused}");
-        assert!(manager.sessions.contains_key(&id), "it runs on");
+        assert!(manager.running(id).is_some(), "it runs on");
         assert!(manager.stop(&as_user(alice), id).await.unwrap(), "the owner stops it");
         assert!(!manager.stop(&as_user(alice), id).await.unwrap(), "stopped already");
 
         assert!(manager.delete(&as_user(alice), id).await.expect("the owner deletes it"));
-        assert!(!manager.sessions.contains_key(&id));
+        assert!(!manager.running(id).is_some());
     }
 
     /// A running session of alice and an agent of hers that hangs in its

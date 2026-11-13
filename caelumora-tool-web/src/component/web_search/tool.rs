@@ -149,7 +149,7 @@ impl ToolProvider for WebSearchComponent {
 mod tests {
     use super::super::WebSearchParams;
     use super::*;
-    use crate::prompts;
+    use crate::testing::prompts;
     use axum::extract::State;
     use axum::http::{HeaderMap, StatusCode};
     use axum::response::{IntoResponse, Response};

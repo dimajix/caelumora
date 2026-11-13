@@ -9,6 +9,7 @@ use crate::confidentiality::ConfidentialityRules;
 use crate::{AccessPolicy, AllowAllPolicy, Policies};
 use std::sync::Arc;
 
+/// The policies the tests open stores and kernels by, past their own API.
 impl Policies {
     /// The policies that permit everything (`AllowAllPolicy`) by the default rules - for what a
     /// test writes before it runs what it tests, and for what a test runs that checks nothing.

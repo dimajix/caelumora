@@ -59,6 +59,10 @@ against this list, rule by rule, before it is reported (the self-review of
     [SECURITY.md](SECURITY.md#the-security-suite)) - a plugin's in its own tests, in the suite's
     world (`caelumora_kernel::testing`, feature `test-support`; with agents,
     `caelumora_agents::testing`).
+*   A test uses what the code offers its callers, not its fields; what tests alone use - a fixture
+    shared by several files, a method of a type - stands in a `testing` module or a guarded `impl`
+    block of its own, never loose beside the code or guarded inside the type's own `impl`
+    ([Testing](#testing)).
 *   A change to what is stored comes without compatibility code; the summary says which stored
     data has to be deleted ([Crates and interfaces](#crates-and-interfaces)).
 *   Comments and Markdown documents wrap prose at 100 characters, and no line of it starts with a
@@ -559,20 +563,34 @@ that answered it.
 ## Testing
 
 A test uses what the code offers its callers. One that needs an internal - a field or method made
-visible for it, beyond what the `testing` modules below offer - says that a cut is wrong: it is a
-[finding](../AGENTS.md#findings), and the visibility is not widened for it.
+visible for it, beyond what the `testing` modules and the blocks for tests below offer - says that
+a cut is wrong: it is a [finding](../AGENTS.md#findings), and the visibility is not widened for it.
 
 ### Unit tests
 
 *   **Placement:** in a `mod tests` block at the bottom of the file, guarded by `#[cfg(test)]`.
 *   **Shared fixtures:** what the tests of several files use lives in a `testing` module of the
-    module it builds, e.g. `session::testing` - `#[cfg(test)] pub(crate)` while only the crate's own
-    tests use it, `#[cfg(any(test, feature = "test-support"))] pub` once the tests of another crate
-    do (`channel::testing`, `session::testing`, `workspace::testing`, `component::testing`, issue
-    370). What such a module adds to a type for tests - `ChannelLoop::actor_of` - is named apart
-    from the type's own API and widens nothing outside `test-support`. The tests of the actors in a
-    running channel live in `channel/tests/` of the kernel, those of the agents in `channel_tests/`
-    of `caelumora-agents`.
+    module it builds, e.g. `session::testing` - a free function no less than a type, never loose in
+    `lib.rs` or beside the code (issue 567). It is private, `#[cfg(test)] mod testing` with
+    `pub(super)` items, while the tests of its parent module and of the modules within it use it
+    (`routes::testing` of the REST server, the `testing` of a tool's crate); `#[cfg(test)]
+    pub(crate)` while other modules of the crate do; `#[cfg(any(test, feature = "test-support"))]
+    pub` once the tests of another crate do (`channel::testing`, `session::testing`,
+    `workspace::testing`, `component::testing`, issue 370), inline in its module's file
+    (`question::testing`) or as its `testing.rs`. The tests of the actors in a running channel live
+    in `channel/tests/` of the kernel, those of the agents in `channel_tests/` of
+    `caelumora-agents`.
+*   **What a type offers tests:** a method or constructor only tests use stands apart from the
+    type's own API, in an `impl` block of its own, guarded as a `testing` module is (`#[cfg(test)]`,
+    or `#[cfg(any(test, feature = "test-support"))]` once another crate's tests use it), whose doc
+    comment says what the tests do with the type past its own API (issue 567). The block lies in
+    the nearest `testing` module above the type that reaches what the method needs, the crate's
+    own included (`impl ChannelLoop` in `channel::testing`, with `actor_of`; `impl Turn` in
+    `caelumora_agents::testing`); only where none does, beside the type, after its own `impl`
+    (`EventSubscription`, `UserActor`, `SessionManager::create`, whose module's `testing` cannot
+    reach what it calls). No single method of the type's own `impl` is guarded for tests: who
+    reads the type sees its API apart from what only tests are given, and nothing widens it outside
+    the guard.
 *   **Documents in tests:** a test that needs a document of the domain starts from what the
     `testing` module of its kind makes - `make_personality`, `make_session`, `make_user`,
     `make_template`, `make_channel`, `make_message` - and writes beside it only what it differs in

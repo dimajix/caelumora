@@ -15,17 +15,17 @@ use std::sync::Mutex;
 
 /// The texts of the kernel, of the agents and of compaction, as the kernel and the plugins add
 /// them, as a model of the default variant is given them - for what a test makes itself.
-pub(crate) fn prompts() -> PromptTexts {
+pub(super) fn prompts() -> PromptTexts {
     testing::prompts_with(NAMESPACE, PROMPTS)
 }
 
 /// A message heard, saying `text`.
-pub(crate) fn heard(text: &str) -> Message {
+pub(super) fn heard(text: &str) -> Message {
     Message { content: Some(text.to_string()), ..Message::new(Classification::PUBLIC) }
 }
 
 /// The text the strategy puts in the place of a part, unless it fails.
-pub(crate) const SUMMARY: &str = "They want release notes.";
+pub(super) const SUMMARY: &str = "They want release notes.";
 
 /// What a `Scripted` strategy answers.
 #[derive(Debug, Default, Clone, Copy)]
@@ -43,24 +43,24 @@ enum Answer {
 /// of answer, as its `Answer` says, keeping what it was asked: the part, and what can be given
 /// again.
 #[derive(Debug, Default)]
-pub(crate) struct Scripted {
+pub(super) struct Scripted {
     answer: Answer,
-    pub(crate) asked: Mutex<Vec<(Vec<Message>, Vec<String>)>>,
+    pub(super) asked: Mutex<Vec<(Vec<Message>, Vec<String>)>>,
 }
 
 impl Scripted {
     /// A strategy that fails with what `fails` returns.
-    pub(crate) fn failing(fails: fn() -> CompactionError) -> Self {
+    pub(super) fn failing(fails: fn() -> CompactionError) -> Self {
         Self { answer: Answer::Failing(fails), ..Self::default() }
     }
 
     /// A strategy for whose agent nothing that can be given again is still needed.
-    pub(crate) fn needing_nothing() -> Self {
+    pub(super) fn needing_nothing() -> Self {
         Self { answer: Answer::NeedingNothing, ..Self::default() }
     }
 
     /// How often it was asked.
-    pub(crate) fn times_asked(&self) -> usize {
+    pub(super) fn times_asked(&self) -> usize {
         self.asked.lock().unwrap().len()
     }
 }
@@ -92,7 +92,7 @@ impl CompactionStrategy for Scripted {
 
 /// Records in `turn` two calls of `agent`'s model, each with its result, long enough that a
 /// compaction keeping a tenth of the context replaces the first.
-pub(crate) fn two_calls(turn: &mut Turn<'_>, agent: AgentId) {
+pub(super) fn two_calls(turn: &mut Turn<'_>, agent: AgentId) {
     for (content, role) in [
         ("a", MessageRole::Assistant),
         ("r", MessageRole::Tool),

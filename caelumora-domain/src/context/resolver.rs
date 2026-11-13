@@ -526,7 +526,8 @@ mod tests {
     use crate::digest;
     use crate::digest::prompt;
     use crate::message::TokenUsage;
-    use crate::prompt_catalogue::{kernel_catalogue, PromptVariant, KERNEL_PROMPTS};
+    use crate::prompt_catalogue::testing::kernel_catalogue;
+    use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
     use crate::tool::{Tool, ToolCall, ToolCallResult};
     use crate::turn::TurnState;
     use crate::user::UserId;

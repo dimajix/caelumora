@@ -411,6 +411,36 @@ impl Turn<'_> {
     }
 }
 
+/// How the tests of this crate begin a turn, or take up one they began, past its own API.
+#[cfg(test)]
+impl<'a> Turn<'a> {
+    /// A turn begun on `agent_channel_state` with a default context, no
+    /// tools and the default profile, as `under_way` - what a test needs to
+    /// work in one.
+    pub(crate) fn begun(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
+        agent_channel_state.begin_turn(Work::new(
+            Default::default(),
+            None,
+            Default::default(),
+            Default::default(),
+        ));
+        Self::under_way(agent_id, agent_channel_state)
+    }
+
+    /// The turn a test began on `agent_channel_state`, of the agent `agent_id` called "agent",
+    /// with a state of its own, in a channel of no running session (`detached_actor_runtime`).
+    ///
+    /// # Panics
+    /// If no turn is under way.
+    pub(crate) fn under_way(
+        agent_id: AgentId,
+        agent_channel_state: &'a mut AgentChannelState,
+    ) -> Self {
+        Self::of(agent_channel_state, detached_actor_runtime(agent_id))
+            .expect("a turn is under way")
+    }
+}
+
 /// A turn of the agent of `with` in its channel, begun in `state`: where a
 /// test of a tool on the workspace calls it.
 pub fn workspace_turn<'a>(with: &WithWorkspace, state: &'a mut AgentChannelState) -> Turn<'a> {

@@ -347,7 +347,7 @@ pub fn found_from<'a, D: Scoped>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::meets_exactly_its_equals;
+    use crate::query::testing::meets_exactly_its_equals;
     use uuid::Uuid;
 
     #[test]

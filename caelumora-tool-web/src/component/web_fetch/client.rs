@@ -148,21 +148,6 @@ impl Client {
         Self::build(HttpClient::builder(), Reach { admitted: is_public, proxies })
     }
 
-    /// A client that goes through no proxy and reaches the addresses `admitted`, with the proxies
-    /// `proxies` - for the server of a test, which lies on the host itself.
-    #[cfg(test)]
-    fn direct(admitted: fn(IpAddr) -> bool, proxies: &[&str]) -> Self {
-        let proxies = proxies.iter().map(|host| host.to_string()).collect();
-        Self::build(HttpClient::builder().no_proxy(), Reach { admitted, proxies }).unwrap()
-    }
-
-    /// A client that goes through no proxy and reaches the public internet and the host itself -
-    /// for the server of a test.
-    #[cfg(test)]
-    pub(super) fn reaching_the_host() -> Self {
-        Self::direct(|address| is_public(address) || address.is_loopback(), &[])
-    }
-
     fn build(builder: ClientBuilder, reach: Reach) -> reqwest::Result<Self> {
         let reach = Arc::new(reach);
         let followed = Arc::clone(&reach);
@@ -224,6 +209,23 @@ impl Client {
             body.extend_from_slice(&chunk);
         }
         Ok(text::page(url, &media_type, body, encoding))
+    }
+}
+
+/// The clients the tests reach the server of a test with, on the host itself, past the API.
+#[cfg(test)]
+impl Client {
+    /// A client that goes through no proxy and reaches the addresses `admitted`, with the proxies
+    /// `proxies` - for the server of a test, which lies on the host itself.
+    fn direct(admitted: fn(IpAddr) -> bool, proxies: &[&str]) -> Self {
+        let proxies = proxies.iter().map(|host| host.to_string()).collect();
+        Self::build(HttpClient::builder().no_proxy(), Reach { admitted, proxies }).unwrap()
+    }
+
+    /// A client that goes through no proxy and reaches the public internet and the host itself -
+    /// for the server of a test.
+    pub(super) fn reaching_the_host() -> Self {
+        Self::direct(|address| is_public(address) || address.is_loopback(), &[])
     }
 }
 

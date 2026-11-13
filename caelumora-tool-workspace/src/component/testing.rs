@@ -2,7 +2,7 @@
 //! builds it.
 
 use super::{WorkspaceComponent, WorkspaceParams};
-use crate::prompts;
+use crate::testing::prompts;
 use caelumora_api::component::Params;
 use serde_json::Value;
 

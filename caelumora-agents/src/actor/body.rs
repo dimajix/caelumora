@@ -369,6 +369,7 @@ mod testing {
     use caelumora_domain::agent::Personality;
     use caelumora_kernel::kernel::AgentRuntime;
 
+    /// What the tests make of an agent's body past its own API.
     impl AgentBody {
         /// The body of an agent in a channel outside a session, perceiving
         /// through `processors`: for tests of what it takes in.

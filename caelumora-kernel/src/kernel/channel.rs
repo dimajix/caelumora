@@ -86,15 +86,6 @@ impl ChannelRuntime {
         }
     }
 
-    /// The runtime of `actor` in the channel this runtime is for, for a test: one that takes part
-    /// in nothing, acting in its own name without roles (issue 516). The channel makes its actors'
-    /// runtimes of their participants (`participant_runtime`).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
-        let (session_id, channel_id) = (self.session.id(), self.channel.id());
-        self.runtime_acting(actor, Acting(ActingKind::Itself { actor, session_id, channel_id }))
-    }
-
     /// The runtime of the participant `resolved` in the channel this runtime is for: acting in
     /// the participant's context as the controllers hold it now (issue 516).
     pub(crate) fn participant_runtime(&self, resolved: &ResolvedParticipant) -> ParticipantRuntime {
@@ -173,16 +164,6 @@ impl ChannelRuntime {
     pub(crate) fn history_store(&self) -> &Arc<dyn HistoryStore> {
         self.kernel.history_store()
     }
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
-        self.kernel.transcript_store()
-    }
-
-    /// The texts given to models (issue 57), for the tests' views.
-    #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> {
-        self.kernel.prompts()
-    }
 
     pub(crate) fn controller_manager(&self) -> &Arc<ControllerManager> {
         self.kernel.controller_manager()
@@ -197,6 +178,9 @@ impl ChannelRuntime {
     }
 }
 
+/// What the tests do with a channel's runtime past its own API: make one outside a session, and
+/// the runtime of a participant in it, and read the session's controller and the stores and texts
+/// the views of a test read.
 #[cfg(any(test, feature = "test-support"))]
 impl ChannelRuntime {
     /// A runtime for `channel` of `session`, which is not running - in
@@ -232,5 +216,23 @@ impl ChannelRuntime {
             channel,
             Weak::clone(&self.session_loop),
         )
+    }
+
+    /// The runtime of `actor` in the channel this runtime is for, for a test: one that takes part
+    /// in nothing, acting in its own name without roles (issue 516). The channel makes its actors'
+    /// runtimes of their participants (`participant_runtime`).
+    pub fn new_participant_runtime(&self, actor: ActorId) -> ParticipantRuntime {
+        let (session_id, channel_id) = (self.session.id(), self.channel.id());
+        self.runtime_acting(actor, Acting(ActingKind::Itself { actor, session_id, channel_id }))
+    }
+
+    /// Where the transcripts of the agents' contexts are kept, for the tests' views.
+    pub(crate) fn transcript_store(&self) -> &Arc<dyn TranscriptStore> {
+        self.kernel.transcript_store()
+    }
+
+    /// The texts given to models (issue 57), for the tests' views.
+    pub(crate) fn prompts(&self) -> &Arc<PromptCatalogue> {
+        self.kernel.prompts()
     }
 }

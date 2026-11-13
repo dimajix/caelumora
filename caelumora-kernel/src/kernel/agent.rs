@@ -125,6 +125,8 @@ impl AgentRuntime {
     }
 }
 
+/// What the tests make of an agent's runtime past its own API: one of a participant's runtime,
+/// of the personality they give it.
 #[cfg(any(test, feature = "test-support"))]
 impl AgentRuntime {
     /// The runtime of the agent that `participant` is the runtime of - in a test: of the agent as

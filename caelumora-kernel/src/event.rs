@@ -340,9 +340,25 @@ pub struct EventSubscription {
     queue: mpsc::WeakUnboundedSender<Dispatched>,
 }
 impl EventSubscription {
+    /// The underlying receiver, for a subscriber that handles lost events
+    /// itself.
+    pub fn into_receiver(self) -> broadcast::Receiver<Arc<GlobalEvent>> {
+        self.rx
+    }
+
+    /// The underlying receiver, lent to a subscriber that handles lost
+    /// events itself and keeps the subscription to follow more topics.
+    pub fn receiver(&mut self) -> &mut broadcast::Receiver<Arc<GlobalEvent>> {
+        &mut self.rx
+    }
+}
+
+/// What the tests read of a subscription past its own API: the events as they come, a loss
+/// skipped, and the bus settled - since they read what they caused.
+#[cfg(any(test, feature = "test-support"))]
+impl EventSubscription {
     /// The next event, or `None` once the bus is gone, as a copy of its own. Lost events are logged
     /// and skipped: for tests alone, since a subscriber of the kernel makes up for them.
-    #[cfg(any(test, feature = "test-support"))]
     pub async fn recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.recv().await {
@@ -356,7 +372,6 @@ impl EventSubscription {
     }
 
     /// The next event if one is waiting, like `recv`.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn try_recv(&mut self) -> Option<GlobalEvent> {
         loop {
             match self.rx.try_recv() {
@@ -372,7 +387,6 @@ impl EventSubscription {
     /// Waits until the bus delivered everything published before: for a
     /// test that reads what it caused, since the dispatcher delivers a
     /// moment after `publish` returns (issue 504).
-    #[cfg(any(test, feature = "test-support"))]
     pub async fn settled(&self) {
         let Some(queue) = self.queue.upgrade() else { return };
         let (done, settled) = oneshot::channel();
@@ -383,7 +397,6 @@ impl EventSubscription {
 
     /// Everything delivered of what was published before, as `recv` hands
     /// it out (`settled`): for a test that reads what it caused.
-    #[cfg(any(test, feature = "test-support"))]
     pub async fn drain(&mut self) -> Vec<GlobalEvent> {
         self.settled().await;
         let mut events = Vec::new();
@@ -391,18 +404,6 @@ impl EventSubscription {
             events.push(event);
         }
         events
-    }
-
-    /// The underlying receiver, for a subscriber that handles lost events
-    /// itself.
-    pub fn into_receiver(self) -> broadcast::Receiver<Arc<GlobalEvent>> {
-        self.rx
-    }
-
-    /// The underlying receiver, lent to a subscriber that handles lost
-    /// events itself and keeps the subscription to follow more topics.
-    pub fn receiver(&mut self) -> &mut broadcast::Receiver<Arc<GlobalEvent>> {
-        &mut self.rx
     }
 }
 
@@ -556,6 +557,7 @@ impl EventBus {
     }
 }
 
+/// What the tests do with the bus past its own API: make a subscriber lose events.
 #[cfg(any(test, feature = "test-support"))]
 impl EventBus {
     /// Publishes `event` more often than a subscription holds, in a row: a

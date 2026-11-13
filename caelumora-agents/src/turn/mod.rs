@@ -40,8 +40,6 @@ pub(crate) use ending::CommittedTurn;
 
 use crate::notes::NoteKind;
 use crate::situation::Situation;
-#[cfg(test)]
-use crate::testing::detached_actor_runtime;
 use anyhow::Result;
 use caelumora_api::actor::Answering;
 use caelumora_api::reader::ViewResult;
@@ -98,34 +96,6 @@ impl<'a> Turn<'a> {
         let agent = runtime.agent();
         let (agent_id, agent_name) = (agent.id, agent.name.to_string());
         Some(Self { agent_id, agent_name, agent_channel_state, runtime })
-    }
-
-    /// A turn begun on `agent_channel_state` with a default context, no
-    /// tools and the default profile, as `under_way` - what a test needs to
-    /// work in one.
-    #[cfg(test)]
-    pub(crate) fn begun(agent_id: AgentId, agent_channel_state: &'a mut AgentChannelState) -> Self {
-        agent_channel_state.begin_turn(Work::new(
-            Default::default(),
-            None,
-            Default::default(),
-            Default::default(),
-        ));
-        Self::under_way(agent_id, agent_channel_state)
-    }
-
-    /// The turn a test began on `agent_channel_state`, of the agent `agent_id` called "agent",
-    /// with a state of its own, in a channel of no running session (`detached_actor_runtime`).
-    ///
-    /// # Panics
-    /// If no turn is under way.
-    #[cfg(test)]
-    pub(crate) fn under_way(
-        agent_id: AgentId,
-        agent_channel_state: &'a mut AgentChannelState,
-    ) -> Self {
-        Self::of(agent_channel_state, detached_actor_runtime(agent_id))
-            .expect("a turn is under way")
     }
 
     /// The situation of the turn, to read (issues 204, 399): what the turn

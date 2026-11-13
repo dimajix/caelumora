@@ -171,3 +171,42 @@ collected here, to be taken on one after the other, each a step of its own:
   `views` of `Channels`, since it has to take in what the bus delivered of the user's taking part
   through the subscription of `Channels` itself; a method of `Channels` doing so would be one for
   tests, and is decided with the others.
+
+- **2026-11-13** — Decided with the maintainer before step 6: one form for what a type offers
+  tests - an `impl` block of its own, guarded and saying what the tests do with the type past its
+  API, in the `testing` module of the type's module or, where that cannot reach what it needs,
+  right after the type's own `impl` -; the single methods guarded inside a type's own `impl` move
+  into such blocks. The seven free functions for tests loose in a crate's `lib.rs` or beside the
+  code - `prompts` and `catalogue` of four tool crates, the domain's `kernel_catalogue` and
+  `meets_exactly_its_equals` - move into `testing` modules in the same step.
+
+- **2026-11-13** — Step 6, point 6: CODING-GUIDELINES describes the three visibilities of a
+  `testing` module - private with `pub(super)` items, `pub(crate)`, `pub` under `test-support` -,
+  that a free function shared by tests is no exception, and the rule above under "What a type
+  offers tests", with a line in the checklist. Moved into blocks of their own: `recv`, `try_recv`,
+  `settled` and `drain` of `EventSubscription`; `recv` and `try_recv` of `ChannelWatch`;
+  `UserActor::watch` into the actor's block; `ChannelLoop::observe` into `channel::testing`;
+  `new_participant_runtime`, `transcript_store` and `prompts` into the block of `ChannelRuntime`;
+  `ParticipantRuntime::acting_as`; `SessionManager::create`; `ResolvedParticipant::approver`;
+  `ApiError::status` and `code`; `Turn::begun` and `under_way`; the store's `Connection::schema`;
+  the web client's `direct` and `reaching_the_host`; `AgentChannelState::context_of`. The
+  terminal's fixture `settled` is a method of a `#[cfg(test)]` block of `Channels`, so that no test
+  reads its fields. The free functions live in `prompt_catalogue::testing` and `query::testing` of
+  the domain and in a `testing` module of each tool crate; the doc comment of the workspace
+  tools' `prompts`, which called the texts a catalogue, says what they are. No behaviour changes.
+  On the review: every block for tests says what the tests do with the type past its own API,
+  also the four that said nothing before (`EventBus`, `AgentRuntime`, `Policies` of the security
+  crate, `AgentBody`); `nowhere`, which the actor's block and its tests share, lives in a private
+  `testing` module of `actor::user`; and the guidelines say that a block for tests is one of what
+  a test may use beside a `testing` module.
+
+- **2026-11-13** — Decided with the maintainer on the review of step 6: a block for tests lies in
+  the nearest `testing` module above the type that reaches what its methods need, the crate's own
+  included, and only where none does beside the type; the two findings of the review join the
+  step. So `AgentChannelState::context_of` moved to the domain's `agent::testing`,
+  `ResolvedParticipant::approver` to `channel::testing`, and `Turn::begun` and `under_way` to
+  `caelumora_agents::testing`, beside its other block for `Turn`. The tests of the session manager
+  ask `running` instead of reading its map of sessions, and the tests of a running channel read
+  the history it holds through `ChannelLoop::reading_history` of `channel::testing` instead of its
+  state. The crate-root `testing` modules of `caelumora-model` and `caelumora-compaction` give
+  their items as `pub(super)`, as the guidelines describe a private one.

@@ -47,14 +47,6 @@ impl ParticipantRuntime {
         self.acting.context_for(initiator)
     }
 
-    /// This runtime, acting in `context` whatever its actor and its initiator are: for a test
-    /// that gives the work of an actor the rights it needs without making it a participant
-    /// (issue 516).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn acting_as(self, context: SecurityContext) -> Self {
-        Self { acting: Acting(ActingKind::Given(context)), ..self }
-    }
-
     /// The kernel of the process the participant runs in, which the runtime of its agent answers by
     /// (`AgentRuntime`).
     pub(super) fn kernel(&self) -> &Arc<Kernel> {
@@ -129,6 +121,18 @@ impl ParticipantRuntime {
     /// its channel (`AgentRuntime`, issue 370): the loop's public API acts in a user's name too.
     pub(crate) fn channel_loop(&self) -> Option<Arc<ChannelLoop>> {
         self.runtime.channel_loop.get()
+    }
+}
+
+/// What the tests make of a participant's runtime past its own API: one acting in a context they
+/// give it.
+#[cfg(any(test, feature = "test-support"))]
+impl ParticipantRuntime {
+    /// This runtime, acting in `context` whatever its actor and its initiator are: for a test
+    /// that gives the work of an actor the rights it needs without making it a participant
+    /// (issue 516).
+    pub fn acting_as(self, context: SecurityContext) -> Self {
+        Self { acting: Acting(ActingKind::Given(context)), ..self }
     }
 }
 

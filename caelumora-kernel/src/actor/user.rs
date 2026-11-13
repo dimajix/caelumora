@@ -7,8 +7,6 @@ use crate::channel::{ChannelError, ChannelLoop};
 use crate::command::{first_word, CommandContext, CommandReply};
 use crate::controller::{ChannelController, UserController};
 use crate::kernel::ParticipantRuntime;
-#[cfg(any(test, feature = "test-support"))]
-use crate::transport::memory::InMemoryEventSender;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
@@ -110,13 +108,17 @@ impl ChannelWatch {
             Err(RecvError::Closed) => future::pending().await,
         }
     }
+}
 
+/// What the tests read of a watch past its own API: the envelopes alone, past where runs begin
+/// and end, which whoever follows a channel takes in (`next`).
+#[cfg(any(test, feature = "test-support"))]
+impl ChannelWatch {
     /// The next envelope shown, past where runs begin and end: for tests alone, since whoever
     /// follows a channel takes in where its runs begin and end (`next`).
     ///
     /// # Errors
     /// As `next`.
-    #[cfg(any(test, feature = "test-support"))]
     pub async fn recv(&mut self) -> Result<Envelope, Lagged> {
         loop {
             if let Shown::Envelope(envelope) = self.next().await? {
@@ -130,7 +132,6 @@ impl ChannelWatch {
     ///
     /// # Errors
     /// As `next`.
-    #[cfg(any(test, feature = "test-support"))]
     pub fn try_recv(&mut self) -> Result<Option<Envelope>, Lagged> {
         loop {
             match self.shown.try_recv() {
@@ -805,14 +806,6 @@ impl UserActor {
             .await
     }
 
-    /// Follows the channel as this user, from now on: see `ChannelWatch`. For tests alone: whoever
-    /// follows a channel does so through the views, as the user, where the channel lists them
-    /// (`ChannelView::user_follow`).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn watch(&self) -> ChannelWatch {
-        ChannelWatch::of(&self.outbox)
-    }
-
     /// Hands `maybe_event` to whoever watches, and answers a request for
     /// approval that a rule of the user's answers (issue 13): sent as the
     /// user's own answer would be, and shown to the user as theirs. `true`
@@ -994,32 +987,46 @@ impl Actor for UserActor {
     }
 }
 
-/// What the tests of a frontend do with a user's actor, past its own API: hand it what a channel
-/// would route to it.
+/// What the tests do with a user's actor past its own API: follow the channel as the user, past
+/// the views, and hand it what the channel would route to it.
 #[cfg(any(test, feature = "test-support"))]
 impl UserActor {
+    /// Follows the channel as this user, from now on: see `ChannelWatch`. For tests alone: whoever
+    /// follows a channel does so through the views, as the user, where the channel lists them
+    /// (`ChannelView::user_follow`).
+    pub fn watch(&self) -> ChannelWatch {
+        ChannelWatch::of(&self.outbox)
+    }
+
     /// Takes `envelope` in as if the channel had routed it to this actor: shown to whoever follows
     /// it, a question kept as open. What the actor would send for it - the answer of a rule of the
     /// user's to an approval - goes nowhere, and the actor takes the channel for gone; so answers
     /// whether the actor would end.
     pub async fn take_in_as_routed(&self, envelope: Envelope) -> bool {
-        self.handle_actor_envelope(Some(envelope), &nowhere()).await
+        self.handle_actor_envelope(Some(envelope), &testing::nowhere()).await
     }
 }
 
-/// Where what an actor sends goes when nothing is to come of it.
+/// What the tests of a user's actor and its block for tests share.
 #[cfg(any(test, feature = "test-support"))]
-fn nowhere() -> InMemoryEventSender {
-    InMemoryEventSender::new(mpsc::channel(1).0)
+mod testing {
+    use crate::transport::memory::InMemoryEventSender;
+    use tokio::sync::mpsc;
+
+    /// Where what an actor sends goes when nothing is to come of it.
+    pub(super) fn nowhere() -> InMemoryEventSender {
+        InMemoryEventSender::new(mpsc::channel(1).0)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::actor::manager::OUTBOX_CAPACITY;
+    use crate::actor::user::testing::nowhere;
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
-    use crate::transport::memory::InMemoryEventReceiver;
+    use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
     use caelumora_domain::actor::EventContext;
     use caelumora_domain::channel::testing::make_channel;
     use caelumora_domain::question::testing::make_question_request;

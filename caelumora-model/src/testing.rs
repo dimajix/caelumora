@@ -28,11 +28,11 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 /// The backend of the language models of the tests.
-pub(crate) const ANSWERING: &str = "answering";
+pub(super) const ANSWERING: &str = "answering";
 /// The backend of the image models of the tests.
-pub(crate) const DRAWING: &str = "drawing";
+pub(super) const DRAWING: &str = "drawing";
 /// The backend of the decision models of the tests.
-pub(crate) const JUDGING: &str = "judging";
+pub(super) const JUDGING: &str = "judging";
 
 /// What a model of the backend `answering` is configured with.
 #[derive(Debug, Deserialize)]
@@ -118,7 +118,7 @@ fn public() -> Classification {
 impl Params for Judged {}
 
 /// The name of the answer of the backend `judging` that says for whom it was asked.
-pub(crate) const ASKED_FOR: &str = "asked_for";
+pub(super) const ASKED_FOR: &str = "asked_for";
 
 /// A decision model that answers every question yes with the probability it is configured with,
 /// and says, under `ASKED_FOR`, whose context it was asked in.
@@ -172,7 +172,7 @@ impl Plugin for TestModels {
 }
 
 /// The configuration whose section `plugins.model` is `section`.
-pub(crate) fn configuring(section: Value) -> AppConfig {
+pub(super) fn configuring(section: Value) -> AppConfig {
     AppConfig { plugins: [(MODEL.to_string(), section)].into(), ..AppConfig::default() }
 }
 
@@ -181,7 +181,7 @@ pub(crate) fn configuring(section: Value) -> AppConfig {
 ///
 /// # Errors
 /// What keeps the kernel from being built.
-pub(crate) fn kernel_of(config: AppConfig) -> Result<Kernel> {
+pub(super) fn kernel_of(config: AppConfig) -> Result<Kernel> {
     TestKernel { config, plugins: vec![&ModelPlugin, &TestModels], ..Default::default() }
         .try_build()
 }

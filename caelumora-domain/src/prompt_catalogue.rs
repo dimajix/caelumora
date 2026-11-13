@@ -35,8 +35,6 @@ use std::fs;
 use std::io;
 use std::path::Path;
 use std::sync::Arc;
-#[cfg(test)]
-use std::sync::OnceLock;
 
 /// The namespace of the kernel's texts: what `caelumora-domain` writes for a model - the notices of
 /// a context as it is resolved, the explanation of how messages are marked.
@@ -394,17 +392,23 @@ pub enum PromptError {
     UnknownValue { variant: String, key: String, name: String },
 }
 
-/// A catalogue with the kernel's texts alone, for the tests of what renders them.
+/// What the tests of this crate render texts with.
 #[cfg(test)]
-pub(crate) fn kernel_catalogue() -> &'static Arc<PromptCatalogue> {
-    static CATALOGUE: OnceLock<Arc<PromptCatalogue>> = OnceLock::new();
-    CATALOGUE.get_or_init(|| {
-        let mut catalogue = PromptCatalogue::new();
-        catalogue
-            .add(KERNEL, KERNEL_PROMPTS)
-            .unwrap_or_else(|e| panic!("the kernel's texts cannot be read: {e}"));
-        Arc::new(catalogue)
-    })
+pub(crate) mod testing {
+    use super::{PromptCatalogue, KERNEL, KERNEL_PROMPTS};
+    use std::sync::{Arc, OnceLock};
+
+    /// A catalogue with the kernel's texts alone, for the tests of what renders them.
+    pub(crate) fn kernel_catalogue() -> &'static Arc<PromptCatalogue> {
+        static CATALOGUE: OnceLock<Arc<PromptCatalogue>> = OnceLock::new();
+        CATALOGUE.get_or_init(|| {
+            let mut catalogue = PromptCatalogue::new();
+            catalogue
+                .add(KERNEL, KERNEL_PROMPTS)
+                .unwrap_or_else(|e| panic!("the kernel's texts cannot be read: {e}"));
+            Arc::new(catalogue)
+        })
+    }
 }
 
 #[cfg(test)]

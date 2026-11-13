@@ -200,7 +200,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::approval::ApproverId;
-    use crate::query::meets_exactly_its_equals;
+    use crate::query::testing::meets_exactly_its_equals;
     use crate::security::testing::{shared, user};
     use uuid::Uuid;
 

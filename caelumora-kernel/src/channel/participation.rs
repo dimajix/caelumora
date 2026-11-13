@@ -258,19 +258,6 @@ impl ResolvedParticipant {
         Self { kind, session_id, channel_id: Some(channel_id) }
     }
 
-    /// An approver of channel `channel_id` of session `session_id` - in
-    /// tests, as the participant of an actor of whatever kind the channel
-    /// only looks up.
-    #[cfg(test)]
-    pub(crate) fn approver(session_id: SessionId, channel_id: ChannelId) -> Self {
-        use caelumora_domain::approval::ApprovalStrategy;
-        Self::internal(
-            &InternalActor::Approver(Approver::new(ApprovalStrategy::default())),
-            session_id,
-            channel_id,
-        )
-    }
-
     /// What its actor is built from.
     pub(crate) fn kind(&self) -> &ResolvedKind {
         &self.kind

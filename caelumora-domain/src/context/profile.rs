@@ -410,7 +410,7 @@ mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::context::testing::text;
-    use crate::prompt_catalogue::kernel_catalogue;
+    use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::tool::{ToolCall, ToolCallResult};
     use crate::user::UserId;
     use chrono::{TimeZone as _, Utc};

@@ -89,12 +89,6 @@ impl Connection {
         })
     }
 
-    /// The schema its tables are kept in.
-    #[cfg(test)]
-    pub(crate) fn schema(&self) -> &str {
-        &self.schema
-    }
-
     /// Resolves the secret, connects, makes the schema and applies the
     /// migrations. No message names the URL: it holds the password.
     async fn connect(&self) -> StoreResult<PgPool> {
@@ -132,6 +126,15 @@ impl Connection {
         })?;
         info!("Connected to the database of the secret '{named}', schema '{}'", self.schema);
         Ok(pool)
+    }
+}
+
+/// What the tests read of a connection past its own API.
+#[cfg(test)]
+impl Connection {
+    /// The schema its tables are kept in.
+    pub(crate) fn schema(&self) -> &str {
+        &self.schema
     }
 }
 

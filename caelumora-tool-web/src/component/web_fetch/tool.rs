@@ -179,7 +179,7 @@ mod tests {
     use super::super::client::Client;
     use super::super::WebFetchParams;
     use super::*;
-    use crate::prompts;
+    use crate::testing::prompts;
     use axum::routing::get;
     use axum::Router;
     use caelumora_agents::library::AgentsLibrary;

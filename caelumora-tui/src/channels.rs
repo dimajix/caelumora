@@ -239,6 +239,23 @@ impl Channels {
     }
 }
 
+/// What the tests do with the channels past their own API: take in what the bus has yet to deliver
+/// of the user's taking part.
+#[cfg(test)]
+impl Channels {
+    /// Takes in what the event bus has yet to deliver of what a test did before
+    /// (`EventSubscription::settled`), so that what it does next is told by its own events alone.
+    async fn settled(&mut self) {
+        self.session_events.settled().await;
+        let me = self.views.context().caller_id;
+        while let Some(event) = self.session_events.try_recv() {
+            if changes_taking_part(&event, me) {
+                self.take_in(Happened::TakingPart).await;
+            }
+        }
+    }
+}
+
 /// What one of `followed` shows next, with its channel; never if there are none. Nothing is lost
 /// if it is dropped before it completes.
 async fn shown(followed: &mut [Followed]) -> (ChannelId, Result<Shown, Lagged>) {
@@ -325,18 +342,6 @@ mod tests {
     /// What `channel` shows as `sender` sends `event` in it.
     fn envelope_shown(channel: &ChannelLoop, sender: ActorId, event: ActorEvent) -> Happened {
         Happened::Shown(channel.id(), Ok(Shown::Envelope(from(channel, sender, event))))
-    }
-
-    /// Takes in what the event bus has yet to deliver of what a test did before
-    /// (`EventSubscription::settled`), so that what it does next is told by its own events alone.
-    async fn settled(channels: &mut Channels) {
-        channels.session_events.settled().await;
-        let me = channels.views.context().caller_id;
-        while let Some(event) = channels.session_events.try_recv() {
-            if changes_taking_part(&event, me) {
-                channels.take_in(Happened::TakingPart).await;
-            }
-        }
     }
 
     /// Takes in what happens next, until a channel showed something: the lines printed of it.
@@ -536,7 +541,7 @@ mod tests {
             .await
             .expect("they take part");
         assert!(channels.followed(late.id()).is_none(), "not theirs yet");
-        settled(&mut channels).await;
+        channels.settled().await;
         assert!(channels.followed(late.id()).is_none(), "still not theirs");
 
         late.add_participant(&owner, other, HistoryAccess::All).await.expect("the owner adds them");
@@ -569,7 +574,7 @@ mod tests {
         assert!(session_loop.delete_channel(&owner, side.id()).await.unwrap());
         channels.take_in(Happened::Shown(side.id(), Ok(Shown::Ended))).await;
         assert!(channels.followed(side.id()).is_none(), "followed no more");
-        settled(&mut channels).await;
+        channels.settled().await;
 
         session_loop.restore_channel(&owner, side.id()).await.expect("the owner restores it");
         until_told(&mut channels, "side").await;
@@ -602,7 +607,7 @@ mod tests {
         let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
             .await
             .expect("the owner takes part");
-        settled(&mut channels).await;
+        channels.settled().await;
 
         let late = spec("late", vec![owner.caller_id]);
         let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");

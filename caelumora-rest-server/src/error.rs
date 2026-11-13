@@ -138,15 +138,17 @@ impl ApiError {
     pub fn unavailable(code: impl Into<Cow<'static, str>>, detail: impl Into<String>) -> Self {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, code, detail)
     }
+}
 
+/// What the tests read of an error past its own API, which a handler returns rather than reads.
+#[cfg(test)]
+impl ApiError {
     /// The status it answers with - for tests; a handler returns the error.
-    #[cfg(test)]
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
     /// Its code - for tests, like `status`.
-    #[cfg(test)]
     pub fn code(&self) -> &str {
         &self.code
     }

@@ -395,7 +395,7 @@ impl Compartments {
 mod tests {
     use super::*;
     use crate::confidentiality::testing::{classified, compartment, organisation};
-    use crate::query::meets_exactly_its_equals;
+    use crate::query::testing::meets_exactly_its_equals;
     use Confidentiality::*;
 
     #[test]

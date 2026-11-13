@@ -532,7 +532,7 @@ pub(crate) mod tests {
     use crate::confidentiality::Confidentiality;
     use crate::content::testing::make_content_ref;
     use crate::context::{KnowledgeRef, KnowledgeSource};
-    use crate::query::meets_exactly_its_equals;
+    use crate::query::testing::meets_exactly_its_equals;
     use crate::session::SessionId;
     use crate::tool::ToolVisibility;
     use chrono::Duration;

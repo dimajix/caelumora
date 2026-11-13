@@ -7,8 +7,6 @@ use crate::approval::ApprovalRequest;
 use crate::chain::{Position, Stored};
 use crate::confidentiality::Classification;
 use crate::content::ContentId;
-#[cfg(any(test, feature = "test-support"))]
-use crate::context::ContextRef;
 use crate::context::{
     ContextResolver, FrameRef, KnowledgeRef, KnowledgeSource, PromptAt, PromptRef,
 };
@@ -650,17 +648,6 @@ impl AgentChannelState {
         digest
     }
 
-    /// The context `message`, said by the agent, was produced from, as the
-    /// state holds it (issue 426): its frame read from what is held. For a
-    /// test that resolves what its turns said in memory; `None` if the
-    /// message was not produced from a context, or its frame is stored and
-    /// let go (`keep_window`).
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn context_of(&self, message: &Message) -> Option<ContextRef> {
-        let (transcript, frame) = message.produced_from()?;
-        Some(ContextRef { transcript, frame: self.frames.get(&frame)?.clone() })
-    }
-
     /// Begins a turn (issue 85) that does `work` - begun by whoever answers
     /// (`Work::new`): the envelope it answers and why it was asked to (issue
     /// 439), whose authority it acts with, the channel's classification and
@@ -919,7 +906,7 @@ mod tests {
     use crate::context::{ContextResolver, KnowledgeSource};
     use crate::digest;
     use crate::note::NoteId;
-    use crate::prompt_catalogue::kernel_catalogue;
+    use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::store::testing::{replayed, stored};
     use crate::tool::{Tool, ToolCall, ToolCallState, ToolParameters, ToolVisibility};
     use crate::user::UserId;

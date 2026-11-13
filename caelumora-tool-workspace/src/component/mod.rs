@@ -160,7 +160,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalogue;
+    use crate::testing::catalogue;
     use caelumora_agents::testing::with_agent_kinds;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::type_map::TypeKey;

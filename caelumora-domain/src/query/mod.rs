@@ -12,9 +12,9 @@
 
 mod field;
 mod filter;
-
 #[cfg(test)]
-pub(crate) use field::meets_exactly_its_equals;
+pub(crate) mod testing;
+
 pub use field::{Field, FieldPath, FieldValue, NoField};
 pub use filter::{meeting, Filter};
 

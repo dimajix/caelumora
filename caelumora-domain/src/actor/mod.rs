@@ -133,7 +133,7 @@ impl ActorDescription {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::meets_exactly_its_equals;
+    use crate::query::testing::meets_exactly_its_equals;
 
     /// Issue 403: what is public of an actor names its handle only where it
     /// can be mentioned, and says whether it is a person.
