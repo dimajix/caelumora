@@ -188,10 +188,7 @@ mod tests {
                 loop {
                     let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
                     let history = views
-                        .session(session)
-                        .await
-                        .unwrap()
-                        .channel(channel)
+                        .channel(session, channel)
                         .await
                         .unwrap()
                         .history_page(None, 10)

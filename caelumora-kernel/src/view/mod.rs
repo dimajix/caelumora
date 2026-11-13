@@ -315,7 +315,7 @@ impl Views {
     ///
     /// # Errors
     /// `SessionNotFound` if there is no such session or the viewer may not
-    /// read it.
+    /// read it; `Failed` if reading it from its store failed.
     pub async fn session(&self, id: SessionId) -> ViewResult<SessionView> {
         let not_found = || ViewError::SessionNotFound(id);
         let found = match self.running.running(id) {
@@ -346,8 +346,8 @@ impl Views {
 
     /// The channel `channel` of session `session`, wherever it is - what a
     /// memory entry's origin or a `KnowledgeRef` points to (issue 164):
-    /// there, if the viewer may read it (asked as `session(id)` and
-    /// `SessionView::channel` ask); gone, if it or its session was deleted
+    /// there, if the viewer may read it (as `channel` reaches it); gone, if
+    /// it or its session was deleted
     /// and the viewer could read it were it there (`GetSession` on its
     /// stored attributes; a channel reached as a live one is, issue 304),
     /// with who deleted it and when; never there otherwise - so nothing can
@@ -374,18 +374,23 @@ impl Views {
         }
     }
 
+    /// Channel `channel` of session `session`, if the viewer may read it, as `session` and
+    /// `SessionView::channel` ask.
+    ///
+    /// # Errors
+    /// As `session` and `SessionView::channel`: `SessionNotFound`, `ChannelNotFound`, or `Failed`
+    /// if reaching it failed.
+    pub async fn channel(&self, session: SessionId, channel: ChannelId) -> ViewResult<ChannelView> {
+        self.session(session).await?.channel(channel).await
+    }
+
     /// Whether channel `channel` of session `session` lists the viewer among its participants,
     /// resting included (`ChannelView::lists`): what a frontend that follows the channel for a user
     /// asks where a run of their actor began or ended (`ChannelWatch`, issue 386). `false` if the
     /// viewer cannot read the channel, also where reading it failed.
     pub async fn listed_in(&self, session: SessionId, channel: ChannelId) -> bool {
-        match self.session(session).await {
-            Ok(session) => {
-                let viewer = self.viewer.context().caller_id;
-                session.channel(channel).await.is_ok_and(|channel| channel.lists(viewer))
-            }
-            Err(_) => false,
-        }
+        let viewer = self.viewer.context().caller_id;
+        self.channel(session, channel).await.is_ok_and(|channel| channel.lists(viewer))
     }
 
     /// Whether session `id` was deleted and the viewer could read it were
@@ -1163,14 +1168,8 @@ mod tests {
         ]);
         kernel.state_store().put_channel_state(channel.id, &mut channel_state).await.unwrap();
 
-        let for_alice = manager
-            .views(as_user(alice.id))
-            .session(session.id)
-            .await
-            .unwrap()
-            .channel(channel.id)
-            .await
-            .unwrap();
+        let for_alice =
+            manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(remote.id)).await.unwrap();
         let seen = participant.context().await.expect("alice made the agent");
         let texts = |messages: Vec<Message>| {
@@ -1344,6 +1343,23 @@ mod tests {
         assert!(manager.running(id).is_none(), "reaching a session does not start it");
     }
 
+    /// A channel is reached by its coordinates as its session and the session's channel are: not
+    /// in a session the viewer cannot read, nor where the session has no such channel.
+    #[tokio::test]
+    async fn a_channel_is_reached_by_its_session_and_its_id() {
+        let (_, manager) = owned_kernel(Default::default());
+        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let session = session_loop.id();
+        let main = session_loop.channels()[0].id();
+        let views = manager.views(Viewer::new(owner));
+        assert_eq!(views.channel(session, main).await.map(|c| c.id()).ok(), Some(main));
+        let none = views.channel(session, ChannelId::new()).await;
+        assert!(matches!(none, Err(ViewError::ChannelNotFound { .. })), "no such channel");
+        let strangers = manager.views(as_user(UserId::new()));
+        let unread = strangers.channel(session, main).await;
+        assert!(matches!(unread, Err(ViewError::SessionNotFound(_))), "the session is not theirs");
+    }
+
     /// Whether a channel lists the viewer: while they take part in it; not once they left it -
     /// though they may still read it -, nor in a channel that is not there, nor for whom the
     /// session cannot be read.
@@ -1362,8 +1378,7 @@ mod tests {
         let strangers = manager.views(as_user(UserId::new()));
         assert!(!strangers.listed_in(session, id).await, "the session cannot be read");
         channel.leave(&owner, owner.caller_id).await.expect("the owner may leave");
-        let read = views.session(session).await.unwrap().channel(id).await;
-        assert!(read.is_ok(), "the owner still reads it");
+        assert!(views.channel(session, id).await.is_ok(), "the owner still reads it");
         assert!(!views.listed_in(session, id).await, "left");
     }
 
@@ -1384,10 +1399,7 @@ mod tests {
 
         let view = manager
             .views(as_user(alice.id))
-            .session(session.id)
-            .await
-            .unwrap()
-            .channel(channel.id)
+            .channel(session.id, channel.id)
             .await
             .unwrap()
             .snapshot(Detail::PARTICIPANTS)
@@ -1485,14 +1497,7 @@ mod tests {
             .unwrap();
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
 
-        let for_bob = manager
-            .views(as_user(bob.id))
-            .session(session.id)
-            .await
-            .unwrap()
-            .channel(channel.id)
-            .await
-            .unwrap();
+        let for_bob = manager.views(as_user(bob.id)).channel(session.id, channel.id).await.unwrap();
         let plain = for_bob.snapshot(Detail::PARTICIPANTS).await;
         assert!(
             plain
@@ -1607,14 +1612,8 @@ mod tests {
         let unread_of = |viewer: &User| {
             let (manager, viewer) = (&manager, viewer.id);
             async move {
-                let channel = manager
-                    .views(as_user(viewer))
-                    .session(session.id)
-                    .await
-                    .unwrap()
-                    .channel(channel.id)
-                    .await
-                    .unwrap();
+                let channel =
+                    manager.views(as_user(viewer)).channel(session.id, channel.id).await.unwrap();
                 channel.snapshot(Detail::UNREAD).await.unread
             }
         };
@@ -1632,10 +1631,7 @@ mod tests {
         );
         let without = manager
             .views(as_user(alice.id))
-            .session(session.id)
-            .await
-            .unwrap()
-            .channel(channel.id)
+            .channel(session.id, channel.id)
             .await
             .unwrap()
             .snapshot(Detail::empty())
@@ -1795,16 +1791,7 @@ mod tests {
 
         let reach = |viewer: Viewer| {
             let manager = &manager;
-            async move {
-                manager
-                    .views(viewer)
-                    .session(session.id)
-                    .await
-                    .unwrap()
-                    .channel(channel.id)
-                    .await
-                    .unwrap()
-            }
+            async move { manager.views(viewer).channel(session.id, channel.id).await.unwrap() }
         };
         let for_alice = reach(as_user(alice.id)).await;
         let texts = |messages: &[Message]| {
@@ -2104,14 +2091,8 @@ mod tests {
             .await
             .unwrap());
 
-        let for_alice = manager
-            .views(as_user(alice.id))
-            .session(session.id)
-            .await
-            .unwrap()
-            .channel(channel.id)
-            .await
-            .unwrap();
+        let for_alice =
+            manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
         assert_eq!(
             (participant.name(), participant.handle().as_deref()),
@@ -2187,14 +2168,7 @@ mod tests {
             .await
             .unwrap();
 
-        let main = manager
-            .views(as_user(alice.id))
-            .session(session.id)
-            .await
-            .unwrap()
-            .channel(channel.id)
-            .await
-            .unwrap();
+        let main = manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let pending = main.pending_approvals().await.unwrap();
         assert_eq!(pending.len(), 1, "only the call that waits");
         assert_eq!(
@@ -2274,7 +2248,7 @@ mod tests {
             .unwrap();
 
         let views = manager.views(as_user(alice.id));
-        let main = views.session(session.id).await.unwrap().channel(channel.id).await.unwrap();
+        let main = views.channel(session.id, channel.id).await.unwrap();
         // As counted: the last call's measure, read as it is stored (issue 390).
         let expected = TokenUsage {
             calls: 1,
@@ -2484,10 +2458,7 @@ mod tests {
                 session.id,
                 secret.id,
             )))
-            .session(session.id)
-            .await
-            .unwrap()
-            .channel(secret.id)
+            .channel(session.id, secret.id)
             .await
             .unwrap();
         assert_eq!(
@@ -3110,10 +3081,7 @@ mod tests {
         let participant = || async {
             let view = manager
                 .views(Viewer::new(alice_ctx.clone()))
-                .session(session.id())
-                .await
-                .unwrap()
-                .channel(channel.id())
+                .channel(session.id(), channel.id())
                 .await
                 .unwrap();
             view.snapshot(Detail::PARTICIPANTS)

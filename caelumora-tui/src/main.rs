@@ -551,7 +551,7 @@ async fn main() -> Result<()> {
         })?;
 
     // Who answers, as the views tell it (issue 174).
-    let view = views.session(session_id).await?.channel(followed.channel_id()).await?;
+    let view = views.channel(session_id, followed.channel_id()).await?;
     let unknown = || "from a bundle".to_string();
     println!(
         "Moderator: {}, responders: {}",

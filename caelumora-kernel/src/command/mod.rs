@@ -108,13 +108,17 @@ impl CommandContext<'_> {
     }
 
     /// The channel the command `command` runs in as the issuer reads it: its view, reached through
-    /// `session_view`.
+    /// `views`.
     ///
     /// # Errors
-    /// `CommandError::Failed` if the session or the channel cannot be read.
+    /// `CommandError::Failed` if the channel belongs to no session, or the session or the channel
+    /// cannot be read.
     pub(crate) async fn channel_view(&self, command: &str) -> CommandResult<ChannelView> {
-        let session = self.session_view(command).await?;
-        session.channel(self.channel.id()).await.map_err(|e| command_error(command, &e.into()))
+        let views = self.views(command)?;
+        views
+            .channel(self.channel.session_id(), self.channel.id())
+            .await
+            .map_err(|e| command_error(command, &e.into()))
     }
 }
 

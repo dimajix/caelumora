@@ -103,8 +103,7 @@ pub async fn channel_view(
     session_id: SessionId,
     channel_id: ChannelId,
 ) -> Result<ChannelView, ApiError> {
-    let session = views(state, user).session(session_id).await?;
-    Ok(session.channel(channel_id).await?)
+    Ok(views(state, user).channel(session_id, channel_id).await?)
 }
 
 /// The views as `user` navigates them (issue 163): what a handler reads

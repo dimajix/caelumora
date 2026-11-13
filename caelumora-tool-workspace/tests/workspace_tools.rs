@@ -214,10 +214,7 @@ async fn an_agent_is_offered_the_workspace_tools_its_list_lets_it_call_in_its_ch
         let view = world
             .manager
             .views(Viewer::new(World::as_user(world.bob)))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(main.id())
+            .channel(session.id(), main.id())
             .await
             .unwrap();
         let sets =

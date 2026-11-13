@@ -832,10 +832,7 @@ mod tests {
         let held_in = async |channel: &ChannelLoop| {
             let view = manager
                 .views(Viewer::new(ctx.clone()))
-                .session(session.id())
-                .await
-                .unwrap()
-                .channel(channel.id())
+                .channel(session.id(), channel.id())
                 .await
                 .unwrap();
             let snapshot = view.snapshot(Detail::empty()).await;

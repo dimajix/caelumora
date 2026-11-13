@@ -319,8 +319,9 @@ impl ActorRuntime for AgentRuntime {
         initiator: ActorId,
         classification: Classification,
     ) -> ViewResult<Option<Box<dyn ChannelReader>>> {
-        let Some(session) = self.session(initiator, classification).await? else { return Ok(None) };
-        session.channel(self.participant.channel_id).await.map(Some)
+        let Some(views) = self.views_of_work(initiator, classification) else { return Ok(None) };
+        let (session, channel) = (self.participant.session_id, self.participant.channel_id);
+        Ok(Some(Box::new(views.channel(session, channel).await?)))
     }
 
     async fn admit_tool_call(&self, initiator: ActorId, call: &ToolCall) -> CallPermit {

@@ -229,11 +229,7 @@ async fn channel_snapshot(
     viewer: &SecurityContext,
 ) -> Option<ChannelSnapshot> {
     let views = state.session_manager.views(Viewer::new(viewer.clone()));
-    let reached = match views.session(session_id).await {
-        Ok(session) => session.channel(channel_id).await,
-        Err(e) => Err(e),
-    };
-    let view = match reached {
+    let view = match views.channel(session_id, channel_id).await {
         Ok(view) => view,
         Err(e) => {
             tracing::warn!("Cannot describe channel {} for its snapshot: {:#}", channel_id, e);
@@ -1047,7 +1043,7 @@ mod tests {
     /// Whether channel `channel` of `session` runs.
     async fn runs(state: &AppState, session: SessionId, channel: ChannelId) -> bool {
         let views = state.session_manager.views(Viewer::new(SecurityContext::system()));
-        views.session(session).await.unwrap().channel(channel).await.unwrap().running().is_some()
+        views.channel(session, channel).await.unwrap().running().is_some()
     }
 
     /// The page of a history `uri` names, as whoever `cookie` logs in reads it.

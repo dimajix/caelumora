@@ -156,3 +156,15 @@ a session is continued - would be the same choice made at start. Nobody has aske
   views mean without a deleted agent resting in a channel (`ChannelView::takes_part`). The
   approver's catching up (`ApproverActor::catch_up`) asks something else - whether an agent still
   runs in the channel, a resting one counting as gone - and keeps its own check.
+- **2026-11-13** — Decided with the maintainer on the review of step 6: two findings become steps
+  of their own before the switch: 7, a channel is reached by its coordinates in one place; 8, the
+  channel stream of the REST server holds its views, as `Followed` does. The switch is step 9.
+
+  Step 7 done. `Views::channel(session, channel)` reaches a channel as `Views::session` and
+  `SessionView::channel` ask, without the distinction of a deleted one that `Views::channel_of`
+  makes. Every walk from a session to its channel by their ids reaches it so: in the kernel the
+  channel of a command (`CommandContext::channel_view`), the channel of an agent's work
+  (`ActorRuntime::channel` of `AgentRuntime`) and `Views::listed_in`; the REST server's
+  `channel_view` and channel snapshot; the terminal; and 41 places of tests and their helpers,
+  which reached the channel only to test something else. The tests that test
+  `SessionView::channel` start from a session they hold, and keep doing so.

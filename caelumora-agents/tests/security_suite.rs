@@ -358,10 +358,7 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     let for_bob = world
         .manager
         .views(Viewer::new(World::as_user(world.bob)))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(main.id())
+        .channel(session.id(), main.id())
         .await
         .unwrap();
     let page = for_bob.history_page(None, 10).await.unwrap();
@@ -422,10 +419,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     let view = world
         .manager
         .views(Viewer::new(World::as_user(world.bob)))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(channel)
+        .channel(session.id(), channel)
         .await
         .unwrap();
     let participants = view.participants().await;
@@ -663,15 +657,8 @@ async fn cancelling_one_actor_is_for_whoever_may_cancel_the_channel() {
     );
     assert_eq!(asked, checks(&["carol: CancelChannel(alice's) no"]));
 
-    let view = world
-        .manager
-        .views(Viewer::new(bob))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(main.id())
-        .await
-        .unwrap();
+    let view =
+        world.manager.views(Viewer::new(bob)).channel(session.id(), main.id()).await.unwrap();
     let participant =
         view.participant(ActorId::Agent(helper)).await.expect("the agent is a participant");
     let (offered, asked) = world.asked(participant.may_cancel()).await;
@@ -813,10 +800,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let view = world
         .manager
         .views(Viewer::new(World::as_user(world.bob)))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(main.id())
+        .channel(session.id(), main.id())
         .await
         .unwrap();
     let participant =
@@ -896,10 +880,7 @@ async fn what_an_agent_saw_is_its_owners_alone() {
             let view = world
                 .manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap();
             view.participants()
@@ -967,10 +948,7 @@ async fn which_tools_an_agent_has_is_read_by_the_participants_of_its_channel() {
             let view = world
                 .manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap();
             view.participants()
@@ -1043,10 +1021,7 @@ async fn which_components_an_agent_was_built_from_is_read_by_its_owner_alone() {
             let view = world
                 .manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap();
             view.participants()
@@ -1268,10 +1243,7 @@ async fn questions_shown(
     let view = world
         .manager
         .views(Viewer::new(World::as_user(user)))
-        .session(session)
-        .await
-        .unwrap()
-        .channel(main)
+        .channel(session, main)
         .await
         .unwrap();
     view.snapshot(Detail::PARTICIPANTS | Detail::APPROVALS)
@@ -1781,10 +1753,7 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
             let view = world
                 .manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap();
             view.participants()
@@ -2006,10 +1975,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
             let view = world
                 .manager
                 .views(Viewer::new(World::as_user(world.alice)))
-                .session(session.id())
-                .await
-                .unwrap()
-                .channel(main.id())
+                .channel(session.id(), main.id())
                 .await
                 .unwrap();
             view.participant(ActorId::Agent(helper)).await.unwrap().tool_sets().await.unwrap()
@@ -2285,10 +2251,7 @@ async fn what_a_tool_kept_is_found_by_its_agent_alone_until_its_channel_recorded
     let owner = world
         .manager
         .views(Viewer::new(World::as_user(world.alice)))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(main.id())
+        .channel(session.id(), main.id())
         .await
         .unwrap()
         .attachment(MessageId::new(), kept.id)
@@ -2322,10 +2285,7 @@ async fn said_with_attachment(
     let view = world
         .manager
         .views(Viewer::new(hers))
-        .session(channel.session_id())
-        .await
-        .unwrap()
-        .channel(channel.id())
+        .channel(channel.session_id(), channel.id())
         .await
         .unwrap();
     time::timeout(Duration::from_secs(5), async {
@@ -4094,10 +4054,7 @@ async fn a_private_answer_to_a_command_is_on_its_issuers_page_alone() {
         async move {
             let view = manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap();
             view.history_page(None, 50)

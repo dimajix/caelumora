@@ -467,14 +467,7 @@ async fn a_history_is_read_in_pages_and_by_message_as_far_as_the_readers_view_go
     let reach = |user| {
         let manager = &world.manager;
         let (session, channel) = (session.id(), side.id());
-        async move {
-            manager
-                .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await?
-                .channel(channel)
-                .await
-        }
+        async move { manager.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
     };
     let texts = |items: &[HistoryEntry]| {
         items
@@ -588,9 +581,7 @@ async fn the_messages_carrying_attachments_are_read_as_far_as_the_readers_view_g
     let carrying = |user: UserId| async move {
         manager
             .views(Viewer::new(World::as_user(user)))
-            .session(session_id)
-            .await?
-            .channel(channel_id)
+            .channel(session_id, channel_id)
             .await?
             .history_page_of(None, 10, Some(Filter::with_attachments()))
             .await
@@ -657,10 +648,7 @@ async fn up_to_where_a_channel_was_read_is_marked_by_its_reader_alone() {
         async move {
             manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap()
                 .unread()
@@ -714,14 +702,7 @@ async fn a_participant_follows_a_channel_through_their_own_actor_whether_it_runs
     let reach = |user| {
         let manager = &world.manager;
         let (session, channel) = (session.id(), main.id());
-        async move {
-            manager
-                .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await?
-                .channel(channel)
-                .await
-        }
+        async move { manager.views(Viewer::new(World::as_user(user))).channel(session, channel).await }
     };
 
     let (watch, asked) =
@@ -1280,12 +1261,7 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     let attachments = world.kernel.attachment_manager();
     let (manager, session_id, channel_id) = (&world.manager, session.id(), main.id());
     let channel_of = |user: UserId| async move {
-        manager
-            .views(Viewer::new(World::as_user(user)))
-            .session(session_id)
-            .await?
-            .channel(channel_id)
-            .await
+        manager.views(Viewer::new(World::as_user(user))).channel(session_id, channel_id).await
     };
 
     let (uploaded, asked) = world
@@ -1497,10 +1473,7 @@ async fn what_a_tool_gave_is_kept_for_a_participant_asked_of_the_flow_alone() {
         async move {
             manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session)
-                .await
-                .unwrap()
-                .channel(channel)
+                .channel(session, channel)
                 .await
                 .unwrap()
         }
@@ -1570,15 +1543,7 @@ async fn a_profile_is_written_by_its_user_alone_and_read_by_who_shares_a_session
 
     let session = world.shared_session(&[], &[]).await;
     let channel = session.channels()[0].id();
-    let view = world
-        .manager
-        .views(Viewer::new(bob))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(channel)
-        .await
-        .unwrap();
+    let view = world.manager.views(Viewer::new(bob)).channel(session.id(), channel).await.unwrap();
     let participants = view.participants().await;
     let hers = participants.iter().find(|m| m.id() == ActorId::User(world.alice)).unwrap();
     assert_eq!(
@@ -2881,15 +2846,7 @@ async fn a_channel_whose_bundle_is_withdrawn_keeps_its_session_from_nothing() {
         .await
         .expect("its owner deletes it though it does not run"));
     assert!(
-        world
-            .manager
-            .views(Viewer::new(alice.clone()))
-            .session(session.id())
-            .await
-            .unwrap()
-            .channel(side)
-            .await
-            .is_err(),
+        world.manager.views(Viewer::new(alice.clone())).channel(session.id(), side).await.is_err(),
         "gone"
     );
     world.manager.stop(&alice, session.id()).await.unwrap();
@@ -3784,7 +3741,7 @@ async fn a_workspace_is_used_in_a_channel_by_its_participants_as_its_list_lets_t
     let (session_id, main) = (session.id(), session.channels()[0].id());
     let in_main = |ctx: &SecurityContext| {
         let views = world.manager.views(Viewer::new(ctx.clone()));
-        async move { views.session(session_id).await.unwrap().channel(main).await.unwrap() }
+        async move { views.channel(session_id, main).await.unwrap() }
     };
 
     assert!(
@@ -4275,10 +4232,7 @@ async fn the_group_of_a_channels_participants_follows_who_takes_part() {
         async move {
             manager
                 .views(Viewer::new(World::as_user(user)))
-                .session(session_id)
-                .await
-                .unwrap()
-                .channel(channel_id)
+                .channel(session_id, channel_id)
                 .await
                 .is_ok()
         }
@@ -4344,10 +4298,7 @@ async fn a_workspace_is_not_used_in_a_channel_by_who_is_not_in_it() {
     let main = world
         .manager
         .views(Viewer::new(as_agent))
-        .session(session.id())
-        .await
-        .unwrap()
-        .channel(session.channels()[0].id())
+        .channel(session.id(), session.channels()[0].id())
         .await
         .unwrap();
     assert!(main.workspace().await.unwrap().is_none());
