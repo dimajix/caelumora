@@ -283,7 +283,7 @@ mod tests {
     use crate::followed::testing::{approval, from, message};
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::AgentId;
-    use caelumora_domain::channel::HistoryAccess;
+    use caelumora_domain::channel::{HistoryAccess, AGENT_STATE_CHANGED};
     use caelumora_domain::message::Message;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::SessionId;
@@ -349,6 +349,23 @@ mod tests {
                 return lines;
             }
         }
+    }
+
+    /// Takes in what happens next, until the user is told they take part in channel `name` now,
+    /// within five seconds.
+    async fn until_told(channels: &mut Channels, name: &str) {
+        let told = format!(
+            "--- You take part in channel {name} now: type '/switch {name}' to talk there ---"
+        );
+        let taken_in = async {
+            loop {
+                let happened = channels.next().await;
+                if channels.take_in(happened).await.contains(&told) {
+                    return;
+                }
+            }
+        };
+        time::timeout(Duration::from_secs(5), taken_in).await.expect("told in time");
     }
 
     #[tokio::test]
@@ -523,17 +540,8 @@ mod tests {
         assert!(channels.followed(late.id()).is_none(), "still not theirs");
 
         late.add_participant(&owner, other, HistoryAccess::All).await.expect("the owner adds them");
-        let told = "--- You take part in channel late now: type '/switch late' to talk there ---";
         let talked_in = channels.talked_in().map(|f| f.channel_id());
-        let joined = async {
-            loop {
-                let happened = channels.next().await;
-                if channels.take_in(happened).await.iter().any(|line| line == told) {
-                    return;
-                }
-            }
-        };
-        time::timeout(Duration::from_secs(5), joined).await.expect("told in time");
+        until_told(&mut channels, "late").await;
         assert!(channels.followed(late.id()).is_some());
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), talked_in, "no switch");
     }
@@ -564,16 +572,7 @@ mod tests {
         settled(&mut channels).await;
 
         session_loop.restore_channel(&owner, side.id()).await.expect("the owner restores it");
-        let told = "--- You take part in channel side now: type '/switch side' to talk there ---";
-        let restored = async {
-            loop {
-                let happened = channels.next().await;
-                if channels.take_in(happened).await.iter().any(|line| line == told) {
-                    return;
-                }
-            }
-        };
-        time::timeout(Duration::from_secs(5), restored).await.expect("told in time");
+        until_told(&mut channels, "side").await;
         assert!(channels.followed(side.id()).is_some());
     }
 
@@ -590,6 +589,31 @@ mod tests {
             ["--- You no longer take part in channel side, or it was deleted ---"]
         );
         assert!(channels.followed(side.id()).is_none());
+    }
+
+    /// A loss on the event bus is made up for by following anew: a channel made with the user in
+    /// it while the bus lost the announcement is followed all the same.
+    #[tokio::test]
+    async fn a_loss_on_the_bus_follows_anew() {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let views = manager.views(Viewer::new(owner.clone()));
+        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("the owner takes part");
+        settled(&mut channels).await;
+
+        let late = spec("late", vec![owner.caller_id]);
+        let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
+        let main = (session_loop.id(), channels.talked_in().expect("one talked in").channel_id());
+        let busy = GlobalEvent::custom::<Channel>(&main, AGENT_STATE_CHANGED, &AgentId::new());
+        kernel.event_bus().publish_past_capacity(&busy);
+        kernel.event_bus().subscribe_all().settled().await;
+        assert!(channels.followed(late.id()).is_none(), "not followed yet");
+
+        until_told(&mut channels, "late").await;
+        assert!(channels.followed(late.id()).is_some());
     }
 
     /// Following anew follows every channel the user takes part in that is not followed yet, and

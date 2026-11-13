@@ -116,7 +116,9 @@ what it keeps (issue 502) - a loss between instances will be the rule, not the e
     `caelumora-tui`).
 
 So only tests skip a loss: `EventSubscription::recv`, which logs it and goes on, is built for them
-alone (`test-support`).
+alone (`test-support`). A test of what a subscriber does at a loss causes one by publishing more
+than a subscription holds (`EventBus::publish_past_capacity`, `test-support`, so that a subscriber
+outside the kernel - the terminal - tests it too).
 
 ### Publishing with attributes
 

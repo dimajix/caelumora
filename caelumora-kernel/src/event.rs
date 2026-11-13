@@ -556,12 +556,12 @@ impl EventBus {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl EventBus {
     /// Publishes `event` more often than a subscription holds, in a row: a
     /// subscriber that does not run meanwhile falls behind and loses the
     /// oldest, which tests of making up for a loss need (issue 502).
-    pub(crate) fn publish_past_capacity(&self, event: &GlobalEvent) {
+    pub fn publish_past_capacity(&self, event: &GlobalEvent) {
         for _ in 0..=SUBSCRIPTION_CAPACITY {
             self.publish(event.clone(), SecurityAttributes::systems());
         }

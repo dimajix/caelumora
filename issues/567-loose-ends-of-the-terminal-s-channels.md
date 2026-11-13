@@ -155,3 +155,19 @@ collected here, to be taken on one after the other, each a step of its own:
   and what is shown is dropped while nobody does, moved from its doc comment to `ChannelWatch`'s,
   since it holds of every follower. No test changes; the terminal, the REST server and the app
   build without it.
+
+- **2026-11-13** — Step 5, point 5: `EventBus::publish_past_capacity` is `pub` under
+  `test-support`, in its block of what the bus offers tests; EVENTS.md names it where it says how
+  a subscriber's making up for a loss is tested. The terminal tests it with
+  `a_loss_on_the_bus_follows_anew`: a channel is made with the user in it, the bus loses the
+  announcement under more than a subscription holds, and the terminal follows the channel all the
+  same. Without the arm of `taking_part` that follows anew at a loss, the test fails. On the
+  review: the test waits for the bus through a subscription of its own, not the private one of
+  `Channels`; and waiting until the user is told of a channel they take part in now, written out
+  in three tests, is one helper, `until_told`.
+
+- **2026-11-13** — Decided with the maintainer on the review of step 5: to point 6, the terminal's
+  test fixture `settled` (`caelumora-tui/src/channels.rs`) reads the private `session_events` and
+  `views` of `Channels`, since it has to take in what the bus delivered of the user's taking part
+  through the subscription of `Channels` itself; a method of `Channels` doing so would be one for
+  tests, and is decided with the others.
