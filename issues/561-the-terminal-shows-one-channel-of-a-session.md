@@ -194,3 +194,26 @@ a session is continued - would be the same choice made at start. Nobody has aske
   take is answered with an error as well. `/approve` and `/retry` act through the actor the
   terminal reached for the line. A channel the user cannot read is passed over at the start.
   What the user may not be told of an error stays in the log, as for a failed command.
+- **2026-11-13** — Decided with the maintainer on the review of step 9: two findings become steps
+  of their own after the switch: the global stream of the REST server builds its views once, as
+  the channel stream does since step 8; `ChannelWatch::recv` and `try_recv` are for tests alone
+  (`test-support`). Decided on the review of step 10: the open questions are kept by the user's
+  actor alone, which decides what may be answered, not by the terminal beside it - a step of its
+  own before the bus. The steps are now: 11, the open questions; 12, the channels joined
+  meanwhile, from the event bus; 13, the global stream's views; 14, `recv` and `try_recv`.
+
+  Step 10 done. The terminal follows every channel of the session the user takes part in
+  (`Channels`, `caelumora-tui`, `channels.rs`) and talks in the first; `/switch <channel>` talks
+  in another of them, named by its whole name as `/channel join` names one, and tells who answers
+  there and what waits for the user there (`Followed::waiting`); without a name, or with one the
+  user takes part in no channel of, it tells which they could switch to. Of the channels not
+  talked in, the terminal tells what waits for the user (`Followed::waits_for_user`) - an
+  approval, questions put to them, a message that mentions them - and events lost, marked with
+  the channel's name. `/approve`, `/deny`, `/answer` and `/decline` with an id act in the channel
+  where it waits; questions being answered are answered in the channel that asked them. A channel
+  the user no longer takes part in is followed no more and told so; if it was the one talked in,
+  the terminal talks in none until `/switch`. What one of the channels shows next
+  (`Channels::next`) is taken in apart from it (`Channels::take_in`), as with `Followed`: it is
+  awaited beside what the user types, and whether a channel ended, asked when it was shown, must
+  not be dropped with it. An approval is answered in the channel where it is pending
+  (`Channels::awaiting`), through the user's actor there, as step 9 decided.

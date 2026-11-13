@@ -39,6 +39,7 @@ clap.workspace = true
 tokio = { workspace = true, features = ["full"] }
 rustyline.workspace = true
 anyhow.workspace = true
+futures.workspace = true
 chrono.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 serde_json.workspace = true
