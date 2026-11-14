@@ -73,7 +73,7 @@ pub trait WorkspaceReader: Send + Sync {
     fn id(&self) -> WorkspaceId;
 
     /// Its name, unique where it lies.
-    fn name(&self) -> &str;
+    fn name(&self) -> &Name;
 
     /// What it holds, in a line; `None` if nobody said.
     fn description(&self) -> Option<&Description>;

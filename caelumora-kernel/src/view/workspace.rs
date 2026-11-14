@@ -9,6 +9,7 @@
 use super::Views;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::snapshot::WorkspaceSnapshot;
+use caelumora_domain::value::name::Name;
 use caelumora_domain::value::text::Description;
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use caelumora_security::AccessQuestions;
@@ -28,8 +29,9 @@ impl WorkspaceView {
         self.workspace.id
     }
 
-    pub fn name(&self) -> &str {
-        self.workspace.name.as_str()
+    /// Its name, without the scope it lies in.
+    pub fn name(&self) -> &Name {
+        &self.workspace.name.name
     }
 
     /// The storage its files lie in, by its configured name.

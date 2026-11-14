@@ -12,6 +12,7 @@ use caelumora_api::workspace::{WorkspaceError, WorkspaceReader, WorkspaceResult,
 use caelumora_domain::channel::{Channel, ChannelId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::session::Session;
+use caelumora_domain::value::name::Name;
 use caelumora_domain::value::text::Description;
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use caelumora_security::SecurityContext;
@@ -51,7 +52,7 @@ impl WorkspaceReader for UsableWorkspace {
         self.workspace.id()
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &Name {
         self.workspace.name()
     }
 
