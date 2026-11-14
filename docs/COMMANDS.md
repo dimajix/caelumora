@@ -34,8 +34,9 @@ is, what it means, who may run it and what it answers is decided in one place.
 ### Commands of the terminal
 
 The terminal (`caelumora-tui`) carries out a few commands itself, of what the channel's commands do
-not offer - end the program, switch the channel it talks in, answer an approval or questions as it
-shows them, ask an agent to answer again (`TerminalCommand`, issue
+not offer - end the program, switch the channel or the session it talks in, list, start, resume or
+delete the sessions of its directory, answer an approval or questions as it shows them, ask an
+agent to answer again (`TerminalCommand`, issue
 [570](../issues/570-the-terminal-s-commands-and-its-sessions.md)). They are named by the rules below
 as the channel's are, with the domain's `Command`, and a line is tried against them before it goes
 to the channel: so no name or short form of them may begin, or be the beginning of, one of the
@@ -249,6 +250,10 @@ external agent alike.
 | `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
 | `/exit` | `/quit` | the terminal | - | - | - | Ends the program, the session shut down in order. |
 | `/channel switch` | `/switch` | the terminal | - | `<channel>` | - | Talks in another channel of the session the user takes part in. |
+| `/session list` | - | the terminal | - | - | - | Lists the sessions of the directory, the one spoken in last first, the one talked in marked. |
+| `/session new` | `/new` | the terminal | - | `[template]` | - | Starts a session from the template named, or the program's, and talks in it; the one left is stopped. |
+| `/session resume` | `/resume` | the terminal | - | `<id>` | - | Continues the session of the directory whose id begins so, and talks in it; the one left is stopped. |
+| `/session delete` | - | the terminal | - | `<id>` | - | Deletes the session of the directory whose id begins so, not the one talked in; it can be restored. |
 | `/agent retry` | `/retry` | the terminal | - | - | - | Asks for the answer under way, the turn given up, or the last answer of an agent again. |
 | `/approval approve` | `/approve` | the terminal | - | `<id>` | - | Approves the call waiting for approval of that id ([APPROVALS.md](APPROVALS.md)). |
 | `/approval deny` | `/deny` | the terminal | - | `<id>` | - | Denies the call waiting for approval of that id. |

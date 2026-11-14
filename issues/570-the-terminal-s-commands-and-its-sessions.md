@@ -80,3 +80,20 @@ where the channel knows nothing of it or no channel is talked in. A command that
 refuses them. `exit` and `quit` are messages. A test holds that none of them collides with another,
 nor with a command a session has by default - not with those a configuration, a template or an
 agent adds, which the terminal would hide.
+
+**2026-11-14** - Step 3 done: `/session list`, `/session new [template]` (`/new`),
+`/session resume <id>` (`/resume`) and `/session delete <id>` reach the sessions of the directory
+while the program runs (`Sessions::list`, `open`, `stop`, `delete`); `/session new` starts from the
+template named, else from the program's (`--template`, `default` unless named) rather than from
+`default` always, as the table above has it. A session switched to is
+opened before the one left is stopped, and its channels followed in place of the others; where it
+cannot be opened, or the user takes part in none of its channels, the talk stays where it is. The
+session talked in is not deleted. What fails of the sessions tells what failed in its outermost
+message, which the terminal shows; its causes stay in the log.
+
+**2026-11-14** - From the review of step 3, decided by the maintainer as step 4: the channels of
+another session are followed by `Channels` itself, which keeps the event bus beside its views, so
+that switching the session lies with the other commands on sessions and `Handled::Open` goes; and
+what `Sessions` fails with is an error type of its own (`SessionsError`), which the terminal asks
+first, before `user_message`, in one function - so that a kernel's error meant for users still
+reaches them, and the log level follows what failed.

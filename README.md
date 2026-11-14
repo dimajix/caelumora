@@ -100,7 +100,8 @@ each line once, above the line being typed - for a screen reader, and wherever i
 no terminal. Both show what agents say, the tools they call and how the calls ended, and of a
 channel the program opens, continues or switches to what was said in it so far - the messages
 among its last 50 items. `/help` lists the commands of the channel and those the terminal carries
-out itself; `/exit` ends the program.
+out itself: `/session list`, `/session new`, `/session resume` and `/session delete` reach the
+sessions of the directory while the program runs, `/exit` ends it.
 
 ### Running the Program
 

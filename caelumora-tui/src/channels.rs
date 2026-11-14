@@ -9,6 +9,7 @@ use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::channel::{Channel, ChannelId, JOINED};
 use caelumora_domain::event::{EntityChange, GlobalEvent};
 use caelumora_domain::question::QuestionId;
+use caelumora_domain::session::SessionId;
 use caelumora_kernel::actor::user::Lagged;
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
@@ -70,6 +71,11 @@ impl Channels {
         channels.follow_the_others().await;
         channels.talked_in = Some(channels.followed.first()?.channel_id());
         Some(channels)
+    }
+
+    /// The session whose channels are followed.
+    pub(crate) fn session_id(&self) -> SessionId {
+        self.session.id()
     }
 
     /// The channel talked in; `None` once it ended, until the user switches to another.

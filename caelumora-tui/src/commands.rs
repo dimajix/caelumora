@@ -5,11 +5,13 @@ use crate::channels::Channels;
 use crate::followed::Followed;
 use crate::printed::{ErrorKind, Printed};
 use crate::screen::question_line;
+use crate::sessions::{listing, Opening, Sessions};
 use anyhow::Result;
 use caelumora_api::command::CommandError;
 use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::command::{parse_input, Command, UserInput};
 use caelumora_domain::question::{Question, QuestionRequest, Response};
+use caelumora_domain::session::SessionId;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::command::help::HELP_COMMAND_NAME;
@@ -68,6 +70,14 @@ enum TerminalCommand {
     Exit,
     /// Talks in another channel the user takes part in.
     ChannelSwitch,
+    /// Lists the sessions of the directory.
+    SessionList,
+    /// Starts a session and talks in it.
+    SessionNew,
+    /// Continues a session of the directory and talks in it.
+    SessionResume,
+    /// Deletes a session of the directory.
+    SessionDelete,
     /// Asks an agent for its answer again.
     AgentRetry,
     /// Approves a call waiting for approval.
@@ -82,9 +92,13 @@ enum TerminalCommand {
 
 impl TerminalCommand {
     /// Every command of the terminal, in the order `/help` lists them.
-    const ALL: [TerminalCommand; 7] = [
+    const ALL: [TerminalCommand; 11] = [
         TerminalCommand::Exit,
         TerminalCommand::ChannelSwitch,
+        TerminalCommand::SessionList,
+        TerminalCommand::SessionNew,
+        TerminalCommand::SessionResume,
+        TerminalCommand::SessionDelete,
         TerminalCommand::AgentRetry,
         TerminalCommand::ApprovalApprove,
         TerminalCommand::ApprovalDeny,
@@ -109,6 +123,34 @@ impl TerminalCommand {
                 aliases: vec![CommandName::fixed("switch")],
                 description: "Talks in another channel of the session you take part in.".to_string(),
                 usage: Some("<channel>".to_string()),
+                owners_only: false,
+            },
+            TerminalCommand::SessionList => Command {
+                name: CommandName::fixed("session list"),
+                aliases: Vec::new(),
+                description: "Lists the sessions of this directory, the one spoken in last first.".to_string(),
+                usage: None,
+                owners_only: false,
+            },
+            TerminalCommand::SessionNew => Command {
+                name: CommandName::fixed("session new"),
+                aliases: vec![CommandName::fixed("new")],
+                description: "Starts a session from the template named, or the program's, and talks in it.".to_string(),
+                usage: Some("[template]".to_string()),
+                owners_only: false,
+            },
+            TerminalCommand::SessionResume => Command {
+                name: CommandName::fixed("session resume"),
+                aliases: vec![CommandName::fixed("resume")],
+                description: "Continues the session of this directory whose id begins so, and talks in it.".to_string(),
+                usage: Some("<id>".to_string()),
+                owners_only: false,
+            },
+            TerminalCommand::SessionDelete => Command {
+                name: CommandName::fixed("session delete"),
+                aliases: Vec::new(),
+                description: "Deletes the session of this directory whose id begins so, not the one talked in; it can be restored.".to_string(),
+                usage: Some("<id>".to_string()),
                 owners_only: false,
             },
             TerminalCommand::AgentRetry => Command {
@@ -162,14 +204,17 @@ impl TerminalCommand {
 pub(crate) enum Handled {
     /// What the terminal prints of it.
     Printed(Vec<Printed>),
+    /// The user asks to talk in another session of the directory (`/session new`,
+    /// `/session resume`).
+    Open(Opening),
     /// The user ends the program (`/exit`).
     Exit,
 }
 
 /// Does what the user typed, `input`, and answers what it came to: a command of the terminal
-/// carried out - one that takes no arguments refused with them -; while questions are being
-/// `answering`, any other line the answer to the next; else the line sent to the channel talked in
-/// of the `channels` (`send_line`).
+/// carried out - one that takes no arguments refused with them, one on the `sessions` of the
+/// directory asked of them -; while questions are being `answering`, any other line the answer to
+/// the next; else the line sent to the channel talked in of the `channels` (`send_line`).
 ///
 /// # Errors
 /// As [`send_line`].
@@ -177,6 +222,7 @@ pub(crate) async fn handle_line(
     input: &str,
     channels: &mut Channels,
     answering: &mut Option<(QuestionRequest, Vec<Response>)>,
+    sessions: &Sessions,
 ) -> Result<Handled> {
     if input.is_empty() {
         return Ok(Handled::Printed(Vec::new()));
@@ -196,6 +242,20 @@ pub(crate) async fn handle_line(
     let printed = match terminal {
         Some((TerminalCommand::Exit, _)) => return Ok(Handled::Exit),
         Some((TerminalCommand::ChannelSwitch, name)) => channels.switch(name).await,
+        Some((TerminalCommand::SessionNew, template)) => {
+            let template = (!template.is_empty()).then(|| template.to_string());
+            return Ok(Handled::Open(Opening::Start { template }));
+        }
+        Some((TerminalCommand::SessionResume, id)) => {
+            return Ok(Handled::Open(Opening::Resume(id.to_string())));
+        }
+        Some((TerminalCommand::SessionList, _)) => listed(sessions, channels.session_id()).await,
+        Some((TerminalCommand::SessionDelete, id)) => {
+            match sessions.delete(id, channels.session_id()).await {
+                Ok(id) => vec![Printed::Notice(format!("The session {id} is deleted"))],
+                Err(e) => vec![sessions_error_printed(&e)],
+            }
+        }
         Some((TerminalCommand::QuestionDecline, id)) => {
             decline_questions(id, channels, answering).await
         }
@@ -208,6 +268,15 @@ pub(crate) async fn handle_line(
         None => send_line(&parsed, channels).await?,
     };
     Ok(Handled::Printed(printed))
+}
+
+/// What tells of the `sessions` of the directory, the one spoken in last first, `talked_in` marked
+/// as such.
+async fn listed(sessions: &Sessions, talked_in: SessionId) -> Vec<Printed> {
+    match sessions.list().await {
+        Ok(listed) => vec![Printed::Plain(listing(&listed, Some(talked_in)).join("\n"))],
+        Err(e) => vec![sessions_error_printed(&e)],
+    }
 }
 
 /// Answers the approval `id` names - `approved` or not - in the channel of the `channels` where it
@@ -431,6 +500,13 @@ fn terminal_help(args: &str) -> Option<String> {
     (!listed.is_empty()).then(|| format!("Commands of this terminal:\n\n{}", listed.join("\n")))
 }
 
+/// What tells that what was asked of the sessions of the directory (`Sessions`) failed: the
+/// outermost message of `error`, which says what failed; its causes stay in the log.
+pub(crate) fn sessions_error_printed(error: &anyhow::Error) -> Printed {
+    tracing::warn!("Failed: {error:#}");
+    Printed::Error { kind: ErrorKind::Failed, message: error.to_string() }
+}
+
 /// `error` as the user may be told it (`user_message`); what may not be told stays in the log,
 /// and the user is told where to find it.
 fn error_printed(error: &anyhow::Error) -> Printed {
@@ -446,12 +522,12 @@ mod tests {
     use super::*;
     use crate::followed::testing::from;
     use crate::screen::testing::lines;
+    use crate::sessions::testing::{in_directory, InDirectory};
     use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::Choice;
-    use caelumora_kernel::session::testing::{running_session_of_a_user, test_kernel};
-    use caelumora_kernel::session::{SessionLoop, SessionManager};
+    use caelumora_kernel::session::SessionLoop;
     use caelumora_kernel::view::Viewer;
 
     fn question(choices: &[&str], multi_select: bool) -> Question {
@@ -491,24 +567,30 @@ mod tests {
     /// What is being answered: nothing.
     type Answering = Option<(QuestionRequest, Vec<Response>)>;
 
-    /// The channels of a running session as its owner follows them, who takes part in its first
-    /// channel alone, with the session and the owner.
-    async fn followed_alone() -> (Channels, Arc<SessionLoop>, ActorId) {
-        let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
-        let me = owner.caller_id;
-        let views = manager.views(Viewer::new(owner));
-        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+    /// A session the owner of a directory talks in, the first channel of it followed, with the
+    /// session and the directory.
+    async fn talking() -> (Channels, Arc<SessionLoop>, InDirectory) {
+        let directory = in_directory().await;
+        let start = Opening::Start { template: None };
+        let (session_loop, _) = directory.sessions.open(&start).await.expect("started");
+        let views = directory.manager.views(Viewer::new(directory.owner.clone()));
+        let bus = directory.kernel.event_bus();
+        let channels = Channels::new(Arc::clone(&session_loop), views, bus)
             .await
             .expect("the owner takes part");
-        (channels, session_loop, me)
+        (channels, session_loop, directory)
     }
 
     /// What the terminal prints of `input` typed in `channels`, while `answering`.
-    async fn typed(channels: &mut Channels, answering: &mut Answering, input: &str) -> Vec<String> {
-        match handle_line(input, channels, answering).await.expect("handled") {
+    async fn typed(
+        channels: &mut Channels,
+        answering: &mut Answering,
+        sessions: &Sessions,
+        input: &str,
+    ) -> Vec<String> {
+        match handle_line(input, channels, answering, sessions).await.expect("handled") {
             Handled::Printed(printed) => lines(&printed),
+            Handled::Open(_) => panic!("{input} opens a session"),
             Handled::Exit => panic!("{input} ends the program"),
         }
     }
@@ -557,7 +639,7 @@ mod tests {
                 assert!(!command.collides_with(other), "/{} and /{}", command.name, other.name);
             }
         }
-        let (channels, _, _) = followed_alone().await;
+        let (channels, _, _directory) = talking().await;
         let actor = channels.talked_in().and_then(Followed::actor).expect("the owner's actor runs");
         let of_channel = actor.visible_commands().await;
         assert!(!of_channel.is_empty(), "the channel's commands");
@@ -571,34 +653,42 @@ mod tests {
     /// words are messages.
     #[tokio::test]
     async fn the_program_ends_by_a_command_not_by_a_word() {
-        let (mut channels, _, _) = followed_alone().await;
+        let (mut channels, _, directory) = talking().await;
         let mut answering = None;
         for exit in ["/exit", "/quit"] {
-            let handled = handle_line(exit, &mut channels, &mut answering).await.expect("handled");
+            let handled = handle_line(exit, &mut channels, &mut answering, &directory.sessions)
+                .await
+                .expect("handled");
             assert!(matches!(handled, Handled::Exit), "{exit}");
         }
-        let refused = typed(&mut channels, &mut answering, "/exit now").await;
+        let refused = typed(&mut channels, &mut answering, &directory.sessions, "/exit now").await;
         assert_eq!(refused, ["Error: /exit takes no arguments"]);
-        assert!(typed(&mut channels, &mut answering, "exit").await.is_empty(), "said");
+        assert!(
+            typed(&mut channels, &mut answering, &directory.sessions, "exit").await.is_empty(),
+            "said"
+        );
     }
 
     /// `/help` tells the terminal's commands after the channel's; of one named, or of a group of
     /// the terminal alone, what the terminal tells.
     #[tokio::test]
     async fn help_tells_the_terminal_s_commands() {
-        let (mut channels, _, _) = followed_alone().await;
+        let (mut channels, _, directory) = talking().await;
         let answering = &mut None;
-        let all = typed(&mut channels, answering, "/help").await.join("\n");
+        let all = typed(&mut channels, answering, &directory.sessions, "/help").await.join("\n");
         let theirs = all.find("/participant list").expect("the channel's");
         let mine = all.find("Commands of this terminal:").expect("the terminal's");
         assert!(theirs < mine, "after the channel's: {all}");
         assert!(all.contains("- `/channel switch <channel>` (also `/switch`) — Talks"), "{all}");
-        let one = typed(&mut channels, answering, "/help switch").await.join("\n");
+        let one =
+            typed(&mut channels, answering, &directory.sessions, "/help switch").await.join("\n");
         assert!(one.starts_with("`/channel switch <channel>` (also `/switch`)"), "{one}");
-        let group = typed(&mut channels, answering, "/help approval").await.join("\n");
+        let group =
+            typed(&mut channels, answering, &directory.sessions, "/help approval").await.join("\n");
         assert!(group.contains("/approval approve") && group.contains("/approval deny"), "{group}");
         assert!(!group.contains("/exit"), "{group}");
-        let unknown = typed(&mut channels, answering, "/help nothing").await.join("\n");
+        let unknown =
+            typed(&mut channels, answering, &directory.sessions, "/help nothing").await.join("\n");
         assert!(unknown.contains("Unknown command"), "{unknown}");
     }
 
@@ -607,21 +697,23 @@ mod tests {
     /// such channel.
     #[tokio::test]
     async fn a_line_that_cannot_be_done_is_told_why() {
-        let (mut channels, _, _) = followed_alone().await;
+        let (mut channels, _, directory) = talking().await;
         let (channels, answering) = (&mut channels, &mut None);
-        assert!(typed(channels, answering, "").await.is_empty());
-        let invalid = typed(channels, answering, "/approve nope").await;
+        assert!(typed(channels, answering, &directory.sessions, "").await.is_empty());
+        let invalid = typed(channels, answering, &directory.sessions, "/approve nope").await;
         assert_eq!(invalid, ["Invalid approval id: nope"]);
         let id = Uuid::new_v4();
-        let not_pending = typed(channels, answering, &format!("/deny {id}")).await;
+        let not_pending =
+            typed(channels, answering, &directory.sessions, &format!("/deny {id}")).await;
         assert_eq!(not_pending, [format!("No pending approval with id {id}")]);
-        let retried = typed(channels, answering, "/retry").await;
+        let retried = typed(channels, answering, &directory.sessions, "/retry").await;
         assert_eq!(retried, ["No answer of an agent to give again"]);
-        let none = typed(channels, answering, "/answer").await;
+        let none = typed(channels, answering, &directory.sessions, "/answer").await;
         assert_eq!(none, ["No open questions put to you"]);
-        let none_named = typed(channels, answering, &format!("/decline {id}")).await;
+        let none_named =
+            typed(channels, answering, &directory.sessions, &format!("/decline {id}")).await;
         assert_eq!(none_named, [format!("No open questions put to you with id {id}")]);
-        let switched = typed(channels, answering, "/switch nowhere").await;
+        let switched = typed(channels, answering, &directory.sessions, "/switch nowhere").await;
         let unknown = "You take part in no channel 'nowhere'";
         assert_eq!(switched.first().map(String::as_str), Some(unknown));
     }
@@ -630,7 +722,8 @@ mod tests {
     /// the next question, and are no longer being answered once the last is.
     #[tokio::test]
     async fn questions_are_answered_line_by_line() {
-        let (mut channels, session_loop, me) = followed_alone().await;
+        let (mut channels, session_loop, directory) = talking().await;
+        let me = directory.owner.caller_id;
         let channel_id = channels.talked_in().expect("talked in").channel_id();
         let channel = session_loop.channel(channel_id).expect("the channel runs");
         let ActorId::User(user) = me else { unreachable!("a user") };
@@ -641,11 +734,51 @@ mod tests {
         actor.take_in_as_routed(from(&channel, ActorId::Agent(agent), asked)).await;
 
         let (channels, answering) = (&mut channels, &mut None);
-        let prompt = typed(channels, answering, "/answer").await;
+        let prompt = typed(channels, answering, &directory.sessions, "/answer").await;
         assert_eq!(prompt, [prompt_of(0, &request.questions.questions[0])]);
         assert!(answering.is_some(), "being answered");
-        let answered = typed(channels, answering, "Kaya").await;
+        let answered = typed(channels, answering, &directory.sessions, "Kaya").await;
         assert!(answered.is_empty(), "{answered:?}");
         assert!(answering.is_none(), "answered");
+    }
+
+    /// The commands on the sessions of the directory: listed, the one talked in marked; deleted,
+    /// but the one talked in; started and resumed by asking the talk to open them.
+    #[tokio::test]
+    async fn the_sessions_of_the_directory_are_reached_by_commands() {
+        let (mut channels, talked_in, directory) = talking().await;
+        let sessions = &directory.sessions;
+        let (other, _) = sessions.open(&Opening::Start { template: None }).await.expect("started");
+        // Also while questions are being answered, which stay so.
+        let me = directory.owner.caller_id;
+        let channel_id = channels.talked_in().expect("talked in").channel_id();
+        let questions = make_question_request(talked_in.id(), channel_id, AgentId::new(), me);
+        let answering = &mut Some((questions, Vec::new()));
+        let listed = typed(&mut channels, answering, sessions, "/session list").await.join("\n");
+        assert!(answering.is_some(), "still being answered");
+        let marked: Vec<&str> =
+            listed.lines().filter(|line| line.ends_with(", talked in")).collect();
+        assert_eq!(marked.len(), 1, "{listed}");
+        assert!(marked[0].starts_with(&talked_in.id().to_string()[..8]), "{listed}");
+
+        let mine = talked_in.id().to_string()[..8].to_string();
+        let refused =
+            typed(&mut channels, answering, sessions, &format!("/session delete {mine}")).await;
+        assert!(refused.join("\n").contains("switch to another"), "{refused:?}");
+        let theirs = other.id().to_string()[..8].to_string();
+        let deleted =
+            typed(&mut channels, answering, sessions, &format!("/session delete {theirs}")).await;
+        assert_eq!(deleted, [format!("The session {} is deleted", other.id())]);
+
+        let started = handle_line("/new", &mut channels, answering, sessions).await.unwrap();
+        assert!(matches!(started, Handled::Open(Opening::Start { template: None })));
+        let named = handle_line("/session new pairing", &mut channels, answering, sessions).await;
+        let named = named.unwrap();
+        assert!(
+            matches!(named, Handled::Open(Opening::Start { template: Some(t) }) if t == "pairing")
+        );
+        let resumed =
+            handle_line("/resume 0a1b", &mut channels, answering, sessions).await.unwrap();
+        assert!(matches!(resumed, Handled::Open(Opening::Resume(prefix)) if prefix == "0a1b"));
     }
 }
