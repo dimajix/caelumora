@@ -791,7 +791,7 @@ fn alike(a: &Message, b: &Message) -> bool {
 }
 
 /// Why an agent does not answer again instead of one of its messages (issue
-/// 234), as `ActorEvent::RetryRejected` tells it: a closed set, so that a
+/// 234), as `ActorEvent::RetryRefused` tells it: a closed set, so that a
 /// user interface can word and react to each itself. The text is for logs
 /// and the TUI, after "… cannot answer again:".
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]

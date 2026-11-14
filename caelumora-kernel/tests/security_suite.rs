@@ -1059,7 +1059,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
     let (alice, bob) = (main.user_actor(world.alice).unwrap(), main.user_actor(world.bob).unwrap());
     let (mut hers, mut his) = (alice.watch(), bob.watch());
 
-    let (refused, asked) = world
+    let (rejection, asked) = world
         .asked(async {
             alice
                 .send_message(
@@ -1072,7 +1072,7 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
             shown(&mut hers, "EventRejected").await
         })
         .await;
-    let ActorEvent::EventRejected { rejected, message, reason } = refused else { unreachable!() };
+    let ActorEvent::EventRejected { rejected, message, reason } = rejection else { unreachable!() };
     assert_eq!(
         (rejected.as_str(), reason),
         ("CompleteMessageGenerated", Rejection::ClassificationRefused),
@@ -1093,14 +1093,14 @@ async fn a_message_is_let_in_by_the_channel_and_its_sender_told_if_not() {
         "he hears what was let in, and nothing of what was not"
     );
     while let Ok(Some(envelope)) = his.try_recv() {
-        assert_ne!(envelope.event.kind(), "EventRejected", "nor of the refusal");
+        assert_ne!(envelope.event.kind(), "EventRejected", "nor of the rejection");
     }
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
 /// M1: a message is its author's to modify and to take back (issue 234) - not another
 /// participant's. Asked by the channel alone, as it admits the change (issue 304), with whether the
-/// modified message may enter the channel as classified; who is refused is told why
+/// modified message may enter the channel as classified; who is rejected is told why
 /// (`EventRejected`). Another's message modified would speak as its author, which nobody's actor
 /// can send (issue 228): it is refused by his actor, which asks nothing.
 #[tokio::test]
@@ -1124,7 +1124,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
         world.asked(bob.modify_message(said, Some("bob's".to_string()), None, Vec::new())).await;
     assert!(denied(&refused.expect_err("not his")));
     assert!(asked.is_empty(), "it cannot be sent in his name: {asked:?}");
-    let (refused, asked) = world
+    let (rejection, asked) = world
         .asked(async {
             bob.revoke_message(said).await.expect("sent: the channel decides");
             shown(&mut watch, "EventRejected").await
@@ -1132,7 +1132,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
         .await;
     assert!(
         matches!(
-            refused,
+            rejection,
             ActorEvent::EventRejected { reason: Rejection::Forbidden, message: Some(m), .. }
                 if m == said
         ),
@@ -1167,7 +1167,7 @@ async fn a_message_is_modified_and_taken_back_by_its_author_alone() {
 /// M3: a message is reclassified (issues 133, 239) by its author, or by the channel's owner - not
 /// by another participant. Asked as `Reclassify` of the message's author, then the flow of the new
 /// classification, by the channel alone as it admits it (issue 304); nothing else, since nothing of
-/// the message's content enters the channel again. Who is refused is told why (`EventRejected`).
+/// the message's content enters the channel again. Who is rejected is told why (`EventRejected`).
 #[tokio::test]
 async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     use caelumora_domain::actor::ActorEvent;
@@ -1199,7 +1199,7 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     };
     let public = Classification::general(Confidentiality::Public);
 
-    let (refused, asked) = world
+    let (rejection, asked) = world
         .asked(async {
             bob.reclassify_message(alices, public.clone())
                 .await
@@ -1209,7 +1209,7 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
         .await;
     assert!(
         matches!(
-            refused,
+            rejection,
             ActorEvent::EventRejected { reason: Rejection::Forbidden, message: Some(m), .. }
                 if m == alices
         ),
@@ -1218,7 +1218,7 @@ async fn a_message_is_reclassified_by_its_author_or_the_channels_owner() {
     assert_eq!(
         asked,
         checks(&["bob: Reclassify(alice's message) no"]),
-        "refused before the flow is asked"
+        "rejected before the flow is asked"
     );
 
     let (_, asked) = world

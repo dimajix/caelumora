@@ -198,8 +198,8 @@ async fn an_agent_does_not_answer_again_once_more_was_said() {
     answered(&mut events, agent).await;
 
     alice.request_retry(first.id).await.expect("asked");
-    let ActorEvent::RetryRejected { target, reason } =
-        shown_by(&mut events, agent, "RetryRejected").await
+    let ActorEvent::RetryRefused { target, reason } =
+        shown_by(&mut events, agent, "RetryRefused").await
     else {
         unreachable!()
     };
@@ -327,7 +327,7 @@ async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
     assert_eq!(channel.turn_of(ActorId::Agent(agent)), Some(turn), "the turn its start announced");
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     // Not another turn.
-    retry_of_turn_refused(&channel, alice_of(&context), agent, TurnId::new()).await;
+    retry_of_turn_rejected(&channel, alice_of(&context), agent, TurnId::new()).await;
 
     alice.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("asked");
     assert!(
@@ -359,7 +359,7 @@ async fn an_answer_under_way_asked_for_again_is_given_up_and_answered_anew() {
         channel.whole_history().await.into_iter().filter_map(|m| m.content).collect();
     assert_eq!(history, ["hello", "second"], "nothing of the given-up turn reached the channel");
     // And it is over.
-    retry_of_turn_refused(&channel, alice_of(&context), agent, turn).await;
+    retry_of_turn_rejected(&channel, alice_of(&context), agent, turn).await;
     running.abort();
 }
 
@@ -436,8 +436,8 @@ async fn an_older_answer_asked_for_again_leaves_the_answer_under_way_alone() {
 
     // Judged against what stands, beside the request to answer "one
     // more": not its last answer any more.
-    let ActorEvent::RetryRejected { target, reason } =
-        shown_by(&mut events, agent, "RetryRejected").await
+    let ActorEvent::RetryRefused { target, reason } =
+        shown_by(&mut events, agent, "RetryRefused").await
     else {
         unreachable!()
     };
@@ -1757,7 +1757,7 @@ async fn a_turn_given_up_is_not_asked_for_again_once_something_followed_it() {
     .expect("the message is said");
 
     // The conversation moved on.
-    retry_of_turn_refused(&channel, alice_of(&context), agent, failed).await;
+    retry_of_turn_rejected(&channel, alice_of(&context), agent, failed).await;
     running.abort();
 }
 

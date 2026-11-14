@@ -171,7 +171,7 @@ pub struct TurnState {
     /// What the turn put aside for its answer (issue 282): copies of
     /// attachments, waiting for that message as an upload waits - in
     /// memory, so not stored: a turn resumed after a restart has lost them,
-    /// not its answer, which its channel would refuse with them.
+    /// not its answer, which its channel would reject with them.
     #[serde(skip)]
     pub attachments: Vec<ContentRef>,
 }

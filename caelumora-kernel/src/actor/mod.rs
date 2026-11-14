@@ -38,7 +38,7 @@ pub(crate) trait ChannelAnswering: Sized {
     fn with_span(self, span_id: Uuid) -> Self;
 
     /// This context in the span of `answered`, answering its event - what
-    /// is said of an event that is no request, as the channel's refusal of
+    /// is said of an event that is no request, as the channel's rejection of
     /// it (`Answering::to` continues a request so).
     fn replying_to(self, answered: &EventContext) -> Self;
 }

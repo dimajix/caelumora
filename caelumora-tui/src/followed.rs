@@ -325,12 +325,12 @@ fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<String>
         }
         ActorEvent::MessageRevoked { .. } => Some(format!("{sender} took a message back")),
         ActorEvent::RetryAccepted { .. } => Some(format!("{sender} answers again")),
-        ActorEvent::RetryRejected { reason, .. } => {
+        ActorEvent::RetryRefused { reason, .. } => {
             Some(format!("{sender} cannot answer again: {reason}"))
         }
         // What this user sent that the channel did not let in (issue 304), told to them alone.
         ActorEvent::EventRejected { rejected, reason, .. } => {
-            Some(format!("[refused] the channel did not let in your {rejected}: {reason}"))
+            Some(format!("[rejected] the channel did not let in your {rejected}: {reason}"))
         }
         // What this user sent that the actor it went to did not take (issue 567), told to them
         // alone: the approver an answer it does not count.
@@ -623,6 +623,25 @@ mod tests {
         assert_eq!(printed(message(Some(""), Vec::new())), None, "nothing said");
     }
 
+    /// What the channel did not let in of the user's is told to them as rejected, apart from what
+    /// an actor refused (issue 567).
+    #[tokio::test]
+    async fn a_rejection_is_told_as_the_channel_s() {
+        let (mut followed, channel, _) = followed().await;
+        let rejected = ActorEvent::EventRejected {
+            rejected: "CompleteMessageGenerated".to_string(),
+            message: None,
+            reason: Rejection::ClassificationRefused,
+        };
+        let told = followed.take_in(&from(&channel, ActorId::System, rejected));
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(
+            told[0]
+                .starts_with("[rejected] the channel did not let in your CompleteMessageGenerated"),
+            "{told:?}"
+        );
+    }
+
     /// What an actor did not take of the user's is told to them, by whom (issue 567).
     #[tokio::test]
     async fn a_refusal_is_told_by_whom() {
@@ -806,7 +825,7 @@ mod tests {
         let actor = followed.actor().expect("the owner's actor runs");
         let agent = ActorId::Agent(AgentId::new());
         assert!(!followed.retry(&actor).await.unwrap(), "nothing to give again");
-        let refused = |e: Error| e.downcast::<ChannelError>().expect("refused by the channel");
+        let refused = |e: Error| e.downcast::<ChannelError>().expect("refused by the actor");
 
         let said = ActorEvent::CompleteMessageGenerated(message(agent, "an answer"));
         followed.take_in(&from(&channel, agent, said));

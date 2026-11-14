@@ -245,7 +245,7 @@ impl Chain<Recorded> {
             | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(history.turn_given_up_last(other), None, "another agent's");
         // What was only told or asked of it is no part of the conversation
         // (issue 417).
-        history.record(HistoryEntry::RetryRejected {
+        history.record(HistoryEntry::RetryRefused {
             target: RetryTarget::Turn(turn),
             reason: RetryRefused::NotLast,
             actor: other,

@@ -564,7 +564,7 @@ has seen is kept by `caelumora-agents`, not checked by the kernel (issue 559).
 
 ### What enters a channel
 
-The channel decides what enters it: every event an actor sends is admitted or refused by the
+The channel decides what enters it: every event an actor sends is admitted or rejected by the
 channel's loop, in order, as it takes it in (see [CHANNELS.md](CHANNELS.md)) - against the channel
 as it is then, so that nothing changes between the check and the entry, and in a context the
 channel builds for the sender itself, from its participants as the controllers hold them now,
@@ -572,8 +572,8 @@ with the initiator the event names (issue 516): an envelope carries none, and an
 its rights is never taken. The actor that sends asks nothing of the policy. So a message, a change
 of one, a reclassification, a request to answer again and an answer to questions are each asked
 once, in the sender's name - first whether it may act so, then the flow of what it carries -, and
-what is refused is answered to its sender alone (`EventRejected`), recorded to it alone; what was
-refused entered nothing and is not recorded (issue 417). An answer to an approval request names the
+what is rejected is answered to its sender alone (`EventRejected`), recorded to it alone; what was
+rejected entered nothing and is not recorded (issue 417). An answer to an approval request names the
 request alone, and the approver, which holds it, asks whether its sender may approve the calls of
 the agent that asked (`ApproveToolCall`), in the context the channel admits them in, and refuses
 it to them alone otherwise (`EventRefused`, issue 567).

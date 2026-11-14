@@ -285,8 +285,8 @@ export function responderUndecidedNotice(at: string, position?: number): Message
 }
 
 /** The notice that `agentName` did not answer again, for `reason` (issue 234). */
-export function retryRejectedNotice(reason: RetryRefused, agentName: string | undefined, at: string, position?: number): Message {
-  return {id: entryId(position), role: 'System', content: null, sender_name: agentName, retryRejected: reason, timestamp: at};
+export function retryRefusedNotice(reason: RetryRefused, agentName: string | undefined, at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, sender_name: agentName, retryRefused: reason, timestamp: at};
 }
 
 /**
@@ -390,9 +390,9 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
       const {turn_id, actor, command, reason, at} = item.command_failed;
       return [commandFailedNotice(turn_id, command, reason, nameOf(actor), at, item.seq)];
     }
-    if ('retry_rejected' in item) {
-      const {reason, actor, at} = item.retry_rejected;
-      return [retryRejectedNotice(reason, nameOf(actor), at, item.seq)];
+    if ('retry_refused' in item) {
+      const {reason, actor, at} = item.retry_refused;
+      return [retryRefusedNotice(reason, nameOf(actor), at, item.seq)];
     }
     if ('chain_cut_off' in item) {
       const {max_agent_hops, not_asked, at} = item.chain_cut_off;

@@ -216,7 +216,7 @@ impl UserActor {
     /// answer cannot be given: whether the questions are open and put to them, and whether
     /// `responses` answer them as asked. Whether they may answer in the channel at all
     /// (`AnswerQuestion`) is the channel's to decide as it admits the answer, which tells them of a
-    /// refusal (`EventRejected`, issue 304); the agent asking checks again what it takes. Returns
+    /// rejection (`EventRejected`, issue 304); the agent asking checks again what it takes. Returns
     /// the `span_id`, as `send_message` does.
     ///
     /// # Errors
@@ -258,7 +258,7 @@ impl UserActor {
     /// issue 282) -, classified `classification` - the channel's if `None` (issue 133). A user may
     /// release what they write: classify it for a wider audience or a lower level than the channel,
     /// as long as it may flow into the channel. Whether it may is the channel's to decide as it
-    /// admits the message, which tells the user of a refusal (`EventRejected`, issue 304) - the
+    /// admits the message, which tells the user of a rejection (`EventRejected`, issue 304) - the
     /// user asks nothing of the policy for what they send.
     ///
     /// Returns the `span_id` of the envelopes it starts, which every envelope
@@ -416,7 +416,7 @@ impl UserActor {
     /// user may ask it (`RetryMessage`, whoever may read the channel) is the channel's to decide as
     /// it admits the request, as for `send_message`; it goes to that agent alone: whether it can
     /// answer again is the agent's to decide, by its own transcript, and it says so with
-    /// `RetryAccepted` or `RetryRejected` - this returns once the request is on its way. No
+    /// `RetryAccepted` or `RetryRefused` - this returns once the request is on its way. No
     /// `WakeupRequested` goes ahead of it - that would wake every agent -; the channel wakes the
     /// one it asks, as for a nudge (issue 567).
     ///
@@ -667,7 +667,7 @@ impl UserActor {
     /// command's. Whom it names is found among the agents that carry it out as this user sees them
     /// (`ChannelLoop::agent_commands`, `ShowAgentCommand`) - offering, which asks nothing of the
     /// agent's queue. Whether this user may ask for it (`ExecuteAgentCommand`) is decided at the
-    /// channel's door; a refusal is its `EventRejected` (issue 516). Sent as `CommandRequested`,
+    /// channel's door; a rejection is its `EventRejected` (issue 516). Sent as `CommandRequested`,
     /// by the command's name, one per agent under one span, through this actor's transport; no
     /// wakeup ahead of it - a sleeping agent carries a command out asleep.
     ///

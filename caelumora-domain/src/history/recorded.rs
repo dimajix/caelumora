@@ -493,7 +493,7 @@ mod tests {
                 turn_id: None,
             },
             ActorEvent::RetryAccepted { target: RetryTarget::Turn(turn_id) },
-            ActorEvent::RetryRejected {
+            ActorEvent::RetryRefused {
                 target: RetryTarget::Turn(turn_id),
                 reason: RetryRefused::NotLast,
             },

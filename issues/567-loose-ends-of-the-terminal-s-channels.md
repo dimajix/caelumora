@@ -496,3 +496,20 @@ collected here, to be taken on one after the other, each a step of its own:
   20. **`RetryRejected` is an actor's refusal.** The agent asked to answer again does not, for a
   reason of the type `RetryRefused`; by the words of point 17 the event is a refusal. Whether it
   is to be renamed is to be decided.
+
+- **2026-11-14** — Step 14, points 17 to 20: the channel rejects, an actor refuses, and the reason
+  of either is a rejection - CHANNELS.md says so. The documents, the doc comments of `UserActor`
+  and the REST handlers, the locals, helpers and names of the tests, the TUI's `[rejected]` and the
+  web UI's `sentText` - the kind of what a user sent, for either - keep the words apart. The channel
+  builds its rejection as an actor its refusal (`Envelope::rejection`), and `Envelope::describe`
+  describes both. What an agent tells where it does not answer again is a refusal:
+  `RetryRejected` is renamed `RetryRefused` (`ActorEvent`, `HistoryEntry`, the REST API's
+  `retry_refused`, the domain tag of its digest, the web UI's `retryRefused`), and the agent's
+  `AgentBody::refuse_retries` sends it. Stored histories with an entry `RetryRejected` no longer
+  load and have to be deleted.
+
+- **2026-11-14** — The review of step 14, applied: the places it found that still called the
+  channel's rejection a refusal, or an agent's refusal to answer again a rejection - in
+  CHANNELS.md, SECURITY.md, WEB-UI.md, REST-SERVER.md, AGENT-TURN.md and in doc comments and test
+  messages of the kernel, the domain, the TUI and the web UI - say so now, and a test of the TUI
+  shows a rejection told apart from a refusal.

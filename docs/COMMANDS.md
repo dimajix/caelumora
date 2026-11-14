@@ -177,7 +177,7 @@ external agent alike.
     channel answers from the agent's list (`ChannelLoop::commands_of`), so it answers at once while
     the agent is busy. Whether the issuer may ask for the command is decided at the channel's door,
     as it admits the request (issue 516): only from a user, to an agent taking part that carries the
-    command out, and only if the issuer may see it and ask for it; what is refused is answered to
+    command out, and only if the issuer may see it and ask for it; what is rejected is answered to
     the issuer alone (`EventRejected`). The moderator routes an admitted request to that agent
     alone. A quiet channel delivers it as well; one read back from the history for the agent is
     admitted again, with the issuer's rights as they are then, and left out if it is not - the

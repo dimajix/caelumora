@@ -114,9 +114,9 @@ the item it is read as later as `seq` (issue 417).
 What the user was shown is what the channel's history recorded for them, so a reload shows the
 same: a turn given up, the answer of a command - the channel's and an agent's, a private one to its
 issuer -, a command not carried out, a chain cut off, that it could not be decided who responds, a
-nudge, a refusal to let something into the channel, a retry rejected (issue 417). A message of
-theirs that was not let in is marked live; after a reload, the notice of its refusal stands in its
-place, since the message entered nothing.
+nudge, something not let into the channel or not taken by an actor, a retry refused (issue 417). A
+message of theirs that was not let in is marked live; after a reload, the notice of its rejection
+stands in its place, since the message entered nothing.
 
 ## What it shows
 
@@ -355,15 +355,15 @@ it is fetched anew as it starts.
     placeholder naming who took it back. Both are applied to the message in place as the server
     reads them. A modification keeps the message's classification.
 *   **What the channel did not let in.** What the user sends is shown as they sent it, and the
-    channel decides whether it enters. A message refused is marked so, with why; a refused change of
-    a message is undone by reading the message back (`GET …/messages/{mid}`).
+    channel decides whether it enters. A message rejected is marked so, with why; a rejected change
+    of a message is undone by reading the message back (`GET …/messages/{mid}`).
 *   **Asking for another answer.** An agent's last message has a retry icon while nothing is being
     generated and its participant's `can_retry` allows it - never an external agent's, which never
     answers again. So has an answer under way, once its turn is known, and the notice of a turn
     given up because it failed, the channel was lowered or it reached the limit of its model calls
     (`mayBeAnsweredAgain`), while it is the last thing in the chat.
     The agent decides: accepted, its answer is taken back and the new one follows - what a turn
-    under way said stays, since what was said is not unsaid; rejected, a notice says why.
+    under way said stays, since what was said is not unsaid; refused, a notice says why.
 *   **Approvals.** A call that needs approval is shown to everybody, with approve and deny only for
     who may approve the agent's calls (`can_approve`); everybody else is told it waits for whoever
     is responsible for the agent. It disappears only when the approver ends it - decided, timed out

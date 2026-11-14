@@ -143,7 +143,7 @@ manager's - counts once: it is one write.
 ### What enters a channel
 
 `ChannelLoop::admission`, in the envelope's context (**E**), in the loop, in order, against the
-channel as it is when the event is taken in; a refusal is answered to the sender alone with
+channel as it is when the event is taken in; a rejection is answered to the sender alone with
 `EventRejected`. The actors ask nothing for what they send. All rows R3; the sender's own
 permission first, then the flow of what it carries.
 

@@ -805,7 +805,7 @@ export interface Message {
   nudged?: boolean;
   // UI only: the sender would not answer again instead of a message (issue
   // 234). Part of the history (issue 417).
-  retryRejected?: RetryRefused;
+  retryRefused?: RetryRefused;
   // UI only: the channel did not let this message of the user's in, for
   // `rejected` (issue 304) - it is in no history, and gone on reload.
   rejected?: Rejection;
@@ -968,7 +968,7 @@ export interface ActorEvent {
   /** The sender answers again instead of `target` (issues 234, 235). */
   RetryAccepted?: { target: RetryTarget };
   /** The sender does not answer again instead of `target`, for `reason` (issues 234, 235). */
-  RetryRejected?: { target: RetryTarget; reason: RetryRefused };
+  RetryRefused?: { target: RetryTarget; reason: RetryRefused };
   /**
    * The channel did not let in the user's own event of the kind `rejected` (issue 304), about the
    * message `message` if it was one, for `reason`. Sent by the channel to its sender alone, and
@@ -1430,7 +1430,7 @@ export type HistoryItemKind<M> =
   /** An agent answers again instead of `target` (issue 234). */
   | {retry_accepted: {target: RetryTarget; actor: ActorId; at: string}}
   /** An agent does not answer again instead of `target` (issue 234). */
-  | {retry_rejected: {target: RetryTarget; reason: RetryRefused; actor: ActorId; at: string}}
+  | {retry_refused: {target: RetryTarget; reason: RetryRefused; actor: ActorId; at: string}}
   /** A chain between agents reached its limit (issue 200). */
   | {chain_cut_off: {message: string; max_agent_hops: number; not_asked: ActorId[]; at: string}}
   /** It could not be decided who responds to `message`, and nobody was asked (issue 441). */

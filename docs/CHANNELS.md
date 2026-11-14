@@ -374,13 +374,13 @@ every participant at the time it concerns by the rule every channel delivers by 
 is recorded, so that who took part then decides who reads it -, or those the moderator named. What
 a participant was shown live is what the history holds for them, in the same order - also what went
 to them alone: the answer to a request to answer again, a command's answer and a command not carried
-out, a chain cut off, that it could not be decided who responds, a refusal, a request to respond,
+out, a chain cut off, that it could not be decided who responds, a rejection, a request to respond,
 each notice and request recorded in the system's name as the channel sends it. What it delivers
 carries the position of its entry (`EventContext::position`), the `seq` of the item a client reads
 it as later. Not recorded: what streams, a beginning whose end is recorded, where an actor stands,
 approvals and questions.
 
-**The channel decides what enters it.** Every event an actor sends is admitted or refused by the
+**The channel decides what enters it.** Every event an actor sends is admitted or rejected by the
 channel's loop, one after another, as it takes it in (`ChannelLoop::admission`) - against the
 channel as it is at that moment, so that nothing changes between a check and the entry. An actor
 asks nothing of the policy for what it sends; it reads of the channel only what it needs to build
@@ -401,14 +401,14 @@ may act so, then whether what it carries may flow in:
 | `PlanStepStarted`, `CommandExecuted` of a turn, `ActivityStarted`, `ActivityFinished`, `TurnFinished`, `TurnGivenUp` | sent by an agent in its own name: nobody else has turns, and the history records them (issue 284) |
 
 A message is admitted as it arrives, so one said after the channel was lowered below its turn is
-refused. What is refused is written nowhere and delivered to nobody. The channel tells its sender
+rejected. What is rejected is written nowhere and delivered to nobody. The channel tells its sender
 alone why, in the system's name (`EventRejected`, with a `Rejection`), recorded to the sender
 alone (issue 417). What an actor does not take of what was let in and went to it - the approver an
 answer it does not count - it tells its sender alike, in its own name (`EventRefused`, with a
-`Rejection`, issue 567), recorded to that sender alone. A
-user's actor shows what its user sends before it forwards it, so that the refusal always follows
-what it refuses (see [WEB-UI.md](WEB-UI.md)). What an agent said that the channel refused stays in
-its own transcript only.
+`Rejection`, issue 567), recorded to that sender alone. So the channel rejects, an actor refuses,
+and the reason of either is a rejection. A user's actor shows what its user sends before it forwards
+it, so that the rejection always follows what it rejects (see [WEB-UI.md](WEB-UI.md)). What an
+agent said that the channel rejected stays in its own transcript only.
 
 Waking the channel for a message is the actor's job, too: it sends a `WakeupRequested` ahead of
 every message. Neither a frontend nor the channel decides that by itself.
@@ -498,11 +498,11 @@ naming a message or a turn.
 
 *   **A user** asks through their actor, which refuses at once, without an event, only a message
     not there - what it reads of the channel to know whom it asks; one taken back the channel
-    refuses (`EventRejected`, issue 567).
+    rejects (`EventRejected`, issue 567).
 *   **The channel** admits it (`RetryMessage` - as cancelling and waking, whoever may read the
     channel) of a message an agent taking part said, or of a turn of such an agent that is either
     its turn under way or its last turn given up that may be answered again
-    (`ChannelLoop::retryable_turn`), and refuses any other (`EventRejected`, issue 567) - the
+    (`ChannelLoop::retryable_turn`), and rejects any other (`EventRejected`, issue 567) - the
     actor of the user reaches into no other actor to know. The moderator routes it to the agent
     alone, which the channel wakes first - ending being quiet, as for a nudge; no
     `WakeupRequested` goes ahead of it, which would wake every agent. A turn
@@ -517,20 +517,20 @@ naming a message or a turn.
     *   the request of the turn it gave up for it is accepted;
     *   a request of its last turn, given up because it failed, the channel was lowered or it
         reached the limit of its model calls, with nothing after it, is accepted and answered anew
-        after it - nothing taken back; otherwise it is rejected;
+        after it - nothing taken back; otherwise it is refused;
     *   of the requests of a message, the last is judged against the conversation as it stands, the
-        others rejected. It is accepted only if the message is the agent's last answer, as its own
+        others refused. It is accepted only if the message is the agent's last answer, as its own
         transcript says: then the agent takes back the message and the rest of its turn, in its
         own state and in the channel. Otherwise it says why, as one of a known few reasons
         (`RetryRefused`), which a user interface words itself.
 
     A retry accepted and a request to respond in the same batch are one turn, in the request's
     context; its model is given the conversation as it stands, without what was replaced.
-*   **An external agent** rejects every request to answer again: its remote agent keeps what it was
+*   **An external agent** refuses every request to answer again: its remote agent keeps what it was
     given, and nothing here takes the answer back from it.
 
 Whether a retry was accepted is told to the users and recorded for them (`RetryAccepted`,
-`RetryRejected`, issue 417). Whether a viewer may ask is part of each participant's snapshot - the
+`RetryRefused`, issue 417). Whether a viewer may ask is part of each participant's snapshot - the
 viewer's `RetryMessage`, of an agent whose kind answers again - so a client offers it only where it
 is permitted and can succeed.
 
@@ -709,7 +709,7 @@ one starts under the same id. An actor removed before the run loop started it is
 
 A join or a leave is announced on the event bus like every change of who takes part
 (`channel::JOINED`, `channel::LEFT`). In the channel itself, it is the channel's own word (issue
-408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` refuses
+408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` rejects
 them), told in the name of whoever made the change - who added or removed the participant, the
 participant itself if it joined by itself, `System` if the kernel did, as for an agent deleted or
 restored. The event is named for what happened to the participant; who made it happen is its
@@ -905,7 +905,7 @@ An **actor** is anything that sends and receives events in a channel.
     as it is. Every envelope the kernel sends is built through `Answering` (issue 352): the context
     of a request continued in the actor's name (`to`) - an agent's, an external agent's, the
     approver's -, an actor's own (`own`) - a user's -, or, for what the channel says itself, its
-    place in someone's name (`in_channel`): a removal in the name of who removed, a refusal in its
+    place in someone's name (`in_channel`): a removal in the name of who removed, a rejection in its
     own. Whose name an envelope carries is what the `OriginEventSender` checks, so it is decided in
     one place. Every envelope is an event of its own, with an `event_id` of its own, even where many
     are sent in the same context - the events of a turn share its span and what it answers
@@ -1142,8 +1142,8 @@ failure.
 
 What the channel delivers is what its rule and the moderator's `Routing` say, and nothing else; it
 has no broadcast of its own. Nothing goes back to the actor that sent an event but why it was
-refused: an agent takes its own messages into its transcript itself, and a user's actor shows what
-its user says itself.
+rejected or refused: an agent takes its own messages into its transcript itself, and a user's actor
+shows what its user says itself.
 
 ### Chains between agents
 

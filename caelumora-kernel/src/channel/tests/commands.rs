@@ -312,10 +312,10 @@ async fn an_agent_in_a_turn_is_asked_as_any() {
 }
 
 /// Whether a turn can be answered again the channel decides as it admits the request (issue
-/// 567): one that is neither the agent's turn under way nor its last given up is refused, and the
+/// 567): one that is neither the agent's turn under way nor its last given up is rejected, and the
 /// user told - their actor asks nothing of the agent.
 #[tokio::test]
-async fn a_turn_that_cannot_be_answered_again_is_refused_at_the_door() {
+async fn a_turn_that_cannot_be_answered_again_is_rejected_at_the_door() {
     let Stuck { channel, context, agent, running, .. } = stuck_in_a_turn().await;
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     let mut hers = alice.watch();

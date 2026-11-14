@@ -473,7 +473,7 @@ export const api = {
 
   /**
    * Asks the agent that said `messageId` to answer again instead of it
-   * (issue 234); it answers on the stream with `RetryAccepted` or `RetryRejected`.
+   * (issue 234); it answers on the stream with `RetryAccepted` or `RetryRefused`.
    */
   async retryMessage(sessionId: string, channelId: string, messageId: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/messages/${messageId}/retry`, { method: 'POST' });

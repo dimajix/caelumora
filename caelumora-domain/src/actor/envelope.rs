@@ -131,7 +131,7 @@ impl Envelope {
     /// joined or left, by its sender (issue 408); a change of a message
     /// (issue 234); what an agent was given, where it stopped reading a part
     /// given (issue 537), and a compaction of its context;
-    /// the answer to a request to answer again, a chain cut off, a rejection
+    /// the answer to a request to answer again, a chain cut off, a rejection, a refusal
     /// and a request to respond (issue 417); what an actor's state depends
     /// on receiving, to be delivered again from the history (issue 223) - a
     /// command and a request to answer again asked of an agent, approvals,
@@ -196,8 +196,8 @@ impl Envelope {
             ActorEvent::RetryAccepted { target } => {
                 HistoryEntry::RetryAccepted { target: *target, actor, at }
             }
-            ActorEvent::RetryRejected { target, reason } => {
-                HistoryEntry::RetryRejected { target: *target, reason: *reason, actor, at }
+            ActorEvent::RetryRefused { target, reason } => {
+                HistoryEntry::RetryRefused { target: *target, reason: *reason, actor, at }
             }
             ActorEvent::ChainCutOff { message, max_agent_hops, not_asked } => {
                 HistoryEntry::ChainCutOff {
@@ -366,7 +366,17 @@ impl Envelope {
         self.context.initiator_id == initiator
     }
 
-    /// What its receiver sends back where it does not take it, for `reason` (issue 567): a
+    /// What the channel tells its sender where it does not let it in, for `reason` (issue 304): an
+    /// `EventRejected`, naming its kind and the message it was or was about.
+    pub fn rejection(&self, reason: Rejection) -> ActorEvent {
+        ActorEvent::EventRejected {
+            rejected: self.event.kind().to_string(),
+            message: self.event.subject_message(),
+            reason,
+        }
+    }
+
+    /// What its receiver sends back where it does not take it, for `reason` (issue 567): an
     /// `EventRefused` to its sender, naming its kind and the message it was or was about.
     pub fn refusal(&self, reason: Rejection) -> ActorEvent {
         ActorEvent::EventRefused {
@@ -587,9 +597,9 @@ impl Envelope {
             ActorEvent::RetryAccepted { target } => {
                 format!("RetryAccepted(sender_id={}, {})", ctx.sender_id, target)
             }
-            ActorEvent::RetryRejected { target, reason } => {
+            ActorEvent::RetryRefused { target, reason } => {
                 format!(
-                    "RetryRejected(sender_id={}, {}, reason={:?})",
+                    "RetryRefused(sender_id={}, {}, reason={:?})",
                     ctx.sender_id, target, reason
                 )
             }
@@ -597,6 +607,12 @@ impl Envelope {
                 format!(
                     "EventRejected(sender_id={}, rejected={}, mid={:?})",
                     ctx.sender_id, rejected, message
+                )
+            }
+            ActorEvent::EventRefused { to, refused, message, .. } => {
+                format!(
+                    "EventRefused(sender_id={}, to={}, refused={}, mid={:?})",
+                    ctx.sender_id, to, refused, message
                 )
             }
             _ => {
@@ -773,7 +789,7 @@ mod tests {
                 output: "done".to_string(),
             },
             ActorEvent::RetryAccepted { target },
-            ActorEvent::RetryRejected { target, reason: RetryRefused::NotLast },
+            ActorEvent::RetryRefused { target, reason: RetryRefused::NotLast },
         ] {
             let kind = event.kind();
             assert_eq!(

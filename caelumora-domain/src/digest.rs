@@ -486,8 +486,8 @@ fn history_entry(previous: Option<&Digest>, entry: &HistoryEntry) -> Digest {
             e.json(&serde_json::json!([target, actor]));
             e.finish()
         }
-        HistoryEntry::RetryRejected { target, reason, actor, .. } => {
-            let mut e = Encoder::new("caelumora.history-retry-rejected.v1");
+        HistoryEntry::RetryRefused { target, reason, actor, .. } => {
+            let mut e = Encoder::new("caelumora.history-retry-refused.v1");
             e.opt_digest(previous);
             e.json(&serde_json::json!([target, reason, actor]));
             e.finish()

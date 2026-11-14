@@ -233,7 +233,7 @@ impl ExternalAgentActor {
     /// what others said, as it passes its perceive processors, for the
     /// remote agent to be given when it is next asked; stored at once, so
     /// that a restart loses none of it. Returns the last request to
-    /// respond, if any. A request to answer again is rejected (issue 234):
+    /// respond, if any. A request to answer again is refused (issue 234):
     /// the remote agent keeps what it was given, and nothing here can take
     /// its answer back from it. A message it was given that was modified
     /// or taken back since is told to it by a notice (`tell`, issue 236). A
@@ -248,7 +248,7 @@ impl ExternalAgentActor {
         let taken = self.body.hear(state, received, rx, output).await;
         let (request, retries) = (taken.request, taken.retries);
         self.body.store(state).await;
-        self.body.reject_retries(retries, RetryRefused::Elsewhere, output).await;
+        self.body.refuse_retries(retries, RetryRefused::Elsewhere, output).await;
         request
     }
 

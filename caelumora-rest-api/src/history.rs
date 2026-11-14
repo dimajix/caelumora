@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// `{"said": …}`, `{"plan_step_started": {…}}`, `{"turn_finished": {…}}`, `{"turn_given_up": {…}}`,
 /// `{"command_executed": {…}}`, `{"compacted": {…}}`, `{"withdrawn": {…}}`,
 /// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, and the notices a reader was given
-/// (issue 417): `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_rejected": {…}}`,
+/// (issue 417): `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_refused": {…}}`,
 /// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"event_rejected": {…}}`,
 /// `{"event_refused": {…}}`, `{"response_requested": {…}}`.
 #[derive(Debug, Serialize)]
@@ -115,7 +115,7 @@ pub enum HistoryItemResponse<M> {
         at: DateTime<Utc>,
     },
     /// An agent does not answer again instead of `target`, for `reason`.
-    RetryRejected {
+    RetryRefused {
         target: RetryTarget,
         reason: RetryRefused,
         actor: ActorId,
@@ -238,8 +238,8 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::RetryAccepted { target, actor, at } => {
                 Some(Self::RetryAccepted { target, actor, at })
             }
-            HistoryEntry::RetryRejected { target, reason, actor, at } => {
-                Some(Self::RetryRejected { target, reason, actor, at })
+            HistoryEntry::RetryRefused { target, reason, actor, at } => {
+                Some(Self::RetryRefused { target, reason, actor, at })
             }
             HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, at } => {
                 Some(Self::ChainCutOff { message, max_agent_hops, not_asked, at })

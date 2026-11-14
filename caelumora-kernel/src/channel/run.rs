@@ -711,11 +711,6 @@ impl ChannelLoop {
         let Some(inbox) = running.get(&sender).and_then(|actor| actor.inbox.as_ref()) else {
             return;
         };
-        let rejected = ActorEvent::EventRejected {
-            rejected: event.event.kind().to_string(),
-            message: event.event.subject_message(),
-            reason,
-        };
         let mut envelope = Answering::in_channel(
             self.session_id,
             self.id,
@@ -723,7 +718,7 @@ impl ChannelLoop {
             &SecurityContext::system(),
         )
         .replying_to(&event.context)
-        .envelope(rejected);
+        .envelope(event.rejection(reason));
         envelope.context.position =
             self.append_history(&envelope, Audience::Only(vec![sender])).await;
         inbox.deliver(envelope);
@@ -2194,12 +2189,12 @@ mod tests {
         );
         hers.modify_message(said.id, Some("hello".to_string()), None, Vec::new())
             .await
-            .expect("taken back, for the channel to refuse");
-        hers.revoke_message(MessageId::new()).await.expect("never said, for the channel to refuse");
+            .expect("taken back, for the channel to reject");
+        hers.revoke_message(MessageId::new()).await.expect("never said, for the channel to reject");
         hers.reclassify_message(said.id, Classification::PUBLIC)
             .await
-            .expect("taken back, for the channel to refuse");
-        his.request_retry(said.id).await.expect("taken back, for the channel to refuse");
+            .expect("taken back, for the channel to reject");
+        his.request_retry(said.id).await.expect("taken back, for the channel to reject");
     }
 
     #[tokio::test]
@@ -3082,7 +3077,7 @@ mod tests {
         );
 
         // Taken back, it carries nothing any more: of what it carried her actor finds none to make
-        // a modification of, and refuses at once; one naming none the channel refuses (issue 567).
+        // a modification of, and refuses at once; one naming none the channel rejects (issue 567).
         actor.revoke_message(message.id).await.expect("hers to take back");
         time::timeout(Duration::from_secs(5), async {
             while main.message(message.id).await.is_none_or(|m| m.revoked.is_none()) {
@@ -3101,6 +3096,6 @@ mod tests {
         actor
             .modify_message(message.id, Some("again".to_string()), None, Vec::new())
             .await
-            .expect("for the channel to refuse");
+            .expect("for the channel to reject");
     }
 }

@@ -709,9 +709,9 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
-/// That what `watch` shows next of a refusal is the channel's of a request to answer again, as it
+/// That what `watch` shows next is the channel's rejection of a request to answer again, as it
 /// admits it (issue 567).
-async fn retry_refused(watch: &mut ChannelWatch) {
+async fn retry_rejected(watch: &mut ChannelWatch) {
     let ActorEvent::EventRejected { rejected, reason, .. } = shown(watch, "EventRejected").await
     else {
         unreachable!()
@@ -722,7 +722,7 @@ async fn retry_refused(watch: &mut ChannelWatch) {
 /// M2: asking an agent to answer again (issue 234) is an act on the conversation, like cancelling
 /// it: whoever takes part may - bob as well as alice - asked as `RetryMessage` of the channel by
 /// the channel alone, as it admits the request (issue 304). His actor asks nothing; the channel,
-/// after his permission, refuses a message no agent said, or a turn that is neither an answer under
+/// after his permission, rejects a message no agent said, or a turn that is neither an answer under
 /// way (issue 235) nor the agent's last turn given up (issue 259), and tells him (`EventRejected`,
 /// issue 567). Whether the agent answers again is its own to decide. It is offered of an agent by
 /// the same question (issue 242).
@@ -780,7 +780,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     let (_, asked) = world
         .asked(async {
             bob.request_retry(said.id).await.expect("on its way");
-            retry_refused(&mut watch).await;
+            retry_rejected(&mut watch).await;
         })
         .await;
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "no agent said it");
@@ -789,7 +789,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
             bob.request_retry_of_turn(ActorId::User(world.alice), TurnId::new())
                 .await
                 .expect("on its way");
-            retry_refused(&mut watch).await;
+            retry_rejected(&mut watch).await;
         })
         .await;
     assert_eq!(asked, checks(&["bob: RetryMessage(alice's) yes"]), "no agent answers");
@@ -798,7 +798,7 @@ async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
             bob.request_retry_of_turn(ActorId::Agent(helper), TurnId::new())
                 .await
                 .expect("on its way");
-            retry_refused(&mut watch).await;
+            retry_rejected(&mut watch).await;
         })
         .await;
     assert_eq!(

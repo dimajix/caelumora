@@ -88,7 +88,7 @@ import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
-import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -146,10 +146,10 @@ function rejectionText(reason: Rejection): string {
 }
 
 /**
- * What the user sent that the channel did not let in (issue 304), or the actor it went to did not
- * take (issue 567), by its kind.
+ * What the user sent, by its kind: what the channel did not let in (issue 304), or the actor it
+ * went to did not take (issue 567).
  */
-function rejectedText(kind: string): string {
+function sentText(kind: string): string {
   switch (kind) {
     case 'CompleteMessageGenerated': return 'Your message';
     case 'MessageModified': return 'Your change to a message';
@@ -910,8 +910,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           // history keeps it (issue 258); a completed answer is taken back
           // as `MessageRevoked` says.
           setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
-        } else if (actorEvent.RetryRejected) {
-          showOnce(retryRejectedNotice(actorEvent.RetryRejected.reason, envelope.context.sender_name, envelope.timestamp, position));
+        } else if (actorEvent.RetryRefused) {
+          showOnce(retryRefusedNotice(actorEvent.RetryRefused.reason, envelope.context.sender_name, envelope.timestamp, position));
         } else if (actorEvent.EventRejected) {
           // What the user sent, which the channel did not let in (issue
           // 304). A message of theirs, shown as they sent it, is marked as
@@ -1409,7 +1409,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   /**
    * Asks for another answer instead of `answer`, still under way (issue
    * 235): offered once its turn is known and where its answerer's
-   * `can_retry` allows it (issue 242). Refused if the answer ended
+   * `can_retry` allows it (issue 242). Rejected if the answer ended
    * meanwhile; the retry icon on its last message is then the way.
    */
   const retryAnswer = async (answer: Answer) => {
@@ -1563,15 +1563,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     </Notice>
   ) : msg.eventRejected ? (
     <Notice key={key} message={msg} icon={Ban} heading={<span>Not let in</span>}>
-      <div className="wrap-break-word">{rejectedText(msg.eventRejected.rejected)} was not let into the channel: {rejectionText(msg.eventRejected.reason)}.</div>
+      <div className="wrap-break-word">{sentText(msg.eventRejected.rejected)} was not let into the channel: {rejectionText(msg.eventRejected.reason)}.</div>
     </Notice>
   ) : msg.eventRefused ? (
     <Notice key={key} message={msg} icon={Ban} heading={<span>Not taken</span>}>
-      <div className="wrap-break-word">{rejectedText(msg.eventRefused.refused)} was not taken{msg.sender_name ? ` by ${msg.sender_name}` : ''}: {rejectionText(msg.eventRefused.reason)}.</div>
+      <div className="wrap-break-word">{sentText(msg.eventRefused.refused)} was not taken{msg.sender_name ? ` by ${msg.sender_name}` : ''}: {rejectionText(msg.eventRefused.reason)}.</div>
     </Notice>
-  ) : msg.retryRejected ? (
+  ) : msg.retryRefused ? (
     <Notice key={key} message={msg} icon={RotateCcw} heading={<span>Not answered again</span>}>
-      <div className="wrap-break-word">{msg.sender_name || 'The agent'} did not answer again: {retryRefusedText(msg.retryRejected)}.</div>
+      <div className="wrap-break-word">{msg.sender_name || 'The agent'} did not answer again: {retryRefusedText(msg.retryRefused)}.</div>
     </Notice>
   ) : msg.rejected ? (
     <div

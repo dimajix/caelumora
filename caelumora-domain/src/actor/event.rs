@@ -328,7 +328,7 @@ pub enum ActorEvent {
     /// decide, by its own transcript. A turn is asked of the answer under
     /// way: the channel ends that turn before it delivers the request - if
     /// it is still the one under way, else it drops the request - and the
-    /// agent answers anew. It answers `RetryAccepted` or `RetryRejected`.
+    /// agent answers anew. It answers `RetryAccepted` or `RetryRefused`.
     RetryRequested {
         target: RetryTarget,
         author: ActorId,
@@ -343,9 +343,9 @@ pub enum ActorEvent {
     },
     /// The agent does not answer again instead of `target`, for `reason`
     /// (issue 234) - one of a known few, which a user interface words
-    /// itself. Shown to users, and recorded (`HistoryEntry::RetryRejected`,
+    /// itself. Shown to users, and recorded (`HistoryEntry::RetryRefused`,
     /// issue 417).
-    RetryRejected {
+    RetryRefused {
         target: RetryTarget,
         reason: RetryRefused,
     },
@@ -519,7 +519,7 @@ impl ActorEvent {
             | ActorEvent::MessageReclassified { .. }
             | ActorEvent::RetryRequested { .. }
             | ActorEvent::RetryAccepted { .. }
-            | ActorEvent::RetryRejected { .. }
+            | ActorEvent::RetryRefused { .. }
             | ActorEvent::ChainCutOff { .. }
             | ActorEvent::ResponderUndecided { .. }
             | ActorEvent::EventRejected { .. }
@@ -628,7 +628,7 @@ impl ActorEvent {
             ActorEvent::MessageReclassified { .. } => "MessageReclassified",
             ActorEvent::RetryRequested { .. } => "RetryRequested",
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
-            ActorEvent::RetryRejected { .. } => "RetryRejected",
+            ActorEvent::RetryRefused { .. } => "RetryRefused",
             ActorEvent::EventRejected { .. } => "EventRejected",
             ActorEvent::EventRefused { .. } => "EventRefused",
             ActorEvent::MessageGiven { .. } => "MessageGiven",

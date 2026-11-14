@@ -332,7 +332,7 @@ impl AgentBody {
     /// again, for `reason` (issue 234) - in the context of each request,
     /// as an answer to it, in the agent's name and with its rights. One that
     /// cannot be sent is logged.
-    pub(super) async fn reject_retries(
+    pub(super) async fn refuse_retries(
         &self,
         retries: Vec<Envelope>,
         reason: RetryRefused,
@@ -342,11 +342,10 @@ impl AgentBody {
         let name = self.name();
         for retry in retries {
             let Some(target) = retry_target(&retry) else { continue };
-            let rejected = ActorEvent::RetryRejected { target, reason };
-            if let Err(e) =
-                Answering::to(&retry, own, name.to_string()).send(rejected, output).await
+            let refused = ActorEvent::RetryRefused { target, reason };
+            if let Err(e) = Answering::to(&retry, own, name.to_string()).send(refused, output).await
             {
-                warn!("Agent {} cannot reject a request to answer again: {:#}", own, e);
+                warn!("Agent {} cannot refuse a request to answer again: {:#}", own, e);
             }
         }
     }

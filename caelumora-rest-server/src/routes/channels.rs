@@ -435,7 +435,7 @@ pub(super) async fn send_message(
 
 /// Modifies the authenticated user's message `mid` (issue 234): it reads as `content` from now on,
 /// in its place, with the attachments named (issue 282). Answered once it is on its way: whether it
-/// can be changed the channel decides as it admits it, and a refusal comes on the stream
+/// can be changed the channel decides as it admits it, and a rejection comes on the stream
 /// (`EventRejected`, issue 567); otherwise the stream shows it as `MessageModified`. A message
 /// not there, another's, or an attachment that is neither the message's as it stands nor an upload
 /// of the user's for the channel fails at once.
@@ -461,9 +461,9 @@ pub(super) async fn modify_message(
 
 /// Asks the agent that said message `mid` to answer again instead of it (issue 234). Answered once
 /// the request is on its way: whether it may be asked the channel decides as it admits it, and a
-/// refusal comes on the stream (`EventRejected`, issue 567); whether the agent does is its own to
+/// rejection comes on the stream (`EventRejected`, issue 567); whether the agent does is its own to
 /// decide, and the stream shows its answer as `RetryAccepted` - followed by the message taken back
-/// and the new answer - or `RetryRejected` with the reason.
+/// and the new answer - or `RetryRefused` with the reason.
 pub(super) async fn retry_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,
@@ -479,8 +479,8 @@ pub(super) async fn retry_message(
 /// Asks participant `aid`, an agent, to answer again instead of its answer under way, the turn the
 /// body names (issue 235), or anew after its last turn given up (issue 259). Answered once the
 /// request is on its way: whether the turn is either the channel decides as it admits it, and a
-/// refusal comes on the stream (`EventRejected`); otherwise the channel ends a turn under way as it
-/// delivers the request, and the stream shows `RetryAccepted` and the new answer.
+/// rejection comes on the stream (`EventRejected`); otherwise the channel ends a turn under way as
+/// it delivers the request, and the stream shows `RetryAccepted` and the new answer.
 pub(super) async fn retry_turn(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
@@ -497,7 +497,7 @@ pub(super) async fn retry_turn(
 
 /// Takes the authenticated user's message `mid` back (issue 234): it stays in its place without
 /// what it said, and the agents are no longer given it - not a deletion. Answered once it is on its
-/// way: whether it can be taken back the channel decides as it admits it, and a refusal comes on
+/// way: whether it can be taken back the channel decides as it admits it, and a rejection comes on
 /// the stream (`EventRejected`, issue 567); otherwise the stream shows it as `MessageRevoked`.
 pub(super) async fn revoke_message(
     State(state): State<Arc<AppState>>,
@@ -674,7 +674,7 @@ pub(super) async fn update_channel_description(
 /// Reclassifies a message of the channel (issues 133, 239): its author or the channel's owner,
 /// never above the channel - as a participant, through their actor, as every change to a message.
 /// Answered once it is on its way: whether it may be the channel decides as it admits it, and a
-/// refusal comes on the stream (`EventRejected`, issue 567); otherwise the stream shows it as
+/// rejection comes on the stream (`EventRejected`, issue 567); otherwise the stream shows it as
 /// `MessageReclassified`.
 pub(super) async fn reclassify_message(
     State(state): State<Arc<AppState>>,

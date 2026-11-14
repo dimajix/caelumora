@@ -52,7 +52,7 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
 *   **Answer again.** Of the requests to answer again in the batch, the one for the turn the agent
     gave up for it is accepted. Otherwise only the last is judged: if its message is the agent's
     last answer, that answer is taken back with the rest of its turn and a turn begins on the
-    transcript as it stands; every other request is rejected (see
+    transcript as it stands; every other request is refused (see
     [CHANNELS.md](CHANNELS.md#answering-again)).
 
 ### In a turn

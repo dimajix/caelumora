@@ -159,7 +159,7 @@ pub enum HistoryEntry {
     RetryAccepted { target: RetryTarget, actor: ActorId, at: DateTime<Utc> },
     /// `actor`, an agent, does not answer again instead of `target`, for
     /// `reason` (issues 234, 417), told to the users at `at`.
-    RetryRejected { target: RetryTarget, reason: RetryRefused, actor: ActorId, at: DateTime<Utc> },
+    RetryRefused { target: RetryTarget, reason: RetryRefused, actor: ActorId, at: DateTime<Utc> },
     /// A chain between agents reached its limit at `at` (issues 200, 417):
     /// the response ending in `message` asked nobody to respond, as more
     /// than `max_agent_hops` hops since the last user's message; `not_asked`
@@ -284,7 +284,7 @@ impl HistoryEntry {
             | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }
@@ -332,7 +332,7 @@ impl HistoryEntry {
             HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }
@@ -375,7 +375,7 @@ impl HistoryEntry {
             | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }
@@ -428,7 +428,7 @@ impl HistoryEntry {
             | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }
@@ -467,7 +467,7 @@ impl HistoryEntry {
             | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }
@@ -520,7 +520,7 @@ impl HistoryEntry {
             | HistoryEntry::CommandExecuted { to: None, .. }
             | HistoryEntry::ActivityFinished { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. } => Recipients::participants(false),
+            | HistoryEntry::RetryRefused { .. } => Recipients::participants(false),
             HistoryEntry::Compacted { .. }
             | HistoryEntry::Given { .. }
             | HistoryEntry::Withdrawn { .. }
@@ -615,8 +615,8 @@ impl HistoryEntry {
                 ActorEvent::CommandFailed { command, reason, to, turn_id }
             }
             HistoryEntry::RetryAccepted { target, .. } => ActorEvent::RetryAccepted { target },
-            HistoryEntry::RetryRejected { target, reason, .. } => {
-                ActorEvent::RetryRejected { target, reason }
+            HistoryEntry::RetryRefused { target, reason, .. } => {
+                ActorEvent::RetryRefused { target, reason }
             }
             HistoryEntry::ChainCutOff { message, max_agent_hops, not_asked, .. } => {
                 ActorEvent::ChainCutOff { message, max_agent_hops, not_asked }
@@ -701,7 +701,7 @@ impl HistoryEntry {
             | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }
@@ -736,7 +736,7 @@ impl HistoryEntry {
             | HistoryEntry::ActivityFinished { actor, .. }
             | HistoryEntry::CommandFailed { actor, .. }
             | HistoryEntry::RetryAccepted { actor, .. }
-            | HistoryEntry::RetryRejected { actor, .. } => *actor,
+            | HistoryEntry::RetryRefused { actor, .. } => *actor,
             HistoryEntry::ParticipantJoined { by, .. }
             | HistoryEntry::ParticipantLeft { by, .. }
             | HistoryEntry::HistoryShared { by, .. }
@@ -787,7 +787,7 @@ impl HistoryEntry {
             | HistoryEntry::HistoryShared { .. }
             | HistoryEntry::CommandFailed { .. }
             | HistoryEntry::RetryAccepted { .. }
-            | HistoryEntry::RetryRejected { .. }
+            | HistoryEntry::RetryRefused { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
             | HistoryEntry::EventRejected { .. }

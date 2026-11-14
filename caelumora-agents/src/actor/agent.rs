@@ -252,7 +252,7 @@ impl AgentActor {
     /// `wakeup()` ends the sleep. The channel woke the agent for the
     /// requests to answer again (issues 234, 235): one of them is judged
     /// (`retry`) - the one of the turn `given_up_for` it, whose answer is
-    /// gone already, else the last - and the others are rejected as asked
+    /// gone already, else the last - and the others are refused as asked
     /// again. A retry accepted and a request to respond in the same batch
     /// are one turn, answering the conversation as it stands, in the
     /// context of the request; a retry alone begins one in its own. A
@@ -293,7 +293,7 @@ impl AgentActor {
             .rposition(|retry| retry_target(retry) == of_given_up)
             .or(retries.len().checked_sub(1));
         let judged = judged.map(|at| retries.remove(at));
-        self.body.reject_retries(retries, RetryRefused::AskedAgain, output).await;
+        self.body.refuse_retries(retries, RetryRefused::AskedAgain, output).await;
         let mut accepted = None;
         if let Some(retry) = judged {
             let span = envelope_span(&retry.context, retry.event.kind());
@@ -343,7 +343,7 @@ impl AgentActor {
     /// transcript, and announced with `MessageRevoked`, since its channel's
     /// history holds every message it said (issue 417) - and returns
     /// `true`: a turn is to begin, given the transcript as it stands.
-    /// Otherwise it says why with `RetryRejected`.
+    /// Otherwise it says why with `RetryRefused`.
     async fn retry(
         &self,
         state: &mut AgentChannelState,
@@ -364,7 +364,7 @@ impl AgentActor {
             Ok(taken_back) => taken_back,
             Err(refused) => {
                 answering
-                    .send(ActorEvent::RetryRejected { target, reason: refused }, output)
+                    .send(ActorEvent::RetryRefused { target, reason: refused }, output)
                     .await?;
                 return Ok(false);
             }

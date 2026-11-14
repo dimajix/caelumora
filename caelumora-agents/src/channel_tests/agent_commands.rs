@@ -115,12 +115,12 @@ async fn an_agent_carries_out_a_command_in_a_turn_of_its_own_and_answers_the_iss
     running.abort();
 }
 
-/// A command its issuer may see but not ask for is refused at the channel's
+/// A command its issuer may see but not ask for is rejected at the channel's
 /// door (issue 516): her actor finds the agent by what she sees and asks
 /// nothing more; the channel asks once, as it admits the request, and tells
 /// her alone that it was not let in. The agent hears nothing of it.
 #[tokio::test]
-async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
+async fn a_command_its_issuer_may_see_but_not_ask_for_is_rejected_at_the_door() {
     use caelumora_domain::actor::Rejection;
     let seen_not_asked = Policy(|action| !matches!(action, ActionType::ExecuteAgentCommand { .. }));
     let Stuck { channel, context, agent, running, .. } =
@@ -133,7 +133,7 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
     let reply =
         actor.execute_command("mark @helper twice").await.expect("sent: the channel decides");
     assert!(reply.output.is_none() && reply.span_id.is_some(), "{reply:?}");
-    let refused = time::timeout(Duration::from_secs(5), async {
+    let rejection = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = watch.recv().await.expect("the channel is running");
             if matches!(envelope.event, ActorEvent::EventRejected { .. }) {
@@ -143,7 +143,9 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
     })
     .await
     .expect("told that it was not let in");
-    let ActorEvent::EventRejected { rejected, reason, .. } = refused.event else { unreachable!() };
+    let ActorEvent::EventRejected { rejected, reason, .. } = rejection.event else {
+        unreachable!()
+    };
     assert_eq!(
         (rejected.as_str(), reason),
         ("CommandRequested", Rejection::Forbidden),
