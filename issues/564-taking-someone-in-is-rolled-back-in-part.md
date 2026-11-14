@@ -88,3 +88,15 @@ channel had the participant before (`ChannelController::roll_back_participant_ad
   `ControllerManager::new_channel_controller`), and so is `ChannelRuntime::new`, which takes it;
   `take_back_entering` is `roll_back_project_change`; the test of 221 gives and checks the
   invitation as `AclEntry::invitation`.
+
+  Step 2 done: `ChannelController::add_participant` announces `channel::JOINED` only where the
+  participant was not listed before, and `SessionController::add_participant` announces
+  `ParticipantJoined` only for one who did not take part before - both judged on the document as
+  the change is stored, under the controller's lock, so that two who take one person in at once
+  announce them once. In the channel itself the join is still told and recorded for one added
+  while listed already: its actor starts only now.
+
+  Found on the way, still open: `ChannelLoop::follow_agents` starts the actor of a listed agent
+  that has none - as the session starts, and once a deleted agent is restored - beside `take_in`,
+  and can race it as two takings-in do. It announces a join (`announce_resting`) also for an agent
+  that was left out as its channel started, for which no leave was ever announced.

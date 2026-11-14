@@ -587,8 +587,9 @@ themselves or their own agent, never someone else.
     a channel by themselves sees all of its history: whoever let them join let them read it.
 *   **What follows**: the session's document gains the participant, the group of its participants
     follows before it is announced (`SessionUpdateEvent::ParticipantJoined`), so that the new one
-    hears of it, too, and a running session follows an agent taken in as it follows those it started
-    with.
+    hears of it, too - announced only for one who did not take part before, so that two who take
+    the same person in at once announce them once -, and a running session follows an agent taken
+    in as it follows those it started with.
 
 Whom one could take in is the session view's to answer (`SessionView::candidates`): the users and
 agents whose names are sought (`NameMatch`), each with whether they take part already and why they
@@ -708,12 +709,16 @@ one starts under the same id. An actor removed before the run loop started it is
 ### How others learn of it
 
 A join or a leave is announced on the event bus like every change of who takes part
-(`channel::JOINED`, `channel::LEFT`). In the channel itself, it is the channel's own word (issue
-408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` rejects
-them), told in the name of whoever made the change - who added or removed the participant, the
-participant itself if it joined by itself, `System` if the kernel did, as for an agent deleted or
-restored. The event is named for what happened to the participant; who made it happen is its
-sender. Each carries the participant's name as it was, so that it reads the same after a renaming.
+(`channel::JOINED`, `channel::LEFT`): where it changed who is listed - one added while listed
+already, an agent whose actor did not run, is not announced again -, and as an agent rests or is
+restored, which changes no listing (see above). In the channel itself, it is the channel's own word
+(issue 408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission`
+rejects them), told as an actor comes or goes by someone's act - for one added while listed
+already, too, whose actor starts now -, in the name of whoever made the change - who added or
+removed the participant, the participant itself if it joined by itself, `System` if the kernel did,
+as for an agent deleted or restored. The event is named for what happened to the participant; who
+made it happen is its sender. Each carries the participant's name as it was, so that it reads the
+same after a renaming.
 
 *   **Recorded where it happened.** The channel keeps it in its history
     (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what

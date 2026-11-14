@@ -1,3 +1,5 @@
+//! `ChannelController`: the one writer of a running channel's document.
+
 use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
@@ -136,14 +138,13 @@ impl ChannelController {
         self.update(ctx, &ChannelUpdateEvent::ApprovalRulesChanged(rules)).await
     }
 
-    /// Adds `participant` to the channel on behalf of `ctx` (issue 46), as
-    /// `Channel::take_in` takes one in - no longer a former participant,
-    /// their invitation used up (issue 563). How much of the history it is
-    /// given is the history's to record (`HistoryShared`, issue 417). Stored
-    /// first (`UpdateChannel`), then the group of its participants follows,
-    /// so that the newcomer may read it (issue 286), then taken over and
-    /// announced (`channel::JOINED`). Answers the channel as it was before,
-    /// for [`Self::roll_back_participant_addition`].
+    /// Adds `participant` to the channel on behalf of `ctx` (issue 46), as `Channel::take_in` takes
+    /// one in - no longer a former participant, their invitation used up (issue 563). How much of
+    /// the history it is given is the history's to record (`HistoryShared`, issue 417). Stored
+    /// first (`UpdateChannel`), then the group of its participants follows, so that the newcomer
+    /// may read it (issue 286), then taken over and announced (`channel::JOINED`) - only where they
+    /// were not listed before, as a leave is announced only where they were (issue 564). Answers
+    /// the channel as it was before, for [`Self::roll_back_participant_addition`].
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
@@ -163,7 +164,7 @@ impl ChannelController {
             })
             .await?;
         self.keep_participants(&channel).await;
-        if let Some(event) = self.joined_or_left_event(id, true) {
+        if let Some(event) = self.joined_or_left_event(id, true).filter(|_| !before.lists(id)) {
             writing.announce(event, &channel);
         }
         Ok(before)
@@ -304,5 +305,46 @@ impl ChannelController {
     /// whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, event: &ChannelUpdateEvent) -> StoreResult<()> {
         self.channel.update(ctx, event).await.map(drop)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::testing::test_kernel;
+    use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::user::UserId;
+
+    /// Issue 564: a join is announced where who is listed changed, not for one added again - a
+    /// listed agent whose actor did not run, or two takings-in of one participant racing. The
+    /// channel's document is stored alone, without a session: the test is about what its
+    /// controller stores and announces. The controller is made as the kernel makes it
+    /// (`ControllerManager::new_channel_controller`), and what it announces read from the bus.
+    #[tokio::test]
+    async fn one_added_again_is_not_announced_again() {
+        let kernel = test_kernel();
+        let system = SecurityContext::system();
+        let mut channel = make_channel(SessionId::new(), "main");
+        kernel.entity_stores().channels.create(&system, &mut channel).await.unwrap();
+        let controller = kernel.controller_manager().new_channel_controller(channel);
+        let bob = UserId::new();
+        let mut events = kernel.event_bus().subscribe_all();
+
+        controller.add_participant(&system, Participant::User(bob)).await.expect("added");
+        controller.add_participant(&system, Participant::User(bob)).await.expect("added again");
+
+        let joins = events
+            .drain()
+            .await
+            .iter()
+            .filter(|e| {
+                let joined =
+                    e.about::<Channel>().and_then(|(_, c)| c.data::<ActorId>(channel::JOINED));
+                joined == Some(ActorId::User(bob))
+            })
+            .count();
+        assert_eq!(joins, 1, "announced once");
+        assert!(controller.load().lists(ActorId::User(bob)), "listed");
     }
 }
