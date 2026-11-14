@@ -329,8 +329,9 @@ impl UserActor {
     ///
     /// # Errors
     /// `ChannelError::MessageNotFound` if the channel has no such message, `Forbidden` if it is not
-    /// this user's; `AttachmentError::NotFound` for an attachment that is neither the message's nor
-    /// an upload of the user's for the channel; an error if the channel is gone.
+    /// this user's; `AttachmentError::NotFound` for an attachment that is neither the message's as
+    /// it stands nor an upload of the user's for the channel - of a message taken back, which
+    /// carries none any more, every one it carried (issue 567); an error if the channel is gone.
     pub async fn modify_message(
         &self,
         message: MessageId,

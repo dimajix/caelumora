@@ -1012,6 +1012,7 @@ mod tests {
     use bytes::Bytes;
     use caelumora_api::actor::Actor;
     use caelumora_api::component::ComponentImpl;
+    use caelumora_api::error::AttachmentError;
     use caelumora_api::transport::{EventReceiver, EventSender};
     use caelumora_domain::actor::{
         ActorEvent, ActorId, ActorState, Envelope, EventContext, Rejection, RequestReason,
@@ -3066,9 +3067,31 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            main.admit(&modified(vec![hers, his])).await,
+            main.admit(&modified(vec![hers.clone(), his])).await,
             Err(Rejection::Invalid),
             "never another's upload"
         );
+
+        // Taken back, it carries nothing any more: of what it carried her actor finds none to make
+        // a modification of, and refuses at once; one naming none the channel refuses (issue 567).
+        actor.revoke_message(message.id).await.expect("hers to take back");
+        time::timeout(Duration::from_secs(5), async {
+            while main.message(message.id).await.is_none_or(|m| m.revoked.is_none()) {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("taken back");
+        let refused = actor
+            .modify_message(message.id, None, None, vec![hers.id])
+            .await
+            .expect_err("nothing it carried is found")
+            .downcast::<AttachmentError>()
+            .expect("an attachment's error");
+        assert!(matches!(refused, AttachmentError::NotFound(id) if id == hers.id));
+        actor
+            .modify_message(message.id, Some("again".to_string()), None, Vec::new())
+            .await
+            .expect("for the channel to refuse");
     }
 }

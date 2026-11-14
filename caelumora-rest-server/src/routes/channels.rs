@@ -436,7 +436,9 @@ pub(super) async fn send_message(
 /// Modifies the authenticated user's message `mid` (issue 234): it reads as `content` from now on,
 /// in its place, with the attachments named (issue 282). Answered once it is on its way: whether it
 /// can be changed the channel decides as it admits it, and a refusal comes on the stream
-/// (`MessageRejected`, issue 567); otherwise the stream shows it as `MessageModified`.
+/// (`MessageRejected`, issue 567); otherwise the stream shows it as `MessageModified`. A message
+/// not there, another's, or an attachment that is neither the message's as it stands nor an upload
+/// of the user's for the channel fails at once.
 pub(super) async fn modify_message(
     State(state): State<Arc<AppState>>,
     Path((id, cid, mid)): Path<(Uuid, Uuid, Uuid)>,

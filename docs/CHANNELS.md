@@ -463,9 +463,12 @@ message, and what they said in reply stays.
 
 *   **A user** changes their message through their actor, as they write. A modified message speaks
     as its author, so only the author's actor can send it: the actor looks the message up in the
-    channel's history to make the modification of, and refuses one not there, or another's. Whether
-    it can be changed - not taken back - the channel decides, as for a revocation or a
-    reclassification, which the actor sends as they are (issue 567).
+    channel's history to make the modification of, and refuses one not there, or another's, and an
+    attachment named that is neither the message's as it stands nor an upload of the user's for the
+    channel - of a message taken back, which carries none any more, every one it carried. These it
+    refuses at once; whether the message can be changed - not taken back - the channel decides, and
+    tells on the stream, as for a revocation or a reclassification, which the actor sends as they
+    are (issue 567).
 *   **The channel admits it** as it admits a message (above): the message is in its history, its
     author may change it, it can be changed so as it stands - not taken back, modified by its own
     sender in its own role - and a modification may flow in. It records the change in its history.

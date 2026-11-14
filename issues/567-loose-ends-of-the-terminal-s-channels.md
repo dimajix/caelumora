@@ -422,3 +422,25 @@ collected here, to be taken on one after the other, each a step of its own:
   back (`MessageUnchangeable`); the REST handlers of the four say that a refusal comes on the stream
   (`MessageRejected`), as that of a turn did already; CHANNELS.md and PERMISSION-CHECKS.md say what
   the actor reads, and that whether a message can be answered again the door decides.
+
+- **2026-11-13** — A point joins the issue, at the maintainer's decision:
+  13. **Whether a modification fails at once depends on its attachments.** The user's actor
+  resolves the attachments a modification names itself (`AttachmentManager::named`), from those
+  the message carries and the user's uploads for the channel, before the channel's door sees the
+  modification; the door asks the same again (`AttachmentManager::claim`). A message taken back
+  carries none any more (`Message::revoke`), so that a modification of one that names an
+  attachment it carried fails at once (`AttachmentError::NotFound`), and one that names none on
+  the stream (`MessageUnchangeable`). The door is to resolve what a modification names, after it
+  decided whether the message can be changed, so that the actor reads nothing to send it.
+
+- **2026-11-14** — Point 13 decided with the maintainer: it stays as it is. For the door to resolve
+  the attachments, a modification would have to be sent as a request the channel makes the
+  modified message of; the user's actor shows what it sends before the channel admits it (issue
+  220), and its frontends would no longer see their own change - the channel would have to deliver
+  what it made back to its sender, apart from `MessageRevoked` and `MessageReclassified`, which
+  are request and record at once. That is much for a case that needs the same user to take a
+  message back in one place while saving a change of it in another that still names one of its
+  attachments, and in which the change fails either way. The actor goes on reading what it builds
+  the modification of - point 12 -, and `UserActor::modify_message`, its REST handler and
+  CHANNELS.md say that of a message taken back every attachment it carried is not found, at once;
+  a test of the kernel holds it.
