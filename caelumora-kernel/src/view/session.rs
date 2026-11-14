@@ -26,7 +26,7 @@ use caelumora_domain::snapshot::{
 use caelumora_domain::store::{StoreError, StoreResultExt, Stored};
 use caelumora_domain::user::UserField;
 use caelumora_domain::value::language::Language;
-use caelumora_domain::value::name::{NameMatch, ScopedName};
+use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::value::text::{Briefing, Summary};
 use caelumora_domain::value::time_zone::TimeZone;
 use caelumora_security::{AccessQuestions, ActionType, SecurityContext};
@@ -95,8 +95,9 @@ impl SessionView {
         self.session.id
     }
 
-    pub fn name(&self) -> &str {
-        self.session.name.as_str()
+    /// Its name.
+    pub fn name(&self) -> &Name {
+        &self.session.name
     }
 
     /// When the session was made.
