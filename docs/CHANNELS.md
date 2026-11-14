@@ -845,8 +845,9 @@ An **actor** is anything that sends and receives events in a channel.
     it sends as an envelope, and whom it went to answers by one - also a refusal of what it does
     not take (`EventRefused`). No actor calls into another, nor reads its state, its context or
     what it holds: what another's state decides - whether a turn can be answered again, whether an
-    agent's actor runs - the channel tells, which holds its actors (`ChannelLoop::runs`,
-    `context_of`), and what enters is decided at its door. Whether an agent asked is answering
+    agent's actor runs, which commands an agent carries out - the channel tells, which holds its
+    actors (`ChannelLoop::runs`, `context_of`, `agent_commands`), and what enters is decided at its
+    door. Whether an agent asked is answering
     already is the agent's own to tell; nobody guards it.
 *   **An actor's inbox** (`channel::inbox`, issue 223) is a bounded queue of the envelopes the
     channel delivers live, and behind it the channel's history, which it reads from wherever the

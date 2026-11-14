@@ -523,3 +523,21 @@ collected here, to be taken on one after the other, each a step of its own:
   (`MessageView.tsx`, `QuestionView.tsx`); `MessageTime`, which notes and attachments show as well,
   is no part of a message and has a file of its own, and the history's notices show their time by
   it.
+
+- **2026-11-14** — Points join the issue from the review of step 15, at the maintainer's decision:
+  21. **`MessageTime` names a message where it shows any time.** Since it has a file of its own,
+  it shows when a message was written, a note, an attachment, and when an entry of an agent's
+  history happened. A name for what it shows - a point in time, its full form on hover - is to
+  be found.
+  22. **The chat writes the time a message was taken back by hand.** `ChatView.tsx` formats it
+  with `formatTimestamp` and its full form as the title, which `MessageTime` does.
+
+- **2026-11-14** — The finding on `request_command` decided with the maintainer: it stays as it
+  is. The user's actor reads of the channel which commands its agents carry out as this user may
+  see them (`ChannelLoop::agent_commands`) to address what it sends, as `request_retry` reads whom
+  a message is of - point 12 -; it reaches into no agent, since the channel tells what its actors
+  offer, and whether the user may ask for a command is decided at the door (`admit_command`).
+  Offering and admitting ask apart, as for tools. Sending the line for the channel to resolve
+  would make an unknown command or an ambiguous handle a rejection on the stream instead of an
+  answer at once, and the door make several events of one. CHANNELS.md names the commands among
+  what the channel tells of its actors.
