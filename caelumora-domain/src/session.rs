@@ -178,7 +178,10 @@ impl Updatable for Session {
             }
             SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
             SessionUpdateEvent::ProjectChanged(project) => self.project = *project,
-            SessionUpdateEvent::ParticipantJoined(participant) => self.take_in(participant.clone()),
+            // Taken over as announced: announcing was the business of whoever took them in.
+            SessionUpdateEvent::ParticipantJoined(participant) => {
+                self.take_in(participant.clone());
+            }
         }
         Ok(())
     }
@@ -233,17 +236,18 @@ impl Session {
         Ok(())
     }
 
-    /// Takes `participant` in (issue 221), unless it takes part already;
-    /// the group of its participants follows it where it is stored
-    /// (`Group::of_session`). Their invitation is used up
-    /// (`SecurityAttributes::use_up_invitation`). Whether they may is asked
-    /// before.
-    pub fn take_in(&mut self, participant: Participant) {
+    /// Takes `participant` in (issue 221), unless it takes part already; the group of its
+    /// participants follows it where it is stored (`Group::of_session`). Their invitation is used
+    /// up (`SecurityAttributes::use_up_invitation`). Whether they may is asked before. Answers
+    /// whether they were listed anew: only then is a join announced (issue 564).
+    pub fn take_in(&mut self, participant: Participant) -> bool {
         let actor = participant.actor_id();
         self.security_attributes.use_up_invitation(actor);
-        if !self.takes_part(actor) {
+        let anew = !self.takes_part(actor);
+        if anew {
             self.participants.push(participant);
         }
+        anew
     }
 
     /// Whether `actor` is one of its participants.
@@ -382,9 +386,9 @@ mod tests {
         ];
         let mut session = session_of(alice, vec![Participant::User(alice)], &access);
         let id = session.id;
-        session.take_in(Participant::User(bob));
-        session.take_in(Participant::User(bob));
-        session.take_in(Participant::Agent(AgentId::new()));
+        assert!(session.take_in(Participant::User(bob)), "listed anew");
+        assert!(!session.take_in(Participant::User(bob)), "listed already");
+        assert!(session.take_in(Participant::Agent(AgentId::new())), "another listed anew");
         assert_eq!(session.participants.len(), 3, "each once");
         let joins: Vec<Subject> = session
             .security_attributes

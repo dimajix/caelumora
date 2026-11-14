@@ -110,3 +110,22 @@ channel had the participant before (`ChannelController::roll_back_participant_ad
   no longer races a taking-in or a removal. Only the first is held by a test: the window of the
   others is not reached by running them at once. That `follow_agents` announces a join for an agent
   left out as its channel started stays open.
+
+  Decided with the maintainer: the join `follow_agents` announces for an agent left out as its
+  channel started stays, described at `follow_agents` - rare, harmless to who hears it, and telling
+  it from one that rested would need the channel to keep why it left out whom. And, as a step of
+  its own before step 4, without behaviour: the document answers whether it listed or unlisted.
+
+  Step 3b done: `Channel::take_in` and `Session::take_in` answer whether they listed the participant
+  anew, `Channel::undo_take_in` whether it took them out, as `Channel::let_go` answers whom it let
+  go. The controllers announce by these answers instead of judging the listing again;
+  `SessionController::add_participant` takes the participant in by `Session::take_in` as the
+  channel's controller does by `Channel::take_in`, and `Session::apply` takes over an announced
+  join without the answer.
+
+  Found by the review of step 3b, for the maintainer: a join recorded in a channel's history for a
+  participant whose range of attendance is still open - one added while listed already (step 2),
+  the join of `follow_agents` above, an agent deleted while its session was stopped and restored
+  later - opens a second range (`Attendance::take`), and a later leave closes only the last one. The
+  first stays open, and what the participant is shown of the history (`Attendance::of_reader`)
+  then reaches past their leave.

@@ -11,7 +11,7 @@ use caelumora_domain::group::Group;
 use caelumora_domain::privacy::PrivacyConfig;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
-use caelumora_domain::store::{StoreError, StoreResult, Updatable};
+use caelumora_domain::store::{StoreError, StoreResult};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::SecurityContext;
@@ -172,33 +172,27 @@ impl SessionController {
         self.update(ctx, SessionUpdateEvent::ProjectChanged(project)).await
     }
 
-    /// Takes `participant` into the session on behalf of `ctx` (issue 221) as [`Self::update`]
-    /// does - whoever may change it (`UpdateSession`), or the kernel for one who joined by
-    /// themselves (`JOIN`) - using up an invitation (`Session::take_in`). The group of its
-    /// participants follows (issue 286) before it is announced, so that the new one hears of it
-    /// too - announced only where they did not take part before (issue 564). Whether they may be
-    /// taken in is the caller's to have asked.
+    /// Takes `participant` into the session on behalf of `ctx` (issue 221), as `Session::take_in`
+    /// takes one in - their invitation used up: stored first, on behalf of whoever may change it
+    /// (`UpdateSession`) or of the kernel for one who joined by themselves (`JOIN`), then taken
+    /// over. The group of its participants follows (issue 286) before it is announced
+    /// (`ParticipantJoined`), so that the new one hears of it too - announced only where they were
+    /// listed anew (issue 564). Whether they may be taken in is the caller's to have asked.
     ///
     /// # Errors
-    /// See [`Self::update`].
+    /// Whatever the store reports, `StoreError::PermissionDenied` included; the session is then
+    /// unchanged.
     pub async fn add_participant(
         &self,
         ctx: &SecurityContext,
         participant: Participant,
     ) -> StoreResult<()> {
-        let actor = participant.actor_id();
-        let event = SessionUpdateEvent::ParticipantJoined(participant);
         let mut writing = self.session.write().await;
-        let (joined, session) = writing
-            .change(ctx, |session| {
-                let joined = !session.takes_part(actor);
-                session.apply(&event)?;
-                Ok(joined)
-            })
-            .await?;
+        let (joined, session) =
+            writing.change(ctx, |session| Ok(session.take_in(participant.clone()))).await?;
         self.keep_participants(&session).await;
         if joined {
-            writing.announce_update(&event, &session);
+            writing.announce_update(&SessionUpdateEvent::ParticipantJoined(participant), &session);
         }
         Ok(())
     }

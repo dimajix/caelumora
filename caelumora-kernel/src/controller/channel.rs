@@ -156,15 +156,15 @@ impl ChannelController {
     ) -> StoreResult<Channel> {
         let mut writing = self.channel.write().await;
         let id = participant.actor_id();
-        let (before, channel) = writing
+        let ((before, joined), channel) = writing
             .change(ctx, |channel| {
                 let before = channel.clone();
-                channel.take_in(participant.clone());
-                Ok(before)
+                let joined = channel.take_in(participant.clone());
+                Ok((before, joined))
             })
             .await?;
         self.keep_participants(&channel).await;
-        if let Some(event) = self.joined_or_left_event(id, true).filter(|_| !before.lists(id)) {
+        if let Some(event) = self.joined_or_left_event(id, true).filter(|_| joined) {
             writing.announce(event, &channel);
         }
         Ok(before)
@@ -188,9 +188,7 @@ impl ChannelController {
         let mut writing = self.channel.write().await;
         let (left, channel) = writing
             .change(&SecurityContext::system(), |channel| {
-                let listed = channel.lists(participant);
-                channel.undo_take_in(participant, before);
-                Ok(listed && !channel.lists(participant))
+                Ok(channel.undo_take_in(participant, before))
             })
             .await?;
         self.keep_participants(&channel).await;

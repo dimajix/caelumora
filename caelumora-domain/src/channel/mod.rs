@@ -332,14 +332,17 @@ impl Channel {
     /// Takes `participant` in, unless it is listed already, as `Session::take_in` takes one into
     /// the session: no longer one of its former participants (issue 164), and their invitation
     /// used up (`SecurityAttributes::use_up_invitation`, issue 563) - on every way in, joining,
-    /// being added or founding. Whether they may is asked before.
-    pub fn take_in(&mut self, participant: Participant) {
+    /// being added or founding. Whether they may is asked before. Answers whether they were listed
+    /// anew: only then is a join announced (issue 564).
+    pub fn take_in(&mut self, participant: Participant) -> bool {
         let actor = participant.actor_id();
         self.security_attributes.use_up_invitation(actor);
         self.former.retain(|former| former.participant.actor_id() != actor);
-        if !self.lists(actor) {
+        let anew = !self.lists(actor);
+        if anew {
             self.participants.push(participant);
         }
+        anew
     }
 
     /// Lets `actor` go, removed by `removal`: out of its participants, and kept as a former
@@ -356,12 +359,14 @@ impl Channel {
     /// them: out of its participants unless listed before, a former participant again if they
     /// were one, and their invitation given back if it was there. Nothing if they were let go
     /// meanwhile (`let_go`): who removed them decided, and what that left stands. Nothing else of
-    /// the channel is set back, so that what changed meanwhile stays.
-    pub fn undo_take_in(&mut self, actor: ActorId, before: &Channel) {
+    /// the channel is set back, so that what changed meanwhile stays. Answers whether they were
+    /// taken out of its participants: only then is a leave announced (issue 564).
+    pub fn undo_take_in(&mut self, actor: ActorId, before: &Channel) -> bool {
         if !self.lists(actor) {
-            return;
+            return false;
         }
-        if !before.lists(actor) {
+        let unlisted = !before.lists(actor);
+        if unlisted {
             self.participants.retain(|p| p.actor_id() != actor);
         }
         self.former.retain(|former| former.participant.actor_id() != actor);
@@ -372,6 +377,7 @@ impl Channel {
         if invited && !self.security_attributes.acl.contains(&invitation) {
             self.security_attributes.acl.push(invitation);
         }
+        unlisted
     }
 
     /// Says what the channel is for (issue 245): `summary` and `briefing`
@@ -457,9 +463,9 @@ mod tests {
             }],
             ..made
         };
-        channel.take_in(Participant::User(bob));
-        channel.take_in(Participant::User(bob));
-        channel.take_in(Participant::Agent(AgentId::new()));
+        assert!(channel.take_in(Participant::User(bob)), "listed anew");
+        assert!(!channel.take_in(Participant::User(bob)), "listed already");
+        assert!(channel.take_in(Participant::Agent(AgentId::new())), "another listed anew");
         assert_eq!(channel.participants.len(), 2, "each once");
         assert!(channel.former.is_empty(), "bob is back, no longer a former participant");
         let joins: Vec<Subject> = channel
@@ -506,7 +512,7 @@ mod tests {
         let before = channel.clone();
         channel.take_in(Participant::User(bob));
         channel.take_in(Participant::User(carol));
-        channel.undo_take_in(bob_id, &before);
+        assert!(channel.undo_take_in(bob_id, &before), "taken out");
         assert!(!channel.lists(bob_id), "out again");
         assert!(channel.lists(ActorId::User(carol)), "what came meanwhile stays");
         assert!(
@@ -517,7 +523,7 @@ mod tests {
             channel.security_attributes.acl.contains(&AclEntry::invitation(bob_id)),
             "his invitation given back"
         );
-        channel.undo_take_in(alice_id, &before);
+        assert!(!channel.undo_take_in(alice_id, &before), "not taken out");
         assert!(channel.lists(alice_id), "listed before, she stays");
 
         // Let go between coming in and the undoing: who removed him decided.
@@ -525,7 +531,7 @@ mod tests {
         channel.take_in(Participant::User(bob));
         let removal = Removal::now(alice_id);
         channel.let_go(bob_id, removal.clone()).expect("listed");
-        channel.undo_take_in(bob_id, &before);
+        assert!(!channel.undo_take_in(bob_id, &before), "let go already");
         let left: Vec<&Removal> = channel
             .former
             .iter()

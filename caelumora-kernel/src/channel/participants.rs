@@ -278,8 +278,14 @@ impl ChannelLoop {
     /// `only`, or of every agent taking part if `None`: a deleted agent rests in the channel, its
     /// actor stopped in the kernel's name and the document unchanged; a restored one has its actor
     /// built and started again, given the part of the history it may see, as when it joined. Either
-    /// is announced as a leave or a join, in the kernel's name. One that cannot be read or run is
-    /// logged and left as it is. Of a running one only whether it exists is asked, not again
+    /// is announced as a leave or a join, in the kernel's name - also for an agent listed without
+    /// an actor that did not rest and for which no leave was announced: left out as the channel
+    /// started, since what it runs with - its personality, its components - was withdrawn, or one
+    /// whose start failed as it was added and whose rollback failed too. For it this join is one
+    /// too many, on the bus and in the history. Rare - it needs what it runs with given back while
+    /// the session runs, then one of the occasions that have the agents followed; telling it apart
+    /// would need the channel to keep why it left out whom (issue 564). One that cannot be read or
+    /// run is logged and left as it is. Of a running one only whether it exists is asked, not again
     /// whether it may run. One change of a participant at a time (`changing`, issue 564), as
     /// `take_in` makes it: an agent being taken in or let go meanwhile is looked at once that is
     /// done, and not at all once it is no longer listed.
