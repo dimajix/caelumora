@@ -1,6 +1,6 @@
 # 570 — The terminal's commands follow no rule of commands, and reach no other session
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -56,3 +56,18 @@ issue [571](571-approvals-and-questions-in-the-terminal.md), `/retry` its own he
 
 **2026-11-14** - Opened from the maintainer's use of the terminal, with the naming by COMMANDS.md
 decided.
+
+**2026-11-14** - Decided with the maintainer before the work began, in three steps: a restructuring
+without a change of behaviour (`Command::help_line` in the domain for every list of commands, the
+sessions of the directory as `Sessions`, the lines typed handled in a module of their own); the
+terminal's commands named by COMMANDS.md and listed by `/help`; the commands on sessions. The
+approvals and questions are named here already - `/approval approve` (`/approve`), `/approval deny`
+(`/deny`), `/question answer` (`/answer`), `/question decline` (`/decline`) -, their behaviour left
+to issue [571](571-approvals-and-questions-in-the-terminal.md), so that one set of commands
+replaces the second system at once; `/retry` becomes the short form of `/agent retry`; `/exit`
+stands without a group, as `/help` does, since ending the program acts on no entity of a channel.
+
+**2026-11-14** - Step 1 done: `Command::help_line`, which the kernel's `/help` writes its lists
+with; `Sessions`, which lists, starts, continues and resumes the sessions of the directory for the
+options of the program; the lines typed handled in `commands.rs`. What tells that no session was
+started yet is printed by the screen now, not past it.

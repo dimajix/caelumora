@@ -52,6 +52,34 @@ impl Command {
         self.names().find_map(|name| name.strip_from(line))
     }
 
+    /// How the command is told in a list of commands: its signature, its short forms and what it
+    /// does - "`/participant add <name>` (also `/add`) — Brings the user or agent named ...".
+    pub fn help_line(&self) -> String {
+        self.told(None)
+    }
+
+    /// How a command an agent carries out (issue 269) is told in a list of commands: as
+    /// `help_line`, the agent named - "`/compact @agent` — Compacts the agent's context ...".
+    pub fn agent_help_line(&self) -> String {
+        self.told(Some("@agent"))
+    }
+
+    /// How the command is told, `addressee` named after its name where it has one: its signature,
+    /// its short forms - " (also `/add`)" - and what it does.
+    fn told(&self, addressee: Option<&str>) -> String {
+        let words: Vec<&str> = addressee.into_iter().chain(self.usage.as_deref()).collect();
+        let signature = match words.is_empty() {
+            true => format!("/{}", self.name),
+            false => format!("/{} {}", self.name, words.join(" ")),
+        };
+        let aliases: Vec<String> = self.aliases.iter().map(|alias| format!("`/{alias}`")).collect();
+        let also = match aliases.is_empty() {
+            true => String::new(),
+            false => format!(" (also {})", aliases.join(", ")),
+        };
+        format!("`{signature}`{also} — {}", self.description)
+    }
+
     /// Whether a name of one - its name or an alias - begins a name of the other
     /// (`CommandName::begins`): a line beginning with the longer could not be told from one
     /// beginning with the shorter.
@@ -135,6 +163,24 @@ mod tests {
 
     fn command(line: &str) -> UserInput {
         UserInput::Command(line.to_string())
+    }
+
+    /// A command is told in a list by its signature, its short forms and what it does; one an
+    /// agent carries out with the agent named.
+    #[test]
+    fn a_command_is_told_by_its_signature_short_forms_and_description() {
+        let described = |usage: Option<&str>, aliases: &[&str]| Command {
+            description: "Brings someone in.".to_string(),
+            usage: usage.map(str::to_string),
+            ..named("participant add", aliases)
+        };
+        let plain = described(None, &[]);
+        assert_eq!(plain.help_line(), "`/participant add` — Brings someone in.");
+        assert_eq!(plain.agent_help_line(), "`/participant add @agent` — Brings someone in.");
+        let full = described(Some("<name>"), &["add", "in"]);
+        let also = "(also `/add`, `/in`) — Brings someone in.";
+        assert_eq!(full.help_line(), format!("`/participant add <name>` {also}"));
+        assert_eq!(full.agent_help_line(), format!("`/participant add @agent <name>` {also}"));
     }
 
     #[test]

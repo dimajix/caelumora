@@ -18,22 +18,6 @@ pub const HELP_COMMAND_NAME: &str = "help";
 #[derive(Debug)]
 pub struct HelpComponent;
 
-fn signature(command: &Command) -> String {
-    match &command.usage {
-        Some(usage) => format!("/{} {}", command.name, usage),
-        None => format!("/{}", command.name),
-    }
-}
-
-/// The short forms of `command`, as told after its signature: " (also `/add`)", or nothing.
-fn also(command: &Command) -> String {
-    if command.aliases.is_empty() {
-        return String::new();
-    }
-    let aliases: Vec<String> = command.aliases.iter().map(|alias| format!("`/{alias}`")).collect();
-    format!(" (also {})", aliases.join(", "))
-}
-
 impl ProvidesCommands for HelpComponent {
     fn commands(&self) -> Vec<Command> {
         vec![Command {
@@ -44,14 +28,6 @@ impl ProvidesCommands for HelpComponent {
             usage: Some("[group or command]".to_string()),
             owners_only: false,
         }]
-    }
-}
-
-/// How a command of an agent is written (issue 269): with the agent named.
-fn agent_signature(command: &Command) -> String {
-    match &command.usage {
-        Some(usage) => format!("/{} @agent {}", command.name, usage),
-        None => format!("/{} @agent", command.name),
     }
 }
 
@@ -96,19 +72,12 @@ impl ChannelCommandProvider for HelpComponent {
             // By its name or a short form.
             let named = |command: &Command| command.strip_from(wanted) == Some("");
             if let Some(command) = visible.iter().find(|c| named(c)) {
-                return Ok(CommandOutput::private(format!(
-                    "`{}`{} — {}",
-                    signature(command),
-                    also(command),
-                    command.description
-                )));
+                return Ok(CommandOutput::private(command.help_line()));
             }
             if let Some((command, handles)) = of_agents.values().find(|(c, _)| named(c)) {
                 return Ok(CommandOutput::private(format!(
-                    "`{}`{} — {} Carried out by {}.",
-                    agent_signature(command),
-                    also(command),
-                    command.description,
+                    "{} Carried out by {}.",
+                    command.agent_help_line(),
                     handles.join(", ")
                 )));
             }
@@ -133,21 +102,14 @@ impl ChannelCommandProvider for HelpComponent {
             None => String::from("Commands:\n\n"),
         };
         for command in listed {
-            text.push_str(&format!(
-                "- `{}`{} — {}\n",
-                signature(command),
-                also(command),
-                command.description
-            ));
+            text.push_str(&format!("- {}\n", command.help_line()));
         }
         if !of_agents.is_empty() {
             text.push_str("\nCommands the agents here carry out - name the agent, or `@all`:\n\n");
             for (command, handles) in of_agents {
                 text.push_str(&format!(
-                    "- `{}`{} — {} ({})\n",
-                    agent_signature(command),
-                    also(command),
-                    command.description,
+                    "- {} ({})\n",
+                    command.agent_help_line(),
                     handles.join(", ")
                 ));
             }
