@@ -2,11 +2,11 @@
 //! read by rustyline (issue 569).
 
 use super::words::{
-    attachment, error_word, how_to_answer, how_to_approve, outcome, question_rows, word_parts,
+    attachment, error_word, how_to_answer, how_to_approve, missed, outcome, question_rows,
     Arguments, EXPLICIT,
 };
 use super::{Screen, Typed};
-use crate::printed::{Printed, Said, Saying, Words};
+use crate::printed::{Printed, Said, Saying};
 use crate::under_way::UnderWay;
 use async_trait::async_trait;
 use caelumora_domain::approval::ApprovalRequest;
@@ -119,40 +119,40 @@ fn spawn_rustyline_input(
     input_rx
 }
 
-/// The lines `printed` is written as.
+/// The lines `printed` is written as: in words, not marked by symbols or colours, which a screen
+/// reader reads as they are or not at all.
 fn lines_of(printed: &Printed) -> Vec<String> {
     match printed {
         Printed::Said { sender, said, saying } => {
             let said = said_line(said);
             let line = match saying {
-                Saying::Complete => format!("{sender}> {said}"),
-                Saying::Step => format!("[working] {sender}> {said}"),
-                Saying::Edited => format!("{sender}> [edited] {said}"),
+                Saying::Complete => format!("{sender}: {said}"),
+                Saying::Step => format!("{sender}, working: {said}"),
+                Saying::Edited => format!("{sender}, edited: {said}"),
             };
             vec![line]
         }
-        Printed::Answering { sender } => vec![format!("{sender} is answering...")],
+        Printed::Answering { sender } => vec![format!("{sender} is answering.")],
         Printed::ToolCall { sender, call } => vec![call_line(sender, call)],
         Printed::ToolResult(result) => vec![result_line(result)],
         Printed::Approval(request) => approval_lines(request),
         Printed::Questions { request, put_to_user } => questions_lines(request, *put_to_user),
-        Printed::Notice(notice) => vec![format!("--- {notice} ---")],
-        Printed::Error { kind, message } => vec![format!("[{}] {message}", error_word(*kind))],
-        Printed::Missed { events } => vec![format!("[{events} events missed]")],
-        Printed::Plain(line) => vec![line.clone()],
+        Printed::Notice(notice) | Printed::Plain(notice) => vec![notice.clone()],
+        Printed::Error { kind, message } => vec![format!("{}: {message}", error_word(*kind))],
+        Printed::Missed { events } => vec![missed(*events)],
         Printed::Elsewhere { channel, printed } => {
-            lines_of(printed).into_iter().map(|line| format!("[{channel}] {line}")).collect()
+            lines_of(printed).into_iter().map(|line| format!("In {channel}: {line}")).collect()
         }
     }
 }
 
-/// What `said` says on a line: its words, the participants they mention highlighted, and what it
-/// carries (issue 282).
+/// What `said` says on a line: its words as they were said, and what it carries (issue 282).
 fn said_line(said: &Said) -> String {
-    let words = said.words.as_ref().map(highlighted);
-    let attachments = said.attachments.iter().map(|carried| format!("[{}]", attachment(carried)));
-    let parts: Vec<String> = words.into_iter().chain(attachments).collect();
-    parts.join(" ")
+    let words = said.words.as_ref().map(|words| words.text.clone());
+    let carried: Vec<String> = said.attachments.iter().map(attachment).collect();
+    let carried = (!carried.is_empty()).then(|| format!("attached {}", carried.join("; ")));
+    let parts: Vec<String> = words.into_iter().chain(carried).collect();
+    parts.join(", ")
 }
 
 /// The line that tells that `sender` calls the tool of `call`, and with what.
@@ -170,20 +170,10 @@ fn result_line(result: &ToolCallResult) -> String {
     format!("{} {}", result.tool_name, outcome(result))
 }
 
-/// `words` with the participants they mention highlighted.
-fn highlighted(words: &Words) -> String {
-    let parts = word_parts(words).into_iter().map(|(part, mention)| match mention {
-        true => format!("\x1b[1;36m{part}\x1b[0m"),
-        false => part.to_string(),
-    });
-    parts.collect()
-}
-
 /// The lines that show `request` for approval, and how to answer it.
 fn approval_lines(request: &ApprovalRequest) -> Vec<String> {
     let id = request.id.0;
-    let mut lines =
-        vec![format!("--- Approval requested (id: {id}) ---"), request.description.clone()];
+    let mut lines = vec![format!("Approval requested, id {id}:"), request.description.clone()];
     if request.explicit {
         lines.push(EXPLICIT.to_string());
     }
@@ -195,8 +185,7 @@ fn approval_lines(request: &ApprovalRequest) -> Vec<String> {
 /// are `put_to_user`.
 fn questions_lines(request: &QuestionRequest, put_to_user: bool) -> Vec<String> {
     let id = request.id.0;
-    let mut lines =
-        vec![format!("--- Questions of {} (id: {id}) ---", request.tool_call.function_name)];
+    let mut lines = vec![format!("Questions of {}, id {id}:", request.tool_call.function_name)];
     lines.extend(question_rows(request));
     lines.extend(how_to_answer(request, put_to_user));
     lines
@@ -218,7 +207,7 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::printed::ErrorKind;
+    use crate::printed::{ErrorKind, Words};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::ChannelId;
@@ -230,6 +219,7 @@ mod tests {
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolResultStatus, ToolVisibility};
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::Name;
     use serde_json::json;
     use serde_json::Value;
 
@@ -239,41 +229,53 @@ mod tests {
         Printed::Said { sender: "helper".to_string(), said, saying }
     }
 
-    /// What was said is written by its sender, a step of a plan and a change marked as such.
+    /// What was said is written after its sender, a step of a plan and a change told as such, in
+    /// words.
     #[test]
     fn what_was_said_is_written_by_its_kind() {
         let said = |words, saying| lines_of(&said(Some(words), Vec::new(), saying));
-        assert_eq!(said("hello", Saying::Complete), ["helper> hello"]);
-        assert_eq!(said("hm", Saying::Step), ["[working] helper> hm"]);
-        assert_eq!(said("now", Saying::Edited), ["helper> [edited] now"]);
+        assert_eq!(said("hello", Saying::Complete), ["helper: hello"]);
+        assert_eq!(said("hm", Saying::Step), ["helper, working: hm"]);
+        assert_eq!(said("now", Saying::Edited), ["helper, edited: now"]);
     }
 
     #[test]
     fn a_message_is_written_with_what_it_carries() {
         let chart = make_content_ref("chart.png", b"chart");
         let carrying = |words| lines_of(&said(words, vec![chart.clone()], Saying::Complete));
-        assert_eq!(carrying(None), ["helper> [chart.png, image/png, 5 B]"]);
-        assert_eq!(carrying(Some("look")), ["helper> look [chart.png, image/png, 5 B]"]);
+        assert_eq!(carrying(None), ["helper: attached chart.png, image/png, 5 B"]);
+        assert_eq!(carrying(Some("look")), ["helper: look, attached chart.png, image/png, 5 B"]);
+        let photo = make_content_ref("photo.png", b"photo");
+        let both = lines_of(&said(None, vec![chart.clone(), photo], Saying::Complete));
+        assert_eq!(both, ["helper: attached chart.png, image/png, 5 B; photo.png, image/png, 5 B"]);
     }
 
+    /// A mention is written as it was said, without a colour a screen reader cannot tell.
     #[test]
-    fn a_mention_is_highlighted_where_it_stands() {
-        let text = "hi @kaya and @lou, not @all".to_string();
-        let words = Words { text, mentions: vec![3..8, 13..17] };
-        assert_eq!(
-            highlighted(&words),
-            "hi \x1b[1;36m@kaya\x1b[0m and \x1b[1;36m@lou\x1b[0m, not @all"
-        );
+    fn a_mention_is_written_as_said() {
+        let words = Words { text: "hi @kaya @lou".to_string(), mentions: vec![3..8, 9..13] };
+        let said = Said { words: Some(words), attachments: Vec::new() };
+        assert_eq!(said_line(&said), "hi @kaya @lou");
     }
 
-    /// What went wrong is written with its kind in brackets, what was missed by its number.
+    /// What went wrong is written after its kind, what was missed by its number.
     #[test]
     fn what_went_wrong_is_written_by_its_kind() {
         let error = |kind| Printed::Error { kind, message: "no".to_string() };
-        assert_eq!(lines_of(&error(ErrorKind::Failed)), ["[error] no"]);
-        assert_eq!(lines_of(&error(ErrorKind::Rejected)), ["[rejected] no"]);
-        assert_eq!(lines_of(&error(ErrorKind::Refused)), ["[refused] no"]);
-        assert_eq!(lines_of(&Printed::Missed { events: 3 }), ["[3 events missed]"]);
+        assert_eq!(lines_of(&error(ErrorKind::Failed)), ["Error: no"]);
+        assert_eq!(lines_of(&error(ErrorKind::Rejected)), ["Rejected: no"]);
+        assert_eq!(lines_of(&error(ErrorKind::Refused)), ["Refused: no"]);
+        assert_eq!(lines_of(&Printed::Missed { events: 3 }), ["3 events of this channel missed."]);
+    }
+
+    /// What is told of another channel is led by its name, in words.
+    #[test]
+    fn what_another_channel_tells_is_led_by_its_name() {
+        let elsewhere = Printed::Elsewhere {
+            channel: Name::new("side").expect("a name"),
+            printed: Box::new(Printed::Notice("Talking".to_string())),
+        };
+        assert_eq!(lines_of(&elsewhere), ["In side: Talking"]);
     }
 
     /// Questions put to the user are written with how to answer them, and a warning where they
@@ -289,8 +291,8 @@ mod tests {
         let theirs = questions(&request, false);
         assert_eq!(theirs.last().map(String::as_str), Some("They are put to others."));
         let mine = questions(&request, true);
-        assert_eq!(mine.first(), Some(&format!("--- Questions of ask (id: {id}) ---")));
-        assert_eq!(mine.get(1).map(String::as_str), Some("1. [Name] Who?"));
+        assert_eq!(mine.first(), Some(&format!("Questions of ask, id {id}:")));
+        assert_eq!(mine.get(1).map(String::as_str), Some("1. Name: Who?"));
         assert!(mine.last().is_some_and(|line| line.starts_with(&format!("Type '/answer {id}'"))));
         assert!(!mine.join("\n").contains("Sensitive"), "{mine:?}");
         let sensitive = QuestionRequest {
@@ -350,6 +352,6 @@ mod tests {
     #[test]
     fn an_answer_begun_is_told() {
         let answering = Printed::Answering { sender: "helper".to_string() };
-        assert_eq!(lines_of(&answering), ["helper is answering..."]);
+        assert_eq!(lines_of(&answering), ["helper is answering."]);
     }
 }

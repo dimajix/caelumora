@@ -4,7 +4,7 @@
 use super::PROMPT;
 use crate::printed::{Printed, Said, Saying, Words};
 use crate::screen::words::{
-    attachment, error_word, how_to_answer, how_to_approve, outcome, question_rows, word_parts,
+    attachment, error_word, how_to_answer, how_to_approve, missed, outcome, question_rows,
     Arguments, EXPLICIT,
 };
 use crate::under_way::UnderWay;
@@ -33,9 +33,7 @@ pub(super) fn styled(printed: &Printed) -> Vec<Line<'static>> {
         Printed::Error { kind, message } => {
             text_lines(&format!("{}: {message}", error_word(*kind)), Style::new().red())
         }
-        Printed::Missed { events } => {
-            vec![Line::styled(format!("{events} events missed"), Style::new().yellow())]
-        }
+        Printed::Missed { events } => vec![Line::styled(missed(*events), Style::new().yellow())],
         Printed::Plain(text) => text_lines(text, Style::new()),
         Printed::Elsewhere { channel, printed } => styled(printed)
             .into_iter()
@@ -190,6 +188,20 @@ fn word_rows(words: &Words, style: Style) -> Vec<Vec<Span<'static>>> {
     rows
 }
 
+/// The parts of `words`, in order, each with whether it is the mention of a participant.
+fn word_parts(words: &Words) -> Vec<(&str, bool)> {
+    let mut parts = Vec::new();
+    let mut pos = 0;
+    for mention in &words.mentions {
+        parts.push((&words.text[pos..mention.start], false));
+        parts.push((&words.text[mention.clone()], true));
+        pos = mention.end;
+    }
+    parts.push((&words.text[pos..], false));
+    parts.retain(|(part, _)| !part.is_empty());
+    parts
+}
+
 /// The line that tells that `sender` calls the tool of `call`, and with what.
 fn call_line(sender: &str, call: &ToolCall) -> Line<'static> {
     let mut spans = vec![
@@ -308,7 +320,7 @@ mod tests {
         );
         assert!(styled(&Printed::Answering { sender: "helper".to_string() }).is_empty());
         let error = Printed::Error { kind: ErrorKind::Refused, message: "no".to_string() };
-        assert_eq!(texts(&styled(&error)), ["refused: no"]);
+        assert_eq!(texts(&styled(&error)), ["Refused: no"]);
         assert_eq!(
             texts(&styled(&Printed::Notice("Talking in main now".to_string()))),
             ["Talking in main now"]
@@ -350,5 +362,13 @@ mod tests {
         let line = status_line(&[UnderWay { since, ..answer }], now).to_string();
         assert!(line.ends_with("helper is running tools · 12s"), "{line}");
         assert!(status_line(&[], now).to_string().is_empty());
+    }
+
+    /// The parts of words are told apart by whether they mention a participant, empty ones left
+    /// out.
+    #[test]
+    fn words_are_parted_by_their_mentions() {
+        let words = Words { text: "@kaya and @lou".to_string(), mentions: vec![0..5, 10..14] };
+        assert_eq!(word_parts(&words), [("@kaya", true), (" and ", false), ("@lou", true)]);
     }
 }

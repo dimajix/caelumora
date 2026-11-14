@@ -7,6 +7,7 @@ mod words;
 
 pub(crate) use full::FullScreen;
 pub(crate) use line::LineScreen;
+pub(crate) use words::question_line;
 
 use crate::printed::Printed;
 use crate::under_way::UnderWay;

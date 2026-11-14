@@ -600,7 +600,7 @@ fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<Printed
         }),
         // Told to its issuer alone (issue 299).
         ActorEvent::CommandStarted { command, .. } => {
-            plain(format!("{sender} is carrying out /{command}..."))
+            plain(format!("{sender} is carrying out /{command}."))
         }
         // Carried out by an agent in a turn of its own (issue 269), or run by a user.
         ActorEvent::CommandExecuted { command, output, turn_id, .. } => {
@@ -611,7 +611,7 @@ fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<Printed
             plain(format!("{sender} did not carry out /{command}: {reason}"))
         }
         // Of its own accord (issue 284).
-        ActorEvent::ActivityStarted { activity, .. } => plain(format!("{sender} is {activity}...")),
+        ActorEvent::ActivityStarted { activity, .. } => plain(format!("{sender} is {activity}.")),
         ActorEvent::ActivityFinished { output, .. } => plain(output.to_string()),
         // Who joined or left (issue 408), by whose act.
         ActorEvent::ParticipantJoined { participant, name } => plain(match sender_id {
@@ -903,6 +903,31 @@ mod tests {
         assert_eq!(said_by(message(Some(""), Vec::new())), None, "nothing said");
     }
 
+    /// The words of a message mention the participants it mentions, by their handles in the
+    /// channel; a group handle mentions where anyone was (issue 401), none where nobody was.
+    #[test]
+    fn the_words_of_a_message_mention_by_the_handles() {
+        let owner = ActorId::User(UserId::new());
+        let handles = HashMap::from([(owner, "owner".to_string())]);
+        let mentioning = |content: &str, mentions| Message {
+            content: Some(content.to_string()),
+            mentions,
+            ..make_message(MessageId::new())
+        };
+        let mentions = |message: Message| {
+            said(&message, &handles).and_then(|said| said.words).map(|words| words.mentions)
+        };
+        assert_eq!(
+            mentions(mentioning("@owner look, @all", vec![owner])),
+            Some(vec![0..6, 13..17])
+        );
+        assert_eq!(
+            mentions(mentioning("@owner look, @all", Vec::new())),
+            Some(Vec::new()),
+            "nobody mentioned"
+        );
+    }
+
     /// What the channel did not let in of the user's is told to them as rejected, apart from what
     /// an actor refused (issue 567).
     #[tokio::test]
@@ -917,7 +942,7 @@ mod tests {
         assert_eq!(told.len(), 1, "{told:?}");
         assert!(
             told[0]
-                .starts_with("[rejected] the channel did not let in your CompleteMessageGenerated"),
+                .starts_with("Rejected: the channel did not let in your CompleteMessageGenerated"),
             "{told:?}"
         );
     }
@@ -936,7 +961,7 @@ mod tests {
         let told = lines(&followed.take_in(&from(&channel, approver, refused)));
         assert_eq!(told.len(), 1, "{told:?}");
         assert!(
-            told[0].starts_with("[refused] ")
+            told[0].starts_with("Refused: ")
                 && told[0].contains("did not take your ApprovalAnswered"),
             "{told:?}"
         );
@@ -948,7 +973,7 @@ mod tests {
         let other = ActorId::User(UserId::new());
         let said = |sender| ActorEvent::CompleteMessageGenerated(message(sender, "hello"));
         assert!(followed.take_in(&from(&channel, me, said(me))).is_empty());
-        assert_eq!(lines(&followed.take_in(&from(&channel, other, said(other)))), ["other> hello"]);
+        assert_eq!(lines(&followed.take_in(&from(&channel, other, said(other)))), ["other: hello"]);
     }
 
     /// An approval shown waits until the approver ends it - decided, timed out or withdrawn -, or
@@ -969,7 +994,7 @@ mod tests {
         let withdrawn = ActorEvent::ApprovalRequestWithdrawn { id };
         assert_eq!(
             lines(&followed.take_in(&from(&channel, agent, withdrawn.clone()))),
-            [format!("--- Approval {} withdrawn: the turn ended ---", id.0)]
+            [format!("Approval {} withdrawn: the turn ended", id.0)]
         );
         assert!(followed.take_in(&from(&channel, agent, withdrawn)).is_empty(), "told once");
         assert!(!followed.is_pending(id), "no longer pending");
@@ -1016,7 +1041,7 @@ mod tests {
         );
         assert_eq!(
             lines(&followed.take_in(&answer(me, Some(ApprovalRuleId::new())))),
-            [format!("--- Approval {} answered by your rule ---", id.0)]
+            [format!("Approval {} answered by your rule", id.0)]
         );
     }
 
@@ -1210,7 +1235,7 @@ mod tests {
         let said = ActorEvent::CompleteMessageGenerated(calling);
         assert_eq!(
             lines(&followed.take_in(&from(&channel, agent, said))),
-            ["other> let me look", "other calls terminal, its arguments not shown"]
+            ["other: let me look", "other calls terminal, its arguments not shown"]
         );
 
         let result = |call: &ToolCall, status| {
@@ -1345,7 +1370,7 @@ mod tests {
         let another = ActorId::User(UserId::new());
         let started = ActorEvent::ResponseStarted { turn_id: TurnId::new() };
         let begun = lines(&followed.take_in(&from(&channel, helper, started.clone())));
-        assert_eq!(begun, [format!("{helper} is answering...")]);
+        assert_eq!(begun, [format!("{helper} is answering.")]);
         assert!(followed.take_in(&from(&channel, another, started)).is_empty(), "no agent");
     }
 
@@ -1409,17 +1434,14 @@ mod tests {
         let recorded = async {
             loop {
                 let talking_in = lines(&followed.talking_in().await);
-                if talking_in.iter().any(|line| line == "other> hello") {
+                if talking_in.iter().any(|line| line == "other: hello") {
                     break talking_in;
                 }
                 time::sleep(Duration::from_millis(20)).await;
             }
         };
         let talking_in = time::timeout(Duration::from_secs(5), recorded).await.expect("recorded");
-        assert_eq!(
-            talking_in[..3],
-            ["--- Earlier in side ---", "other> hello", "--- Talking in side now ---"]
-        );
+        assert_eq!(talking_in[..3], ["Earlier in side", "other: hello", "Talking in side now"]);
 
         let shown = async {
             loop {
@@ -1466,12 +1488,12 @@ mod tests {
         assert_eq!(
             lines(&followed.history_printed(&page)),
             [
-                "--- Earlier in main ---",
-                "owner> look",
+                "Earlier in main",
+                "owner: look",
                 "other calls terminal, its arguments not shown",
                 "terminal answered: done",
-                "[working] other> thinking it over",
-                "other> here",
+                "other, working: thinking it over",
+                "other: here",
             ]
         );
 

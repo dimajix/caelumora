@@ -130,3 +130,9 @@ from before a session is opened, not only once the talk began, so that one sent 
 starts ends it through the shutdown too. Planned as step 7, on the maintainer's word,
 from the review of step 4: the channels followed are found by their id in one place, not by their
 position in `Channels::take_in_shown` and `Channels::unfollow_if_ended` each.
+
+**2026-11-14** - Step 6 done: `line` tells in words what it marked by symbols - `helper: `,
+`helper, working: `, `In side: `, `Error: `, notices without dashes - and writes mentions without
+colour. Left as they are: the choices of a question (`1) label`), which issue
+[571](571-approvals-and-questions-in-the-terminal.md) makes choices of its own, the cut mark of a
+result shortened, and rustyline's prompt `>> `.

@@ -432,9 +432,8 @@ mod tests {
     /// Takes in what happens next, until the user is told they take part in channel `name` now,
     /// within five seconds: the lines that tell so.
     async fn until_told(channels: &mut Channels, name: &str) -> Vec<String> {
-        let told = format!(
-            "--- You take part in channel {name} now: type '/switch {name}' to talk there ---"
-        );
+        let told =
+            format!("You take part in channel {name} now: type '/switch {name}' to talk there");
         let taken_in = async {
             loop {
                 let happened = channels.next().await;
@@ -498,7 +497,7 @@ mod tests {
         let event = ActorEvent::CompleteMessageGenerated(mentioning);
         assert_eq!(
             lines(&channels.take_in(envelope_shown(&side, other, event)).await),
-            ["[side] other> \x1b[1;36m@owner\x1b[0m look"]
+            ["In side: other: @owner look"]
         );
         let theirs = ActorEvent::QuestionRequested(make_question_request(
             side.session_id(),
@@ -511,22 +510,19 @@ mod tests {
         let id = request.id;
         let event = ActorEvent::ApprovalRequested(request);
         let told = lines(&channels.take_in(envelope_shown(&side, agent, event)).await);
-        assert_eq!(
-            told.first(),
-            Some(&format!("[side] --- Approval requested (id: {}) ---", id.0))
-        );
+        assert_eq!(told.first(), Some(&format!("In side: Approval requested, id {}:", id.0)));
 
         let first = channels.talked_in().expect("talked in").channel_id();
         let main = session_loop.channel(first).expect("the first channel");
         let event = ActorEvent::CompleteMessageGenerated(message(other, "hello"));
         assert_eq!(
             lines(&channels.take_in(envelope_shown(&main, other, event)).await),
-            ["other> hello"]
+            ["other: hello"]
         );
 
         let switched = lines(&channels.switch("side").await);
-        assert_eq!(switched.first().map(String::as_str), Some("--- Talking in side now ---"));
-        let approval_line = format!("--- Approval requested (id: {}) ---", id.0);
+        assert_eq!(switched.first().map(String::as_str), Some("Talking in side now"));
+        let approval_line = format!("Approval requested, id {}:", id.0);
         assert!(switched.contains(&approval_line), "what waits there: {switched:?}");
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), Some(side.id()));
     }
@@ -549,7 +545,7 @@ mod tests {
             || envelope_shown(&side, agent, ActorEvent::ApprovalRequestWithdrawn { id });
         assert_eq!(
             lines(&channels.take_in(withdrawn()).await),
-            [format!("[side] --- Approval {} withdrawn: the turn ended ---", id.0)]
+            [format!("In side: Approval {} withdrawn: the turn ended", id.0)]
         );
         assert!(lines(&channels.take_in(withdrawn()).await).is_empty(), "told once");
 
@@ -561,7 +557,7 @@ mod tests {
         let by_rule = answered(me, id, Some(ApprovalRuleId::new()));
         assert_eq!(
             lines(&channels.take_in(envelope_shown(&side, me, by_rule)).await),
-            [format!("[side] --- Approval {} answered by your rule ---", id.0)]
+            [format!("In side: Approval {} answered by your rule", id.0)]
         );
         assert!(channels.awaiting(id).is_none(), "no longer pending");
     }
@@ -582,7 +578,7 @@ mod tests {
         let name = alone.talked_in().expect("talked in").name().to_string();
         let opening = lines(&alone.opening().await);
         assert_eq!(opening, lines(&alone.switch(&name).await), "no other channel");
-        assert_eq!(opening.first(), Some(&format!("--- Talking in {name} now ---")));
+        assert_eq!(opening.first(), Some(&format!("Talking in {name} now")));
     }
 
     /// What waits for the user in a channel other than the one talked in is told at the start,
@@ -603,7 +599,7 @@ mod tests {
         assert_ne!(channels.talked_in().map(Followed::channel_id), Some(side.id()), "another");
 
         let opening = lines(&channels.opening().await);
-        let approval_line = format!("[side] --- Approval requested (id: {}) ---", id.0);
+        let approval_line = format!("In side: Approval requested, id {}:", id.0);
         assert!(opening.contains(&approval_line), "{opening:?}");
         assert_eq!(opening.last(), Some(&hint(&channels)), "{opening:?}");
     }
@@ -624,12 +620,14 @@ mod tests {
         let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
             .await
             .expect("the owner takes part");
-        let requested =
-            |id: ApprovalId| format!("[side] --- Approval requested (id: {}) ---", id.0);
+        let requested = |id: ApprovalId| format!("In side: Approval requested, id {}:", id.0);
 
         let first = approval_waiting_in(&kernel, &side, agent_id).await;
         let lost = lines(&channels.take_in(Happened::Shown(side.id(), Err(Lagged(3)))).await);
-        assert_eq!(lost.first().map(String::as_str), Some("[side] [3 events missed]"));
+        assert_eq!(
+            lost.first().map(String::as_str),
+            Some("In side: 3 events of this channel missed.")
+        );
         assert!(lost.contains(&requested(first)), "{lost:?}");
         let started = Happened::Shown(side.id(), Ok(Shown::Started));
         assert!(lines(&channels.take_in(started).await).is_empty(), "known already");
@@ -646,7 +644,7 @@ mod tests {
         let started = Happened::Shown(side.id(), Ok(Shown::Started));
         assert_eq!(
             lines(&channels.take_in(started).await),
-            ["--- You no longer take part in channel side, or it was deleted ---"]
+            ["You no longer take part in channel side, or it was deleted"]
         );
     }
 
@@ -657,7 +655,7 @@ mod tests {
         let refused = lines(&channels.switch("theirs").await);
         assert_eq!(
             refused.first().map(String::as_str),
-            Some("--- You take part in no channel 'theirs' ---")
+            Some("You take part in no channel 'theirs'")
         );
         assert!(refused.last().is_some_and(|hint| hint.contains("side")), "{refused:?}");
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), talked_in, "unchanged");
@@ -712,7 +710,7 @@ mod tests {
         assert!(session_loop.delete_channel(&owner, side.id()).await.unwrap());
         assert_eq!(
             lines(&channels.take_in(Happened::Shown(side.id(), Ok(Shown::Ended))).await),
-            ["--- You no longer take part in channel side, or it was deleted ---"]
+            ["You no longer take part in channel side, or it was deleted"]
         );
         assert!(channels.followed(side.id()).is_none());
 
@@ -772,7 +770,7 @@ mod tests {
 
         late.add_participant(&owner, other, HistoryAccess::All).await.expect("the owner adds them");
         let told = until_told(&mut channels, "late").await;
-        let approval_line = format!("[late] --- Approval requested (id: {}) ---", id.0);
+        let approval_line = format!("In late: Approval requested, id {}:", id.0);
         assert!(told.contains(&approval_line), "{told:?}");
         assert_eq!(channels.awaiting(id).map(Followed::channel_id), Some(late.id()));
     }
@@ -818,7 +816,7 @@ mod tests {
         side.remove_participant(&owner, owner.caller_id).await.expect("they may be removed");
         assert_eq!(
             lines(&channels.take_in(Happened::TakingPart).await),
-            ["--- You no longer take part in channel side, or it was deleted ---"]
+            ["You no longer take part in channel side, or it was deleted"]
         );
         assert!(channels.followed(side.id()).is_none());
     }

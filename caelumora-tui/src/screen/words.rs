@@ -1,10 +1,10 @@
 //! The words in which both ways of drawing tell what is printed, each styling them its own way
 //! (issue 569).
 
-use crate::printed::{ErrorKind, Words};
+use crate::printed::ErrorKind;
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::content::ContentRef;
-use caelumora_domain::question::QuestionRequest;
+use caelumora_domain::question::{Question, QuestionRequest};
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use serde_json::Value;
 
@@ -70,9 +70,9 @@ pub(super) fn outcome(result: &ToolCallResult) -> String {
 /// The word an error of `kind` is told by.
 pub(super) fn error_word(kind: ErrorKind) -> &'static str {
     match kind {
-        ErrorKind::Failed => "error",
-        ErrorKind::Rejected => "rejected",
-        ErrorKind::Refused => "refused",
+        ErrorKind::Failed => "Error",
+        ErrorKind::Rejected => "Rejected",
+        ErrorKind::Refused => "Refused",
     }
 }
 
@@ -82,18 +82,15 @@ pub(super) fn attachment(attachment: &ContentRef) -> String {
     format!("{name}, {}, {}", attachment.media_type, attachment.size_shown())
 }
 
-/// The parts of `words`, in order, each with whether it is the mention of a participant.
-pub(super) fn word_parts(words: &Words) -> Vec<(&str, bool)> {
-    let mut parts = Vec::new();
-    let mut pos = 0;
-    for mention in &words.mentions {
-        parts.push((&words.text[pos..mention.start], false));
-        parts.push((&words.text[mention.clone()], true));
-        pos = mention.end;
-    }
-    parts.push((&words.text[pos..], false));
-    parts.retain(|(part, _)| !part.is_empty());
-    parts
+/// The line that asks `question`, the one of `index` of its request: its number, header and
+/// question.
+pub(crate) fn question_line(index: usize, question: &Question) -> String {
+    format!("{}. {}: {}", index + 1, question.header, question.question)
+}
+
+/// What tells that so many `events` of a channel were missed.
+pub(super) fn missed(events: u64) -> String {
+    format!("{events} events of this channel missed.")
 }
 
 /// What tells how to answer the approval `request`.
@@ -106,7 +103,7 @@ pub(super) fn how_to_approve(request: &ApprovalRequest) -> String {
 pub(super) fn question_rows(request: &QuestionRequest) -> Vec<String> {
     let mut rows = Vec::new();
     for (index, question) in request.questions.questions.iter().enumerate() {
-        rows.push(format!("{}. [{}] {}", index + 1, question.header, question.question));
+        rows.push(question_line(index, question));
         for (number, choice) in question.choices.iter().enumerate() {
             let recommended = if choice.recommended { " (recommended)" } else { "" };
             let description =
@@ -144,18 +141,5 @@ fn shortened(text: &str) -> String {
     match text.char_indices().nth(SHORTENED) {
         Some((cut, _)) => format!("{}…", &text[..cut]),
         None => text.to_string(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The parts of words are told apart by whether they mention a participant, empty ones left
-    /// out.
-    #[test]
-    fn words_are_parted_by_their_mentions() {
-        let words = Words { text: "@kaya and @lou".to_string(), mentions: vec![0..5, 10..14] };
-        assert_eq!(word_parts(&words), [("@kaya", true), (" and ", false), ("@lou", true)]);
     }
 }

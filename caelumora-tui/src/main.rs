@@ -68,7 +68,7 @@ use futures::future::select_all;
 use here::{place_of, HERE};
 use home::Home;
 use printed::{ErrorKind, Printed};
-use screen::{FullScreen, LineScreen, Screen, Typed};
+use screen::{question_line, FullScreen, LineScreen, Screen, Typed};
 use serde_json::Value;
 use sessions::Asked;
 use std::env;
@@ -88,7 +88,7 @@ fn prompt_of(index: usize, question: &Question) -> String {
     } else {
         "the number of your choice, or another answer"
     };
-    format!("{}. [{}] {} - {}; '-' skips:", index + 1, question.header, question.question, how)
+    format!("{} Type {how}; '-' skips:", question_line(index, question))
 }
 
 /// The response `line` gives to `question`: `-` skips it; for one with
@@ -626,8 +626,8 @@ async fn talk(
                         screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
                         break;
                     }
-                    Typed::Failed(reason) => {
-                        screen.print(vec![Printed::Plain(format!("Error: {reason}"))]);
+                    Typed::Failed(message) => {
+                        screen.print(vec![Printed::Error { kind: ErrorKind::Failed, message }]);
                         break;
                     }
                     Typed::Ended => break,
@@ -843,7 +843,7 @@ mod tests {
         let none_named = typed(channels, answering, &format!("/decline {id}")).await;
         assert_eq!(none_named, [format!("No open questions put to you with id {id}")]);
         let switched = typed(channels, answering, "/switch nowhere").await;
-        let unknown = "--- You take part in no channel 'nowhere' ---";
+        let unknown = "You take part in no channel 'nowhere'";
         assert_eq!(switched.first().map(String::as_str), Some(unknown));
     }
 
