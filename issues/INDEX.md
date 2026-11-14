@@ -148,6 +148,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [562](562-nobody-can-leave-a-channel.md) | done | Who takes part in a channel can leave it only by being removed by whoever may change it (`UpdateChannel`), so a participant who is not the channel's owner cannot take themselves - or their own agent - out of a channel, though `Join` lets them take themselves in. |
 | [563](563-a-channel-invitation-is-never-used-up.md) | done | A personal `Join` entry of a channel - an invitation - stays in its access list when the one it names joins, against the rule of issue 221 that SECURITY.md and CHANNELS.md state, so that someone removed from the channel takes themselves back in by `/channel join`. |
 | [564](564-taking-someone-in-is-rolled-back-in-part.md) | open | Taking someone into a session together with a channel stores the session first and keeps it when the channel fails, two takings-in of one participant can race and undo each other, and a join is announced for one already listed; with them, a few loose ends of the same code - visibility, a rollback step not named so, an invitation built by hand. |
+| [568](568-a-second-join-leaves-attendance-open.md) | open | A channel records a join for a participant whose range of attendance is still open in three cases, which opens a second range; a later leave closes only the last, the first stays open, and what the participant is shown of the history then reaches past their leave. |
 
 ## Identity and access management
 
