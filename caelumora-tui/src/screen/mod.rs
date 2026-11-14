@@ -7,8 +7,8 @@ mod words;
 
 pub(crate) use full::FullScreen;
 pub(crate) use line::LineScreen;
-pub(crate) use words::question_line;
 
+use crate::asking::Asked;
 use crate::printed::Printed;
 use crate::under_way::UnderWay;
 use async_trait::async_trait;
@@ -23,6 +23,10 @@ pub(crate) trait Screen: Send {
     /// Shows the answers under way in the channel talked in, `under_way`, as they stand now.
     fn show_under_way(&mut self, under_way: &[UnderWay]);
 
+    /// Shows what is asked of the user now, `asked` - as waiting only, where it is put aside
+    /// (issue 571).
+    fn ask(&mut self, asked: Option<&Asked>);
+
     /// What the user typed next. Nothing is lost if it is dropped before it completes.
     async fn next_input(&mut self) -> Typed;
 }
@@ -32,6 +36,12 @@ pub(crate) trait Screen: Send {
 pub(crate) enum Typed {
     /// A line, as typed.
     Line(String),
+    /// The choices of what is asked, by their indices.
+    Chosen(Vec<usize>),
+    /// What is asked put aside, to type on.
+    PutAside,
+    /// What was put aside taken up again.
+    TakenUp,
     /// Ctrl-C.
     Interrupted,
     /// The input cannot be read any longer, for the reason given.

@@ -35,8 +35,10 @@ is, what it means, who may run it and what it answers is decided in one place.
 
 The terminal (`caelumora-tui`) carries out a few commands itself, of what the channel's commands do
 not offer - end the program, switch the channel or the session it talks in, list, start, resume or
-delete the sessions of its directory, answer an approval or questions as it shows them, ask an
-agent to answer again (`TerminalCommand`, issue
+delete the sessions of its directory, answer an approval or questions - the one asked without an
+argument, else the one whose id begins so (`beginning_with`, issue
+[571](../issues/571-approvals-and-questions-in-the-terminal.md)) -, ask an agent to answer again
+(`TerminalCommand`, issue
 [570](../issues/570-the-terminal-s-commands-and-its-sessions.md)). They are named by the rules below
 as the channel's are, with the domain's `Command`, and a line is tried against them before it goes
 to the channel: so no name or short form of them may begin, or be the beginning of, one of the
@@ -255,7 +257,7 @@ external agent alike.
 | `/session resume` | `/resume` | the terminal | - | `<id>` | - | Continues the session of the directory whose id begins so, and talks in it; the one left is stopped. |
 | `/session delete` | - | the terminal | - | `<id>` | - | Deletes the session of the directory whose id begins so, not the one talked in; it can be restored. |
 | `/agent retry` | `/retry` | the terminal | - | - | - | Asks for the answer under way, the turn given up, or the last answer of an agent again. |
-| `/approval approve` | `/approve` | the terminal | - | `<id>` | - | Approves the call waiting for approval of that id ([APPROVALS.md](APPROVALS.md)). |
-| `/approval deny` | `/deny` | the terminal | - | `<id>` | - | Denies the call waiting for approval of that id. |
-| `/question answer` | `/answer` | the terminal | - | `[id]` | - | Begins to answer the questions put to the user of that id, or the last, one by one. |
-| `/question decline` | `/decline` | the terminal | - | `[id]` | - | Declines the questions put to the user of that id, or the last. |
+| `/approval approve` | `/approve` | the terminal | - | `[id]` | - | Approves the call asked of the user, or the one waiting for approval whose id begins so ([APPROVALS.md](APPROVALS.md)). |
+| `/approval deny` | `/deny` | the terminal | - | `[id]` | - | Denies the call asked of the user, or the one waiting for approval whose id begins so. |
+| `/question answer` | `/answer` | the terminal | - | `[id]` | - | Asks the questions put to the user whose id begins so, or those put aside, one by one. |
+| `/question decline` | `/decline` | the terminal | - | `[id]` | - | Declines the questions asked of the user, or those put to them whose id begins so. |

@@ -1,12 +1,17 @@
-//! The words in which both ways of drawing tell what is printed, each styling them its own way
-//! (issue 569).
+//! The words in which both ways of drawing tell what is printed and what is asked, each styling
+//! them its own way (issues 569, 571).
 
+use crate::asking::{Asking, Offered};
 use crate::printed::ErrorKind;
-use caelumora_domain::approval::ApprovalRequest;
+use caelumora_domain::approval::{ApprovalRequest, ArgumentMatcher, Reach, ToolMatcher};
 use caelumora_domain::content::ContentRef;
-use caelumora_domain::question::{Question, QuestionRequest};
+use caelumora_domain::question::{Choice, Question, QuestionRequest};
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use serde_json::Value;
+use uuid::Uuid;
+
+/// How many hexadecimal digits of an id the terminal names it by (`short_id`).
+const SHORT_ID: usize = 8;
 
 /// How long a tool's arguments, or the first line of its result, are told at most, in characters.
 const SHORTENED: usize = 160;
@@ -84,8 +89,63 @@ pub(super) fn attachment(attachment: &ContentRef) -> String {
 
 /// The line that asks `question`, the one of `index` of its request: its number, header and
 /// question.
-pub(crate) fn question_line(index: usize, question: &Question) -> String {
+fn question_line(index: usize, question: &Question) -> String {
     format!("{}. {}: {}", index + 1, question.header, question.question)
+}
+
+/// The words of `choice`: its label, recommended and described where it is.
+fn choice_words(choice: &Choice) -> String {
+    let recommended = if choice.recommended { " (recommended)" } else { "" };
+    let description = choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
+    format!("{}{recommended}{description}", choice.label)
+}
+
+/// What is asked, in words: the call to be approved, or the next question with its number.
+pub(super) fn what_is_asked(asking: &Asking) -> String {
+    match asking {
+        Asking::Approval(request) => format!("Approve? {}", request.description),
+        Asking::Question { .. } => {
+            asking.question().map(|(index, q)| question_line(index, q)).unwrap_or_default()
+        }
+    }
+}
+
+/// The words of the choice `offered`: yes - from now on for the calls alike, within its reach -,
+/// no, or the words of a question's choice.
+pub(super) fn offered_words(offered: &Offered) -> String {
+    match offered {
+        Offered::Approve => "Yes".to_string(),
+        Offered::ApproveFromNowOn { matcher, reach } => {
+            let within = match reach {
+                Reach::Channel(_) => "in this channel",
+                Reach::Session(_) => "in this session",
+                Reach::Everywhere => "everywhere",
+            };
+            format!("Yes, and from now on for {} {within}", calls_alike(matcher))
+        }
+        Offered::Deny => "No".to_string(),
+        Offered::Choice(choice) => choice_words(choice),
+    }
+}
+
+/// The calls `matcher` is about, in words: of its tool, with what its arguments are compared by.
+fn calls_alike(matcher: &ToolMatcher) -> String {
+    let tool = &matcher.tool;
+    let arguments: Vec<String> = matcher
+        .arguments
+        .iter()
+        .map(|(name, argument)| match argument {
+            ArgumentMatcher::Shell { shell } => {
+                format!("{name} beginning with `{}`", one_line(&shell.join(" ")))
+            }
+            ArgumentMatcher::Pattern(pattern) => format!("{name} matching `{}`", one_line(pattern)),
+            ArgumentMatcher::Equals { equals } => format!("{name} being `{}`", one_line(equals)),
+        })
+        .collect();
+    match arguments.is_empty() {
+        true => format!("every call of {tool}"),
+        false => format!("calls of {tool} with {}", arguments.join(" and ")),
+    }
 }
 
 /// What tells that so many `events` of a channel were missed.
@@ -93,10 +153,17 @@ pub(super) fn missed(events: u64) -> String {
     format!("{events} events of this channel missed.")
 }
 
-/// What tells how to answer the approval `request`.
+/// What tells how to answer the approval `request` by a command, the beginning of its id naming
+/// it - also where it is asked (`Asking`), in the channel talked in.
 pub(super) fn how_to_approve(request: &ApprovalRequest) -> String {
-    let id = request.id.0;
+    let id = short_id(&request.id.0);
     format!("Type '/approve {id}' or '/deny {id}' to respond.")
+}
+
+/// The beginning of `id` the terminal names it by: enough for the commands, which take the
+/// beginning of an id (`commands::beginning_with`).
+pub(super) fn short_id(id: &Uuid) -> String {
+    id.simple().to_string()[..SHORT_ID].to_string()
 }
 
 /// The rows that ask the questions of `request`, each with its choices below it.
@@ -105,10 +172,7 @@ pub(super) fn question_rows(request: &QuestionRequest) -> Vec<String> {
     for (index, question) in request.questions.questions.iter().enumerate() {
         rows.push(question_line(index, question));
         for (number, choice) in question.choices.iter().enumerate() {
-            let recommended = if choice.recommended { " (recommended)" } else { "" };
-            let description =
-                choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
-            rows.push(format!("   {}) {}{recommended}{description}", number + 1, choice.label));
+            rows.push(format!("   {}) {}", number + 1, choice_words(choice)));
         }
     }
     rows
@@ -117,7 +181,7 @@ pub(super) fn question_rows(request: &QuestionRequest) -> Vec<String> {
 /// What tells how to answer the questions of `request` if they are `put_to_user` - with a
 /// warning where they are sensitive -, else that they are put to others.
 pub(super) fn how_to_answer(request: &QuestionRequest, put_to_user: bool) -> Vec<String> {
-    let id = request.id.0;
+    let id = short_id(&request.id.0);
     if !put_to_user {
         return vec!["They are put to others.".to_string()];
     }
@@ -130,10 +194,15 @@ pub(super) fn how_to_answer(request: &QuestionRequest, put_to_user: bool) -> Vec
         );
     }
     how.push(format!(
-        "Type '/answer {id}' to answer them one by one, or '/decline {id}'. A message instead \
-         declines them."
+        "They are asked one by one in the channel talked in, else by '/answer {id}'; '/decline \
+         {id}' declines them."
     ));
     how
+}
+
+/// `text` on one line - its line breaks told as `⏎` -, shortened (`shortened`).
+fn one_line(text: &str) -> String {
+    shortened(&text.lines().collect::<Vec<_>>().join("⏎"))
 }
 
 /// `text` shortened to at most `SHORTENED` characters, the cut marked.

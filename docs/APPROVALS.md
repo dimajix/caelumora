@@ -142,7 +142,10 @@ clicked.
     every argument exactly, a command line of one command by its first two words, as far as they
     do not expand. Exactly is an escaped pattern, which the person can widen, or for a value too
     long for one the value as it is. A rule that could not be kept is not offered. The person
-    answers the call first; the rule is added after.
+    answers the call first; the rule is added after. The terminal offers the matcher as it is
+    suggested, in the call's channel or its session, without an end and only to approve (issue
+    [571](../issues/571-approvals-and-questions-in-the-terminal.md)): what more there is, the web
+    UI offers.
 *   Rules are changed through the user's controller, which stores them first, announces the profile
     and drops those expired. A rule is bound to no agent: whether the person may approve bounds it.
 
@@ -235,8 +238,9 @@ the record of the answers, nothing raw.
     channel at all (`AnswerQuestion`) the channel decides as it admits the answer. Which questions
     are open and put to the user is the actor's to tell (`UserActor::questions_to_answer`): a
     frontend in the kernel's process, as the terminal is, offers those to be answered, rather than
-    keeping a list beside it; a client of the REST API learns them from the channel's snapshot and
-    stream. The answer goes
+    keeping a list beside it - the terminal remembers only which it answered, until the channel
+    tells that they closed (issue 571); a client of the REST API learns them from the channel's
+    snapshot and stream. The answer goes
     to the asking agent alone, which takes it only if its sender was asked and the questions are
     still open, and checks the responses again; who answered it takes from the envelope, never from
     what was said. The first answer that counts settles the call.

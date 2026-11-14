@@ -5,10 +5,10 @@ use crate::followed::Followed;
 use crate::printed::Printed;
 use crate::under_way::UnderWay;
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::approval::ApprovalId;
+use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::{Channel, ChannelId, JOINED};
 use caelumora_domain::event::{EntityChange, GlobalEvent};
-use caelumora_domain::question::QuestionId;
+use caelumora_domain::question::QuestionRequest;
 use caelumora_domain::session::SessionId;
 use caelumora_kernel::actor::user::Lagged;
 use caelumora_kernel::actor::Shown;
@@ -20,7 +20,6 @@ use std::future;
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use tracing::warn;
-use uuid::Uuid;
 
 /// The channels of a session the terminal follows for the user - every one they take part in,
 /// those they join meanwhile too - and the one they talk in: of the others, it tells what concerns
@@ -99,7 +98,7 @@ impl Channels {
     }
 
     /// The channel talked in, to change; `None` once it ended.
-    fn talked_in_mut(&mut self) -> Option<&mut Followed> {
+    pub(crate) fn talked_in_mut(&mut self) -> Option<&mut Followed> {
         self.followed_mut(self.talked_in?)
     }
 
@@ -118,16 +117,18 @@ impl Channels {
         self.followed.iter().find(|followed| followed.is_pending(id))
     }
 
-    /// The channel whose questions `arg` names: the one that knows questions of that id
-    /// (`Followed::knows_questions`), or without one the channel talked in.
-    pub(crate) fn asking(&self, arg: &str) -> Option<&Followed> {
-        match arg.trim() {
-            "" => self.talked_in(),
-            id => {
-                let id = QuestionId(Uuid::parse_str(id).ok()?);
-                self.followed.iter().find(|followed| followed.knows_questions(id))
-            }
-        }
+    /// The approvals pending in the channels followed (`Followed::pending_approvals`).
+    pub(crate) fn pending_approvals(&self) -> impl Iterator<Item = &ApprovalRequest> {
+        self.followed.iter().flat_map(Followed::pending_approvals)
+    }
+
+    /// The open questions put to the user in the channels followed
+    /// (`Followed::questions_to_answer`), each with its channel.
+    pub(crate) fn questions_to_answer(&self) -> impl Iterator<Item = (&Followed, QuestionRequest)> {
+        self.followed.iter().flat_map(|followed| {
+            let to_answer = followed.questions_to_answer().into_iter();
+            to_answer.map(move |request| (followed, request))
+        })
     }
 
     /// Talks in the channel followed of the whole name `name` from now on, and answers what tells
@@ -690,8 +691,7 @@ mod tests {
         );
     }
 
-    /// An approval and questions are found in whichever channel they wait; without an id, only
-    /// questions of the channel talked in.
+    /// An approval and questions are found in whichever channel they wait.
     #[tokio::test]
     async fn approvals_and_questions_are_found_in_whichever_channel() {
         let (mut channels, session_loop, owner, _) = followed().await;
@@ -713,12 +713,13 @@ mod tests {
         until_shown(&mut channels).await;
 
         assert_eq!(channels.awaiting(id).map(|f| f.channel_id()), Some(side.id()));
-        let asking = channels.asking(&question_id.0.to_string()).map(|f| f.channel_id());
-        assert_eq!(asking, Some(side.id()), "by id, in another channel");
-        let talked_in = channels.talked_in().map(|f| f.channel_id());
-        assert_eq!(channels.asking("").map(|f| f.channel_id()), talked_in, "without one");
-        let named = channels.followed(side.id()).and_then(|f| f.questions_put_to_user(""));
-        assert_eq!(named.map(|q| q.id), Some(question_id));
+        let pending: Vec<_> = channels.pending_approvals().map(|request| request.id).collect();
+        assert_eq!(pending, [id]);
+        let to_answer: Vec<_> = channels
+            .questions_to_answer()
+            .map(|(f, request)| (f.channel_id(), request.id))
+            .collect();
+        assert_eq!(to_answer, [(side.id(), question_id)], "in another channel");
     }
 
     /// A channel the user no longer takes part in is followed no more, and told so; if it was the

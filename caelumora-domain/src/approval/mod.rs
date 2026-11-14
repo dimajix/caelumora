@@ -169,6 +169,32 @@ pub enum ApprovalStatus {
     Timeout,
 }
 
+/// Approval requests for the tests of this crate and of others.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::*;
+    use crate::tool::testing::make_tool_call;
+
+    /// What agent `agent_id` asks to be approved in channel `channel_id` of session `session_id`:
+    /// a call of `test_tool`, described so, without a matcher suggested.
+    pub fn make_approval_request(
+        session_id: SessionId,
+        channel_id: ChannelId,
+        agent_id: AgentId,
+    ) -> ApprovalRequest {
+        ApprovalRequest {
+            id: ApprovalId::new(),
+            session_id,
+            channel_id,
+            agent_id,
+            tool_call: make_tool_call("test_tool"),
+            description: "call test_tool".to_string(),
+            explicit: false,
+            suggested: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

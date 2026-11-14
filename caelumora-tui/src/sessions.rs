@@ -2,6 +2,7 @@
 //! reaches them: those of its project, listed by their last message, newest first, started,
 //! continued, resumed, stopped as the terminal leaves them, and deleted.
 
+use crate::commands::{beginning_with, NotNamed};
 use crate::here::HERE;
 use crate::printed::Printed;
 use caelumora_domain::history::HistoryEntry;
@@ -26,7 +27,7 @@ use tracing::warn;
 const SHOWN: usize = 60;
 
 /// What the program is asked to do with the sessions of its directory.
-pub(crate) enum Asked {
+pub(crate) enum Invocation {
     /// List them, and open none.
     List,
     /// Open one, to talk in it.
@@ -187,14 +188,19 @@ impl Sessions {
         read.await.map_err(unreadable)
     }
 
-    /// The session of the directory whose id begins with `prefix`.
+    /// The session of the directory whose id begins with `prefix` (`beginning_with`), as
+    /// `--resume`, `/session resume` and `/session delete` name a session.
     ///
     /// # Errors
     /// If the program works in no directory, its sessions cannot be read, or none of
     /// them or several begin so.
     async fn id_beginning_with(&self, prefix: &str) -> SessionsResult<SessionId> {
-        let sessions = self.of_directory().await?;
-        beginning_with(sessions.iter().map(|session| session.id()), prefix)
+        let ids = self.of_directory().await?.iter().map(|session| session.id()).collect::<Vec<_>>();
+        beginning_with(ids, SessionId::to_string, prefix).map_err(|not| match not {
+            NotNamed::Blank => SessionsError::NoneNamed,
+            NotNamed::None(prefix) => SessionsError::NoneBeginning(prefix),
+            NotNamed::Several(prefix) => SessionsError::SeveralBeginning(prefix),
+        })
     }
 
     /// A new session of the user, started from the template named `template` - among those they
@@ -231,7 +237,7 @@ impl Sessions {
 
 /// Why what was asked of the sessions of the directory (`Sessions`) failed: what the user asked
 /// that cannot be - told as it is -, or what failed of the kernel - told with what of its cause may
-/// be shown (`commands::error_printed`).
+/// be shown (`talk::error_printed`).
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SessionsError {
     #[error(
@@ -352,24 +358,6 @@ fn beginning(content: &str) -> String {
     }
 }
 
-/// The one of `ids` that begins with `prefix`, as `--resume`, `/session resume` and
-/// `/session delete` name a session.
-///
-/// # Errors
-/// If `prefix` is blank, none of them begins so, or several do.
-fn beginning_with(ids: impl Iterator<Item = SessionId>, prefix: &str) -> SessionsResult<SessionId> {
-    let prefix = prefix.trim().to_lowercase();
-    if prefix.is_empty() {
-        return Err(SessionsError::NoneNamed);
-    }
-    let mut found = ids.filter(|id| id.to_string().starts_with(&prefix));
-    match (found.next(), found.next()) {
-        (Some(id), None) => Ok(id),
-        (Some(_), Some(_)) => Err(SessionsError::SeveralBeginning(prefix)),
-        (None, _) => Err(SessionsError::NoneBeginning(prefix)),
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod testing {
     //! What the tests of the terminal reach the sessions of a directory by: a directory the program
@@ -406,8 +394,8 @@ pub(crate) mod testing {
         pub(crate) kernel: Arc<Kernel>,
         /// The user they are reached for.
         pub(crate) owner: SecurityContext,
-        /// The directory, kept as long as the test runs.
-        _directory: TempDir,
+        /// The directory, to be kept as long as the test runs.
+        pub(crate) directory: TempDir,
     }
 
     /// The sessions of a new directory the program works in: its storage `here` is a `local` one in
@@ -432,7 +420,7 @@ pub(crate) mod testing {
         let projects = ProjectManager::new(Arc::clone(&manager));
         let place = place_of(&kernel, &projects, &owner, user.id, directory.path()).await.unwrap();
         let sessions = sessions_of(&kernel, &manager, &owner, Some(place)).await;
-        InDirectory { sessions, manager, kernel, owner, _directory: directory }
+        InDirectory { sessions, manager, kernel, owner, directory }
     }
 
     /// The sessions of the user `owner` acts for, run by `manager` in `kernel`, in `place`; the
@@ -467,24 +455,6 @@ mod tests {
     use caelumora_domain::message::MessageId;
     use caelumora_kernel::session::testing::{running_session_of_a_user, test_kernel};
     use chrono::TimeDelta;
-    use uuid::Uuid;
-
-    fn id(text: &str) -> SessionId {
-        SessionId(Uuid::parse_str(text).unwrap())
-    }
-
-    #[test]
-    fn a_session_is_named_by_the_beginning_of_its_id_if_no_other_begins_so() {
-        let ids = [
-            id("0a1b2c3d-0000-4000-8000-000000000001"),
-            id("0a1b9999-0000-4000-8000-000000000002"),
-        ];
-        let named = |prefix| beginning_with(ids.into_iter(), prefix);
-        assert_eq!(named("0A1B2").unwrap(), ids[0], "as written, in any case");
-        assert!(named("0a1b").is_err(), "two of them");
-        assert!(named("ff").is_err(), "none");
-        assert!(named(" ").unwrap_err().to_string().starts_with("No session named"), "nothing");
-    }
 
     /// The session spoken in last comes first; one nobody spoke in counts by when it was made, and
     /// shows nothing said.

@@ -1,6 +1,6 @@
 # 571 — Approvals in the terminal take a UUID typed, and no rule for calls alike
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -44,3 +44,43 @@ Decided (2026-11-14), on the ways of drawing of issue
 
 **2026-11-14** - Opened from the maintainer's use of the terminal, with the choice in both ways of
 drawing decided.
+
+**2026-11-14** - Decided with the maintainer before the work began, in three steps: a restructuring
+without a change of behaviour, the talk's state - its channels, the questions being answered, the
+sessions - one type, `Talk`, whose methods take a line typed in; then what is asked of the user as
+one model, `Asking` (the options of the program becoming `Invocation`), asked of its own accord
+as an approval waits or questions are put to the user, Esc putting it aside; then the rule. An
+approval offers "yes", "yes, and from now on for the calls the tool suggests" in this channel or in
+this session, without an end, and "no" - no rule that denies, none everywhere, no time limit, no
+matcher edited: what more there is, the web UI offers.
+
+**2026-11-14** - Step 1 done, without a change of behaviour: the talk is `Talk` (`talk.rs`) - its
+channels, the questions being answered, the sessions of the directory -, whose methods take in a
+line typed and what the channels show; `commands.rs` holds the terminal's commands alone
+(`TerminalCommand`, `terminal_help`). What the program is asked by its options is `Invocation`.
+
+**2026-11-14** - Step 2 done: what is asked of the user is `Asking` (`asking.rs`), which `Talk`
+asks of its own accord - the oldest approval pending in the channel talked in, else the oldest
+questions put to the user there, none answered already -, and each way of drawing shows its own
+way (`Screen::ask`): `full` as a choice above the line typed (`screen/full/choosing.rs`), Esc
+putting it aside and taking it up again, `line` with the choices numbered. The commands name an
+approval or questions by the beginning of the id (`commands::beginning_with`, which the sessions
+use too), without one the one asked - not by a number, which names a choice. While questions are
+asked, a command - the terminal's or the channel's - is carried out, and only a message answers;
+a message typed while they are put aside declines them, as the user's actor does. The tests build
+an approval request by `approval::testing::make_approval_request` of the domain.
+
+**2026-11-14** - Decided with the maintainer after the review of step 2, and done in it: an
+approval is asked only where the user may approve its agent's calls, as the web UI offers its
+buttons (`Followed::may_approve`); what is asked is held as shown or put aside (`Asked`), not by a
+flag beside it; switching the channel asks anew of the channel switched to. Step 3 begins with the
+choices told by their meaning instead of by their index. That the terminal remembers what the user
+answered (`Talk::answered`) beside the owners of approvals and questions is an issue of its own.
+
+**2026-11-14** - Step 3 done: what a choice means is `Offered` (`asking.rs`), which `Asking`
+answers its choices by - the call approved, approved with the calls alike from now on in its
+channel or its session, or denied; a question's choice -, and which `screen/words.rs` words for both
+ways of drawing. An approval whose tool suggests a matcher, and which no rule of a place asked a
+person to decide, offers the calls alike; chosen, the call is approved first, then the user's rule
+added by their controller (`UserController::add_approval_rule`), and where that fails, the answer
+stands and the user is told so.
