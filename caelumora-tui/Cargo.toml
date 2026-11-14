@@ -43,6 +43,7 @@ crossterm.workspace = true
 unicode-width.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 futures.workspace = true
 chrono.workspace = true
 uuid = { workspace = true, features = ["v5"] }

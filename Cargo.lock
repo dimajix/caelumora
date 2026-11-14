@@ -1072,6 +1072,7 @@ dependencies = [
  "rustyline",
  "serde_json",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
  "unicode-width",

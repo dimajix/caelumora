@@ -5,7 +5,7 @@ use crate::channels::Channels;
 use crate::followed::Followed;
 use crate::printed::{ErrorKind, Printed};
 use crate::screen::question_line;
-use crate::sessions::{listing, Opening, Sessions};
+use crate::sessions::{listing, Opening, Sessions, SessionsError};
 use anyhow::Result;
 use caelumora_api::command::CommandError;
 use caelumora_domain::approval::ApprovalId;
@@ -17,6 +17,7 @@ use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::command::help::HELP_COMMAND_NAME;
 use caelumora_kernel::error::user_message;
 use std::sync::Arc;
+use tracing::warn;
 use uuid::Uuid;
 
 /// What the prompt for question `index` of `question` says.
@@ -204,9 +205,6 @@ impl TerminalCommand {
 pub(crate) enum Handled {
     /// What the terminal prints of it.
     Printed(Vec<Printed>),
-    /// The user asks to talk in another session of the directory (`/session new`,
-    /// `/session resume`).
-    Open(Opening),
     /// The user ends the program (`/exit`).
     Exit,
 }
@@ -244,16 +242,17 @@ pub(crate) async fn handle_line(
         Some((TerminalCommand::ChannelSwitch, name)) => channels.switch(name).await,
         Some((TerminalCommand::SessionNew, template)) => {
             let template = (!template.is_empty()).then(|| template.to_string());
-            return Ok(Handled::Open(Opening::Start { template }));
+            switch_session(&Opening::Start { template }, sessions, channels, answering).await
         }
         Some((TerminalCommand::SessionResume, id)) => {
-            return Ok(Handled::Open(Opening::Resume(id.to_string())));
+            let opening = Opening::Resume(id.to_string());
+            switch_session(&opening, sessions, channels, answering).await
         }
         Some((TerminalCommand::SessionList, _)) => listed(sessions, channels.session_id()).await,
         Some((TerminalCommand::SessionDelete, id)) => {
             match sessions.delete(id, channels.session_id()).await {
                 Ok(id) => vec![Printed::Notice(format!("The session {id} is deleted"))],
-                Err(e) => vec![sessions_error_printed(&e)],
+                Err(e) => vec![error_printed(&e.into())],
             }
         }
         Some((TerminalCommand::QuestionDecline, id)) => {
@@ -275,8 +274,48 @@ pub(crate) async fn handle_line(
 async fn listed(sessions: &Sessions, talked_in: SessionId) -> Vec<Printed> {
     match sessions.list().await {
         Ok(listed) => vec![Printed::Plain(listing(&listed, Some(talked_in)).join("\n"))],
-        Err(e) => vec![sessions_error_printed(&e)],
+        Err(e) => vec![error_printed(&e.into())],
     }
+}
+
+/// Talks in the session of the `sessions` that `opening` asks for from now on, its channels
+/// followed in place of the `channels` (`Channels::of_session`), the questions of the session left
+/// that are being `answering` so no more, and the session left stopped; answers what tells so, as
+/// the terminal opens with. Where the session cannot be opened, or the user takes part in none of
+/// its channels, or it is the one talked in already, the talk stays where it is, and the user is
+/// told why.
+async fn switch_session(
+    opening: &Opening,
+    sessions: &Sessions,
+    channels: &mut Channels,
+    answering: &mut Option<(QuestionRequest, Vec<Response>)>,
+) -> Vec<Printed> {
+    let left = channels.session_id();
+    let (session, told) = match sessions.open(opening).await {
+        Ok(opened) => opened,
+        Err(e) => return vec![error_printed(&e.into())],
+    };
+    let id = session.id();
+    if id == left {
+        return vec![Printed::Notice(format!("You talk in the session {id} already"))];
+    }
+    let Some(mut followed) = channels.of_session(session).await else {
+        if let Err(e) = sessions.stop(id).await {
+            let e = anyhow::Error::from(e);
+            warn!("The session {id} the terminal did not switch to could not be stopped: {e:#}");
+        }
+        let message = format!("You take part in no channel of the session {id}");
+        return vec![Printed::Error { kind: ErrorKind::Failed, message }];
+    };
+    let mut printed: Vec<Printed> = told.into_iter().collect();
+    printed.push(Printed::Notice(format!("Talking in the session {id} now")));
+    printed.extend(followed.opening().await);
+    *channels = followed;
+    *answering = None;
+    if let Err(e) = sessions.stop(left).await {
+        printed.push(error_printed(&e.into()));
+    }
+    printed
 }
 
 /// Answers the approval `id` names - `approved` or not - in the channel of the `channels` where it
@@ -500,20 +539,28 @@ fn terminal_help(args: &str) -> Option<String> {
     (!listed.is_empty()).then(|| format!("Commands of this terminal:\n\n{}", listed.join("\n")))
 }
 
-/// What tells that what was asked of the sessions of the directory (`Sessions`) failed: the
-/// outermost message of `error`, which says what failed; its causes stay in the log.
-pub(crate) fn sessions_error_printed(error: &anyhow::Error) -> Printed {
-    tracing::warn!("Failed: {error:#}");
-    Printed::Error { kind: ErrorKind::Failed, message: error.to_string() }
-}
-
-/// `error` as the user may be told it (`user_message`); what may not be told stays in the log,
-/// and the user is told where to find it.
+/// `error` as the user may be told it: of the sessions of the directory (`SessionsError`), what it
+/// says - where the kernel failed, with what of its cause may be told -; else what `user_message`
+/// tells. What may not be told stays in the log, where the user is told to find it, as does what
+/// failed of the kernel; what the user asked amiss is not logged.
 fn error_printed(error: &anyhow::Error) -> Printed {
-    let message = user_message(error).unwrap_or_else(|| {
-        tracing::warn!("Failed: {:#}", error);
-        "It failed; the details are in the log".to_string()
-    });
+    let of_sessions = error.chain().find_map(|cause| cause.downcast_ref::<SessionsError>());
+    let told = user_message(error);
+    let message = match (of_sessions, told) {
+        (Some(failed @ SessionsError::Failed { .. }), told) => {
+            warn!("Failed: {error:#}");
+            match told {
+                Some(told) => format!("{failed}: {told}"),
+                None => failed.to_string(),
+            }
+        }
+        (Some(asked_amiss), _) => asked_amiss.to_string(),
+        (None, Some(told)) => told,
+        (None, None) => {
+            warn!("Failed: {error:#}");
+            "It failed; the details are in the log".to_string()
+        }
+    };
     Printed::Error { kind: ErrorKind::Failed, message }
 }
 
@@ -527,7 +574,7 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::Choice;
-    use caelumora_kernel::session::SessionLoop;
+    use caelumora_kernel::session::{SessionError, SessionLoop};
     use caelumora_kernel::view::Viewer;
 
     fn question(choices: &[&str], multi_select: bool) -> Question {
@@ -574,7 +621,7 @@ mod tests {
         let start = Opening::Start { template: None };
         let (session_loop, _) = directory.sessions.open(&start).await.expect("started");
         let views = directory.manager.views(Viewer::new(directory.owner.clone()));
-        let bus = directory.kernel.event_bus();
+        let bus = Arc::clone(directory.kernel.event_bus());
         let channels = Channels::new(Arc::clone(&session_loop), views, bus)
             .await
             .expect("the owner takes part");
@@ -590,7 +637,6 @@ mod tests {
     ) -> Vec<String> {
         match handle_line(input, channels, answering, sessions).await.expect("handled") {
             Handled::Printed(printed) => lines(&printed),
-            Handled::Open(_) => panic!("{input} opens a session"),
             Handled::Exit => panic!("{input} ends the program"),
         }
     }
@@ -743,7 +789,7 @@ mod tests {
     }
 
     /// The commands on the sessions of the directory: listed, the one talked in marked; deleted,
-    /// but the one talked in; started and resumed by asking the talk to open them.
+    /// but the one talked in; started and resumed, switching the talk to them.
     #[tokio::test]
     async fn the_sessions_of_the_directory_are_reached_by_commands() {
         let (mut channels, talked_in, directory) = talking().await;
@@ -770,15 +816,56 @@ mod tests {
             typed(&mut channels, answering, sessions, &format!("/session delete {theirs}")).await;
         assert_eq!(deleted, [format!("The session {} is deleted", other.id())]);
 
-        let started = handle_line("/new", &mut channels, answering, sessions).await.unwrap();
-        assert!(matches!(started, Handled::Open(Opening::Start { template: None })));
-        let named = handle_line("/session new pairing", &mut channels, answering, sessions).await;
-        let named = named.unwrap();
-        assert!(
-            matches!(named, Handled::Open(Opening::Start { template: Some(t) }) if t == "pairing")
+        // Switched to another session, the talk follows its channels, the questions being
+        // answered dropped, and the one left is stopped; to the one talked in, to none that can be
+        // opened, or to one the user takes part in no channel of, it stays where it is.
+        let mine = talked_in.id().to_string();
+        let same = typed(&mut channels, answering, sessions, &format!("/resume {mine}")).await;
+        assert!(same.join("\n").contains("already"), "{same:?}");
+        let missing = typed(&mut channels, answering, sessions, "/resume ffffffff").await;
+        assert!(missing.join("\n").contains("No session"), "{missing:?}");
+        let empty = typed(&mut channels, answering, sessions, "/session new empty").await;
+        assert!(empty.join("\n").contains("no channel"), "{empty:?}");
+        assert_eq!(channels.session_id(), talked_in.id(), "stays where it is");
+        assert!(answering.is_some(), "still being answered");
+
+        let told = typed(&mut channels, answering, sessions, "/new").await.join("\n");
+        assert_ne!(channels.session_id(), talked_in.id(), "the other followed");
+        assert!(told.contains("Talking in the session") && told.contains("Talking in main now"));
+        assert!(!told.contains("Error"), "{told}");
+        assert!(answering.is_none(), "the questions of the session left");
+        // Stopped: opened again, it is started anew, not the one that ran.
+        let (again, _) = sessions.open(&Opening::Resume(mine)).await.expect("opened again");
+        assert!(!Arc::ptr_eq(&again, &talked_in), "the one left was stopped");
+    }
+
+    /// What the user asked of the sessions amiss is told as it is; what failed of the kernel with
+    /// what of its cause may be told, and nothing of one that may not.
+    #[test]
+    fn what_failed_of_the_sessions_is_told_with_what_of_its_cause_may_be() {
+        let told = |error: SessionsError| lines(&[error_printed(&error.into())]);
+        let amiss = SessionsError::NoneBeginning("ff".to_string());
+        assert_eq!(
+            told(amiss),
+            [format!("Error: {}", SessionsError::NoneBeginning("ff".to_string()))]
         );
-        let resumed =
-            handle_line("/resume 0a1b", &mut channels, answering, sessions).await.unwrap();
-        assert!(matches!(resumed, Handled::Open(Opening::Resume(prefix)) if prefix == "0a1b"));
+        let id = SessionId::new();
+        // As `Sessions` keeps a cause (`SessionsError::failed`): an error of the kernel, become
+        // anyhow's by `?`.
+        let cause = anyhow::Error::from(SessionError::RunsElsewhere(id));
+        let elsewhere = SessionsError::Failed {
+            what: format!("The session {id} cannot be deleted"),
+            cause: cause.reallocate_into_boxed_dyn_error_without_backtrace(),
+        };
+        let shown = format!(
+            "Error: The session {id} cannot be deleted: {}",
+            SessionError::RunsElsewhere(id)
+        );
+        assert_eq!(told(elsewhere), [shown], "the kernel's cause, meant for users");
+        let hidden = SessionsError::Failed {
+            what: "The sessions of this directory cannot be read".to_string(),
+            cause: "a path, say".into(),
+        };
+        assert_eq!(told(hidden), ["Error: The sessions of this directory cannot be read"]);
     }
 }

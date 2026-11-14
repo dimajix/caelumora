@@ -459,7 +459,9 @@ in `caelumora_agents::error::user_message` (issues 370, 516). Each looks through
 a domain error written to be read and returns its message; the kernel's and the agents' ask their
 own judgement first and the API's for the rest, in one walk
 (`caelumora_api::error::user_message_with`), so that the outermost error that may be shown is shown.
-Anything else stays in the log.
+Anything else stays in the log. A program judges its own types the same way, in one function: the
+terminal its `SessionsError` in `error_printed` of `caelumora-tui`, before the kernel's
+`user_message` for the rest (issue 570).
 
 A new error type meant for users must meet the rules above and be added to the function of whoever
 defines it. A plugin's error type is never added there: where the plugin answers the kernel or the

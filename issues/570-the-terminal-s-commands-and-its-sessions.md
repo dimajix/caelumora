@@ -1,6 +1,6 @@
 # 570 — The terminal's commands follow no rule of commands, and reach no other session
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -97,3 +97,13 @@ that switching the session lies with the other commands on sessions and `Handled
 what `Sessions` fails with is an error type of its own (`SessionsError`), which the terminal asks
 first, before `user_message`, in one function - so that a kernel's error meant for users still
 reaches them, and the log level follows what failed.
+
+**2026-11-14** - Step 4 done: `Channels` keeps the event bus and follows the channels of another
+session itself (`Channels::of_session`), so that switching the session lies in `commands.rs` beside
+the other commands on sessions, drops the questions being answered there, and `Handled::Open` is
+gone. What `Sessions` fails with is `SessionsError`: what the user asked that cannot be, told as it
+is and not logged, or what failed of the kernel (`Failed`), told with what of its cause may be told
+(`user_message`) and logged - asked first by the terminal's one function that tells errors.
+
+**2026-11-14** - Every step of the issue is done. CODING-GUIDELINES names the terminal among those
+that judge what users see of their own error types.

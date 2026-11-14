@@ -30,6 +30,9 @@ pub(crate) struct Channels {
     session: Arc<SessionLoop>,
     /// The views as the user reads them, through which a channel is followed.
     views: Views,
+    /// The event bus, by which the channels the user joins meanwhile are learnt of - also of
+    /// another session followed (`of_session`).
+    bus: Arc<EventBus>,
     /// What the event bus tells of the session in the user's name: where they joined a channel,
     /// or one was restored.
     session_events: EventSubscription,
@@ -60,17 +63,23 @@ impl Channels {
     pub(crate) async fn new(
         session: Arc<SessionLoop>,
         views: Views,
-        bus: &EventBus,
+        bus: Arc<EventBus>,
     ) -> Option<Self> {
         // Subscribed first, so that no join is lost between the channels read and the
         // subscription.
         let topics = vec![SubscriptionTopic::Session(session.id())];
         let session_events = bus.subscribe(views.context().clone(), topics);
-        let mut channels =
-            Self { session, views, session_events, followed: Vec::new(), talked_in: None };
+        let followed = Vec::new();
+        let mut channels = Self { session, views, bus, session_events, followed, talked_in: None };
         channels.follow_the_others().await;
         channels.talked_in = Some(channels.followed.first()?.channel_id());
         Some(channels)
+    }
+
+    /// The channels of `session` the same user takes part in, followed as these are (`new`);
+    /// `None` if they take part in none.
+    pub(crate) async fn of_session(&self, session: Arc<SessionLoop>) -> Option<Channels> {
+        Channels::new(session, self.views.clone(), Arc::clone(&self.bus)).await
     }
 
     /// The session whose channels are followed.
@@ -395,9 +404,10 @@ mod tests {
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         session_loop.create_channel(&theirs, spec("theirs", vec![])).await.expect("they create it");
         let views = manager.views(Viewer::new(owner.clone()));
-        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
-            .await
-            .expect("the owner takes part");
+        let channels =
+            Channels::new(Arc::clone(&session_loop), views, Arc::clone(kernel.event_bus()))
+                .await
+                .expect("the owner takes part");
         (channels, session_loop, owner, other)
     }
 
@@ -408,9 +418,10 @@ mod tests {
         let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
         let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
         let views = manager.views(Viewer::new(owner.clone()));
-        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
-            .await
-            .expect("the owner takes part");
+        let channels =
+            Channels::new(Arc::clone(&session_loop), views, Arc::clone(kernel.event_bus()))
+                .await
+                .expect("the owner takes part");
         (channels, session_loop, owner, kernel)
     }
 
@@ -604,9 +615,10 @@ mod tests {
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
         let id = approval_waiting_in(&kernel, &side, agent_id).await;
         let views = manager.views(Viewer::new(owner));
-        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
-            .await
-            .expect("the owner takes part");
+        let mut channels =
+            Channels::new(Arc::clone(&session_loop), views, Arc::clone(kernel.event_bus()))
+                .await
+                .expect("the owner takes part");
         assert_ne!(channels.talked_in().map(Followed::channel_id), Some(side.id()), "another");
 
         let opening = lines(&channels.opening().await);
@@ -628,9 +640,10 @@ mod tests {
         let side = session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
         let views = manager.views(Viewer::new(owner.clone()));
-        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
-            .await
-            .expect("the owner takes part");
+        let mut channels =
+            Channels::new(Arc::clone(&session_loop), views, Arc::clone(kernel.event_bus()))
+                .await
+                .expect("the owner takes part");
         let requested = |id: ApprovalId| format!("In side: Approval requested, id {}:", id.0);
 
         let first = approval_waiting_in(&kernel, &side, agent_id).await;
@@ -746,9 +759,10 @@ mod tests {
         let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         let views = manager.views(Viewer::new(theirs));
-        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
-            .await
-            .expect("they take part");
+        let mut channels =
+            Channels::new(Arc::clone(&session_loop), views, Arc::clone(kernel.event_bus()))
+                .await
+                .expect("they take part");
         assert!(channels.followed(late.id()).is_none(), "not theirs yet");
         channels.settled().await;
         assert!(channels.followed(late.id()).is_none(), "still not theirs");
@@ -773,9 +787,10 @@ mod tests {
         let id = approval_waiting_in(&kernel, &late, agent_id).await;
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         let views = manager.views(Viewer::new(theirs));
-        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
-            .await
-            .expect("they take part");
+        let mut channels =
+            Channels::new(Arc::clone(&session_loop), views, Arc::clone(kernel.event_bus()))
+                .await
+                .expect("they take part");
         channels.settled().await;
         assert!(channels.awaiting(id).is_none(), "not followed yet");
 

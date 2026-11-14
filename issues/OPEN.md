@@ -50,7 +50,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [208](208-generated-artifacts.md) | open | high | feature | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
-| [570](570-the-terminal-s-commands-and-its-sessions.md) | in progress | medium | feature | The commands `caelumora-tui` carries out itself - `/switch`, `/approve`, `/deny`, `/answer`, `/decline`, `/retry` - are named by no rule of commands and unknown to `/help`, the program ends on the bare words `exit` and `quit` - which can then never be said -, and once running it can neither start a session, nor continue, list or delete one. |
 | [571](571-approvals-and-questions-in-the-terminal.md) | open | medium | feature | An approval is answered in `caelumora-tui` only by typing `/approve` or `/deny` with its UUID, questions put to the user by typing their answers line by line, and nothing offers the rule "and from now on" for calls alike that the web UI offers on its approval card. |
 
 ## Context and knowledge

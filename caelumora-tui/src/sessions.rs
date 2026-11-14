@@ -4,7 +4,6 @@
 
 use crate::here::HERE;
 use crate::printed::Printed;
-use anyhow::{bail, Context, Result};
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::Message;
 use caelumora_domain::project::ProjectId;
@@ -19,6 +18,7 @@ use caelumora_kernel::session::{SessionError, SessionLoop, SessionManager, Sessi
 use caelumora_kernel::view::{ChannelView, SessionView, Views};
 use chrono::{DateTime, Local, Utc};
 use std::cmp::Reverse;
+use std::error::Error;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -47,8 +47,8 @@ pub(crate) enum Opening {
 }
 
 /// The sessions of the directory the program was started in, as its user reaches them: all of
-/// them in the directory's project, where the program works in one. What fails tells what failed
-/// in its outermost message, meant for the user; its causes are not.
+/// them in the directory's project, where the program works in one. What fails is a
+/// `SessionsError`.
 pub(crate) struct Sessions {
     /// The kernel, whose stores of templates and of profiles a session is started by: held, not
     /// the stores, since the terminal links no crate of stores (`docs/CRATES.md`), and the views
@@ -86,8 +86,9 @@ impl Sessions {
     /// in a channel they read, a session without one by when it was made.
     ///
     /// # Errors
-    /// If the program works in no directory (`project`), or the sessions cannot be read.
-    pub(crate) async fn list(&self) -> Result<Vec<Listed>> {
+    /// If the program works in no directory (`SessionsError::NoDirectory`), or the sessions cannot
+    /// be read.
+    pub(crate) async fn list(&self) -> SessionsResult<Vec<Listed>> {
         let mut listed = Vec::new();
         for session in self.of_directory().await? {
             let mut last: Option<Message> = None;
@@ -108,12 +109,12 @@ impl Sessions {
     /// not what was asked.
     ///
     /// # Errors
-    /// If the program works in no directory where a session of it is asked for (`project`), it
+    /// If the program works in no directory where a session of it is asked for, it
     /// cannot be found or is open in another terminal, or starting one fails (`start`).
     pub(crate) async fn open(
         &self,
         opening: &Opening,
-    ) -> Result<(Arc<SessionLoop>, Option<Printed>)> {
+    ) -> SessionsResult<(Arc<SessionLoop>, Option<Printed>)> {
         let id = match opening {
             Opening::Start { .. } => None,
             Opening::Continue => self.list().await?.first().map(|session| session.id),
@@ -132,12 +133,11 @@ impl Sessions {
             return Ok((self.start(template).await?, told));
         };
         match self.manager.open(self.views.context(), id).await {
+            Ok(opened) => Ok((opened, None)),
             Err(e) if matches!(e.downcast_ref(), Some(SessionError::RunsElsewhere(_))) => {
-                bail!("The session {id} is open in another terminal")
+                Err(SessionsError::OpenElsewhere(id))
             }
-            opened => {
-                Ok((opened.with_context(|| format!("The session {id} cannot be resumed"))?, None))
-            }
+            Err(e) => Err(SessionsError::failed(format!("The session {id} cannot be resumed"), e)),
         }
     }
 
@@ -145,9 +145,10 @@ impl Sessions {
     ///
     /// # Errors
     /// As `SessionManager::stop`.
-    pub(crate) async fn stop(&self, id: SessionId) -> Result<()> {
+    pub(crate) async fn stop(&self, id: SessionId) -> SessionsResult<()> {
         let stopped = self.manager.stop(self.views.context(), id).await;
-        stopped.with_context(|| format!("The session {id} cannot be stopped"))?;
+        stopped
+            .map_err(|e| SessionsError::failed(format!("The session {id} cannot be stopped"), e))?;
         Ok(())
     }
 
@@ -158,32 +159,40 @@ impl Sessions {
     /// If no session or several begin so (`id_beginning_with`), it is the one talked in, or
     /// deleting it fails. One gone meanwhile counts as deleted: for whoever wants it gone it is
     /// gone.
-    pub(crate) async fn delete(&self, prefix: &str, talked_in: SessionId) -> Result<SessionId> {
+    pub(crate) async fn delete(
+        &self,
+        prefix: &str,
+        talked_in: SessionId,
+    ) -> SessionsResult<SessionId> {
         let id = self.id_beginning_with(prefix).await?;
         if id == talked_in {
-            bail!("You talk in the session {id}: switch to another before you delete it");
+            return Err(SessionsError::TalkedIn(id));
         }
         let deleted = self.manager.delete(self.views.context(), id).await;
-        deleted.with_context(|| format!("The session {id} cannot be deleted"))?;
+        deleted
+            .map_err(|e| SessionsError::failed(format!("The session {id} cannot be deleted"), e))?;
         Ok(id)
     }
 
     /// The sessions of the directory, as the user may read them.
     ///
     /// # Errors
-    /// If the program works in no directory (`project`), or its sessions cannot be read.
-    async fn of_directory(&self) -> Result<Vec<SessionView>> {
-        let project = self.project()?;
+    /// If the program works in no directory (`SessionsError::NoDirectory`), or its sessions
+    /// cannot be read.
+    async fn of_directory(&self) -> SessionsResult<Vec<SessionView>> {
+        let project = self.place.map(|(project, _)| project).ok_or(SessionsError::NoDirectory)?;
         let read = async { self.views.project(project).await?.sessions().await };
-        read.await.context("The sessions of this directory cannot be read")
+        let unreadable =
+            |e| SessionsError::failed("The sessions of this directory cannot be read", e);
+        read.await.map_err(unreadable)
     }
 
     /// The session of the directory whose id begins with `prefix`.
     ///
     /// # Errors
-    /// If the program works in no directory (`project`), its sessions cannot be read, or none of
+    /// If the program works in no directory, its sessions cannot be read, or none of
     /// them or several begin so.
-    async fn id_beginning_with(&self, prefix: &str) -> Result<SessionId> {
+    async fn id_beginning_with(&self, prefix: &str) -> SessionsResult<SessionId> {
         let sessions = self.of_directory().await?;
         beginning_with(sessions.iter().map(|session| session.id()), prefix)
     }
@@ -193,18 +202,19 @@ impl Sessions {
     ///
     /// # Errors
     /// If there is no such template, or making the session fails.
-    async fn start(&self, template: &str) -> Result<Arc<SessionLoop>> {
+    async fn start(&self, template: &str) -> SessionsResult<Arc<SessionLoop>> {
         let stores = self.kernel.entity_stores();
         let security = self.views.context();
         let templates = stores.session_templates.list(security, &Query::all()).await;
-        let templates = templates.context("The session templates cannot be read")?.items;
-        let template = templates.into_iter().find(|t| t.name.name == template).ok_or_else(|| {
-            anyhow::anyhow!("Session template '{template}' not found: templates lie in `templates` of the configuration directory, or come from the `seed` of the configuration")
-        })?;
+        let unreadable = |e| SessionsError::failed("The session templates cannot be read", e);
+        let templates = templates.map_err(unreadable)?.items;
+        let named = templates.into_iter().find(|t| t.name.name == template);
+        let template = named.ok_or_else(|| SessionsError::NoTemplate(template.to_string()))?;
         // Held in the language the user prefers where the template names none:
         // the frontend's to offer, not the server's (issues 331, 425).
         let profile = stores.user_profiles.get(security, self.owner).await.optional();
-        let profile = profile.context("Your profile cannot be read")?;
+        let profile =
+            profile.map_err(|e| SessionsError::failed("Your profile cannot be read", e))?;
         let preferred = profile.and_then(|profile| profile.preferred_language);
         let language = preferred.filter(|_| template.language.is_none());
         let spec = SessionSpec {
@@ -214,23 +224,56 @@ impl Sessions {
             ..SessionSpec::default()
         };
         let started = self.manager.create_from_template(security, template.id, spec).await;
-        started.with_context(|| {
-            format!("No session can be started from the template '{}'", template.name.name)
-        })
+        let what = format!("No session can be started from the template '{}'", template.name.name);
+        started.map_err(|e| SessionsError::failed(what, e))
     }
+}
 
-    /// The project of the directory the program was started in.
-    ///
-    /// # Errors
-    /// If the program works in no directory: the configuration names no storage `here`.
-    fn project(&self) -> Result<ProjectId> {
-        self.place.map(|(project, _)| project).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Sessions are listed, continued, resumed and deleted by the directory they were \
-                 started in, which the configuration does not work in (it names no storage \
-                 `{HERE}`)"
-            )
-        })
+/// Why what was asked of the sessions of the directory (`Sessions`) failed: what the user asked
+/// that cannot be - told as it is -, or what failed of the kernel - told with what of its cause may
+/// be shown (`commands::error_printed`).
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum SessionsError {
+    #[error(
+        "Sessions are listed, continued, resumed and deleted by the directory they were started \
+         in, which the configuration does not work in (it names no storage `{}`)",
+        HERE
+    )]
+    NoDirectory,
+    #[error(
+        "No session named: give the beginning of its id, as --sessions or /session list shows it"
+    )]
+    NoneNamed,
+    #[error(
+        "No session of this directory begins with '{0}'; --sessions or /session list lists them"
+    )]
+    NoneBeginning(String),
+    #[error("Several sessions of this directory begin with '{0}'")]
+    SeveralBeginning(String),
+    #[error("Session template '{0}' not found: templates lie in `templates` of the configuration directory, or come from the `seed` of the configuration")]
+    NoTemplate(String),
+    #[error("The session {0} is open in another terminal")]
+    OpenElsewhere(SessionId),
+    #[error("You talk in the session {0}: switch to another before you delete it")]
+    TalkedIn(SessionId),
+    /// What failed of the kernel, `what` telling it.
+    #[error("{what}")]
+    Failed {
+        what: String,
+        #[source]
+        cause: Box<dyn Error + Send + Sync>,
+    },
+}
+
+/// What is asked of the sessions of the directory comes to, or why not.
+pub(crate) type SessionsResult<T> = Result<T, SessionsError>;
+
+impl SessionsError {
+    /// That `what` failed, for `cause` - kept as the error it is, which the user may be told of
+    /// where it is meant for them (`user_message`): anyhow's own boxing would hide it.
+    fn failed(what: impl Into<String>, cause: impl Into<anyhow::Error>) -> Self {
+        let cause = cause.into().reallocate_into_boxed_dyn_error_without_backtrace();
+        Self::Failed { what: what.into(), cause }
     }
 }
 
@@ -314,18 +357,16 @@ fn beginning(content: &str) -> String {
 ///
 /// # Errors
 /// If `prefix` is blank, none of them begins so, or several do.
-fn beginning_with(ids: impl Iterator<Item = SessionId>, prefix: &str) -> Result<SessionId> {
+fn beginning_with(ids: impl Iterator<Item = SessionId>, prefix: &str) -> SessionsResult<SessionId> {
     let prefix = prefix.trim().to_lowercase();
     if prefix.is_empty() {
-        bail!("No session named: give the beginning of its id, as --sessions or /session list shows it");
+        return Err(SessionsError::NoneNamed);
     }
     let mut found = ids.filter(|id| id.to_string().starts_with(&prefix));
     match (found.next(), found.next()) {
         (Some(id), None) => Ok(id),
-        (Some(_), Some(_)) => bail!("Several sessions of this directory begin with '{prefix}'"),
-        (None, _) => {
-            bail!("No session of this directory begins with '{prefix}'; --sessions or /session list lists them")
-        }
+        (Some(_), Some(_)) => Err(SessionsError::SeveralBeginning(prefix)),
+        (None, _) => Err(SessionsError::NoneBeginning(prefix)),
     }
 }
 
@@ -526,5 +567,16 @@ mod tests {
         let listed: Vec<SessionId> =
             sessions.list().await.unwrap().iter().map(|session| session.id).collect();
         assert_eq!(listed, [none.id()], "the other deleted");
+    }
+
+    /// What failed of the kernel keeps its cause as the error it is, for what the user may be told
+    /// of it to be found.
+    #[test]
+    fn a_failure_keeps_its_cause_as_it_is() {
+        let id = SessionId::new();
+        let failed =
+            SessionsError::failed("deleting", anyhow::Error::from(SessionError::RunsElsewhere(id)));
+        let cause = failed.source().expect("a cause");
+        assert!(matches!(cause.downcast_ref(), Some(SessionError::RunsElsewhere(of)) if *of == id));
     }
 }
