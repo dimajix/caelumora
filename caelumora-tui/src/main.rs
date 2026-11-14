@@ -7,6 +7,8 @@ mod channels;
 mod followed;
 mod here;
 mod home;
+mod printed;
+mod screen;
 mod sessions;
 
 use anyhow::Context;
@@ -62,19 +64,15 @@ use clap::{Parser, Subcommand};
 use followed::Followed;
 use here::{place_of, HERE};
 use home::Home;
-use rustyline::error::ReadlineError;
-use rustyline::history::DefaultHistory;
-use rustyline::Editor;
+use printed::{ErrorKind, Printed};
+use screen::{LineScreen, Screen, Typed};
 use serde_json::Value;
 use sessions::Asked;
 use std::env;
 use std::future;
-use std::io::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::thread;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 /// What the prompt for question `index` of `question` says.
@@ -119,54 +117,54 @@ fn response_of(question: &Question, line: &str) -> Response {
 }
 
 /// Has the user talk in the channels `channels` follows, line by line, until they end it or a
-/// signal does - in the channel talked in, or in none until they switch to one.
-#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-async fn run_repl(mut channels: Channels) -> Result<()> {
-    let mut input_rx = spawn_rustyline_input();
+/// signal does - in the channel talked in, or in none until they switch to one -, shown and read
+/// by `screen`.
+async fn run_repl(mut channels: Channels, screen: &mut impl Screen) -> Result<()> {
     // The questions being answered, with the responses given so far: while they are, every line
     // but `/switch`, `/answer` and `/decline` answers the next question.
     let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
 
-    println!("--- Chat Session Started (Type 'exit' or 'quit' to stop) ---");
+    let started = "Chat Session Started (Type 'exit' or 'quit' to stop)".to_string();
+    screen.print(vec![Printed::Notice(started)]);
     // A signal ends the loop as `exit` does, so that the session is shut
     // down in order (issue 297).
     let mut signalled = std::pin::pin!(signalled());
     loop {
         tokio::select! {
             () = &mut signalled => {
-                println!("\r--- Ending ---");
+                screen.print(vec![Printed::Notice("Ending".to_string())]);
                 break;
             }
             happened = channels.next() => {
-                for line in channels.take_in(happened).await {
-                    println!("\r{line}");
-                }
+                let mut printed = channels.take_in(happened).await;
                 // As the channel that asked them tells; one followed no more has closed them.
                 let closed = |(q, _): &mut (QuestionRequest, Vec<Response>)| {
                     channels.followed(q.channel_id).is_none_or(|f| !f.is_to_answer(q.id))
                 };
                 if let Some((request, _)) = answering.take_if(closed) {
-                    println!("\r--- Questions {} closed before you answered ---", request.id.0);
+                    printed.push(closed_before_answered(&request));
                 }
+                screen.print(printed);
             }
-            maybe_input = input_rx.recv() => {
-                let line = match maybe_input {
-                    Some(Ok(line)) => line,
-                    Some(Err(ReadlineError::Interrupted)) => {
-                        println!("CTRL-C");
+            typed = screen.next_input() => {
+                let line = match typed {
+                    Typed::Line(line) => line,
+                    Typed::Interrupted => {
+                        screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
                         break;
                     }
-                    Some(Err(err)) => {
-                        println!("Error: {:?}", err);
+                    Typed::Failed(reason) => {
+                        screen.print(vec![Printed::Plain(format!("Error: {reason}"))]);
                         break;
                     }
-                    None => break,
+                    Typed::Ended => break,
                 };
                 let input = line.trim();
                 if input == "exit" || input == "quit" {
                     break;
                 }
-                handle_line(input, &mut channels, &mut answering).await?;
+                let printed = handle_line(input, &mut channels, &mut answering).await?;
+                screen.print(printed);
             }
         }
     }
@@ -174,143 +172,145 @@ async fn run_repl(mut channels: Channels) -> Result<()> {
     Ok(())
 }
 
-/// Does what the user typed, `input`: switches to another of the `channels` (`/switch`), answers
-/// questions put to the user (`answer_line`), answers an approval in the channel where it is
-/// pending (`/approve`, `/deny`), or in the channel talked in asks for an answer again (`/retry`)
-/// or sends a command or a message (issue 28).
+/// Does what the user typed, `input`, and answers what the terminal prints of it: switches to
+/// another of the `channels` (`/switch`), answers questions put to the user (`answer_line`),
+/// answers an approval in the channel where it is pending (`/approve`, `/deny`), or in the channel
+/// talked in asks for an answer again (`/retry`) or sends a command or a message (issue 28).
 ///
 /// # Errors
 /// As [`send_line`].
-#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
 async fn handle_line(
     input: &str,
     channels: &mut Channels,
     answering: &mut Option<(QuestionRequest, Vec<Response>)>,
-) -> Result<()> {
+) -> Result<Vec<Printed>> {
     if input.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if let Some(name) = after(input, "/switch") {
-        for line in channels.switch(name).await {
-            println!("{line}");
-        }
-        return Ok(());
+        return Ok(channels.switch(name).await);
     }
-    if answer_line(input, channels, answering).await {
-        return Ok(());
+    if let Some(printed) = answer_line(input, channels, answering).await {
+        return Ok(printed);
     }
     if let Some(rest) = input.strip_prefix("/approve ").or_else(|| input.strip_prefix("/deny ")) {
         let approved = input.starts_with("/approve ");
         let Ok(id) = Uuid::parse_str(rest.trim()).map(ApprovalId) else {
-            println!("Invalid approval id: {}", rest.trim());
-            return Ok(());
+            return Ok(vec![Printed::Plain(format!("Invalid approval id: {}", rest.trim()))]);
         };
         let Some(followed) = channels.awaiting(id) else {
-            println!("No pending approval with id {}", id.0);
-            return Ok(());
+            return Ok(vec![Printed::Plain(format!("No pending approval with id {}", id.0))]);
         };
-        if let Some(actor) = acting(followed) {
-            if let Err(e) = actor.send_approval(id, approved).await {
-                print_error(&e);
-            }
-        }
-        return Ok(());
+        let actor = match acting(followed) {
+            Ok(actor) => actor,
+            Err(no_run) => return Ok(vec![no_run]),
+        };
+        let failed = actor.send_approval(id, approved).await.err();
+        return Ok(failed.map(|e| error_printed(&e)).into_iter().collect());
     }
     let Some(followed) = channels.talked_in() else {
-        println!("{}", channels.hint());
-        return Ok(());
+        return Ok(vec![channels.hint()]);
     };
-    let Some(actor) = acting(followed) else { return Ok(()) };
+    let actor = match acting(followed) {
+        Ok(actor) => actor,
+        Err(no_run) => return Ok(vec![no_run]),
+    };
     if input == "/retry" {
-        match followed.retry(&actor).await {
-            Ok(true) => {}
-            Ok(false) => println!("No answer of an agent to give again"),
-            Err(e) => print_error(&e),
-        }
-        return Ok(());
+        return Ok(match followed.retry(&actor).await {
+            Ok(true) => Vec::new(),
+            Ok(false) => vec![Printed::Plain("No answer of an agent to give again".to_string())],
+            Err(e) => vec![error_printed(&e)],
+        });
     }
     // Every other command goes to the channel.
     send_line(input, &actor).await
 }
 
-/// Answers `input` if it is about questions put to the user: declines them (`/decline`), begins
-/// to answer them (`/answer`) - questions named by id in whichever of the `channels` knows them,
-/// else the last in the channel talked in, as the user's actor there tells -, or answers the next
-/// of the questions being `answering`, in the channel that asked them; `false` if it is about none.
-/// Between two runs of the user's actor in that channel, only that nothing can be done there now.
-#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
+/// Answers `input` if it is about questions put to the user, with what the terminal prints of it:
+/// declines them (`/decline`), begins to answer them (`/answer`) - questions named by id in
+/// whichever of the `channels` knows them, else the last in the channel talked in, as the user's
+/// actor there tells -, or answers the next of the questions being `answering`, in the channel
+/// that asked them; `None` if it is about none. Between two runs of the user's actor in that
+/// channel, only that nothing can be done there now.
 async fn answer_line(
     input: &str,
     channels: &Channels,
     answering: &mut Option<(QuestionRequest, Vec<Response>)>,
-) -> bool {
-    let none_named = |rest: &str| match rest.trim() {
-        "" => println!("No open questions put to you"),
-        id => println!("No open questions put to you with id {id}"),
+) -> Option<Vec<Printed>> {
+    let none_named = |rest: &str| {
+        Printed::Plain(match rest.trim() {
+            "" => "No open questions put to you".to_string(),
+            id => format!("No open questions put to you with id {id}"),
+        })
     };
     // The questions `rest` names, with the user's actor in the channel that asked them - which
-    // tells which are open -; `None`, telling why, if there are none, or no run of it.
-    let named = |rest: &str| {
-        let Some(asking) = channels.asking(rest) else {
-            none_named(rest);
-            return None;
-        };
+    // tells which are open -; what tells why, if there are none, or no run of it.
+    let named = |rest: &str| -> Result<(QuestionRequest, Arc<UserActor>), Printed> {
+        let asking = channels.asking(rest).ok_or_else(|| none_named(rest))?;
         let actor = acting(asking)?;
-        let request = asking.questions_put_to_user(rest);
-        if request.is_none() {
-            none_named(rest);
-        }
-        Some((request?, actor))
+        let request = asking.questions_put_to_user(rest).ok_or_else(|| none_named(rest))?;
+        Ok((request, actor))
     };
     if let Some(rest) = after(input, "/decline") {
-        if let Some((request, actor)) = named(rest) {
-            *answering = None;
-            if let Err(e) = actor.answer_questions(request.id, None).await {
-                print_error(&e);
+        let printed = match named(rest) {
+            Ok((request, actor)) => {
+                *answering = None;
+                actor.answer_questions(request.id, None).await.err().map(|e| error_printed(&e))
             }
-        }
-        return true;
+            Err(printed) => Some(printed),
+        };
+        return Some(printed.into_iter().collect());
     }
     if let Some(rest) = after(input, "/answer") {
-        if let Some((request, _)) = named(rest) {
-            if let Some(first) = request.questions.questions.first() {
-                println!("{}", prompt_of(0, first));
-                *answering = Some((request, Vec::new()));
+        let printed = match named(rest) {
+            Ok((request, _)) => {
+                let first = request.questions.questions.first();
+                let prompt = first.map(|first| Printed::Plain(prompt_of(0, first)));
+                if prompt.is_some() {
+                    *answering = Some((request, Vec::new()));
+                }
+                prompt
             }
-        }
-        return true;
+            Err(printed) => Some(printed),
+        };
+        return Some(printed.into_iter().collect());
     }
     // While questions are answered, each other line answers the next.
-    let Some((request, mut responses)) = answering.take() else { return false };
+    let (request, mut responses) = answering.take()?;
     if let Some(question) = request.questions.questions.get(responses.len()) {
         responses.push(response_of(question, input));
     }
     if let Some(next) = request.questions.questions.get(responses.len()) {
-        println!("{}", prompt_of(responses.len(), next));
+        let prompt = Printed::Plain(prompt_of(responses.len(), next));
         *answering = Some((request, responses));
-        return true;
+        return Some(vec![prompt]);
     }
     // Closed with its channel, if it is followed no more - which `run_repl` tells as it drops it.
     let Some(followed) = channels.followed(request.channel_id) else {
-        println!("--- Questions {} closed before you answered ---", request.id.0);
-        return true;
+        return Some(vec![closed_before_answered(&request)]);
     };
-    match acting(followed) {
-        Some(actor) => {
-            if let Err(e) = actor.answer_questions(request.id, Some(responses)).await {
-                print_error(&e);
-            }
+    let printed = match acting(followed) {
+        Ok(actor) => {
+            let failed = actor.answer_questions(request.id, Some(responses)).await.err();
+            failed.map(|e| error_printed(&e)).into_iter().collect()
         }
         // The last answer is typed again once the user's actor runs.
-        None => {
+        Err(no_run) => {
             responses.pop();
+            let mut printed = vec![no_run];
             if let Some(question) = request.questions.questions.get(responses.len()) {
-                println!("{}", prompt_of(responses.len(), question));
+                printed.push(Printed::Plain(prompt_of(responses.len(), question)));
             }
             *answering = Some((request, responses));
+            printed
         }
-    }
-    true
+    };
+    Some(printed)
+}
+
+/// What tells that the questions of `request` closed before the user answered them.
+fn closed_before_answered(request: &QuestionRequest) -> Printed {
+    Printed::Notice(format!("Questions {} closed before you answered", request.id.0))
 }
 
 /// What follows `command` at the start of `input`, if `input` begins with it as a word of its own.
@@ -318,86 +318,48 @@ fn after<'a>(input: &'a str, command: &str) -> Option<&'a str> {
     input.strip_prefix(command).filter(|rest| rest.is_empty() || rest.starts_with(' '))
 }
 
-/// The user's actor in `followed` as it runs now (`Followed::actor`); `None` between two runs of
-/// it, telling the user that nothing can be done there right now.
-#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-fn acting(followed: &Followed) -> Option<Arc<UserActor>> {
-    let actor = followed.actor();
-    if actor.is_none() {
-        println!(
-            "--- No run of yours in channel {} right now: try again in a moment ---",
+/// The user's actor in `followed` as it runs now (`Followed::actor`); between two runs of it, what
+/// tells the user that nothing can be done there right now.
+fn acting(followed: &Followed) -> Result<Arc<UserActor>, Printed> {
+    followed.actor().ok_or_else(|| {
+        Printed::Notice(format!(
+            "No run of yours in channel {} right now: try again in a moment",
             followed.name()
-        );
-    }
-    actor
+        ))
+    })
 }
 
 /// Sends what the user typed, `input`, to the channel as a command or a message, through
-/// `actor`, the user's in it.
+/// `actor`, the user's in it, and answers what the terminal prints of it.
 ///
 /// # Errors
 /// If a message cannot be sent into the channel.
-#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-async fn send_line(input: &str, actor: &UserActor) -> Result<()> {
+async fn send_line(input: &str, actor: &UserActor) -> Result<Vec<Printed>> {
     match parse_input(input) {
-        UserInput::Command(line) => match actor.execute_command(&line).await {
+        UserInput::Command(line) => Ok(match actor.execute_command(&line).await {
             // Also for an answer to the whole channel: its announcement is not routed back to its
             // sender.
-            Ok(reply) => {
-                if let Some(output) = reply.output {
-                    println!("{}", output)
-                }
-            }
+            Ok(reply) => reply.output.map(Printed::Plain).into_iter().collect(),
             // The line is not logged: what follows the command may be what was said. The error
             // names the command.
-            Err(e) => print_error(&e),
-        },
+            Err(e) => vec![error_printed(&e)],
+        }),
         UserInput::Message(text) => {
             let span_id = actor.send_message(Some(text), None, Vec::new()).await?;
             tracing::debug!(span_id = %span_id, "Message sent");
+            Ok(Vec::new())
         }
     }
-    Ok(())
 }
 
-/// Prints `error` as the user may be told it (`user_message`); what may not be told stays in the
-/// log, and the user is told where to find it.
-#[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
-fn print_error(error: &anyhow::Error) {
+/// `error` as the user may be told it (`user_message`); what may not be told stays in the log,
+/// and the user is told where to find it.
+fn error_printed(error: &anyhow::Error) -> Printed {
     let message = user_message(error).unwrap_or_else(|| {
         tracing::warn!("Failed: {:#}", error);
         "It failed; the details are in the log".to_string()
     });
-    println!("[error] {message}");
-}
-
-fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
-    let (input_tx, input_rx) = mpsc::unbounded_channel::<Result<String, ReadlineError>>();
-    thread::spawn(move || {
-        let mut rl = match Editor::<(), DefaultHistory>::new() {
-            Ok(rl) => rl,
-            Err(err) => {
-                let _ = input_tx.send(Err(ReadlineError::Io(Error::other(err.to_string()))));
-                return;
-            }
-        };
-
-        loop {
-            match rl.readline(">> ") {
-                Ok(line) => {
-                    if input_tx.send(Ok(line)).is_err() {
-                        break;
-                    }
-                }
-                Err(err) => {
-                    let _ = input_tx.send(Err(err));
-                    break;
-                }
-            }
-        }
-    });
-
-    input_rx
+    Printed::Error { kind: ErrorKind::Failed, message }
 }
 
 #[derive(Parser, Debug)]
@@ -596,14 +558,13 @@ async fn main() -> Result<()> {
         Channels::new(Arc::clone(&session_loop), views, kernel.event_bus()).await.ok_or_else(
             || anyhow::anyhow!("The user takes part in no channel of the session {session_id}"),
         )?;
-    for line in channels.opening().await {
-        println!("{line}");
-    }
+    let mut screen = LineScreen::new();
+    screen.print(channels.opening().await);
 
     // Start the interactive loop; however it ends, the session is shut
     // down in order (issue 297): its actors keep what they are in the
     // middle of, and only what does not outlive the process ends with it.
-    let ran = run_repl(channels).await;
+    let ran = run_repl(channels, &mut screen).await;
     session_manager.shutdown().await;
     ran
 }
@@ -705,7 +666,13 @@ async fn signalled() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::followed::testing::from;
+    use crate::screen::testing::lines;
+    use caelumora_domain::actor::{ActorEvent, ActorId};
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::Choice;
+    use caelumora_kernel::session::testing::{running_session_of_a_user, test_kernel};
     use clap::CommandFactory;
 
     /// The options of the program fit together: no name taken twice, and one thing asked at most.
@@ -756,5 +723,74 @@ mod tests {
             Response::Text { text: "Kaya".to_string() }
         );
         assert_eq!(response_of(&question(&[], false), "-"), Response::Declined);
+    }
+
+    /// What is being answered: nothing.
+    type Answering = Option<(QuestionRequest, Vec<Response>)>;
+
+    /// The channels of a running session as its owner follows them, who takes part in its first
+    /// channel alone, with the session and the owner.
+    async fn followed_alone() -> (Channels, Arc<SessionLoop>, ActorId) {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let me = owner.caller_id;
+        let views = manager.views(Viewer::new(owner));
+        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("the owner takes part");
+        (channels, session_loop, me)
+    }
+
+    /// What the terminal prints of `input` typed in `channels`, while `answering`.
+    async fn typed(channels: &mut Channels, answering: &mut Answering, input: &str) -> Vec<String> {
+        lines(&handle_line(input, channels, answering).await.expect("handled"))
+    }
+
+    /// What the terminal prints of a line typed where it cannot do what the line asks: an
+    /// approval named badly or not pending, nothing to give again, no questions to answer, no
+    /// such channel.
+    #[tokio::test]
+    async fn a_line_that_cannot_be_done_is_told_why() {
+        let (mut channels, _, _) = followed_alone().await;
+        let (channels, answering) = (&mut channels, &mut None);
+        assert!(typed(channels, answering, "").await.is_empty());
+        let invalid = typed(channels, answering, "/approve nope").await;
+        assert_eq!(invalid, ["Invalid approval id: nope"]);
+        let id = Uuid::new_v4();
+        let not_pending = typed(channels, answering, &format!("/deny {id}")).await;
+        assert_eq!(not_pending, [format!("No pending approval with id {id}")]);
+        let retried = typed(channels, answering, "/retry").await;
+        assert_eq!(retried, ["No answer of an agent to give again"]);
+        let none = typed(channels, answering, "/answer").await;
+        assert_eq!(none, ["No open questions put to you"]);
+        let none_named = typed(channels, answering, &format!("/decline {id}")).await;
+        assert_eq!(none_named, [format!("No open questions put to you with id {id}")]);
+        let switched = typed(channels, answering, "/switch nowhere").await;
+        let unknown = "--- You take part in no channel 'nowhere' ---";
+        assert_eq!(switched.first().map(String::as_str), Some(unknown));
+    }
+
+    /// Questions put to the user are answered line by line after `/answer`, each line prompted by
+    /// the next question, and are no longer being answered once the last is.
+    #[tokio::test]
+    async fn questions_are_answered_line_by_line() {
+        let (mut channels, session_loop, me) = followed_alone().await;
+        let channel_id = channels.talked_in().expect("talked in").channel_id();
+        let channel = session_loop.channel(channel_id).expect("the channel runs");
+        let ActorId::User(user) = me else { unreachable!("a user") };
+        let actor = channel.user_actor(user).expect("the owner's actor runs");
+        let agent = AgentId::new();
+        let request = make_question_request(session_loop.id(), channel_id, agent, me);
+        let asked = ActorEvent::QuestionRequested(request.clone());
+        actor.take_in_as_routed(from(&channel, ActorId::Agent(agent), asked)).await;
+
+        let (channels, answering) = (&mut channels, &mut None);
+        let prompt = typed(channels, answering, "/answer").await;
+        assert_eq!(prompt, [prompt_of(0, &request.questions.questions[0])]);
+        assert!(answering.is_some(), "being answered");
+        let answered = typed(channels, answering, "Kaya").await;
+        assert!(answered.is_empty(), "{answered:?}");
+        assert!(answering.is_none(), "answered");
     }
 }

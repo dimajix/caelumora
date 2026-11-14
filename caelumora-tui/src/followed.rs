@@ -1,6 +1,7 @@
 //! A channel as the terminal follows it for the user: what it prints of what the channel shows,
 //! and what the user's commands there need of it (issue 561).
 
+use crate::printed::{ErrorKind, Printed, Said, Saying, Words};
 use anyhow::Result;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
@@ -99,8 +100,8 @@ impl Followed {
         Some(followed)
     }
 
-    /// Reads anew what waits for the user in the channel (issue 565), and answers the lines that
-    /// show what it did not know: the approvals pending, as the agents' turns hold them
+    /// Reads anew what waits for the user in the channel (issue 565), and answers what is printed
+    /// of what it did not know: the approvals pending, as the agents' turns hold them
     /// (`ChannelView::pending_approvals`), which take the place of those known - one that ended
     /// meanwhile is known no more -, and the open questions put to the user, as their actor tells,
     /// which become known. Read as the channel is followed, and where what it showed may have been
@@ -119,19 +120,19 @@ impl Followed {
     /// yet to be decided is shown again, since it is still pending. A new run of the user's actor
     /// knows none of the questions put to the one before (issue 561), so where one began, only
     /// approvals are made up for.
-    pub(crate) async fn catch_up(&mut self) -> Vec<String> {
-        let mut lines = Vec::new();
+    pub(crate) async fn catch_up(&mut self) -> Vec<Printed> {
+        let mut printed = Vec::new();
         if let Some(pending) = self.read_pending_approvals().await {
             let unknown = pending.iter().filter(|request| !self.is_pending(request.id));
-            lines.extend(unknown.flat_map(approval_shown));
+            printed.extend(unknown.map(approval_printed));
             self.pending_approvals = pending;
         }
         for questions in self.put_to_user() {
             if self.known_questions.insert(questions.id) {
-                lines.extend(questions_shown(&questions, self.me()));
+                printed.push(questions_printed(&questions, self.me()));
             }
         }
-        lines
+        printed
     }
 
     /// The channel followed.
@@ -144,25 +145,25 @@ impl Followed {
         self.channel.name()
     }
 
-    /// The lines that tell the user they talk in the channel now: its name, who answers there, and
-    /// what waits for them there.
-    pub(crate) async fn talking_in(&self) -> Vec<String> {
-        let mut lines = vec![format!("--- Talking in {} now ---", self.name())];
-        lines.extend(self.who_answers().await);
-        lines.extend(self.waiting());
-        lines
+    /// What tells the user they talk in the channel now: its name, who answers there, and what
+    /// waits for them there.
+    pub(crate) async fn talking_in(&self) -> Vec<Printed> {
+        let mut printed = vec![Printed::Notice(format!("Talking in {} now", self.name()))];
+        printed.extend(self.who_answers().await);
+        printed.extend(self.waiting());
+        printed
     }
 
-    /// The line that tells who answers in the channel, as the views tell it (issue 174); `None` if
-    /// the channel cannot be read.
-    async fn who_answers(&self) -> Option<String> {
+    /// What tells who answers in the channel, as the views tell it (issue 174); `None` if the
+    /// channel cannot be read.
+    async fn who_answers(&self) -> Option<Printed> {
         let view = self.views.channel(self.channel.session_id(), self.channel_id()).await.ok()?;
         let unknown = || "from a bundle".to_string();
         let moderator = view.moderator().unwrap_or_else(unknown);
-        Some(format!(
+        Some(Printed::Plain(format!(
             "Moderator: {moderator}, responders: {}",
             view.responder_policy().unwrap_or_else(unknown)
-        ))
+        )))
     }
 
     /// The user's actor in the channel, through which what they say, run and answer goes, if a run
@@ -203,23 +204,23 @@ impl Followed {
         }
     }
 
-    /// The lines that show again what waits for the user in the channel: the approvals pending and
-    /// the open questions put to them that are known - one asked since, which the channel has yet
-    /// to show, is shown as it shows it, and not twice.
-    pub(crate) fn waiting(&self) -> Vec<String> {
-        let approvals = self.pending_approvals.iter().flat_map(approval_shown);
+    /// What shows again what waits for the user in the channel: the approvals pending and the open
+    /// questions put to them that are known - one asked since, which the channel has yet to show,
+    /// is shown as it shows it, and not twice.
+    pub(crate) fn waiting(&self) -> Vec<Printed> {
+        let approvals = self.pending_approvals.iter().map(approval_printed);
         let mut put_to_user = self.put_to_user();
         put_to_user.retain(|q| self.knows_questions(q.id));
-        let put_to_user = put_to_user.iter().flat_map(|q| questions_shown(q, self.me()));
+        let put_to_user = put_to_user.iter().map(|q| questions_printed(q, self.me()));
         approvals.chain(put_to_user).collect()
     }
 
     /// Takes in what the channel showed: keeps what the user's commands need of it, and answers
-    /// the lines the terminal prints of it. What was sent in the user's name is passed over and
-    /// printed not at all, since what they typed is on the screen already, as typed - but for an
-    /// answer of theirs to an approval, after which it is theirs to give no longer, as on the web
-    /// UI, and which is told where a rule of theirs gave it (issue 13).
-    pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<String> {
+    /// what the terminal prints of it. What was sent in the user's name is passed over and printed
+    /// not at all, since what they typed is on the screen already, as typed - but for an answer of
+    /// theirs to an approval, after which it is theirs to give no longer, as on the web UI, and
+    /// which is told where a rule of theirs gave it (issue 13).
+    pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
         let sender_id = envelope.context.sender_id;
         if sender_id == self.me() {
             let ActorEvent::ApprovalAnswered { id, decision, .. } = &envelope.event else {
@@ -228,7 +229,7 @@ impl Followed {
             self.take_pending(*id);
             return decision
                 .by_rule
-                .map(|_| format!("--- Approval {} answered by your rule ---", id.0))
+                .map(|_| Printed::Notice(format!("Approval {} answered by your rule", id.0)))
                 .into_iter()
                 .collect();
         }
@@ -250,8 +251,7 @@ impl Followed {
                     self.last_answer = Some(message.id);
                 }
                 self.given_up = None;
-                let said = said(message, &self.handles);
-                said.map(|said| format!("{}> {said}", message.sender_name)).into_iter().collect()
+                said_printed(message, &self.handles, Saying::Complete).into_iter().collect()
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
                 if self.is_under_way(sender_id) {
@@ -266,7 +266,7 @@ impl Followed {
             ActorEvent::ApprovalRequested(request) if self.is_pending(request.id) => Vec::new(),
             ActorEvent::ApprovalRequested(request) => {
                 self.pending_approvals.push(request.clone());
-                approval_shown(request)
+                vec![approval_printed(request)]
             }
             // The user's own answer, given by a rule of theirs; only the approver tells when the
             // approval is over.
@@ -283,7 +283,7 @@ impl Followed {
                 let withdrawn = self.take_pending(*id).is_some();
                 let id = id.0;
                 withdrawn
-                    .then(|| format!("--- Approval {id} withdrawn: the turn ended ---"))
+                    .then(|| Printed::Notice(format!("Approval {id} withdrawn: the turn ended")))
                     .into_iter()
                     .collect()
             }
@@ -291,7 +291,7 @@ impl Followed {
             // that resumed its turn.
             ActorEvent::QuestionRequested(request) => {
                 match self.known_questions.insert(request.id) {
-                    true => questions_shown(request, self.me()),
+                    true => vec![questions_printed(request, self.me())],
                     false => Vec::new(),
                 }
             }
@@ -386,177 +386,135 @@ impl Followed {
     }
 }
 
-/// The lines the terminal prints of `envelope` that the user's commands need nothing of, by the
+/// What the terminal prints of `envelope` that the user's commands need nothing of, by the
 /// `handles` of the channel's participants: what was said in a step or changed, and what was done
 /// in the channel.
-fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<String> {
+fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<Printed> {
     let sender_id = envelope.context.sender_id;
     let sender = &envelope.context.sender_name;
-    let line = match &envelope.event {
+    let plain = |line: String| Some(Printed::Plain(line));
+    let printed = match &envelope.event {
         ActorEvent::IntermediateMessageGenerated(message) => {
-            said(message, handles).map(|said| format!("[working] {}> {said}", message.sender_name))
+            said_printed(message, handles, Saying::Step)
         }
         // What another changed of what was said (issue 234).
-        ActorEvent::MessageModified(message) => {
-            said(message, handles).map(|said| format!("{}> [edited] {said}", message.sender_name))
-        }
-        ActorEvent::MessageRevoked { .. } => Some(format!("{sender} took a message back")),
-        ActorEvent::RetryAccepted { .. } => Some(format!("{sender} answers again")),
+        ActorEvent::MessageModified(message) => said_printed(message, handles, Saying::Edited),
+        ActorEvent::MessageRevoked { .. } => plain(format!("{sender} took a message back")),
+        ActorEvent::RetryAccepted { .. } => plain(format!("{sender} answers again")),
         ActorEvent::RetryRefused { reason, .. } => {
-            Some(format!("{sender} cannot answer again: {reason}"))
+            plain(format!("{sender} cannot answer again: {reason}"))
         }
         // What this user sent that the channel did not let in (issue 304), told to them alone.
-        ActorEvent::EventRejected { rejected, reason, .. } => {
-            Some(format!("[rejected] the channel did not let in your {rejected}: {reason}"))
-        }
+        ActorEvent::EventRejected { rejected, reason, .. } => Some(Printed::Error {
+            kind: ErrorKind::Rejected,
+            message: format!("the channel did not let in your {rejected}: {reason}"),
+        }),
         // What this user sent that the actor it went to did not take (issue 567), told to them
         // alone: the approver an answer it does not count.
-        ActorEvent::EventRefused { refused, reason, .. } => {
-            Some(format!("[refused] {sender} did not take your {refused}: {reason}"))
-        }
+        ActorEvent::EventRefused { refused, reason, .. } => Some(Printed::Error {
+            kind: ErrorKind::Refused,
+            message: format!("{sender} did not take your {refused}: {reason}"),
+        }),
         // Told to its issuer alone (issue 299).
         ActorEvent::CommandStarted { command, .. } => {
-            Some(format!("{sender} is carrying out /{command}..."))
+            plain(format!("{sender} is carrying out /{command}..."))
         }
         // Carried out by an agent in a turn of its own (issue 269), or run by a user.
         ActorEvent::CommandExecuted { command, output, turn_id, .. } => {
             let verb = if turn_id.is_some() { "carried out" } else { "ran" };
-            Some(format!("{sender} {verb} /{command}: {output}"))
+            plain(format!("{sender} {verb} /{command}: {output}"))
         }
         ActorEvent::CommandFailed { command, reason, .. } => {
-            Some(format!("{sender} did not carry out /{command}: {reason}"))
+            plain(format!("{sender} did not carry out /{command}: {reason}"))
         }
         // Of its own accord (issue 284).
-        ActorEvent::ActivityStarted { activity, .. } => Some(format!("{sender} is {activity}...")),
-        ActorEvent::ActivityFinished { output, .. } => Some(output.to_string()),
+        ActorEvent::ActivityStarted { activity, .. } => plain(format!("{sender} is {activity}...")),
+        ActorEvent::ActivityFinished { output, .. } => plain(output.to_string()),
         // Who joined or left (issue 408), by whose act.
-        ActorEvent::ParticipantJoined { participant, name } => Some(match sender_id {
+        ActorEvent::ParticipantJoined { participant, name } => plain(match sender_id {
             by if by == *participant => format!("{name} joined the channel"),
             ActorId::System => format!("{name} was added to the channel"),
             _ => format!("{sender} added {name} to the channel"),
         }),
-        ActorEvent::ParticipantLeft { participant, name, .. } => Some(match sender_id {
+        ActorEvent::ParticipantLeft { participant, name, .. } => plain(match sender_id {
             by if by == *participant => format!("{name} left the channel"),
             ActorId::System => format!("{name} was removed from the channel"),
             _ => format!("{sender} removed {name} from the channel"),
         }),
         _ => None,
     };
-    line.into_iter().collect()
+    printed.into_iter().collect()
 }
 
-/// The line that tells that `sender` gave its answer up, and why.
-fn given_up(sender: &str, reason: &GivenUpReason) -> String {
+/// What tells that `sender` gave its answer up, and why: a failure as an error.
+fn given_up(sender: &str, reason: &GivenUpReason) -> Printed {
     match reason {
         GivenUpReason::Failed { message } => {
-            format!("[error] {sender} could not answer: {message}")
+            let message = format!("{sender} could not answer: {message}");
+            Printed::Error { kind: ErrorKind::Failed, message }
         }
-        GivenUpReason::Lowered { channel } => {
-            format!("{sender} gave its answer up: the channel was lowered to {channel}")
-        }
-        GivenUpReason::CallLimit { calls } => format!(
+        GivenUpReason::Lowered { channel } => Printed::Plain(format!(
+            "{sender} gave its answer up: the channel was lowered to {channel}"
+        )),
+        GivenUpReason::CallLimit { calls } => Printed::Plain(format!(
             "{sender} gave its answer up: it asked its model {calls} times, as often as one answer \
              or one step of a plan may"
-        ),
+        )),
         GivenUpReason::Left | GivenUpReason::Retried => {
-            format!("{sender} gave its answer up: {}", reason.cause())
+            Printed::Plain(format!("{sender} gave its answer up: {}", reason.cause()))
         }
     }
 }
 
-/// The lines that show `request` for approval, and how to answer it.
-fn approval_shown(request: &ApprovalRequest) -> Vec<String> {
-    let id = request.id.0;
-    let mut lines =
-        vec![format!("--- Approval requested (id: {id}) ---"), request.description.clone()];
-    if request.explicit {
-        lines.push(
-            "A rule of this session or channel asks for this call to be decided by a person."
-                .to_string(),
-        );
-    }
-    lines.push(format!("Type '/approve {id}' or '/deny {id}' to respond."));
-    lines
+/// What shows `request` for approval.
+fn approval_printed(request: &ApprovalRequest) -> Printed {
+    Printed::Approval(Box::new(request.clone()))
 }
 
-/// What `message` says as the terminal prints it: its words, the participants it mentions
-/// highlighted, and what it carries by name, type and size (issue 282); `None` if it says neither.
-fn said(message: &Message, handles: &HashMap<ActorId, String>) -> Option<String> {
+/// What shows the questions of `request` (issue 165), and whether they are put to `me`.
+fn questions_printed(request: &QuestionRequest, me: ActorId) -> Printed {
+    let put_to_user = request.questions.is_asked(me);
+    Printed::Questions { request: Box::new(request.clone()), put_to_user }
+}
+
+/// What `message` says, in a message of the kind `saying`, by the `handles` of the channel's
+/// participants; `None` if it says nothing (`said`).
+fn said_printed(
+    message: &Message,
+    handles: &HashMap<ActorId, String>,
+    saying: Saying,
+) -> Option<Printed> {
+    let said = said(message, handles)?;
+    Some(Printed::Said { sender: message.sender_name.clone(), said, saying })
+}
+
+/// What `message` says: its words, with where they mention participants by the `handles` of the
+/// channel's, and what it carries (issue 282); `None` if it says neither.
+fn said(message: &Message, handles: &HashMap<ActorId, String>) -> Option<Said> {
     let words = message
         .content
         .as_deref()
         .filter(|content| !content.is_empty())
-        .map(|content| render_content(message, content, handles));
-    let attachments = message.attachments.iter().map(|attachment| {
-        format!(
-            "[{}, {}, {}]",
-            attachment.name.as_str(),
-            attachment.media_type,
-            attachment.size_shown()
-        )
-    });
-    let parts: Vec<String> = words.into_iter().chain(attachments).collect();
-    (!parts.is_empty()).then(|| parts.join(" "))
+        .map(|content| words(message, content, handles));
+    let attachments = message.attachments.clone();
+    (words.is_some() || !attachments.is_empty()).then_some(Said { words, attachments })
 }
 
-fn render_content(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> String {
+/// The words `content` of `message`, with where they mention a participant it mentions, by the
+/// `handles` of the channel's participants.
+fn words(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> Words {
     let mentioned: Vec<&String> =
         message.mentions.iter().filter_map(|id| handles.get(id)).collect();
-    let mut rendered = String::with_capacity(content.len());
-    let mut pos = 0;
-    for span in mention_spans(content) {
-        // A group handle addresses everyone (issue 401): resolved if anyone was.
-        if mentioned.contains(&&span.handle)
-            || (is_group_handle(&span.handle) && !message.mentions.is_empty())
-        {
-            rendered.push_str(&content[pos..span.range.start]);
-            rendered.push_str("\x1b[1;36m");
-            rendered.push_str(&content[span.range.clone()]);
-            rendered.push_str("\x1b[0m");
-            pos = span.range.end;
-        }
-    }
-    rendered.push_str(&content[pos..]);
-    rendered
-}
-
-/// The lines that show the questions of `request` (issue 165), and - if they are put to `me` -
-/// how to answer them.
-fn questions_shown(request: &QuestionRequest, me: ActorId) -> Vec<String> {
-    let id = request.id.0;
-    let mut lines =
-        vec![format!("--- Questions of {} (id: {id}) ---", request.tool_call.function_name)];
-    for (index, question) in request.questions.questions.iter().enumerate() {
-        lines.push(format!("{}. [{}] {}", index + 1, question.header, question.question));
-        for (number, choice) in question.choices.iter().enumerate() {
-            let recommended = if choice.recommended { " (recommended)" } else { "" };
-            let description =
-                choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
-            lines.push(format!(
-                "   {}) {}{}{}",
-                number + 1,
-                choice.label,
-                recommended,
-                description
-            ));
-        }
-    }
-    if request.questions.is_asked(me) {
-        if request.questions.sensitive {
-            lines.push(
-                "Sensitive: the answers go to the tool alone - but what you type is shown on this \
-                 terminal."
-                    .to_string(),
-            );
-        }
-        lines.push(format!(
-            "Type '/answer {id}' to answer them one by one, or '/decline {id}'. A message instead \
-             declines them."
-        ));
-    } else {
-        lines.push("They are put to others.".to_string());
-    }
-    lines
+    // A group handle addresses everyone (issue 401): resolved if anyone was.
+    let mentions = mention_spans(content)
+        .into_iter()
+        .filter(|span| {
+            mentioned.contains(&&span.handle)
+                || (is_group_handle(&span.handle) && !message.mentions.is_empty())
+        })
+        .map(|span| span.range)
+        .collect();
+    Words { text: content.to_string(), mentions }
 }
 
 #[cfg(test)]
@@ -565,6 +523,7 @@ pub(crate) mod testing {
     //! questions, as a channel would send them, and an agent whose turn waits for an approval.
 
     use super::Followed;
+    use crate::printed::Printed;
     use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, EventContext};
     use caelumora_domain::agent::testing::{make_personality, waiting_for_approval};
     use caelumora_domain::agent::AgentId;
@@ -584,16 +543,16 @@ pub(crate) mod testing {
 
     /// Routes `envelope` to the user's actor in the channel `followed` follows, as the channel
     /// would (`UserActor::take_in_as_routed`), and takes in what the actor shows of it
-    /// (`next_taken_in`): the lines the terminal prints.
-    pub(crate) async fn routed(followed: &mut Followed, envelope: Envelope) -> Vec<String> {
+    /// (`next_taken_in`): what the terminal prints.
+    pub(crate) async fn routed(followed: &mut Followed, envelope: Envelope) -> Vec<Printed> {
         let actor = followed.actor().expect("the user's actor runs");
         actor.take_in_as_routed(envelope).await;
         next_taken_in(followed).await
     }
 
     /// Takes in the next envelope the channel `followed` follows shows, passing over where a run
-    /// of the user's actor begins or ends: the lines the terminal prints.
-    pub(crate) async fn next_taken_in(followed: &mut Followed) -> Vec<String> {
+    /// of the user's actor begins or ends: what the terminal prints.
+    pub(crate) async fn next_taken_in(followed: &mut Followed) -> Vec<Printed> {
         loop {
             if let Ok(Shown::Envelope(shown)) = followed.next().await {
                 return followed.take_in(&shown);
@@ -685,6 +644,7 @@ mod tests {
         an_agent_in, answered, approval, approval_waiting_in, from, message, next_taken_in, routed,
     };
     use super::*;
+    use crate::screen::testing::lines;
     use anyhow::Error;
     use caelumora_domain::actor::Rejection;
     use caelumora_domain::agent::AgentId;
@@ -730,25 +690,30 @@ mod tests {
     }
 
     #[test]
-    fn a_message_is_printed_with_what_it_carries() {
+    fn a_message_says_its_words_and_what_it_carries() {
         let message = |content: Option<&str>, attachments| Message {
             content: content.map(str::to_string),
             attachments,
             ..make_message(MessageId::new())
         };
         let chart = make_content_ref("chart.png", b"chart");
-        let printed = |message: Message| said(&message, &HashMap::new());
-        assert_eq!(printed(message(Some("hello"), Vec::new())).as_deref(), Some("hello"));
+        let said_by = |message: Message| said(&message, &HashMap::new());
+        let words = |text: &str| Some(Words { text: text.to_string(), mentions: Vec::new() });
+        let carried = vec![chart.clone()];
         assert_eq!(
-            printed(message(None, vec![chart.clone()])).as_deref(),
-            Some("[chart.png, image/png, 5 B]"),
+            said_by(message(Some("hello"), Vec::new())),
+            Some(Said { words: words("hello"), attachments: Vec::new() })
+        );
+        assert_eq!(
+            said_by(message(None, vec![chart.clone()])),
+            Some(Said { words: None, attachments: carried.clone() }),
             "attachments alone"
         );
         assert_eq!(
-            printed(message(Some("look"), vec![chart])).as_deref(),
-            Some("look [chart.png, image/png, 5 B]")
+            said_by(message(Some("look"), vec![chart])),
+            Some(Said { words: words("look"), attachments: carried })
         );
-        assert_eq!(printed(message(Some(""), Vec::new())), None, "nothing said");
+        assert_eq!(said_by(message(Some(""), Vec::new())), None, "nothing said");
     }
 
     /// What the channel did not let in of the user's is told to them as rejected, apart from what
@@ -761,7 +726,7 @@ mod tests {
             message: None,
             reason: Rejection::ClassificationRefused,
         };
-        let told = followed.take_in(&from(&channel, ActorId::System, rejected));
+        let told = lines(&followed.take_in(&from(&channel, ActorId::System, rejected)));
         assert_eq!(told.len(), 1, "{told:?}");
         assert!(
             told[0]
@@ -781,7 +746,7 @@ mod tests {
             message: None,
             reason: Rejection::Forbidden,
         };
-        let told = followed.take_in(&from(&channel, approver, refused));
+        let told = lines(&followed.take_in(&from(&channel, approver, refused)));
         assert_eq!(told.len(), 1, "{told:?}");
         assert!(
             told[0].starts_with("[refused] ")
@@ -796,7 +761,7 @@ mod tests {
         let other = ActorId::User(UserId::new());
         let said = |sender| ActorEvent::CompleteMessageGenerated(message(sender, "hello"));
         assert!(followed.take_in(&from(&channel, me, said(me))).is_empty());
-        assert_eq!(followed.take_in(&from(&channel, other, said(other))), ["other> hello"]);
+        assert_eq!(lines(&followed.take_in(&from(&channel, other, said(other)))), ["other> hello"]);
     }
 
     /// An approval shown waits until the approver ends it - decided, timed out or withdrawn -, or
@@ -808,12 +773,15 @@ mod tests {
         let agent = ActorId::Agent(agent_id);
         let request = approval(&channel, agent_id);
         let id = request.id;
-        let shown =
-            followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
+        let shown = lines(&followed.take_in(&from(
+            &channel,
+            agent,
+            ActorEvent::ApprovalRequested(request),
+        )));
         assert!(shown.first().is_some_and(|line| line.contains(&id.0.to_string())), "{shown:?}");
         let withdrawn = ActorEvent::ApprovalRequestWithdrawn { id };
         assert_eq!(
-            followed.take_in(&from(&channel, agent, withdrawn.clone())),
+            lines(&followed.take_in(&from(&channel, agent, withdrawn.clone()))),
             [format!("--- Approval {} withdrawn: the turn ended ---", id.0)]
         );
         assert!(followed.take_in(&from(&channel, agent, withdrawn)).is_empty(), "told once");
@@ -860,7 +828,7 @@ mod tests {
             "not theirs"
         );
         assert_eq!(
-            followed.take_in(&answer(me, Some(ApprovalRuleId::new()))),
+            lines(&followed.take_in(&answer(me, Some(ApprovalRuleId::new())))),
             [format!("--- Approval {} answered by your rule ---", id.0)]
         );
     }
@@ -942,7 +910,7 @@ mod tests {
             assert!(!followed.concerns_user(&envelope), "{:?}", envelope.event);
             routed(&mut followed, envelope).await;
         }
-        let waiting = followed.waiting().join("\n");
+        let waiting = lines(&followed.waiting()).join("\n");
         assert!(waiting.contains(&ids[0]) && waiting.contains(&ids[1]), "{waiting}");
         assert!(!waiting.contains(&ids[2]), "put to another: {waiting}");
     }
@@ -997,7 +965,7 @@ mod tests {
             Followed::new(Arc::clone(&channel), views).await.expect("the owner takes part");
         assert!(followed.is_pending(id), "the approval the agent's turn waits for");
         assert!(followed.knows_questions(question_id), "the questions put to the user");
-        let waiting = followed.waiting().join("\n");
+        let waiting = lines(&followed.waiting()).join("\n");
         let shown_again = [id.0, question_id.0].map(|id| waiting.contains(&id.to_string()));
         assert_eq!(shown_again, [true, true], "{waiting}");
 
@@ -1011,10 +979,10 @@ mod tests {
         let later = make_question_request(channel.session_id(), channel.id(), agent_id, me);
         let later_id = later.id.0.to_string();
         actor.take_in_as_routed(from(&channel, agent, ActorEvent::QuestionRequested(later))).await;
-        assert!(!followed.waiting().join("\n").contains(&later_id), "not known yet");
+        assert!(!lines(&followed.waiting()).join("\n").contains(&later_id), "not known yet");
         let shown = next_taken_in(&mut followed).await;
-        assert!(shown.join("\n").contains(&later_id), "{shown:?}");
-        assert!(followed.waiting().join("\n").contains(&later_id), "known once shown");
+        assert!(lines(&shown).join("\n").contains(&later_id), "{shown:?}");
+        assert!(lines(&followed.waiting()).join("\n").contains(&later_id), "known once shown");
     }
 
     /// Catching up tells the questions put to the user that it did not know, once, and the
@@ -1031,7 +999,7 @@ mod tests {
         let actor = followed.actor().expect("the owner's actor runs");
         actor.take_in_as_routed(asked).await;
 
-        assert!(followed.catch_up().await.join("\n").contains(&id), "not known before");
+        assert!(lines(&followed.catch_up().await).join("\n").contains(&id), "not known before");
         assert!(followed.catch_up().await.is_empty(), "known since");
         let shown = next_taken_in(&mut followed).await;
         assert!(shown.is_empty(), "{shown:?}");
