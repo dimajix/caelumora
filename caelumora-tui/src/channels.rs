@@ -323,7 +323,7 @@ fn changes_taking_part(event: &GlobalEvent, me: ActorId) -> bool {
 mod tests {
     use super::*;
     use crate::followed::testing::{
-        an_agent_in, answered, approval, from, message, waiting_for_approval,
+        an_agent_in, answered, approval, approval_waiting_in, from, message,
     };
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::AgentId;
@@ -561,7 +561,7 @@ mod tests {
         let side = spec("side", vec![owner.caller_id]);
         let side = session_loop.create_channel(&owner, side).await.expect("the owner creates it");
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
-        let id = waiting_for_approval(&kernel, &side, agent_id).await;
+        let id = approval_waiting_in(&kernel, &side, agent_id).await;
         let views = manager.views(Viewer::new(owner));
         let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
             .await
@@ -681,7 +681,7 @@ mod tests {
         let late = spec("late", vec![owner.caller_id]);
         let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, late.id()).await;
-        let id = waiting_for_approval(&kernel, &late, agent_id).await;
+        let id = approval_waiting_in(&kernel, &late, agent_id).await;
         let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
         let views = manager.views(Viewer::new(theirs));
         let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())

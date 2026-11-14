@@ -71,3 +71,8 @@ The window is short, and the same as for what a channel showed before the termin
   following a channel anew does (`Channels::opening`) - unlike the decision of issue
   [566](566-the-terminal-tells-little-at-its-start-and-of-withdrawals.md), which listed only the
   channel talked in; this also closes the window 561 accepted at the start. Done.
+- **2026-11-14** — First of two steps decided with the maintainer on the findings of the review,
+  without a change of behaviour: an agent's turn that waits for the approval of calls, which the
+  tests of the views and of the terminal built by hand, is the domain's fixture
+  (`agent::testing::waiting_for_approval`). The tests of the domain's resumption and of the
+  Postgres store build theirs on: theirs differ in what else the state holds.

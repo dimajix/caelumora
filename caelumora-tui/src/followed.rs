@@ -524,9 +524,9 @@ pub(crate) mod testing {
     //! questions, as a channel would send them, and an agent whose turn waits for an approval.
 
     use super::Followed;
-    use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, EventContext};
-    use caelumora_domain::agent::testing::make_personality;
-    use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, EventContext};
+    use caelumora_domain::agent::testing::{make_personality, waiting_for_approval};
+    use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::{
         ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalRuleId,
     };
@@ -534,8 +534,6 @@ pub(crate) mod testing {
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::{Message, MessageId};
     use caelumora_domain::tool::testing::make_tool_call;
-    use caelumora_domain::tool::ToolCallState;
-    use caelumora_domain::turn::TurnState;
     use caelumora_kernel::actor::Shown;
     use caelumora_kernel::channel::ChannelLoop;
     use caelumora_kernel::kernel::Kernel;
@@ -603,26 +601,15 @@ pub(crate) mod testing {
     }
 
     /// Stores a turn of `agent` in `channel` that waits for the approval of one call, as the agent
-    /// keeps it (issue 172), and answers the id of the request the views read from it.
-    pub(crate) async fn waiting_for_approval(
+    /// keeps it (`agent::testing::waiting_for_approval`), and answers the id of the request the
+    /// views read from it.
+    pub(crate) async fn approval_waiting_in(
         kernel: &Kernel,
         channel: &ChannelLoop,
         agent: AgentId,
     ) -> ApprovalId {
-        let call = make_tool_call("test_tool");
-        let mut turn = TurnState::default();
-        turn.work.event_context = EventContext::new(
-            channel.session_id(),
-            channel.id(),
-            ActorId::Agent(agent),
-            "helper".to_string(),
-        );
-        turn.tool_calls = vec![ToolCallState::pending(call, "test".to_string(), false, None, None)];
-        let mut state = AgentChannelState {
-            processing_state: ActorState::WaitingForUser,
-            turn: Some(turn),
-            ..Default::default()
-        };
+        let calls = vec![make_tool_call("test_tool")];
+        let mut state = waiting_for_approval(channel.session_id(), channel.id(), agent, calls);
         kernel
             .state_store()
             .put_agent_channel_state(agent, channel.id(), &mut state)
@@ -640,7 +627,7 @@ pub(crate) mod testing {
             channel_id: channel.id(),
             agent_id,
             tool_call: make_tool_call("test_tool"),
-            description: "test".to_string(),
+            description: "call test_tool".to_string(),
         }
     }
 }
@@ -648,7 +635,7 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::testing::{
-        an_agent_in, answered, approval, from, message, routed, waiting_for_approval,
+        an_agent_in, answered, approval, approval_waiting_in, from, message, routed,
     };
     use super::*;
     use anyhow::Error;
@@ -950,7 +937,7 @@ mod tests {
         let agent_id = an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await;
         let me = ctx.caller_id;
         let agent = ActorId::Agent(agent_id);
-        let id = waiting_for_approval(&kernel, &channel, agent_id).await;
+        let id = approval_waiting_in(&kernel, &channel, agent_id).await;
         let questions = make_question_request(channel.session_id(), channel.id(), agent_id, me);
         let question_id = questions.id;
         let asked = from(&channel, agent, ActorEvent::QuestionRequested(questions));

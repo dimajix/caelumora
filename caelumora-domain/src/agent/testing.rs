@@ -1,12 +1,17 @@
-//! Personalities to write beside, and what the tests read of an agent's state past its API, for
-//! the tests of this crate and of others; agents stored with a personality of their own are
-//! `caelumora_store::testing::stored_agent`.
+//! Personalities and states of an agent to write beside, and what the tests read of an agent's
+//! state past its API, for the tests of this crate and of others; agents stored with a
+//! personality of their own are `caelumora_store::testing::stored_agent`.
 
-use super::{AgentChannelState, Personality, PersonalityId};
+use super::{AgentChannelState, AgentId, Personality, PersonalityId};
+use crate::actor::{ActorId, ActorState, EventContext};
+use crate::channel::ChannelId;
 use crate::context::ContextRef;
 use crate::message::Message;
 use crate::scope::Scope;
 use crate::security::SecurityAttributes;
+use crate::session::SessionId;
+use crate::tool::{ToolCall, ToolCallState};
+use crate::turn::TurnState;
 use crate::value::name::ScopedName;
 
 /// A personality `name` of the global scope, the system's as a seed's is, and naming nothing
@@ -32,6 +37,32 @@ pub fn make_personality(name: &str) -> Personality {
         deleted: None,
         revision: Default::default(),
         purging: false,
+    }
+}
+
+/// The state of `agent` in the channel `channel_id` of the session `session_id`, whose turn waits
+/// for the approval of `calls` (issue 172), each described as `call <function name>`, none
+/// suggesting a rule: what it stores while it waits, from which the approvals pending are read.
+pub fn waiting_for_approval(
+    session_id: SessionId,
+    channel_id: ChannelId,
+    agent: AgentId,
+    calls: Vec<ToolCall>,
+) -> AgentChannelState {
+    let sender = ActorId::Agent(agent);
+    let mut turn = TurnState::default();
+    turn.work.event_context = EventContext::new(session_id, channel_id, sender, sender.to_string());
+    turn.tool_calls = calls
+        .into_iter()
+        .map(|call| {
+            let description = format!("call {}", call.function_name);
+            ToolCallState::pending(call, description, false, None, None)
+        })
+        .collect();
+    AgentChannelState {
+        processing_state: ActorState::WaitingForUser,
+        turn: Some(turn),
+        ..AgentChannelState::default()
     }
 }
 

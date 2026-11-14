@@ -1031,9 +1031,8 @@ mod tests {
     use caelumora_api::error::AttachmentError;
     use caelumora_api::reader::{ChannelReader, SessionReader};
     use caelumora_domain::actor::Rejection;
-    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::testing::{make_personality, waiting_for_approval};
     use caelumora_domain::agent::{Agent, AgentChannelState, Personality, PersonalityKind};
-    use caelumora_domain::approval::ToolMatcher;
     use caelumora_domain::channel::testing::{founded, main_channel};
     use caelumora_domain::channel::{Channel, ChannelState, Participant};
     use caelumora_domain::confidentiality::Classification;
@@ -1044,6 +1043,7 @@ mod tests {
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::Session;
     use caelumora_domain::snapshot::Detail;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
@@ -2153,9 +2153,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_approvals_a_channel_waits_for_are_read_from_its_agents_turns() {
-        use caelumora_domain::actor::ActorState;
-        use caelumora_domain::tool::{ToolCall, ToolCallState};
-        use caelumora_domain::turn::TurnState;
+        use caelumora_domain::tool::ToolCallState;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2168,30 +2166,11 @@ mod tests {
         let session = stored(&manager, session, slice::from_mut(&mut channel)).await;
 
         // The agent's turn waits for one call, the other was approved.
-        let call = |name: &str| ToolCall {
-            id: Some(name.to_string()),
-            function_name: name.to_string(),
-            arguments: serde_json::json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
-        let waiting = ToolCallState::pending(
-            call("delete"),
-            "Delete it?".to_string(),
-            false,
-            Some(ToolMatcher::everything()),
-            None,
-        );
-        let mut turn = TurnState::default();
-        turn.work.event_context.session_id = session.id;
-        turn.work.event_context.channel_id = channel.id;
-        turn.work.event_context.sender_id = ActorId::Agent(helper.id);
-        turn.tool_calls = vec![waiting.clone(), ToolCallState::approved(call("echo"))];
-        let mut state = AgentChannelState {
-            processing_state: ActorState::WaitingForUser,
-            turn: Some(turn),
-            ..Default::default()
-        };
+        let calls = vec![make_tool_call("delete")];
+        let mut state = waiting_for_approval(session.id, channel.id, helper.id, calls);
+        let turn = state.turn.as_mut().expect("a turn");
+        let waiting = turn.tool_calls.first().and_then(ToolCallState::approval_id);
+        turn.tool_calls.push(ToolCallState::approved(make_tool_call("echo")));
         kernel
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut state)
@@ -2208,7 +2187,7 @@ mod tests {
                 pending[0].channel_id,
                 pending[0].description.as_str()
             ),
-            (waiting.approval_id().unwrap(), helper.id, channel.id, "Delete it?")
+            (waiting.expect("the call waits"), helper.id, channel.id, "call delete")
         );
         assert!(manager.running(session.id).is_none(), "read without starting the session");
     }
@@ -2219,8 +2198,6 @@ mod tests {
         use caelumora_domain::message::{Message, MessageId, TokenUsage};
         use caelumora_domain::note::{NoteId, NoteOrigin};
         use caelumora_domain::snapshot::ChannelParticipantSnapshot;
-        use caelumora_domain::tool::{ToolCall, ToolCallState};
-        use caelumora_domain::turn::TurnState;
 
         let (kernel, manager) = owned_kernel(Default::default());
         let stores = kernel.entity_stores();
@@ -2240,9 +2217,10 @@ mod tests {
             context_size: Some(8192),
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
+        let calls = vec![make_tool_call("delete")];
         let mut state = AgentChannelState {
             used: TokenUsage::counted(None, &answer),
-            ..AgentChannelState::default()
+            ..waiting_for_approval(session.id, channel.id, helper.id, calls)
         };
         state.transcript.push(answer);
         state.notes.push(
@@ -2254,23 +2232,6 @@ mod tests {
             NoteOrigin::default(),
             MessageId::default(),
         );
-        let mut turn = TurnState::default();
-        turn.work.event_context.sender_id = ActorId::Agent(helper.id);
-        let call = ToolCall {
-            id: Some("delete".to_string()),
-            function_name: "delete".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
-        turn.tool_calls = vec![ToolCallState::pending(
-            call,
-            "Delete it?".to_string(),
-            false,
-            Some(ToolMatcher::everything()),
-            None,
-        )];
-        state.turn = Some(turn);
         kernel
             .state_store()
             .put_agent_channel_state(helper.id, channel.id, &mut state)
