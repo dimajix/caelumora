@@ -61,16 +61,17 @@ use caelumora_tool_mcp::library::McpToolLibrary;
 use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use channels::Channels;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use followed::Followed;
 use here::{place_of, HERE};
 use home::Home;
 use printed::{ErrorKind, Printed};
-use screen::{LineScreen, Screen, Typed};
+use screen::{FullScreen, LineScreen, Screen, Typed};
 use serde_json::Value;
 use sessions::Asked;
 use std::env;
 use std::future;
+use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
@@ -120,13 +121,15 @@ fn response_of(question: &Question, line: &str) -> Response {
 /// Has the user talk in the channels `channels` follows, line by line, until they end it or a
 /// signal does - in the channel talked in, or in none until they switch to one -, shown and read
 /// by `screen`.
-async fn run_repl(mut channels: Channels, screen: &mut impl Screen) -> Result<()> {
+async fn run_repl(mut channels: Channels, screen: &mut dyn Screen) -> Result<()> {
     // The questions being answered, with the responses given so far: while they are, every line
     // but `/switch`, `/answer` and `/decline` answers the next question.
     let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
 
     let started = "Chat Session Started (Type 'exit' or 'quit' to stop)".to_string();
     screen.print(vec![Printed::Notice(started)]);
+    // What is under way as the channels were followed, before anything happens in them.
+    screen.show_under_way(channels.under_way());
     // A signal ends the loop as `exit` does, so that the session is shut
     // down in order (issue 297).
     let mut signalled = std::pin::pin!(signalled());
@@ -146,6 +149,7 @@ async fn run_repl(mut channels: Channels, screen: &mut impl Screen) -> Result<()
                     printed.push(closed_before_answered(&request));
                 }
                 screen.print(printed);
+                screen.show_under_way(channels.under_way());
             }
             typed = screen.next_input() => {
                 let line = match typed {
@@ -166,6 +170,8 @@ async fn run_repl(mut channels: Channels, screen: &mut impl Screen) -> Result<()
                 }
                 let printed = handle_line(input, &mut channels, &mut answering).await?;
                 screen.print(printed);
+                // Another channel may be talked in now.
+                screen.show_under_way(channels.under_way());
             }
         }
     }
@@ -394,6 +400,12 @@ struct Args {
     #[arg(long)]
     sessions: bool,
 
+    /// How the terminal is drawn: `full`, the whole window, what was said scrolled above the line
+    /// typed; or `line`, line by line, for a screen reader. `line` wherever input or output is no
+    /// terminal.
+    #[arg(long = "screen", value_enum, default_value_t = Drawing::Full)]
+    screen: Drawing,
+
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -409,7 +421,43 @@ enum Command {
     },
 }
 
+/// Which way of drawing - which `Screen` - the terminal is drawn by, as `--screen` chooses it
+/// (issue 569).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Drawing {
+    /// The whole window: what was said scrolled above the line typed (`FullScreen`).
+    Full,
+    /// Line by line, each written once, for a screen reader (`LineScreen`).
+    Line,
+}
+
+impl Drawing {
+    /// The screen that draws the terminal so.
+    ///
+    /// # Errors
+    /// If the terminal cannot be drawn on, or read from.
+    fn screen(self) -> Result<Box<dyn Screen>> {
+        Ok(match self {
+            Drawing::Full => {
+                Box::new(FullScreen::new().context("The terminal cannot be drawn on")?)
+            }
+            Drawing::Line => {
+                Box::new(LineScreen::new().context("The terminal cannot be read from")?)
+            }
+        })
+    }
+}
+
 impl Args {
+    /// The way of drawing asked for - `line` wherever input or output is no terminal, which
+    /// cannot be drawn on as a window.
+    fn drawing(&self) -> Drawing {
+        match io::stdin().is_terminal() && io::stdout().is_terminal() {
+            true => self.screen,
+            false => Drawing::Line,
+        }
+    }
+
     /// What the program is asked to do with the sessions of its directory - one thing at most, as
     /// the options exclude each other.
     fn asked(&self) -> Asked {
@@ -540,7 +588,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
     // Made before a session is opened, so that what fails here needs no shutdown.
-    let mut screen = LineScreen::new().context("The terminal cannot be read from")?;
+    let mut screen = args.drawing().screen()?;
     let chosen = match project {
         Some(project) => sessions::chosen(&views, project, &asked).await?,
         None => None,
@@ -566,7 +614,9 @@ async fn main() -> Result<()> {
     // Start the interactive loop; however it ends, the session is shut
     // down in order (issue 297): its actors keep what they are in the
     // middle of, and only what does not outlive the process ends with it.
-    let ran = run_repl(channels, &mut screen).await;
+    let ran = run_repl(channels, screen.as_mut()).await;
+    // The terminal given back first: the shutdown may take a while.
+    drop(screen);
     session_manager.shutdown().await;
     ran
 }

@@ -108,3 +108,10 @@ presented `quiet` only where it did not succeed. The answers under way are `Unde
 channel followed. The review of the step found that `main` returns without shutting the session
 down where the channels of a session it opened cannot be followed (`Channels::new`); planned as
 step 5: whatever fails once a session is opened ends through its shutdown.
+
+**2026-11-14** - Step 3 done: `full`, the default of `--screen`, draws the whole window with
+`ratatui` - what was printed scrolled by the user alone, staying where it is as text streams, the
+text the answers under way streamed at its end, a status line of who answers and where they stand,
+and the line typed. `line` is taken wherever input or output is no terminal. The answers under way
+are read anew as the terminal catches up. The words both ways of drawing share are theirs
+(`screen/words.rs`).

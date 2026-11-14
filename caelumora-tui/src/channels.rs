@@ -3,6 +3,7 @@
 
 use crate::followed::Followed;
 use crate::printed::Printed;
+use crate::under_way::UnderWay;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::ApprovalId;
 use caelumora_domain::channel::{Channel, ChannelId, JOINED};
@@ -74,6 +75,12 @@ impl Channels {
     /// The channel talked in; `None` once it ended, until the user switches to another.
     pub(crate) fn talked_in(&self) -> Option<&Followed> {
         self.followed(self.talked_in?)
+    }
+
+    /// The answers under way in the channel talked in, in the order they began; none if it talks
+    /// in none.
+    pub(crate) fn under_way(&self) -> &[UnderWay] {
+        self.talked_in().map(Followed::under_way).unwrap_or_default()
     }
 
     /// The channel `channel_id`, if it is followed.

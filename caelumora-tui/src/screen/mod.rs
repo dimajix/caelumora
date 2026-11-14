@@ -1,16 +1,26 @@
 //! How the terminal shows what it prints and reads what the user types: one way of drawing per
 //! implementation of [`Screen`] (issue 569).
 
+mod full;
 mod line;
+mod words;
 
+pub(crate) use full::FullScreen;
 pub(crate) use line::LineScreen;
 
 use crate::printed::Printed;
+use crate::under_way::UnderWay;
+use async_trait::async_trait;
 
-/// A way of drawing the terminal: it shows what is printed, and reads what the user types.
-pub(crate) trait Screen {
+/// A way of drawing the terminal: it shows what is printed and the answers under way, and reads
+/// what the user types.
+#[async_trait]
+pub(crate) trait Screen: Send {
     /// Shows `printed`, after what was shown before.
     fn print(&mut self, printed: Vec<Printed>);
+
+    /// Shows the answers under way in the channel talked in, `under_way`, as they stand now.
+    fn show_under_way(&mut self, under_way: &[UnderWay]);
 
     /// What the user typed next. Nothing is lost if it is dropped before it completes.
     async fn next_input(&mut self) -> Typed;

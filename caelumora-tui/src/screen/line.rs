@@ -1,23 +1,24 @@
 //! The way of drawing `line`: what is printed is written line by line, and what the user types is
 //! read by rustyline (issue 569).
 
+use super::words::{
+    attachment, error_word, how_to_answer, how_to_approve, outcome, question_rows, word_parts,
+    Arguments, EXPLICIT,
+};
 use super::{Screen, Typed};
-use crate::printed::{ErrorKind, Printed, Said, Saying, Words};
+use crate::printed::{Printed, Said, Saying, Words};
+use crate::under_way::UnderWay;
+use async_trait::async_trait;
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::question::QuestionRequest;
-use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
+use caelumora_domain::tool::{ToolCall, ToolCallResult};
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
 use rustyline::{Editor, ExternalPrinter};
-use serde_json::Value;
 use std::sync::mpsc as std_mpsc;
 use std::thread;
 use tokio::sync::mpsc;
 use tracing::warn;
-
-/// How long a tool's arguments, or the first line of its result, are written at most, in
-/// characters.
-const SHORTENED: usize = 160;
 
 /// The way of drawing `line`: each line written once, after those before it, above the line being
 /// typed.
@@ -66,10 +67,15 @@ impl LineScreen {
     }
 }
 
+#[async_trait]
 impl Screen for LineScreen {
     fn print(&mut self, printed: Vec<Printed>) {
         self.write(printed.iter().flat_map(lines_of).collect());
     }
+
+    /// Nothing: an answer is told once as it begins (`Printed::Answering`), and no more until it
+    /// says something, so that a screen reader reads what is said, not where an agent stands.
+    fn show_under_way(&mut self, _under_way: &[UnderWay]) {}
 
     async fn next_input(&mut self) -> Typed {
         if let Some(start) = self.start.take() {
@@ -131,7 +137,7 @@ fn lines_of(printed: &Printed) -> Vec<String> {
         Printed::Approval(request) => approval_lines(request),
         Printed::Questions { request, put_to_user } => questions_lines(request, *put_to_user),
         Printed::Notice(notice) => vec![format!("--- {notice} ---")],
-        Printed::Error { kind, message } => vec![format!("[{}] {message}", error_tag(*kind))],
+        Printed::Error { kind, message } => vec![format!("[{}] {message}", error_word(*kind))],
         Printed::Missed { events } => vec![format!("[{events} events missed]")],
         Printed::Plain(line) => vec![line.clone()],
         Printed::Elsewhere { channel, printed } => {
@@ -144,86 +150,33 @@ fn lines_of(printed: &Printed) -> Vec<String> {
 /// carries (issue 282).
 fn said_line(said: &Said) -> String {
     let words = said.words.as_ref().map(highlighted);
-    let attachments = said.attachments.iter().map(|attachment| {
-        let name = attachment.name.as_str();
-        format!("[{name}, {}, {}]", attachment.media_type, attachment.size_shown())
-    });
+    let attachments = said.attachments.iter().map(|carried| format!("[{}]", attachment(carried)));
     let parts: Vec<String> = words.into_iter().chain(attachments).collect();
     parts.join(" ")
 }
 
-/// The line that tells that `sender` calls the tool of `call`, and with what: its arguments in
-/// one line, shortened.
+/// The line that tells that `sender` calls the tool of `call`, and with what.
 fn call_line(sender: &str, call: &ToolCall) -> String {
     let tool = &call.function_name;
-    match &call.arguments {
-        Value::Null => format!("{sender} calls {tool}, its arguments not shown"),
-        Value::Object(arguments) if arguments.is_empty() => format!("{sender} calls {tool}"),
-        arguments => format!("{sender} calls {tool} with {}", shortened(&arguments.to_string())),
+    match Arguments::of(call) {
+        Arguments::None => format!("{sender} calls {tool}"),
+        Arguments::NotShown => format!("{sender} calls {tool}, its arguments not shown"),
+        Arguments::Shown(arguments) => format!("{sender} calls {tool} with {arguments}"),
     }
 }
 
-/// The line that tells how a call of the tool of `result` ended: what it answered, shortened to
-/// its first line - or that it is not shown -, or why it did not.
+/// The line that tells how a call of the tool of `result` ended.
 fn result_line(result: &ToolCallResult) -> String {
-    let tool = &result.tool_name;
-    let not_shown = !result.visibility.result.is_channel() && result.content.is_empty();
-    if not_shown && result.status.is_ok() {
-        return format!("{tool} answered, its result not shown");
-    }
-    let first = result.content.lines().find(|line| !line.trim().is_empty()).map(shortened);
-    let more = result.content.lines().filter(|line| !line.trim().is_empty()).count();
-    let said = |how: &str| match &first {
-        Some(first) if more > 1 => format!("{tool} {how}: {first} (and {} lines more)", more - 1),
-        Some(first) => format!("{tool} {how}: {first}"),
-        None => format!("{tool} {how}"),
-    };
-    match result.status {
-        ToolResultStatus::Ok => said("answered"),
-        ToolResultStatus::Failed => said("failed"),
-        ToolResultStatus::InvalidArguments => said("refused its arguments"),
-        ToolResultStatus::Denied => format!("{tool} was denied"),
-        ToolResultStatus::Forbidden => format!("{tool} is forbidden here"),
-        ToolResultStatus::TimedOut => format!("{tool} was not approved in time"),
-        ToolResultStatus::Declined => format!("{tool} did not run: its questions were declined"),
-        ToolResultStatus::NotExecuted => format!("{tool} did not run"),
-        ToolResultStatus::Interrupted => format!("{tool} was interrupted"),
-        ToolResultStatus::UnknownTool => format!("{tool} is no tool"),
-        ToolResultStatus::Withheld => format!("{tool} answered what may not be shown here"),
-    }
-}
-
-/// `text` shortened to at most `SHORTENED` characters, the cut marked.
-fn shortened(text: &str) -> String {
-    match text.char_indices().nth(SHORTENED) {
-        Some((cut, _)) => format!("{}…", &text[..cut]),
-        None => text.to_string(),
-    }
-}
-
-/// The word `kind` is told by, in brackets before what went wrong.
-fn error_tag(kind: ErrorKind) -> &'static str {
-    match kind {
-        ErrorKind::Failed => "error",
-        ErrorKind::Rejected => "rejected",
-        ErrorKind::Refused => "refused",
-    }
+    format!("{} {}", result.tool_name, outcome(result))
 }
 
 /// `words` with the participants they mention highlighted.
 fn highlighted(words: &Words) -> String {
-    let text = &words.text;
-    let mut rendered = String::with_capacity(text.len());
-    let mut pos = 0;
-    for mention in &words.mentions {
-        rendered.push_str(&text[pos..mention.start]);
-        rendered.push_str("\x1b[1;36m");
-        rendered.push_str(&text[mention.clone()]);
-        rendered.push_str("\x1b[0m");
-        pos = mention.end;
-    }
-    rendered.push_str(&text[pos..]);
-    rendered
+    let parts = word_parts(words).into_iter().map(|(part, mention)| match mention {
+        true => format!("\x1b[1;36m{part}\x1b[0m"),
+        false => part.to_string(),
+    });
+    parts.collect()
 }
 
 /// The lines that show `request` for approval, and how to answer it.
@@ -232,51 +185,20 @@ fn approval_lines(request: &ApprovalRequest) -> Vec<String> {
     let mut lines =
         vec![format!("--- Approval requested (id: {id}) ---"), request.description.clone()];
     if request.explicit {
-        lines.push(
-            "A rule of this session or channel asks for this call to be decided by a person."
-                .to_string(),
-        );
+        lines.push(EXPLICIT.to_string());
     }
-    lines.push(format!("Type '/approve {id}' or '/deny {id}' to respond."));
+    lines.push(how_to_approve(request));
     lines
 }
 
-/// The lines that show the questions of `request` (issue 165), and - if they are `put_to_user` -
-/// how to answer them.
+/// The lines that show the questions of `request` (issue 165), and how to answer them if they
+/// are `put_to_user`.
 fn questions_lines(request: &QuestionRequest, put_to_user: bool) -> Vec<String> {
     let id = request.id.0;
     let mut lines =
         vec![format!("--- Questions of {} (id: {id}) ---", request.tool_call.function_name)];
-    for (index, question) in request.questions.questions.iter().enumerate() {
-        lines.push(format!("{}. [{}] {}", index + 1, question.header, question.question));
-        for (number, choice) in question.choices.iter().enumerate() {
-            let recommended = if choice.recommended { " (recommended)" } else { "" };
-            let description =
-                choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
-            lines.push(format!(
-                "   {}) {}{}{}",
-                number + 1,
-                choice.label,
-                recommended,
-                description
-            ));
-        }
-    }
-    if put_to_user {
-        if request.questions.sensitive {
-            lines.push(
-                "Sensitive: the answers go to the tool alone - but what you type is shown on this \
-                 terminal."
-                    .to_string(),
-            );
-        }
-        lines.push(format!(
-            "Type '/answer {id}' to answer them one by one, or '/decline {id}'. A message instead \
-             declines them."
-        ));
-    } else {
-        lines.push("They are put to others.".to_string());
-    }
+    lines.extend(question_rows(request));
+    lines.extend(how_to_answer(request, put_to_user));
     lines
 }
 
@@ -296,6 +218,7 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::printed::ErrorKind;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::ChannelId;
@@ -305,9 +228,10 @@ mod tests {
     use caelumora_domain::question::Questions;
     use caelumora_domain::session::SessionId;
     use caelumora_domain::tool::testing::make_tool_call;
-    use caelumora_domain::tool::ToolVisibility;
+    use caelumora_domain::tool::{ToolResultStatus, ToolVisibility};
     use caelumora_domain::user::UserId;
     use serde_json::json;
+    use serde_json::Value;
 
     fn said(words: Option<&str>, attachments: Vec<ContentRef>, saying: Saying) -> Printed {
         let words = words.map(|text| Words { text: text.to_string(), mentions: Vec::new() });

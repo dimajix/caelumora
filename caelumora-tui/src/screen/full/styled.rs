@@ -1,0 +1,354 @@
+//! How the full-screen terminal draws what it prints and the answers under way: in lines styled
+//! by what they tell (issue 569).
+
+use super::PROMPT;
+use crate::printed::{Printed, Said, Saying, Words};
+use crate::screen::words::{
+    attachment, error_word, how_to_answer, how_to_approve, outcome, question_rows, word_parts,
+    Arguments, EXPLICIT,
+};
+use crate::under_way::UnderWay;
+use caelumora_domain::actor::ActorState;
+use caelumora_domain::approval::ApprovalRequest;
+use caelumora_domain::question::QuestionRequest;
+use caelumora_domain::tool::{ToolCall, ToolCallResult};
+use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::text::{Line, Span};
+use std::time::Instant;
+
+/// The frames the status of an answer under way turns through, one each tenth of a second.
+const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// The lines `printed` is drawn as; none for what the status line shows instead.
+pub(super) fn styled(printed: &Printed) -> Vec<Line<'static>> {
+    match printed {
+        Printed::Said { sender, said, saying } => said_lines(sender, said, *saying),
+        // The status line shows it as long as the answer is under way.
+        Printed::Answering { .. } => Vec::new(),
+        Printed::ToolCall { sender, call } => vec![call_line(sender, call)],
+        Printed::ToolResult(result) => vec![result_line(result)],
+        Printed::Approval(request) => approval_lines(request),
+        Printed::Questions { request, put_to_user } => questions_lines(request, *put_to_user),
+        Printed::Notice(notice) => text_lines(notice, Style::new().dim().italic()),
+        Printed::Error { kind, message } => {
+            text_lines(&format!("{}: {message}", error_word(*kind)), Style::new().red())
+        }
+        Printed::Missed { events } => {
+            vec![Line::styled(format!("{events} events missed"), Style::new().yellow())]
+        }
+        Printed::Plain(text) => text_lines(text, Style::new()),
+        Printed::Elsewhere { channel, printed } => styled(printed)
+            .into_iter()
+            .map(|line| {
+                let mut spans = vec![Span::styled(format!("[{channel}] "), Style::new().dim())];
+                spans.extend(line.spans);
+                Line::from(spans).style(line.style)
+            })
+            .collect(),
+    }
+}
+
+/// The line typed by the user, as it is drawn once sent.
+pub(super) fn typed_line(line: &str) -> Vec<Line<'static>> {
+    let mut lines = vec![Line::default()];
+    for (index, row) in line.split('\n').enumerate() {
+        let lead = match index {
+            0 => PROMPT.to_string(),
+            _ => " ".repeat(PROMPT.chars().count()),
+        };
+        lines.push(Line::from(vec![Span::raw(lead).bold(), Span::raw(row.to_string())]));
+    }
+    lines
+}
+
+/// The lines the answers `under_way` are drawn as at the end of what was printed: what each
+/// streamed so far of the message it writes - its reasoning dimmed, then its words.
+pub(super) fn live_lines(under_way: &[UnderWay]) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    for answer in under_way {
+        if answer.reasoning.is_empty() && answer.content.is_empty() {
+            continue;
+        }
+        lines.push(Line::default());
+        let thinking = Style::new().dim().italic();
+        for (index, row) in answer.reasoning.split('\n').enumerate() {
+            if answer.reasoning.is_empty() {
+                break;
+            }
+            let lead = if index == 0 { format!("{} thinks: ", answer.name) } else { "  ".into() };
+            lines.push(Line::from(vec![
+                Span::styled(lead, thinking),
+                Span::styled(row.to_string(), thinking),
+            ]));
+        }
+        for (index, row) in answer.content.split('\n').enumerate() {
+            if answer.content.is_empty() {
+                break;
+            }
+            let lead = match index {
+                0 => Span::styled(format!("{}: ", answer.name), Style::new().bold()),
+                _ => Span::raw("  "),
+            };
+            lines.push(Line::from(vec![lead, Span::raw(row.to_string())]));
+        }
+    }
+    lines
+}
+
+/// The status line of the answers `under_way` at `now`: who answers, where they stand, and for
+/// how long; empty where none is.
+pub(super) fn status_line(under_way: &[UnderWay], now: Instant) -> Line<'static> {
+    let mut spans = Vec::new();
+    for (index, answer) in under_way.iter().enumerate() {
+        if index > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let elapsed = now.saturating_duration_since(answer.since);
+        let tenths = usize::try_from(elapsed.as_millis() / 100).unwrap_or(0);
+        spans.push(Span::styled(
+            format!("{} ", SPINNER[tenths % SPINNER.len()]),
+            Style::new().cyan(),
+        ));
+        spans.push(Span::styled(answer.name.clone(), Style::new().bold()));
+        let state = state_words(answer.state);
+        spans.push(Span::styled(format!(" {state} · {}s", elapsed.as_secs()), Style::new().dim()));
+    }
+    Line::from(spans)
+}
+
+/// The words that tell where an agent stands in its answer, `state`.
+fn state_words(state: Option<ActorState>) -> &'static str {
+    match state {
+        None | Some(ActorState::Idle) => "is answering",
+        Some(ActorState::Planning) => "is thinking",
+        Some(ActorState::ExecutingTools) => "is running tools",
+        Some(ActorState::WaitingForUser) => "is waiting for you",
+        Some(ActorState::Reflecting) => "is finishing",
+        Some(ActorState::Cancelling) => "is cancelling",
+        Some(ActorState::CarryingOutCommand) => "is carrying out a command",
+        Some(ActorState::Sleeping) => "is asleep",
+        Some(ActorState::Busy) => "is busy",
+    }
+}
+
+/// The lines of what `sender` said in a message of the kind `saying`: a message complete set
+/// apart and led by its sender, a step of a plan dimmed, a change marked; what it carries after
+/// its words.
+fn said_lines(sender: &str, said: &Said, saying: Saying) -> Vec<Line<'static>> {
+    let text_style = match saying {
+        Saying::Step => Style::new().dim(),
+        Saying::Complete | Saying::Edited => Style::new(),
+    };
+    let mut rows =
+        said.words.as_ref().map(|words| word_rows(words, text_style)).unwrap_or_default();
+    let carried = said
+        .attachments
+        .iter()
+        .map(|carried| Span::styled(format!(" [{}]", attachment(carried)), Style::new().dim()));
+    if rows.is_empty() {
+        rows.push(Vec::new());
+    }
+    if let Some(last) = rows.last_mut() {
+        last.extend(carried);
+        if saying == Saying::Edited {
+            last.push(Span::styled(" (edited)", Style::new().dim()));
+        }
+    }
+    let lead = match saying {
+        Saying::Step => Span::styled(format!("{sender} (working): "), Style::new().dim()),
+        Saying::Complete | Saying::Edited => {
+            Span::styled(format!("{sender}: "), Style::new().bold())
+        }
+    };
+    let mut lines = match saying {
+        Saying::Complete => vec![Line::default()],
+        Saying::Step | Saying::Edited => Vec::new(),
+    };
+    for (index, row) in rows.into_iter().enumerate() {
+        let first = if index == 0 { lead.clone() } else { Span::raw("  ") };
+        lines.push(Line::from([vec![first], row].concat()));
+    }
+    lines
+}
+
+/// The rows of `words`, broken where a line break was said, in `style`, the participants they
+/// mention highlighted.
+fn word_rows(words: &Words, style: Style) -> Vec<Vec<Span<'static>>> {
+    let mention = Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let mut rows = vec![Vec::new()];
+    for (part, mentions) in word_parts(words) {
+        let style = if mentions { mention } else { style };
+        for (index, piece) in part.split('\n').enumerate() {
+            if index > 0 {
+                rows.push(Vec::new());
+            }
+            if let (false, Some(row)) = (piece.is_empty(), rows.last_mut()) {
+                row.push(Span::styled(piece.to_string(), style));
+            }
+        }
+    }
+    rows
+}
+
+/// The line that tells that `sender` calls the tool of `call`, and with what.
+fn call_line(sender: &str, call: &ToolCall) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(format!("  {sender} → "), Style::new().dim()),
+        Span::styled(call.function_name.clone(), Style::new().bold()),
+    ];
+    match Arguments::of(call) {
+        Arguments::None => {}
+        Arguments::NotShown => {
+            spans.push(Span::styled(" (arguments not shown)", Style::new().dim()))
+        }
+        Arguments::Shown(arguments) => {
+            spans.push(Span::styled(format!(" {arguments}"), Style::new().dim()))
+        }
+    }
+    Line::from(spans)
+}
+
+/// The line that tells how the call of `result` ended: dimmed where it answered, red where not.
+fn result_line(result: &ToolCallResult) -> Line<'static> {
+    let style = match result.status.is_ok() {
+        true => Style::new().dim(),
+        false => Style::new().red(),
+    };
+    Line::styled(format!("    ⎿ {} {}", result.tool_name, outcome(result)), style)
+}
+
+/// The lines that show `request` for approval, and how to answer it.
+fn approval_lines(request: &ApprovalRequest) -> Vec<Line<'static>> {
+    let mut lines = vec![
+        Line::default(),
+        Line::from(vec![
+            Span::styled("Approval requested: ", Style::new().yellow().bold()),
+            Span::raw(request.description.clone()),
+        ]),
+    ];
+    if request.explicit {
+        lines.push(Line::styled(EXPLICIT, Style::new().dim()));
+    }
+    lines.push(Line::styled(how_to_approve(request), Style::new().dim()));
+    lines
+}
+
+/// The lines that show the questions of `request`, and how to answer them if they are
+/// `put_to_user`.
+fn questions_lines(request: &QuestionRequest, put_to_user: bool) -> Vec<Line<'static>> {
+    let header = format!("Questions of {}:", request.tool_call.function_name);
+    let mut lines = vec![Line::default(), Line::styled(header, Style::new().yellow().bold())];
+    lines.extend(question_rows(request).into_iter().map(Line::from));
+    let how = how_to_answer(request, put_to_user);
+    lines.extend(how.into_iter().map(|how| Line::styled(how, Style::new().dim())));
+    lines
+}
+
+/// The lines of `text`, broken where it has line breaks, in `style`.
+fn text_lines(text: &str, style: Style) -> Vec<Line<'static>> {
+    text.split('\n').map(|row| Line::styled(row.to_string(), style)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::printed::ErrorKind;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::AgentId;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::ToolResultStatus;
+    use caelumora_domain::work::TurnId;
+    use std::time::Duration;
+
+    fn texts(lines: &[Line<'static>]) -> Vec<String> {
+        lines.iter().map(|line| line.to_string()).collect()
+    }
+
+    /// A message complete is set apart and led by its sender, broken where it has line breaks; a
+    /// step of a plan is marked so, a change so.
+    #[test]
+    fn what_was_said_is_led_by_its_sender() {
+        // Both mentions stand on the first line: "hi @kaya @lou".
+        let said = |text: &str, saying| Printed::Said {
+            sender: "helper".to_string(),
+            said: Said {
+                words: Some(Words { text: text.to_string(), mentions: vec![3..8, 9..13] }),
+                attachments: Vec::new(),
+            },
+            saying,
+        };
+        assert_eq!(
+            texts(&styled(&said("hi @kaya @lou\nbye", Saying::Complete))),
+            ["", "helper: hi @kaya @lou", "  bye"]
+        );
+        let step = styled(&said("hi @kaya @lou", Saying::Step));
+        assert_eq!(texts(&step), ["helper (working): hi @kaya @lou"]);
+        assert_eq!(
+            texts(&styled(&said("hi @kaya @lou", Saying::Edited))),
+            ["helper: hi @kaya @lou (edited)"]
+        );
+        let mentions = step[0].spans.iter().filter(|span| span.content.starts_with('@'));
+        let highlighted = mentions.filter(|span| span.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(highlighted.count(), 2, "{step:?}");
+    }
+
+    /// Tool calls and how they ended are drawn indented under what was said, an answer begun not
+    /// at all, what went wrong with its kind.
+    #[test]
+    fn tools_errors_and_beginnings_are_drawn_by_what_they_tell() {
+        let call = make_tool_call("terminal");
+        let called =
+            Printed::ToolCall { sender: "helper".to_string(), call: Box::new(call.clone()) };
+        assert_eq!(texts(&styled(&called)), ["  helper → terminal (arguments not shown)"]);
+        let result =
+            ToolCallResult::of(&call, ToolResultStatus::Ok, "done".to_string(), Default::default());
+        assert_eq!(
+            texts(&styled(&Printed::ToolResult(Box::new(result)))),
+            ["    ⎿ terminal answered: done"]
+        );
+        assert!(styled(&Printed::Answering { sender: "helper".to_string() }).is_empty());
+        let error = Printed::Error { kind: ErrorKind::Refused, message: "no".to_string() };
+        assert_eq!(texts(&styled(&error)), ["refused: no"]);
+        assert_eq!(
+            texts(&styled(&Printed::Notice("Talking in main now".to_string()))),
+            ["Talking in main now"]
+        );
+    }
+
+    /// What an answer under way streamed is drawn by its agent, reasoning before words; one that
+    /// streamed nothing is not drawn.
+    #[test]
+    fn what_answers_under_way_streamed_is_drawn() {
+        let mut helper = UnderWay::began(
+            ActorId::Agent(AgentId::new()),
+            "helper".to_string(),
+            TurnId::new(),
+            None,
+        );
+        let quiet = UnderWay::began(
+            ActorId::Agent(AgentId::new()),
+            "quiet".to_string(),
+            TurnId::new(),
+            None,
+        );
+        helper.reasoning = "hm".to_string();
+        helper.content = "one\ntwo".to_string();
+        assert_eq!(
+            texts(&live_lines(&[quiet, helper])),
+            ["", "helper thinks: hm", "helper: one", "  two"]
+        );
+    }
+
+    /// The status line tells who answers, where they stand and for how long.
+    #[test]
+    fn the_status_line_tells_who_answers_where_and_how_long() {
+        let now = Instant::now();
+        let since = now.checked_sub(Duration::from_secs(12)).unwrap_or(now);
+        let agent = ActorId::Agent(AgentId::new());
+        let state = Some(ActorState::ExecutingTools);
+        let answer = UnderWay::began(agent, "helper".to_string(), TurnId::new(), state);
+        let line = status_line(&[UnderWay { since, ..answer }], now).to_string();
+        assert!(line.ends_with("helper is running tools · 12s"), "{line}");
+        assert!(status_line(&[], now).to_string().is_empty());
+    }
+}

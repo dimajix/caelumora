@@ -10,6 +10,7 @@ use caelumora_domain::channel::ChannelId;
 use caelumora_domain::mention::{is_group_handle, mention_spans};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::{QuestionId, QuestionRequest};
+use caelumora_domain::snapshot::Detail;
 use caelumora_domain::tool::ToolPresentation;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
@@ -65,8 +66,9 @@ pub(crate) struct Followed {
     /// The last answer of an agent shown, which `/retry` asks it to give again (issue 234) unless
     /// one of the two below is known.
     last_answer: Option<MessageId>,
-    /// The answers under way, in the order they began: what the screen shows as such, and of which
-    /// `/retry` asks for the last first (issue 235).
+    /// The answers under way, in the order they began - those the terminal learnt of as it caught
+    /// up after those it knew -: what the screen shows as such, and of which `/retry` asks for the
+    /// last first (issue 235).
     under_way: Vec<UnderWay>,
     /// The calls presented `quiet` whose results are yet to come, by id, with the agent that made
     /// them and what would be printed of them: a result of one is left out where it succeeded, as
@@ -131,6 +133,11 @@ impl Followed {
     /// yet to be decided is shown again, since it is still pending. A new run of the user's actor
     /// knows none of the questions put to the one before (issue 561), so where one began, only
     /// approvals are made up for.
+    ///
+    /// The answers under way are read anew as well, from the running channel
+    /// (`read_under_way`): one whose end was missed is under way no more, one whose start was
+    /// missed is, and those known keep what they streamed. Nothing is printed of them; the screen
+    /// shows them (`Screen::show_under_way`).
     pub(crate) async fn catch_up(&mut self) -> Vec<Printed> {
         let mut printed = Vec::new();
         if let Some(pending) = self.read_pending_approvals().await {
@@ -142,6 +149,9 @@ impl Followed {
             if self.known_questions.insert(questions.id) {
                 printed.push(questions_printed(&questions, self.me()));
             }
+        }
+        if let Some(under_way) = self.read_under_way().await {
+            self.under_way = under_way;
         }
         printed
     }
@@ -248,8 +258,25 @@ impl Followed {
         match &envelope.event {
             ActorEvent::ResponseStarted { turn_id } if is_agent => {
                 self.end_under_way(sender_id);
-                self.under_way.push(UnderWay { agent: sender_id, turn: *turn_id });
-                vec![Printed::Answering { sender: envelope.context.sender_name.clone() }]
+                let name = envelope.context.sender_name.clone();
+                self.under_way.push(UnderWay::began(sender_id, name.clone(), *turn_id, None));
+                vec![Printed::Answering { sender: name }]
+            }
+            // Where the agent stands in its answer (issue 243).
+            ActorEvent::StateChanged(state) => {
+                if let Some(answer) = self.answer_of(sender_id) {
+                    answer.state = Some(*state);
+                }
+                Vec::new()
+            }
+            // What streams of the message being written, shown as the answer under way until the
+            // message is complete.
+            ActorEvent::PartialMessageGenerated(partial)
+            | ActorEvent::IntermediatePartialGenerated(partial) => {
+                if let Some(answer) = self.answer_of(sender_id) {
+                    answer.stream(partial);
+                }
+                Vec::new()
             }
             // Its answer has ended, said or not.
             ActorEvent::TurnFinished { .. } => {
@@ -263,10 +290,16 @@ impl Followed {
                     self.last_answer = Some(message.id);
                 }
                 self.given_up = None;
+                if let Some(answer) = self.answer_of(sender_id) {
+                    answer.complete();
+                }
                 self.message_printed(message, Saying::Complete)
             }
             // A step of a plan under way, with the calls it made and their results.
             ActorEvent::IntermediateMessageGenerated(message) => {
+                if let Some(answer) = self.answer_of(sender_id) {
+                    answer.complete();
+                }
                 self.message_printed(message, Saying::Step)
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
@@ -315,6 +348,11 @@ impl Followed {
             }
             _ => shown(envelope, &self.handles),
         }
+    }
+
+    /// The answers under way in the channel, in the order they began.
+    pub(crate) fn under_way(&self) -> &[UnderWay] {
+        &self.under_way
     }
 
     /// Whether approval `id` is known as pending - read as what waits (`catch_up`), or shown
@@ -393,6 +431,37 @@ impl Followed {
     /// (`UserActor::questions_to_answer`); none between two runs of it.
     fn put_to_user(&self) -> Vec<QuestionRequest> {
         self.actor().map(|actor| actor.questions_to_answer()).unwrap_or_default()
+    }
+
+    /// The answer under way of `agent`, if it gives one.
+    fn answer_of(&mut self, agent: ActorId) -> Option<&mut UnderWay> {
+        self.under_way.iter_mut().find(|answer| answer.agent == agent)
+    }
+
+    /// The answers under way in the channel as its running channel tells them: those known that
+    /// still are, in the order they began and with what they streamed, then those not known, in
+    /// the order of the participants, as begun now; `None` if the channel cannot be read.
+    async fn read_under_way(&self) -> Option<Vec<UnderWay>> {
+        let view = self.views.channel(self.channel.session_id(), self.channel_id()).await.ok()?;
+        let mut running = Vec::new();
+        for participant in view.participants().await {
+            let snapshot = participant.snapshot(Detail::empty()).await;
+            if let Some(turn) = snapshot.turn_under_way {
+                let name = snapshot.name.unwrap_or_else(|| snapshot.id.to_string());
+                running.push(UnderWay::began(snapshot.id, name, turn, snapshot.state));
+            }
+        }
+        let is_known = |answer: &UnderWay| {
+            self.under_way
+                .iter()
+                .any(|known| (known.agent, known.turn) == (answer.agent, answer.turn))
+        };
+        let still = self.under_way.iter().filter(|known| {
+            running.iter().any(|answer| (known.agent, known.turn) == (answer.agent, answer.turn))
+        });
+        let mut under_way: Vec<UnderWay> = still.cloned().collect();
+        under_way.extend(running.into_iter().filter(|answer| !is_known(answer)));
+        Some(under_way)
     }
 
     /// Ends the answer under way of `agent`, if it gives one, and forgets its quiet calls, whose
@@ -689,7 +758,7 @@ mod tests {
     use super::*;
     use crate::screen::testing::lines;
     use anyhow::Error;
-    use caelumora_domain::actor::Rejection;
+    use caelumora_domain::actor::{ActorState, Rejection};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::{ApprovalRuleId, ApprovalVerdict, ApproverId};
     use caelumora_domain::channel::HistoryAccess;
@@ -703,6 +772,7 @@ mod tests {
         owned_kernel, running_session_of_a_user, spec, test_kernel,
     };
     use caelumora_kernel::session::{SessionLoop, SessionManager};
+    use caelumora_kernel::testing::{Script, ScriptedAgents, TestKernel};
     use caelumora_kernel::view::Viewer;
     use caelumora_security::confidentiality::ConfidentialityRules;
     use caelumora_security::SecurityContext;
@@ -1089,6 +1159,83 @@ mod tests {
                 "attach failed: done"
             ]
         );
+    }
+
+    /// An answer under way keeps where its agent stands and what it streamed of the message it
+    /// writes, until the message is complete (issue 569).
+    #[tokio::test]
+    async fn an_answer_under_way_keeps_its_state_and_what_it_streamed() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let turn_id = TurnId::new();
+        let shown =
+            |followed: &mut Followed, event| followed.take_in(&from(&channel, agent, event));
+        shown(&mut followed, ActorEvent::ResponseStarted { turn_id });
+        shown(&mut followed, ActorEvent::StateChanged(ActorState::ExecutingTools));
+        for chunk in ["Hel", "lo"] {
+            let partial = Message { reasoning: Some("hm".to_string()), ..message(agent, chunk) };
+            assert!(shown(&mut followed, ActorEvent::PartialMessageGenerated(partial)).is_empty());
+        }
+        let answer = &followed.under_way()[0];
+        assert_eq!((answer.turn, answer.state), (turn_id, Some(ActorState::ExecutingTools)));
+        assert_eq!((answer.content.as_str(), answer.reasoning.as_str()), ("Hello", "hmhm"));
+
+        shown(&mut followed, ActorEvent::CompleteMessageGenerated(message(agent, "Hello")));
+        let answer = &followed.under_way()[0];
+        assert!(answer.content.is_empty() && answer.reasoning.is_empty(), "complete");
+    }
+
+    /// Catching up reads the answers under way anew from the running channel: one whose end was
+    /// missed is under way no more (issue 569).
+    #[tokio::test]
+    async fn catching_up_reads_the_answers_under_way_anew() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let started = ActorEvent::ResponseStarted { turn_id: TurnId::new() };
+        followed.take_in(&from(&channel, agent, started));
+        assert_eq!(followed.under_way().len(), 1);
+        followed.catch_up().await;
+        assert!(followed.under_way().is_empty(), "no turn of it runs in the channel");
+    }
+
+    /// Catching up keeps an answer known with what it streamed, and learns of one whose start was
+    /// missed - also as a channel is followed, with the agent's name (issue 569).
+    #[tokio::test]
+    async fn catching_up_keeps_the_answers_known_and_learns_of_the_others() {
+        let kernel =
+            TestKernel { libraries: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }
+                .build();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
+        let channel = session_loop.channels().into_iter().next().expect("the main channel");
+        let agent = ActorId::Agent(an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await);
+        let views = manager.views(Viewer::new(ctx));
+        let mut followed =
+            Followed::new(Arc::clone(&channel), views.clone()).await.expect("the owner takes part");
+        let actor = followed.actor().expect("the owner's actor runs");
+        actor.send_message(Some("hello".to_string()), None, Vec::new()).await.expect("said");
+        let begun = async {
+            loop {
+                if let Ok(Shown::Envelope(envelope)) = followed.next().await {
+                    followed.take_in(&envelope);
+                    if !followed.under_way().is_empty() {
+                        break;
+                    }
+                }
+            }
+        };
+        time::timeout(Duration::from_secs(5), begun).await.expect("the agent begins to answer");
+        let partial = ActorEvent::PartialMessageGenerated(message(agent, "Hel"));
+        followed.take_in(&from(&channel, agent, partial));
+
+        followed.catch_up().await;
+        let kept =
+            followed.under_way().iter().map(|a| (a.agent, a.content.clone())).collect::<Vec<_>>();
+        assert_eq!(kept, [(agent, "Hel".to_string())], "known, kept with what it streamed");
+
+        let anew = Followed::new(Arc::clone(&channel), views).await.expect("the owner takes part");
+        let learnt = anew.under_way().iter().map(|a| (a.agent, a.name.clone())).collect::<Vec<_>>();
+        assert_eq!(learnt, [(agent, "helper".to_string())], "learnt of as it was followed");
     }
 
     /// The quiet calls of an agent are forgotten as its turn ends: their results will not come.
