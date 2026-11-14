@@ -71,3 +71,12 @@ stands without a group, as `/help` does, since ending the program acts on no ent
 with; `Sessions`, which lists, starts, continues and resumes the sessions of the directory for the
 options of the program; the lines typed handled in `commands.rs`. What tells that no session was
 started yet is printed by the screen now, not past it.
+
+**2026-11-14** - Step 2 done: the terminal's commands are `TerminalCommand`, named by COMMANDS.md
+with the domain's `Command` - `/exit` (`/quit`), `/channel switch` (`/switch`), `/agent retry`
+(`/retry`), `/approval approve` and `deny`, `/question answer` and `decline` -, tried before a line
+goes to the channel; `/help` lists them after the channel's, and tells of one or a group of them
+where the channel knows nothing of it or no channel is talked in. A command that takes no arguments
+refuses them. `exit` and `quit` are messages. A test holds that none of them collides with another,
+nor with a command a session has by default - not with those a configuration, a template or an
+agent adds, which the terminal would hide.

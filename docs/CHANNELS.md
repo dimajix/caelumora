@@ -133,12 +133,12 @@ the call recorded as having run, and the agent ends within the grace.
 
 ### Shutting down
 
-As the process ends - SIGINT or SIGTERM to the server, a signal, `exit` or an error to the TUI - the
-sessions are shut down in order (`SessionManager::shutdown`, issue 297). From then on no session is
-started: a request that would start one is refused (`SessionError::ShuttingDown`), as one that would
-start a session another process runs is (`SessionError::RunsElsewhere`, issue 554). Every running
-session is stopped as `stop` stops it, all at once, so that each actor keeps what it is in the
-middle of. Of the commands, only what does not outlive the process ends: each storage decides
+As the process ends - SIGINT or SIGTERM to the server, a signal, `/exit` or an error to the TUI -
+the sessions are shut down in order (`SessionManager::shutdown`, issue 297). From then on no session
+is started: a request that would start one is refused (`SessionError::ShuttingDown`), as one that
+would start a session another process runs is (`SessionError::RunsElsewhere`, issue 554). Every
+running session is stopped as `stop` stops it, all at once, so that each actor keeps what it is in
+the middle of. Of the commands, only what does not outlive the process ends: each storage decides
 (`TerminalProvider::shutdown`) - the `local` shell ends its commands, an Open Terminal instance
 keeps them, which the model can follow after a restart and their bound ends. The whole takes at most
 `SHUTDOWN_BOUND`, eight seconds, within the ten Docker leaves between SIGTERM and SIGKILL; what is

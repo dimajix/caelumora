@@ -98,8 +98,9 @@ the answers of agents as they stream at its end, a status line that tells who an
 they stand, and the line typed below; text is selected with Shift held. `line` writes line by line,
 each line once, above the line being typed - for a screen reader, and wherever input or output is
 no terminal. Both show what agents say, the tools they call and how the calls ended, and of a
-channel the program opens, continues or switches to what was said in it so far - its last 50
-items.
+channel the program opens, continues or switches to what was said in it so far - the messages
+among its last 50 items. `/help` lists the commands of the channel and those the terminal carries
+out itself; `/exit` ends the program.
 
 ### Running the Program
 

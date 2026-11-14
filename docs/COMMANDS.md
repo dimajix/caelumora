@@ -16,7 +16,9 @@ agent](#commands-of-an-agent)).
 
 Commands are for people; agents act through tools. A command is always issued on behalf of a
 particular person, by that person's actor (`UserActor::execute_command`), as messages and approvals
-are; only `UserActor` issues commands. What a command does to the channel goes through the channel's
+are; only `UserActor` issues commands - but for those the terminal carries out itself, which act on
+the terminal alone or through the same actor ([below](#commands-of-the-terminal)). What a command
+does to the channel goes through the channel's
 own, permission-checked operations; what it sends in the issuer's name, their actor sends, since an
 actor sends only in its own name; a command of an agent is sent to the agent, which carries it out
 itself.
@@ -26,8 +28,22 @@ itself.
 The client decides whether a line is a command and sends it as one rather than as a message; the
 message API stays plain text. The rule is `caelumora_domain::command::parse_input`, mirrored in the
 web UI: a leading `/` starts a command, and the rest of the line is sent, trimmed; `//` sends a
-literal `/`. Only this lexical rule is repeated per frontend. Which command a line is, what it
-means, who may run it and what it answers is decided in one place.
+literal `/`. Only this lexical rule is repeated per frontend. Which command of the channel a line
+is, what it means, who may run it and what it answers is decided in one place.
+
+### Commands of the terminal
+
+The terminal (`caelumora-tui`) carries out a few commands itself, of what the channel's commands do
+not offer - end the program, switch the channel it talks in, answer an approval or questions as it
+shows them, ask an agent to answer again (`TerminalCommand`, issue
+[570](../issues/570-the-terminal-s-commands-and-its-sessions.md)). They are named by the rules below
+as the channel's are, with the domain's `Command`, and a line is tried against them before it goes
+to the channel: so no name or short form of them may begin, or be the beginning of, one of the
+channel's - which a test holds for the commands a session has by default, not for those a
+configuration, a template or an agent adds. One that takes no arguments refuses them. `/help` lists
+them after the channel's, and tells of one of them, or of a group of them, where the channel knows
+nothing of what is asked or no channel is talked in. `/exit` (`/quit`) belongs to no group, as
+`/help` does: ending the program acts on no entity of a channel.
 
 ### Names
 
@@ -210,7 +226,7 @@ external agent alike.
 
 | Command | Short form | Of | Component | Arguments | Answer | What it does |
 |---|---|---|---|---|---|---|
-| `/help` | - | the channel | `help` | `[group or command]` | private | Lists the commands the user may use - the channel's and the agents' -, those of a group, or describes one. |
+| `/help` | - | the channel | `help` | `[group or command]` | private | Lists the commands the user may use - the channel's and the agents', and in the terminal its own -, those of a group, or describes one. |
 | `/participant list` | - | the channel | `participant` | - | private | Lists who takes part in the channel: their names and handles, whether users or agents, and an agent's personality. |
 | `/participant add` | `/add` | the channel | `participant` | `<name>` | private | Brings the user or agent named into the channel, and into the session first if not in it yet; they see the whole history ([CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)). |
 | `/participant remove` | - | the channel | `participant` | `<participant>` | private | Removes the participant named from the channel; they stay in the session. |
@@ -231,3 +247,10 @@ external agent alike.
 | `/skill` | - | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | - | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
 | `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
+| `/exit` | `/quit` | the terminal | - | - | - | Ends the program, the session shut down in order. |
+| `/channel switch` | `/switch` | the terminal | - | `<channel>` | - | Talks in another channel of the session the user takes part in. |
+| `/agent retry` | `/retry` | the terminal | - | - | - | Asks for the answer under way, the turn given up, or the last answer of an agent again. |
+| `/approval approve` | `/approve` | the terminal | - | `<id>` | - | Approves the call waiting for approval of that id ([APPROVALS.md](APPROVALS.md)). |
+| `/approval deny` | `/deny` | the terminal | - | `<id>` | - | Denies the call waiting for approval of that id. |
+| `/question answer` | `/answer` | the terminal | - | `[id]` | - | Begins to answer the questions put to the user of that id, or the last, one by one. |
+| `/question decline` | `/decline` | the terminal | - | `[id]` | - | Declines the questions put to the user of that id, or the last. |

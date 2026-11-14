@@ -285,7 +285,7 @@ impl Channels {
     pub(crate) fn hint(&self) -> Printed {
         if self.followed.is_empty() {
             return Printed::Notice(
-                "You take part in no channel of this session: type 'exit' to end".to_string(),
+                "You take part in no channel of this session: type '/exit' to end".to_string(),
             );
         }
         let names: Vec<String> =

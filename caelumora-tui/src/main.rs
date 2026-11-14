@@ -53,7 +53,7 @@ use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use channels::Channels;
 use clap::{Parser, Subcommand, ValueEnum};
-use commands::{closed_before_answered, handle_line};
+use commands::{closed_before_answered, handle_line, Handled};
 use futures::future::select_all;
 use here::{place_of, HERE};
 use home::Home;
@@ -340,16 +340,17 @@ async fn talk(
     };
     screen.print(opening);
     // The questions being answered, with the responses given so far: while they are, every line
-    // but `/switch`, `/answer` and `/decline` answers the next question.
+    // but `/exit`, `/switch`, `/answer` and `/decline` answers the next question.
     let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
 
-    let started = "Chat Session Started (Type 'exit' or 'quit' to stop)".to_string();
+    let started =
+        "Chat Session Started (Type '/exit' to stop, '/help' for the commands)".to_string();
     screen.print(vec![Printed::Notice(started)]);
     // What is under way as the channels were followed, before anything happens in them.
     screen.show_under_way(channels.under_way());
     loop {
         tokio::select! {
-            // A signal ends the talk as `exit` does, so that the session is shut down in order
+            // A signal ends the talk as `/exit` does, so that the session is shut down in order
             // (issue 297).
             () = &mut signalled => {
                 screen.print(vec![Printed::Notice("Ending".to_string())]);
@@ -380,11 +381,10 @@ async fn talk(
                     }
                     Typed::Ended => break,
                 };
-                let input = line.trim();
-                if input == "exit" || input == "quit" {
-                    break;
-                }
-                let printed = handle_line(input, &mut channels, &mut answering).await?;
+                let printed = match handle_line(line.trim(), &mut channels, &mut answering).await? {
+                    Handled::Printed(printed) => printed,
+                    Handled::Exit => break,
+                };
                 screen.print(printed);
                 // Another channel may be talked in now.
                 screen.show_under_way(channels.under_way());
