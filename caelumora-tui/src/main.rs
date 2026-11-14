@@ -34,12 +34,13 @@ use caelumora_domain::value::language::Language;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
 use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::error::user_message;
+use caelumora_kernel::event::EventBus;
 use caelumora_kernel::kernel::{Kernel, KernelBuilder};
 use caelumora_kernel::plugin::Plugin;
 use caelumora_kernel::project::ProjectManager;
 use caelumora_kernel::session::{SessionError, SessionLoop, SessionManager, SessionSpec};
 use caelumora_kernel::user_provider::Credential;
-use caelumora_kernel::view::Viewer;
+use caelumora_kernel::view::{Viewer, Views};
 use caelumora_logging::{init, LogTarget};
 use caelumora_memory::library::MemoryLibrary;
 use caelumora_memory::plugin::MemoryPlugin;
@@ -63,6 +64,7 @@ use caelumora_tool_workspace::library::WorkspaceToolLibrary;
 use channels::Channels;
 use clap::{Parser, Subcommand, ValueEnum};
 use followed::Followed;
+use futures::future::select_all;
 use here::{place_of, HERE};
 use home::Home;
 use printed::{ErrorKind, Printed};
@@ -70,11 +72,11 @@ use screen::{FullScreen, LineScreen, Screen, Typed};
 use serde_json::Value;
 use sessions::Asked;
 use std::env;
-use std::future;
+use std::future::{self, Future};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{signal, Signal, SignalKind};
 use uuid::Uuid;
 
 /// What the prompt for question `index` of `question` says.
@@ -116,67 +118,6 @@ fn response_of(question: &Question, line: &str) -> Response {
         Some(chosen) => Response::Chosen { chosen, other: None },
         None => Response::Chosen { chosen: Vec::new(), other: Some(line.to_string()) },
     }
-}
-
-/// Has the user talk in the channels `channels` follows, line by line, until they end it or a
-/// signal does - in the channel talked in, or in none until they switch to one -, shown and read
-/// by `screen`.
-async fn run_repl(mut channels: Channels, screen: &mut dyn Screen) -> Result<()> {
-    // The questions being answered, with the responses given so far: while they are, every line
-    // but `/switch`, `/answer` and `/decline` answers the next question.
-    let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
-
-    let started = "Chat Session Started (Type 'exit' or 'quit' to stop)".to_string();
-    screen.print(vec![Printed::Notice(started)]);
-    // What is under way as the channels were followed, before anything happens in them.
-    screen.show_under_way(channels.under_way());
-    // A signal ends the loop as `exit` does, so that the session is shut
-    // down in order (issue 297).
-    let mut signalled = std::pin::pin!(signalled());
-    loop {
-        tokio::select! {
-            () = &mut signalled => {
-                screen.print(vec![Printed::Notice("Ending".to_string())]);
-                break;
-            }
-            happened = channels.next() => {
-                let mut printed = channels.take_in(happened).await;
-                // As the channel that asked them tells; one followed no more has closed them.
-                let closed = |(q, _): &mut (QuestionRequest, Vec<Response>)| {
-                    channels.followed(q.channel_id).is_none_or(|f| !f.is_to_answer(q.id))
-                };
-                if let Some((request, _)) = answering.take_if(closed) {
-                    printed.push(closed_before_answered(&request));
-                }
-                screen.print(printed);
-                screen.show_under_way(channels.under_way());
-            }
-            typed = screen.next_input() => {
-                let line = match typed {
-                    Typed::Line(line) => line,
-                    Typed::Interrupted => {
-                        screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
-                        break;
-                    }
-                    Typed::Failed(reason) => {
-                        screen.print(vec![Printed::Plain(format!("Error: {reason}"))]);
-                        break;
-                    }
-                    Typed::Ended => break,
-                };
-                let input = line.trim();
-                if input == "exit" || input == "quit" {
-                    break;
-                }
-                let printed = handle_line(input, &mut channels, &mut answering).await?;
-                screen.print(printed);
-                // Another channel may be talked in now.
-                screen.show_under_way(channels.under_way());
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Does what the user typed, `input`, and answers what the terminal prints of it: switches to
@@ -292,7 +233,7 @@ async fn answer_line(
         *answering = Some((request, responses));
         return Some(vec![prompt]);
     }
-    // Closed with its channel, if it is followed no more - which `run_repl` tells as it drops it.
+    // Closed with its channel, if it is followed no more - which `talk` tells as it drops it.
     let Some(followed) = channels.followed(request.channel_id) else {
         return Some(vec![closed_before_answered(&request)]);
     };
@@ -589,6 +530,9 @@ async fn main() -> Result<()> {
     }
     // Made before a session is opened, so that what fails here needs no shutdown.
     let mut screen = args.drawing().screen()?;
+    // Caught from before a session is opened, so that no signal ends the program without its
+    // shutdown.
+    let signalled = signalled();
     let chosen = match project {
         Some(project) => sessions::chosen(&views, project, &asked).await?,
         None => None,
@@ -602,23 +546,104 @@ async fn main() -> Result<()> {
         },
         None => start(&kernel, &session_manager, &security, owner, &args.template, place).await?,
     };
-    let session_id = session_loop.id();
 
-    // Every channel of the session the user takes part in, talking in the first.
-    let mut channels =
-        Channels::new(Arc::clone(&session_loop), views, kernel.event_bus()).await.ok_or_else(
-            || anyhow::anyhow!("The user takes part in no channel of the session {session_id}"),
-        )?;
-    screen.print(channels.opening().await);
-
-    // Start the interactive loop; however it ends, the session is shut
-    // down in order (issue 297): its actors keep what they are in the
-    // middle of, and only what does not outlive the process ends with it.
-    let ran = run_repl(channels, screen.as_mut()).await;
+    // However the talk ends - also where it cannot begin -, the session is shut down in order
+    // (issue 297): its actors keep what they are in the middle of, and only what does not outlive
+    // the process ends with it.
+    let talked = talk(session_loop, views, kernel.event_bus(), screen.as_mut(), signalled).await;
     // The terminal given back first: the shutdown may take a while.
     drop(screen);
     session_manager.shutdown().await;
-    ran
+    talked
+}
+
+/// Has the user `views` are read by talk in the channels of `session_loop` they take part in,
+/// line by line - in the channel talked in, or in none until they switch to one -, learning from
+/// `bus` of those they join meanwhile, shown and read by `screen`: from what the terminal opens
+/// with (`Channels::opening`) until they end it, or `signalled` completes - also before the talk
+/// began.
+///
+/// # Errors
+/// If the user takes part in no channel of the session, or a message cannot be sent into a
+/// channel ([`send_line`]).
+async fn talk(
+    session_loop: Arc<SessionLoop>,
+    views: Views,
+    bus: &EventBus,
+    screen: &mut dyn Screen,
+    signalled: impl Future<Output = ()>,
+) -> Result<()> {
+    let mut signalled = std::pin::pin!(signalled);
+    let session_id = session_loop.id();
+    // Every channel of the session the user takes part in, talking in the first.
+    let begun = async {
+        let mut channels = Channels::new(session_loop, views, bus).await.ok_or_else(|| {
+            anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
+        })?;
+        let opening = channels.opening().await;
+        anyhow::Ok((channels, opening))
+    };
+    let (mut channels, opening) = tokio::select! {
+        () = &mut signalled => {
+            screen.print(vec![Printed::Notice("Ending".to_string())]);
+            return Ok(());
+        }
+        begun = begun => begun?,
+    };
+    screen.print(opening);
+    // The questions being answered, with the responses given so far: while they are, every line
+    // but `/switch`, `/answer` and `/decline` answers the next question.
+    let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
+
+    let started = "Chat Session Started (Type 'exit' or 'quit' to stop)".to_string();
+    screen.print(vec![Printed::Notice(started)]);
+    // What is under way as the channels were followed, before anything happens in them.
+    screen.show_under_way(channels.under_way());
+    loop {
+        tokio::select! {
+            // A signal ends the talk as `exit` does, so that the session is shut down in order
+            // (issue 297).
+            () = &mut signalled => {
+                screen.print(vec![Printed::Notice("Ending".to_string())]);
+                break;
+            }
+            happened = channels.next() => {
+                let mut printed = channels.take_in(happened).await;
+                // As the channel that asked them tells; one followed no more has closed them.
+                let closed = |(q, _): &mut (QuestionRequest, Vec<Response>)| {
+                    channels.followed(q.channel_id).is_none_or(|f| !f.is_to_answer(q.id))
+                };
+                if let Some((request, _)) = answering.take_if(closed) {
+                    printed.push(closed_before_answered(&request));
+                }
+                screen.print(printed);
+                screen.show_under_way(channels.under_way());
+            }
+            typed = screen.next_input() => {
+                let line = match typed {
+                    Typed::Line(line) => line,
+                    Typed::Interrupted => {
+                        screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
+                        break;
+                    }
+                    Typed::Failed(reason) => {
+                        screen.print(vec![Printed::Plain(format!("Error: {reason}"))]);
+                        break;
+                    }
+                    Typed::Ended => break,
+                };
+                let input = line.trim();
+                if input == "exit" || input == "quit" {
+                    break;
+                }
+                let printed = handle_line(input, &mut channels, &mut answering).await?;
+                screen.print(printed);
+                // Another channel may be talked in now.
+                screen.show_under_way(channels.under_way());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Prints the identity of the definition in `file`, as the stores of `config` read it: its kind,
@@ -692,26 +717,25 @@ async fn start(
     session_manager.create_from_template(security, template.id, spec).await
 }
 
-/// Completes on SIGINT, SIGTERM or SIGHUP - the terminal closed -, or
-/// never, should none of them be caught.
-async fn signalled() {
-    let caught = |kind: SignalKind| async move {
-        match signal(kind) {
-            Ok(mut caught) => {
-                caught.recv().await;
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "A signal cannot be caught, and ends the program without a shutdown: {e}"
-                );
-                future::pending::<()>().await;
-            }
+/// What completes on SIGINT, SIGTERM or SIGHUP - the terminal closed -, caught from this call
+/// on, not only once it is awaited; never, should none of them be caught.
+fn signalled() -> impl Future<Output = ()> {
+    let caught = |kind: SignalKind| match signal(kind) {
+        Ok(caught) => Some(caught),
+        Err(e) => {
+            tracing::warn!(
+                "A signal cannot be caught, and ends the program without a shutdown: {e}"
+            );
+            None
         }
     };
-    tokio::select! {
-        () = caught(SignalKind::interrupt()) => {}
-        () = caught(SignalKind::terminate()) => {}
-        () = caught(SignalKind::hangup()) => {}
+    let kinds = [SignalKind::interrupt(), SignalKind::terminate(), SignalKind::hangup()];
+    let mut signals: Vec<Signal> = kinds.into_iter().filter_map(caught).collect();
+    async move {
+        if signals.is_empty() {
+            return future::pending().await;
+        }
+        select_all(signals.iter_mut().map(|caught| Box::pin(caught.recv()))).await;
     }
 }
 
@@ -844,5 +868,24 @@ mod tests {
         let answered = typed(channels, answering, "Kaya").await;
         assert!(answered.is_empty(), "{answered:?}");
         assert!(answering.is_none(), "answered");
+    }
+
+    /// Who takes part in no channel of the session cannot talk in it: the talk ends at once, with
+    /// why, for its caller to shut the session down after.
+    #[tokio::test]
+    async fn who_takes_part_in_no_channel_cannot_talk() {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        // Someone outside the session, whom `Channels` follows no channel for, as it follows none
+        // for a participant of the session in none of its channels.
+        let (session_loop, _, _) = running_session_of_a_user(&manager).await;
+        let stranger = ActorId::User(UserId::new());
+        let stranger = SecurityContext::new(stranger, session_loop.id(), Default::default());
+        let views = manager.views(Viewer::new(stranger));
+        let mut screen = LineScreen::new().expect("a screen");
+        let signalled = future::pending();
+        let talked = talk(session_loop, views, kernel.event_bus(), &mut screen, signalled).await;
+        let error = talked.expect_err("no channel to talk in");
+        assert!(error.to_string().contains("takes part in no channel"), "{error}");
     }
 }

@@ -122,3 +122,11 @@ both ways of drawing; a message the channel shows after is not printed twice. Wh
 and turns given up are told live alone: they carry no id to tell them from what the channel shows
 after. Planned as step 6, on the maintainer's word: `line` tells in words what it marks by symbols
 today - `helper> `, `--- … ---`, `[working]`, `[channel]` - and drops the colour of mentions.
+
+**2026-11-14** - Step 5 done: what the user does once a session is opened - its channels followed,
+the talk in them - is `talk`, after which the program shuts the session down however it ended,
+also where the user takes part in no channel of it. The signals that end the program are caught
+from before a session is opened, not only once the talk began, so that one sent as the program
+starts ends it through the shutdown too. Planned as step 7, on the maintainer's word,
+from the review of step 4: the channels followed are found by their id in one place, not by their
+position in `Channels::take_in_shown` and `Channels::unfollow_if_ended` each.
