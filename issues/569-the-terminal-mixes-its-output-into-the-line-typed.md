@@ -115,3 +115,10 @@ text the answers under way streamed at its end, a status line of who answers and
 and the line typed. `line` is taken wherever input or output is no terminal. The answers under way
 are read anew as the terminal catches up. The words both ways of drawing share are theirs
 (`screen/words.rs`).
+
+**2026-11-14** - Step 4 done: as the user begins to talk in a channel - at the start, continued,
+or switched to -, the terminal prints what was said among the last 50 items of its history, in
+both ways of drawing; a message the channel shows after is not printed twice. Who joined, commands
+and turns given up are told live alone: they carry no id to tell them from what the channel shows
+after. Planned as step 6, on the maintainer's word: `line` tells in words what it marks by symbols
+today - `helper> `, `--- … ---`, `[working]`, `[channel]` - and drops the colour of mentions.

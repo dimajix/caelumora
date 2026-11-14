@@ -83,6 +83,12 @@ impl Channels {
         self.talked_in().map(Followed::under_way).unwrap_or_default()
     }
 
+    /// The channel talked in, to change; `None` once it ended.
+    fn talked_in_mut(&mut self) -> Option<&mut Followed> {
+        let talked_in = self.talked_in?;
+        self.followed.iter_mut().find(|followed| followed.channel_id() == talked_in)
+    }
+
     /// The channel `channel_id`, if it is followed.
     pub(crate) fn followed(&self, channel_id: ChannelId) -> Option<&Followed> {
         self.followed.iter().find(|followed| followed.channel_id() == channel_id)
@@ -113,7 +119,8 @@ impl Channels {
         if wanted.is_empty() {
             return vec![self.hint()];
         }
-        let Some(followed) = self.followed.iter().find(|followed| followed.name() == wanted) else {
+        let Some(followed) = self.followed.iter_mut().find(|followed| followed.name() == wanted)
+        else {
             let unknown = Printed::Notice(format!("You take part in no channel '{wanted}'"));
             return vec![unknown, self.hint()];
         };
@@ -125,8 +132,8 @@ impl Channels {
     /// to it tells them (`Followed::talking_in`), what waits for the user in the others
     /// (`Followed::waiting`), marked with their names, as following a channel anew tells it
     /// (issue 565), and, if the user takes part in others, where they could switch to.
-    pub(crate) async fn opening(&self) -> Vec<Printed> {
-        let mut printed = match self.talked_in() {
+    pub(crate) async fn opening(&mut self) -> Vec<Printed> {
+        let mut printed = match self.talked_in_mut() {
             Some(followed) => followed.talking_in().await,
             None => Vec::new(),
         };
@@ -563,18 +570,18 @@ mod tests {
     /// the user could switch to - only if they take part in another (issue 566).
     #[tokio::test]
     async fn the_opening_tells_the_channel_talked_in_and_the_others() {
-        let (channels, _, _, _) = followed().await;
-        let talked_in = channels.talked_in().expect("talked in");
+        let (mut channels, _, _, _) = followed().await;
+        let name = channels.talked_in().expect("talked in").name().to_string();
         let opening = lines(&channels.opening().await);
-        assert_eq!(opening[..opening.len() - 1], lines(&talked_in.talking_in().await)[..]);
+        let talking_in = lines(&channels.switch(&name).await);
+        assert_eq!(opening[..opening.len() - 1], talking_in[..], "as a switch to it tells");
         assert_eq!(opening.last(), Some(&hint(&channels)), "{opening:?}");
         assert!(hint(&channels).contains("side"), "the other channel");
 
-        let (alone, _, _, _) = alone().await;
-        let talked_in = alone.talked_in().expect("talked in");
-        let name = talked_in.name();
+        let (mut alone, _, _, _) = alone().await;
+        let name = alone.talked_in().expect("talked in").name().to_string();
         let opening = lines(&alone.opening().await);
-        assert_eq!(opening, lines(&talked_in.talking_in().await), "no other channel");
+        assert_eq!(opening, lines(&alone.switch(&name).await), "no other channel");
         assert_eq!(opening.first(), Some(&format!("--- Talking in {name} now ---")));
     }
 
@@ -590,7 +597,7 @@ mod tests {
         let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
         let id = approval_waiting_in(&kernel, &side, agent_id).await;
         let views = manager.views(Viewer::new(owner));
-        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
             .await
             .expect("the owner takes part");
         assert_ne!(channels.talked_in().map(Followed::channel_id), Some(side.id()), "another");

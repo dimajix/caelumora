@@ -605,7 +605,7 @@ async fn main() -> Result<()> {
     let session_id = session_loop.id();
 
     // Every channel of the session the user takes part in, talking in the first.
-    let channels =
+    let mut channels =
         Channels::new(Arc::clone(&session_loop), views, kernel.event_bus()).await.ok_or_else(
             || anyhow::anyhow!("The user takes part in no channel of the session {session_id}"),
         )?;
