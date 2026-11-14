@@ -21,7 +21,9 @@ impl SessionLoop {
     /// channel (`UpdateChannel`). One in the session already is only added to the channel, which
     /// needs no right to change the session (issue 46). Everything is asked before anything is
     /// stored - their clearance for the channel too; the session is stored first, then the
-    /// channel: one the channel refuses after all stays in the session.
+    /// channel: one the channel cannot take in after all - refused, or failed as their actor
+    /// starts - stays in the session, as one taken in without a channel does, and is not rolled
+    /// back out of it (issue 564).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session or the channel;
@@ -72,7 +74,8 @@ impl SessionLoop {
     /// session by their own act, where an entry of its access list lets them join (`JOIN`), and
     /// with `into` into that channel at once, where the channel's list lets them join as well
     /// (`ChannelLoop::join`). Asked and stored as `add_participant`, but stored in the kernel's
-    /// name once joining was permitted.
+    /// name once joining was permitted; one the channel cannot take in stays in the session, their
+    /// invitation to it used up, and joins the channel later by its entry alone.
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if they may not join the session or the channel;

@@ -581,8 +581,14 @@ themselves or their own agent, never someone else.
     whether the one taken in is theirs comes first, then the `Join` entries in their own context,
     and only then anything else in their name. Only the channel is cleared for; joining the session
     as such asks no clearance, since each of its channels is read by those cleared for it.
-*   **The session first, then the channel.** One the channel refuses after all stays in the session.
-    Who is in the session already is added to a channel by whoever may change the channel alone.
+*   **The session first, then the channel.** One the channel cannot take in after all - refused,
+    or failed as their actor starts - stays in the session, and is not rolled back out of it (issue
+    [564](../issues/564-taking-someone-in-is-rolled-back-in-part.md)): what the channel can refuse
+    is asked before the session is stored, so only a failure or a race is left; being in the session
+    and in none of its channels is a state of its own, as for one taken in without a channel; and a
+    session lets nobody go. Who is in the session already is added to a channel by whoever may
+    change the channel alone, and joins it by the channel's entry alone - so one left so can be
+    taken in again.
 *   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
     personal `Join` entry - an invitation - is used up as the person comes into the session or the
     channel, whoever takes them in (`Session::take_in`, `Channel::take_in`), so that one removed

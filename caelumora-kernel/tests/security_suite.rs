@@ -5326,6 +5326,72 @@ async fn an_invitation_to_a_channel_is_used_up_as_it_is_taken() {
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 
+/// One the channel cannot take in after the session took them in stays in the session (issue
+/// 564): bob, invited to both, brings his agent in by his own act; it is stored in the session and
+/// in the channel, whose addition is rolled back once its actor cannot start, no agent running in
+/// this world. Bob keeps his invitations, as an owner who brings his agent along does (issue 563).
+/// In the session already, it tries again by the channel's entry alone: nothing of the session is
+/// asked in its name again.
+#[tokio::test]
+async fn one_the_channel_cannot_take_in_stays_in_the_session_and_may_try_again() {
+    let world = World::new().await;
+    let bobs = world.personality("his", Some(world.bob), &[]).await;
+    let scout = ActorId::Agent(world.agent("scout", world.bob, &bobs).await);
+    let invitation = AclEntry::invitation(ActorId::User(world.bob));
+    let mut session = make_session("shared", world.alice);
+    session.security_attributes.acl.push(invitation);
+    let mut main = Channel::build(
+        session.id,
+        ActorId::User(world.alice),
+        Name::new("main").unwrap(),
+        quiet(),
+        Classification::general(Confidentiality::Internal),
+        None,
+    );
+    main.participants = vec![Participant::User(world.alice)];
+    main.security_attributes.acl.push(invitation);
+    let session = Session {
+        participants: vec![Participant::User(world.alice)],
+        channels: vec![main.id],
+        ..session
+    };
+    let (id, main_id) = (session.id, main.id);
+    let alice = World::as_user(world.alice);
+    world.manager.create(&alice, session, vec![main]).await.unwrap();
+    let session = world.manager.open(&alice, id).await.unwrap();
+    let main = session.channel(main_id).unwrap();
+    let bob = World::as_user(world.bob);
+    let cannot_start =
+        |error: &Error| matches!(error.downcast_ref(), Some(ChannelError::UnknownAgentKind { .. }));
+
+    let failed = world.manager.join(&bob, id, scout, Some(main_id)).await.expect_err("cannot run");
+    assert!(cannot_start(&failed), "stored, then failed as it starts: {failed}");
+    assert!(session.session().takes_part(scout), "in the session");
+    assert!(!main.channel().lists(scout), "not in the channel");
+    assert!(session.session().security_attributes.acl.contains(&invitation), "bob keeps his");
+    assert!(main.security_attributes().acl.contains(&invitation), "in both");
+
+    let (again, asked) = world.asked(world.manager.join(&bob, id, scout, Some(main_id))).await;
+    assert!(cannot_start(&again.expect_err("still cannot run")), "tried again");
+    assert_eq!(
+        asked,
+        checks(&[
+            // Whether he may reach the session to join it (`SessionManager::join`).
+            "bob: JoinSession(alice's) yes",
+            "bob: GetAgent(bob's) yes",
+            // Nothing of the session in its name: it takes part already.
+            "bob as scout: JoinChannel(alice's) yes",
+            "bob as scout: GetPersonality(bob's) yes",
+            "bob: Cleared(scout) yes",
+            "bob as scout: JoinChannel(alice's) yes",
+            "bob as scout: GetPersonality(bob's) yes",
+            "bob: Cleared(scout) yes",
+        ]),
+        "the channel's entry, not the session's again: {asked:#?}"
+    );
+    world.manager.stop(&alice, id).await.unwrap();
+}
+
 /// `/agent create` (issue 555) asks nothing making an agent does not ask, beside the lookup of the
 /// personality: a personality bob may not read is answered as one that does not exist. The agent
 /// lies in the session, and is brought in by `/participant add`.
