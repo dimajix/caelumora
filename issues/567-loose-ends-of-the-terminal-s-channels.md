@@ -513,3 +513,13 @@ collected here, to be taken on one after the other, each a step of its own:
   CHANNELS.md, SECURITY.md, WEB-UI.md, REST-SERVER.md, AGENT-TURN.md and in doc comments and test
   messages of the kernel, the domain, the TUI and the web UI - say so now, and a test of the TUI
   shows a rejection told apart from a refusal.
+
+- **2026-11-14** — Step 15, points 14 to 16, as decided with the maintainer: the history panel draws
+  its notices with a component of its own (`HistoryNotice`, private to the panel), given an icon,
+  a tone by what it means - `plain`, `warning`, `info` -, a heading, when, and what it tells. The
+  chat's failed turn is a `Notice` too, whose `tone` is `alert`; the user's own message not let in
+  is no notice and keeps its frame. WEB-UI.md holds one exported component to a file, its own parts
+  with it, and lets the parts of one thing shown that other components draw too share a file
+  (`MessageView.tsx`, `QuestionView.tsx`); `MessageTime`, which notes and attachments show as well,
+  is no part of a message and has a file of its own, and the history's notices show their time by
+  it.

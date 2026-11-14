@@ -13,7 +13,7 @@ import {actorUuid} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {changedAgentState, onGlobalEvent} from '../globalEvents';
 import {classificationDescription, classificationLabel} from '../confidentiality';
-import {MessageTime} from './MessageView';
+import {MessageTime} from './MessageTime';
 
 interface PrivateNotesPanelProps {
   sessionId: string;

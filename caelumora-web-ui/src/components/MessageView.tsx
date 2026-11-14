@@ -1,5 +1,6 @@
 // One message as the chat shows it - reasoning, content, tool calls with their status and result -
-// shared by the chat and the context and history panels (issue 41).
+// shared by the chat and the context and history panels (issue 41), with the parts of it the chat
+// draws apart: its reasoning and its footer.
 
 import React, {useState} from 'react';
 import {Brain, Check, ChevronDown, ChevronRight, Copy, EyeOff, Info} from 'lucide-react';
@@ -13,17 +14,7 @@ import {UsageStats} from './UsageStats';
 import {ToolCallView} from './ToolCallView';
 import {AttachmentList} from './AttachmentList';
 import {useShownChannel} from '../shownChannel';
-
-/** When a message was written: date and time, the full form on hover (issue 43). */
-export const MessageTime: React.FC<{timestamp?: string; className?: string}> = ({timestamp, className}) => {
-  const time = formatTimestamp(timestamp);
-  if (!time) return null;
-  return (
-    <time dateTime={timestamp} title={time.full} className={cn("normal-case tracking-normal font-normal", className)}>
-      {time.short}
-    </time>
-  );
-};
+import {MessageTime} from './MessageTime';
 
 /**
  * An "(i)" that reveals a message's usage statistics - on hover, on keyboard

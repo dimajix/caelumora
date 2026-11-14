@@ -64,7 +64,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/shownChannel.ts` | What the messages shown of a channel need of it, as a React context |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel, and the lists in the sidebar it is opened from |
 | `src/App.tsx` | Login state, keep-alive, the error banner, the layout |
-| `src/components/` | One component per file, named after what it shows |
+| `src/components/` | One exported component per file, named after what it shows; its own parts share its file, as do the parts of one thing shown that other components draw too (`MessageView.tsx`, `QuestionView.tsx`) |
 
 What a subtree shares and reads deep below is a React context, provided once at its top and read
 where it is used, not a prop each component on the way takes only to hand it on; what is a

@@ -11,7 +11,7 @@
 // older ones on request.
 
 import React, {useEffect, useRef, useState} from 'react';
-import {ChevronRight, EyeOff, FoldVertical, History, ScrollText, Undo2, UserMinus, UserPlus, X} from 'lucide-react';
+import {ChevronRight, EyeOff, FoldVertical, History, ScrollText, Undo2, UserMinus, UserPlus, X, type LucideIcon} from 'lucide-react';
 import type {ActorId, ChannelParticipant, GivenUpReason, HistoryItem, HistoryMessage, HistoryPage, Message} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {cn} from '../classNames';
@@ -19,8 +19,9 @@ import {api, type ChannelAttachments} from '../api';
 import {actorUuid, sameActor} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
+import {MessageTime} from './MessageTime';
 import {ShownChannelContext} from '../shownChannel';
-import {formatTimestamp, givenUpText, mergeToolResultsAmong, participantNotice} from '../messages';
+import {givenUpText, mergeToolResultsAmong, participantNotice} from '../messages';
 
 interface HistoryPanelProps {
   sessionId: string;
@@ -71,6 +72,34 @@ async function readBack<M>(read: (before: number | null) => Promise<HistoryPage<
   }
   return {items, earlier: page.earlier};
 }
+
+/** The frame of a notice of the history, by what it means. */
+const HISTORY_NOTICE_TONES = {
+  plain: 'border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-gray-700 dark:text-gray-300',
+  warning: 'border-amber-400 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20 text-amber-900 dark:text-amber-200',
+  info: 'border-sky-300 dark:border-sky-700 bg-sky-50/60 dark:bg-sky-900/20 text-sky-900 dark:text-sky-200',
+};
+
+/**
+ * A notice among the history's messages (issue 567): in a dashed frame of its `tone`, an icon, its
+ * heading with when it happened, and what it tells below them if anything.
+ */
+const HistoryNotice: React.FC<{
+  icon: LucideIcon;
+  tone?: keyof typeof HISTORY_NOTICE_TONES;
+  heading: React.ReactNode;
+  at?: string;
+  children?: React.ReactNode;
+}> = ({icon: Icon, tone = 'plain', heading, at, children}) => (
+  <div className={cn('flex items-start gap-2 p-2 rounded-lg border border-dashed text-xs', HISTORY_NOTICE_TONES[tone])}>
+    <Icon size={14} className="mt-0.5 shrink-0" />
+    <span className="flex-1">
+      <span className="font-semibold">{heading}</span>
+      {at && <> <span className="opacity-70">·</span> <MessageTime timestamp={at} className="opacity-70" /></>}
+      {children && <span className="block">{children}</span>}
+    </span>
+  </div>
+);
 
 /**
  * The rows of `items`, in the order they happened: the messages, with their tool results merged in
@@ -191,80 +220,57 @@ export const HistoryPanel: React.FC<HistoryPanelProps> = ({sessionId, channelId,
     );
   };
 
-  const givenUpView = (reason: GivenUpReason, at: string, key: React.Key) => {
-    const time = formatTimestamp(at);
-    return (
-      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-amber-400 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/20 text-xs text-amber-900 dark:text-amber-200">
-        <Undo2 size={14} className="mt-0.5 shrink-0" />
-        <span className="flex-1">
-          <span className="font-semibold">Turn given up</span>
-          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
-          <span className="block">{givenUpText(reason)} What its tools did stays done.</span>
-        </span>
-      </div>
-    );
-  };
+  const givenUpView = (reason: GivenUpReason, at: string, key: React.Key) => (
+    <HistoryNotice key={key} icon={Undo2} tone="warning" heading="Turn given up" at={at}>
+      {givenUpText(reason)} What its tools did stays done.
+    </HistoryNotice>
+  );
 
   // A command the agent carried out (issue 269): which, on whose word, when.
   const commandView = (row: Extract<Row, {kind: 'command'}>, key: React.Key) => {
-    const time = formatTimestamp(row.at);
     const issuer = participants.find(m => sameActor(m.id, row.issuer))?.name ?? 'someone';
     return (
-      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
-        <ChevronRight size={14} className="mt-0.5 shrink-0" />
-        <span className="flex-1">
-          <span className="font-semibold">Carried out <span className="font-mono">/{row.command}{row.args ? ` ${row.args}` : ''}</span> for {issuer}</span>
-          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
-        </span>
-      </div>
+      <HistoryNotice
+        key={key}
+        icon={ChevronRight}
+        heading={<>Carried out <span className="font-mono">/{row.command}{row.args ? ` ${row.args}` : ''}</span> for {issuer}</>}
+        at={row.at}
+      />
     );
   };
 
   // A compaction (issue 16): what follows replaced the older messages.
-  const compactedView = (at: string, key: React.Key) => {
-    const time = formatTimestamp(at);
-    return (
-      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-sky-300 dark:border-sky-700 bg-sky-50/60 dark:bg-sky-900/20 text-xs text-sky-900 dark:text-sky-200">
-        <FoldVertical size={14} className="mt-0.5 shrink-0" />
-        <span className="flex-1">
-          <span className="font-semibold">Context compacted</span>
-          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
-          <span className="block">From here on the agent was given what follows in place of what came before; what it saw before stays recorded.</span>
-        </span>
-      </div>
-    );
-  };
+  const compactedView = (at: string, key: React.Key) => (
+    <HistoryNotice key={key} icon={FoldVertical} tone="info" heading="Context compacted" at={at}>
+      From here on the agent was given what follows in place of what came before; what it saw before stays recorded.
+    </HistoryNotice>
+  );
 
   // A message the agent was given and stopped reading (issue 537): a prompt part that no longer
   // held, named by its first line where the message is shown.
   const withdrawnView = (id: string, at: string, key: React.Key) => {
-    const time = formatTimestamp(at);
     const given = marks.get(id)?.message.content?.split('\n')[0];
     return (
-      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
-        <EyeOff size={14} className="mt-0.5 shrink-0" />
-        <span className="flex-1">
-          <span className="font-semibold">No longer given{given ? <> <span className="font-mono">{given}</span></> : null}</span>
-          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
-          <span className="block">What the agent was given there no longer held; from here on it is not given it.</span>
-        </span>
-      </div>
+      <HistoryNotice
+        key={key}
+        icon={EyeOff}
+        heading={<>No longer given{given ? <> <span className="font-mono">{given}</span></> : null}</>}
+        at={at}
+      >
+        What the agent was given there no longer held; from here on it is not given it.
+      </HistoryNotice>
     );
   };
 
   // Someone joined or left the channel (issue 408), as the agent was told.
-  const participantView = (notice: Message, key: React.Key) => {
-    const time = formatTimestamp(notice.timestamp);
-    return (
-      <div key={key} className="flex items-start gap-2 p-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-xs text-gray-700 dark:text-gray-300">
-        {notice.participant === 'joined' ? <UserPlus size={14} className="mt-0.5 shrink-0" /> : <UserMinus size={14} className="mt-0.5 shrink-0" />}
-        <span className="flex-1">
-          <span className="font-semibold">{notice.content}</span>
-          {time && <span className="opacity-70" title={time.full}> · {time.short}</span>}
-        </span>
-      </div>
-    );
-  };
+  const participantView = (notice: Message, key: React.Key) => (
+    <HistoryNotice
+      key={key}
+      icon={notice.participant === 'joined' ? UserPlus : UserMinus}
+      heading={notice.content}
+      at={notice.timestamp}
+    />
+  );
 
   const rowView = (row: Row, idx: number) => {
     switch (row.kind) {

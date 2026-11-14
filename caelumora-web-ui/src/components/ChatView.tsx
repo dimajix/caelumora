@@ -85,7 +85,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
-import {MessageFooter, MessageView, Reasoning} from './MessageView';
+import {MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
 import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
@@ -1542,21 +1542,19 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       <div className="wrap-break-word">It could not be decided who should respond, so no agent was asked. Mention someone with @ to ask them.</div>
     </Notice>
   ) : msg.givenUp?.kind === 'failed' ? (
-    <div
+    <Notice
       key={key}
-      role="alert"
-      className="max-w-[80%] p-3 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/30 text-red-800 dark:text-red-200 text-sm"
+      message={msg}
+      icon={AlertTriangle}
+      tone="alert"
+      heading={msg.sender_name ? `${msg.sender_name} could not answer` : 'The turn failed'}
+      actions={retryGivenUpAction(msg)}
     >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1">
-        <AlertTriangle size={14} />
-        {msg.sender_name ? `${msg.sender_name} could not answer` : 'The turn failed'}
-      </div>
       <div className="wrap-break-word">{msg.content}</div>
       {msg.span_id && (
         <div className="mt-1 text-[11px] font-mono opacity-60">span_id {msg.span_id}</div>
       )}
-      <MessageFooter message={msg} actions={retryGivenUpAction(msg)} />
-    </div>
+    </Notice>
   ) : msg.givenUp ? (
     <Notice key={key} message={msg} icon={Ban} heading={<span>{msg.sender_name || 'The agent'} gave its answer up</span>} actions={retryGivenUpAction(msg)}>
       <div className="wrap-break-word">{msg.content}</div>

@@ -7,7 +7,7 @@ import type {HistoryPage, Message} from '../types';
 import type {ChannelAttachments} from '../api';
 import {reportError} from '../errors';
 import {AttachmentList} from './AttachmentList';
-import {MessageTime} from './MessageView';
+import {MessageTime} from './MessageTime';
 
 interface ChannelAttachmentsPanelProps {
   /** The attachments of the channel's messages: where they are listed and downloaded from. */

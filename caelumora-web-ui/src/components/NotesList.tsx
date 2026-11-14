@@ -3,7 +3,7 @@
 
 import React from 'react';
 import type {PublishedNotes} from '../types';
-import {MessageTime} from './MessageView';
+import {MessageTime} from './MessageTime';
 import {actorKey} from '../actor';
 
 export const NotesList: React.FC<{notes: PublishedNotes[]}> = ({notes}) => {
