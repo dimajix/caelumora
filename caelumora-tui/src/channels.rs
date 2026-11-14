@@ -86,14 +86,14 @@ impl Channels {
         self.followed.iter().find(|followed| followed.is_pending(id))
     }
 
-    /// The channel whose questions `arg` names: the one that printed questions of that id, or
-    /// without one the channel talked in.
+    /// The channel whose questions `arg` names: the one that knows questions of that id
+    /// (`Followed::knows_questions`), or without one the channel talked in.
     pub(crate) fn asking(&self, arg: &str) -> Option<&Followed> {
         match arg.trim() {
             "" => self.talked_in(),
             id => {
                 let id = QuestionId(Uuid::parse_str(id).ok()?);
-                self.followed.iter().find(|followed| followed.printed(id))
+                self.followed.iter().find(|followed| followed.knows_questions(id))
             }
         }
     }
@@ -115,13 +115,19 @@ impl Channels {
     }
 
     /// The lines the terminal opens with (issue 566): those of the channel talked in, as a switch
-    /// to it tells them (`Followed::talking_in`), and, if the user takes part in others, where
-    /// they could switch to.
+    /// to it tells them (`Followed::talking_in`), what waits for the user in the others
+    /// (`Followed::waiting`), marked with their names, as following a channel anew tells it
+    /// (issue 565), and, if the user takes part in others, where they could switch to.
     pub(crate) async fn opening(&self) -> Vec<String> {
         let mut lines = match self.talked_in() {
             Some(followed) => followed.talking_in().await,
             None => Vec::new(),
         };
+        for followed in &self.followed {
+            if self.talked_in != Some(followed.channel_id()) {
+                lines.extend(marked(&followed.name(), followed.waiting()));
+            }
+        }
         if self.followed.len() > 1 {
             lines.push(self.hint());
         }
@@ -153,34 +159,36 @@ impl Channels {
     /// event bus lost what it would have told, as every subscriber of it makes up for what it lost
     /// (`docs/EVENTS.md`): a channel followed they no longer take part in is followed no more
     /// (`unfollow_if_ended`), and every one they take part in that is not followed yet is
-    /// followed, without a switch to it (`follow_the_others`). Answers the lines that tell so.
+    /// followed, without a switch to it (`follow_the_others`). Answers the lines that tell so, and
+    /// of a channel followed anew what waits for the user there (`Followed::waiting`, issue 565),
+    /// marked with its name.
     async fn follow_anew(&mut self) -> Vec<String> {
         let mut lines = Vec::new();
         let followed: Vec<ChannelId> = self.followed.iter().map(Followed::channel_id).collect();
         for channel_id in followed {
             lines.extend(self.unfollow_if_ended(channel_id).await);
         }
-        let told = |name: Name| {
-            format!(
+        for followed in self.follow_the_others().await {
+            let name = followed.name();
+            lines.push(format!(
                 "--- You take part in channel {name} now: type '/switch {name}' to talk there ---"
-            )
-        };
-        lines.extend(self.follow_the_others().await.into_iter().map(told));
+            ));
+            lines.extend(marked(&name, followed.waiting()));
+        }
         lines
     }
 
     /// Follows every channel of the session the user takes part in that is not followed yet, and
-    /// answers their names.
-    async fn follow_the_others(&mut self) -> Vec<Name> {
-        let mut followed = Vec::new();
+    /// answers those it followed.
+    async fn follow_the_others(&mut self) -> &[Followed] {
+        let before = self.followed.len();
         for channel in self.session.channels() {
             if self.followed(channel.id()).is_none() {
-                followed.extend(Followed::new(channel, self.views.clone()).await);
+                let followed = Followed::new(channel, self.views.clone()).await;
+                self.followed.extend(followed);
             }
         }
-        let names = followed.iter().map(Followed::name).collect();
-        self.followed.extend(followed);
-        names
+        &self.followed[before..]
     }
 
     /// Takes in what the channel `channel_id` showed (`Followed::take_in`), and answers the lines
@@ -198,22 +206,22 @@ impl Channels {
         };
         let followed = &mut self.followed[at];
         let name = followed.name();
-        let marked = |lines: Vec<String>| match talked_in {
+        let told = |lines: Vec<String>| match talked_in {
             true => lines,
-            false => lines.into_iter().map(|line| format!("[{name}] {line}")).collect(),
+            false => marked(&name, lines),
         };
         match shown {
             Ok(Shown::Envelope(envelope)) => {
                 let printed = talked_in || followed.concerns_user(&envelope);
                 let lines = followed.take_in(&envelope);
                 if printed {
-                    marked(lines)
+                    told(lines)
                 } else {
                     Vec::new()
                 }
             }
             Ok(Shown::Started | Shown::Ended) => self.unfollow_if_ended(channel_id).await,
-            Err(Lagged(lost)) => marked(vec![format!("[{lost} events missed]")]),
+            Err(Lagged(lost)) => told(vec![format!("[{lost} events missed]")]),
         }
     }
 
@@ -267,6 +275,12 @@ impl Channels {
     }
 }
 
+/// `lines` of the channel `name` as they are told while the user talks in another: each marked
+/// with its name.
+fn marked(name: &Name, lines: Vec<String>) -> Vec<String> {
+    lines.into_iter().map(|line| format!("[{name}] {line}")).collect()
+}
+
 /// What one of `followed` shows next, with its channel; never if there are none. Nothing is lost
 /// if it is dropped before it completes.
 async fn shown(followed: &mut [Followed]) -> (ChannelId, Result<Shown, Lagged>) {
@@ -308,7 +322,9 @@ fn changes_taking_part(event: &GlobalEvent, me: ActorId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::followed::testing::{answered, approval, from, message};
+    use crate::followed::testing::{
+        an_agent_in, answered, approval, from, message, waiting_for_approval,
+    };
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::ApprovalRuleId;
@@ -383,20 +399,21 @@ mod tests {
     }
 
     /// Takes in what happens next, until the user is told they take part in channel `name` now,
-    /// within five seconds.
-    async fn until_told(channels: &mut Channels, name: &str) {
+    /// within five seconds: the lines that tell so.
+    async fn until_told(channels: &mut Channels, name: &str) -> Vec<String> {
         let told = format!(
             "--- You take part in channel {name} now: type '/switch {name}' to talk there ---"
         );
         let taken_in = async {
             loop {
                 let happened = channels.next().await;
-                if channels.take_in(happened).await.contains(&told) {
-                    return;
+                let lines = channels.take_in(happened).await;
+                if lines.contains(&told) {
+                    return lines;
                 }
             }
         };
-        time::timeout(Duration::from_secs(5), taken_in).await.expect("told in time");
+        time::timeout(Duration::from_secs(5), taken_in).await.expect("told in time")
     }
 
     #[tokio::test]
@@ -534,6 +551,29 @@ mod tests {
         assert_eq!(opening.first(), Some(&format!("--- Talking in {name} now ---")));
     }
 
+    /// What waits for the user in a channel other than the one talked in is told at the start,
+    /// marked with its name, before where they could switch to (issue 565).
+    #[tokio::test]
+    async fn the_opening_tells_what_waits_in_the_others() {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let side = spec("side", vec![owner.caller_id]);
+        let side = session_loop.create_channel(&owner, side).await.expect("the owner creates it");
+        let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
+        let id = waiting_for_approval(&kernel, &side, agent_id).await;
+        let views = manager.views(Viewer::new(owner));
+        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("the owner takes part");
+        assert_ne!(channels.talked_in().map(Followed::channel_id), Some(side.id()), "another");
+
+        let opening = channels.opening().await;
+        let approval_line = format!("[side] --- Approval requested (id: {}) ---", id.0);
+        assert!(opening.contains(&approval_line), "{opening:?}");
+        assert_eq!(opening.last(), Some(&channels.hint()), "{opening:?}");
+    }
+
     #[tokio::test]
     async fn only_a_channel_taken_part_in_is_switched_to() {
         let (mut channels, _, _, _) = followed().await;
@@ -629,6 +669,32 @@ mod tests {
         until_told(&mut channels, "late").await;
         assert!(channels.followed(late.id()).is_some());
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), talked_in, "no switch");
+    }
+
+    /// What waits for the user in a channel they join meanwhile is told with the join, marked with
+    /// the channel's name, and found where it waits (issue 565).
+    #[tokio::test]
+    async fn what_waits_in_a_channel_joined_meanwhile_is_told() {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let (session_loop, owner, other) = running_session_of_a_user(&manager).await;
+        let late = spec("late", vec![owner.caller_id]);
+        let late = session_loop.create_channel(&owner, late).await.expect("the owner creates it");
+        let agent_id = an_agent_in(&kernel, &session_loop, &owner, late.id()).await;
+        let id = waiting_for_approval(&kernel, &late, agent_id).await;
+        let theirs = SecurityContext::new(other, session_loop.id(), Default::default());
+        let views = manager.views(Viewer::new(theirs));
+        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("they take part");
+        channels.settled().await;
+        assert!(channels.awaiting(id).is_none(), "not followed yet");
+
+        late.add_participant(&owner, other, HistoryAccess::All).await.expect("the owner adds them");
+        let told = until_told(&mut channels, "late").await;
+        let approval_line = format!("[late] --- Approval requested (id: {}) ---", id.0);
+        assert!(told.contains(&approval_line), "{told:?}");
+        assert_eq!(channels.awaiting(id).map(Followed::channel_id), Some(late.id()));
     }
 
     /// What may add to the channels the user takes part in: their own join and a channel

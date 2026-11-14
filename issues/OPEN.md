@@ -10,7 +10,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [568](568-a-second-join-leaves-attendance-open.md) | open | medium | bug | A channel records a join for a participant whose range of attendance is still open in three cases, which opens a second range; a later leave closes only the last, the first stays open, and what the participant is shown of the history then reaches past their leave. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
-| [565](565-the-terminal-misses-what-a-channel-joined-shows-at-first.md) | open | low | bug | The terminal follows a channel the user joins while it runs once the event bus tells so, and is shown only what comes after; what the channel showed the newcomer in between - an approval to answer, questions put to them - the terminal never tells. |
 
 ## Sessions and channels
 

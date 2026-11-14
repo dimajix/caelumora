@@ -1039,6 +1039,7 @@ dependencies = [
  "caelumora-open-terminal",
  "caelumora-security",
  "caelumora-skills",
+ "caelumora-store",
  "caelumora-store-home",
  "caelumora-store-json",
  "caelumora-store-postgres",

@@ -175,6 +175,8 @@ and follows a channel the user joins (`channel::JOINED`) once they are announced
 and one they take part in once it is announced restored (issue
 [561](../issues/561-the-terminal-shows-one-channel-of-a-session.md)): the user can follow what
 their actor in a channel shows from the moment the channel lists them, whether the actor runs yet
-or not, and is shown what comes after. That they left a channel it learns from the end of their
-actor's run there, as a live stream of a channel ends (see
+or not. They are told what waits for them there as the terminal begins to follow it - at its
+start, or as they join -: the approvals the agents' turns wait for and the open questions put to
+them, read after the watch began; and what comes after. That they left a channel it learns from
+the end of their actor's run there, as a live stream of a channel ends (see
 [CHANNELS.md](CHANNELS.md#how-others-learn-of-it)).

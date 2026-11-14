@@ -1,6 +1,6 @@
 # 565 — The terminal misses what a channel joined meanwhile shows at first
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** User interaction
@@ -48,3 +48,26 @@ The window is short, and the same as for what a channel showed before the termin
 
 - **2026-11-13** — Opened at the maintainer's request on the review of step 12 of issue
   [561](561-the-terminal-shows-one-channel-of-a-session.md), priority low.
+- **2026-11-14** — Decided with the maintainer: both, as the channel stream of the REST server
+  reads its snapshot. Where the terminal follows a channel (`Followed::new`), it reads after the
+  watch began what waits for the user there: the approvals pending, as the agents' turns hold
+  them (`ChannelView::pending_approvals`, which so has its first caller outside the tests), and
+  the open questions put to them, as their actor tells. What comes in both is shown once: an
+  approval request known already is no longer shown again (`Followed::take_in`), also one an
+  agent that resumed its turn asks again, as questions were before. The questions printed became
+  the questions known (`known_questions`, `Followed::knows_questions`): `/answer` and `/decline`
+  with an id found questions shown only by `/switch` in no channel; `Followed::waiting` shows
+  only the questions known, so that questions asked while channels are followed are not shown
+  twice. Of a channel joined meanwhile, the terminal tells what waits there with the join, marked
+  with its name (`Channels::follow_anew`). Approvals that cannot be read are not known, logged,
+  and the channel is followed all the same. Left as it is, and documented at `Followed::new`: an
+  approval decided just before the watch began may still be held by a turn not stored anew; it
+  stays known as pending while the terminal runs, and the approver refuses an answer to it, which
+  the user is told.
+- **2026-11-14** — Decided with the maintainer on the review: since an approval known as the
+  channel is followed is no longer shown again, one an agent asks again after a restart in a
+  channel not talked in would be told by nothing until `/switch`. So the terminal tells at its
+  start what waits in every channel followed, those not talked in marked with their names, as
+  following a channel anew does (`Channels::opening`) - unlike the decision of issue
+  [566](566-the-terminal-tells-little-at-its-start-and-of-withdrawals.md), which listed only the
+  channel talked in; this also closes the window 561 accepted at the start. Done.

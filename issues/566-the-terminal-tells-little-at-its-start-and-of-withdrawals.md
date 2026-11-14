@@ -51,3 +51,7 @@ channel of its session the user takes part in, talks in one of them, and switche
   what it tells in the channel talked in - a withdrawal of one shown, and, a gap of the same kind
   found on the way, an answer given by a rule of theirs, after which `/approve` found the approval
   pending no longer without telling why. Done.
+- **2026-11-14** — With issue
+  [565](565-the-terminal-misses-what-a-channel-joined-shows-at-first.md), the terminal tells at its
+  start what waits in the other channels as well, marked with their names: what it knows of them
+  as it follows them is no longer told again when the channel shows it.

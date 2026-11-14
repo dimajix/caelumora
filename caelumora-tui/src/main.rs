@@ -234,7 +234,7 @@ async fn handle_line(
 }
 
 /// Answers `input` if it is about questions put to the user: declines them (`/decline`), begins
-/// to answer them (`/answer`) - questions named by id in whichever of the `channels` printed them,
+/// to answer them (`/answer`) - questions named by id in whichever of the `channels` knows them,
 /// else the last in the channel talked in, as the user's actor there tells -, or answers the next
 /// of the questions being `answering`, in the channel that asked them; `false` if it is about none.
 /// Between two runs of the user's actor in that channel, only that nothing can be done there now.
