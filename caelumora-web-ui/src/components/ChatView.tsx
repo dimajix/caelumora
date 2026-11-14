@@ -87,6 +87,7 @@ import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
+import {Timestamp} from './Timestamp';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
 import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRefusedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
@@ -1595,8 +1596,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       )}
     >
       {msg.sender_name || 'Its author'} took this message back
-      <div className="mt-1 text-[11px] not-italic opacity-70" title={formatTimestamp(msg.revoked)?.full}>
-        {formatTimestamp(msg.revoked)?.short}
+      <div className="mt-1 text-[11px] not-italic">
+        <Timestamp timestamp={msg.revoked} className="opacity-70" />
       </div>
     </div>
   ) : editing === msg.id ? (

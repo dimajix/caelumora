@@ -13,7 +13,7 @@ import {actorUuid} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {changedAgentState, onGlobalEvent} from '../globalEvents';
 import {classificationDescription, classificationLabel} from '../confidentiality';
-import {MessageTime} from './MessageTime';
+import {Timestamp} from './Timestamp';
 
 interface PrivateNotesPanelProps {
   sessionId: string;
@@ -86,7 +86,7 @@ export const PrivateNotesPanel: React.FC<PrivateNotesPanelProps> = ({sessionId, 
                   <div className="whitespace-pre-wrap">{note.text}</div>
                   <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
                     {here && <span className="font-mono">#{note.id}</span>}
-                    <MessageTime timestamp={note.written_at} />
+                    <Timestamp timestamp={note.written_at} />
                     <span title={classificationDescription(note.classification)}>{classificationLabel(note.classification)}</span>
                   </div>
                 </div>

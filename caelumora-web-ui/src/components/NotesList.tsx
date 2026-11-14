@@ -3,7 +3,7 @@
 
 import React from 'react';
 import type {PublishedNotes} from '../types';
-import {MessageTime} from './MessageTime';
+import {Timestamp} from './Timestamp';
 import {actorKey} from '../actor';
 
 export const NotesList: React.FC<{notes: PublishedNotes[]}> = ({notes}) => {
@@ -23,7 +23,7 @@ export const NotesList: React.FC<{notes: PublishedNotes[]}> = ({notes}) => {
               <div className="whitespace-pre-wrap">{note.text}</div>
               <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-500 dark:text-gray-400">
                 <span className="font-mono">#{note.id}</span>
-                <MessageTime timestamp={note.written_at} />
+                <Timestamp timestamp={note.written_at} />
               </div>
             </div>
           ))}

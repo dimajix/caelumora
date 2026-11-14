@@ -1,6 +1,6 @@
 # 567 — Loose ends of the work on the terminal's channels
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** Code structure
@@ -541,3 +541,7 @@ collected here, to be taken on one after the other, each a step of its own:
   would make an unknown command or an ambiguous handle a rejection on the stream instead of an
   answer at once, and the door make several events of one. CHANNELS.md names the commands among
   what the channel tells of its actors.
+
+- **2026-11-14** — Step 16, points 21 and 22: `MessageTime` is `Timestamp`, a point in time as the
+  UI shows it, whatever happened then; the chat shows the time a message was taken back by it.
+  Every point of the issue is resolved or decided; the issue is done.

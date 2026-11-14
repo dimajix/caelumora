@@ -19,7 +19,7 @@ import {api, type ChannelAttachments} from '../api';
 import {actorUuid, sameActor} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {MessageView} from './MessageView';
-import {MessageTime} from './MessageTime';
+import {Timestamp} from './Timestamp';
 import {ShownChannelContext} from '../shownChannel';
 import {givenUpText, mergeToolResultsAmong, participantNotice} from '../messages';
 
@@ -95,7 +95,7 @@ const HistoryNotice: React.FC<{
     <Icon size={14} className="mt-0.5 shrink-0" />
     <span className="flex-1">
       <span className="font-semibold">{heading}</span>
-      {at && <> <span className="opacity-70">·</span> <MessageTime timestamp={at} className="opacity-70" /></>}
+      {at && <> <span className="opacity-70">·</span> <Timestamp timestamp={at} className="opacity-70" /></>}
       {children && <span className="block">{children}</span>}
     </span>
   </div>

@@ -7,7 +7,7 @@ import type {HistoryPage, Message} from '../types';
 import type {ChannelAttachments} from '../api';
 import {reportError} from '../errors';
 import {AttachmentList} from './AttachmentList';
-import {MessageTime} from './MessageTime';
+import {Timestamp} from './Timestamp';
 
 interface ChannelAttachmentsPanelProps {
   /** The attachments of the channel's messages: where they are listed and downloaded from. */
@@ -72,7 +72,7 @@ export const ChannelAttachmentsPanel: React.FC<ChannelAttachmentsPanelProps> = (
         <div key={message.id}>
           <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
             <span className="truncate font-medium text-gray-700 dark:text-gray-300">{message.sender_name || 'Someone'}</span>
-            <MessageTime timestamp={message.timestamp} />
+            <Timestamp timestamp={message.timestamp} />
           </div>
           <AttachmentList
             items={message.attachments ?? []}

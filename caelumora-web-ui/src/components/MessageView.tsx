@@ -14,7 +14,7 @@ import {UsageStats} from './UsageStats';
 import {ToolCallView} from './ToolCallView';
 import {AttachmentList} from './AttachmentList';
 import {useShownChannel} from '../shownChannel';
-import {MessageTime} from './MessageTime';
+import {Timestamp} from './Timestamp';
 
 /**
  * An "(i)" that reveals a message's usage statistics - on hover, on keyboard
@@ -110,7 +110,7 @@ const CopyButton: React.FC<{text: string}> = ({text}) => {
  */
 export const MessageFooter: React.FC<{message: Message; actions?: React.ReactNode}> = ({message, actions}) => (
   <div className="mt-2 flex items-center gap-2 text-[11px]">
-    <MessageTime timestamp={message.timestamp} className="opacity-60" />
+    <Timestamp timestamp={message.timestamp} className="opacity-60" />
     {message.modified && (
       <span className="opacity-60" title={`Edited ${formatTimestamp(message.modified)?.full ?? ''}`}>edited</span>
     )}
