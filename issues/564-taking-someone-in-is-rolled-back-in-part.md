@@ -100,3 +100,13 @@ channel had the participant before (`ChannelController::roll_back_participant_ad
   that has none - as the session starts, and once a deleted agent is restored - beside `take_in`,
   and can race it as two takings-in do. It announces a join (`announce_resting`) also for an agent
   that was left out as its channel started, for which no leave was ever announced.
+
+  Step 3 done: a `ChannelLoop` makes the changes of one participant one at a time, by a lock per
+  participant (`LocksById`, as the managers hold one per entity): `take_in`, `let_go` and
+  `follow_agents` hold it while they change the participant's part, and `follow_agents` looks
+  again under it whether the agent is still listed. Two who add one participant at once are served
+  one after the other - the second finds them there -, a rollback cannot take out one whose actor
+  another started, nor a removal leave a participant's actor running unlisted, and `follow_agents`
+  no longer races a taking-in or a removal. Only the first is held by a test: the window of the
+  others is not reached by running them at once. That `follow_agents` announces a join for an agent
+  left out as its channel started stays open.

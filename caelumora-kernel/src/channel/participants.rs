@@ -112,7 +112,9 @@ impl ChannelLoop {
     /// (`ChannelController::roll_back_participant_addition`) - and the join announced, on the event
     /// bus and in the channel, in the name of `context`'s caller - who added them, or who joined
     /// (issue 408). A participant removed shortly before is added only once its old actor has ended
-    /// (`left`, issue 171).
+    /// (`left`, issue 171). One change of a participant at a time (`changing`, issue 564): who
+    /// takes the same participant in meanwhile waits, and then finds them there - or takes them in
+    /// itself, where the first could not and was rolled back.
     ///
     /// # Errors
     /// `ChannelError::NotInSession`, `OutOfScope`, `AlreadyParticipant`, `StillLeaving`,
@@ -125,6 +127,7 @@ impl ChannelLoop {
         history: HistoryAccess,
         entry: Entry,
     ) -> Result<()> {
+        let _changing = self.changing.lock(participant).await;
         if self.actors.load().contains_key(&participant) {
             return Err(ChannelError::AlreadyParticipant { participant, channel: self.id }.into());
         }
@@ -225,7 +228,8 @@ impl ChannelLoop {
     ///
     /// A participant without an actor - a deleted agent resting in the channel, one that cannot
     /// run - is removed from the document alone (issue 314): restored, it does not come back here.
-    /// An internal actor of the channel - its approver - is none (issue 420).
+    /// An internal actor of the channel - its approver - is none (issue 420). One change of a
+    /// participant at a time (`changing`, issue 564), as `take_in` makes it.
     ///
     /// # Errors
     /// `ChannelError::NotAParticipant`, `Forbidden`; what resolving the one who leaves reports
@@ -237,6 +241,7 @@ impl ChannelLoop {
         participant: ActorId,
         exit: Exit,
     ) -> Result<()> {
+        let _changing = self.changing.lock(participant).await;
         let found = self
             .channel()
             .participants
@@ -275,7 +280,9 @@ impl ChannelLoop {
     /// built and started again, given the part of the history it may see, as when it joined. Either
     /// is announced as a leave or a join, in the kernel's name. One that cannot be read or run is
     /// logged and left as it is. Of a running one only whether it exists is asked, not again
-    /// whether it may run.
+    /// whether it may run. One change of a participant at a time (`changing`, issue 564), as
+    /// `take_in` makes it: an agent being taken in or let go meanwhile is looked at once that is
+    /// done, and not at all once it is no longer listed.
     pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
         let agents: Vec<Participant> = self
             .channel()
@@ -287,6 +294,11 @@ impl ChannelLoop {
         for participant in agents {
             let Participant::Agent(id) = participant else { continue };
             let actor = participant.actor_id();
+            let _changing = self.changing.lock(actor).await;
+            // Removed meanwhile, by whoever held the lock before: nothing to follow.
+            if !self.channel().lists(actor) {
+                continue;
+            }
             match self.actors.load().get(&actor).cloned() {
                 // Running: only whether it still exists matters.
                 Some(running) => match self.participation.agent_exists(id).await {
@@ -754,6 +766,60 @@ mod tests {
             .map(|c| c.id())
             .collect();
         assert!(!listed.contains(&hr.id()) && listed.contains(&team.id()), "listed without it");
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    /// How often `participant` joined `channel` by its history, once the first join is recorded and
+    /// whatever else was under way had time to be recorded too.
+    async fn joins_recorded(channel: &ChannelLoop, participant: ActorId) -> usize {
+        let joins = |entries: Vec<HistoryEntry>| {
+            entries
+                .iter()
+                .filter(|e| {
+                    matches!(e, HistoryEntry::ParticipantJoined { participant: p, .. } if *p == participant)
+                })
+                .count()
+        };
+        time::timeout(Duration::from_secs(5), async {
+            while joins(channel.history_entries().await) == 0 {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("a join is recorded");
+        time::sleep(Duration::from_millis(50)).await;
+        joins(channel.history_entries().await)
+    }
+
+    /// Issue 564: two who add one participant at once are served one after the other - the
+    /// first takes them in, the second finds them there; never two actors.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn two_who_add_one_participant_at_once_take_them_in_once() {
+        let kernel = test_kernel();
+        let manager = SessionManager::new(Arc::clone(&kernel));
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let add = || {
+            let (channel, ctx) = (Arc::clone(&channel), ctx.clone());
+            tokio::spawn(
+                async move { channel.add_participant(&ctx, other, HistoryAccess::All).await },
+            )
+        };
+
+        let (first, second) = (add(), add());
+        let outcomes = [first.await.unwrap(), second.await.unwrap()];
+
+        let added = outcomes.iter().filter(|outcome| outcome.is_ok()).count();
+        assert_eq!(added, 1, "one takes them in: {outcomes:?}");
+        assert!(
+            outcomes.iter().filter_map(|outcome| outcome.as_ref().err()).all(|error| matches!(
+                error.downcast_ref(),
+                Some(ChannelError::AlreadyParticipant { .. })
+            )),
+            "the other finds them there: {outcomes:?}"
+        );
+        assert!(channel.channel().lists(other), "listed");
+        assert_eq!(joins_recorded(&channel, other).await, 1, "one actor joined, not two");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 

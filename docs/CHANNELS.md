@@ -545,8 +545,11 @@ who is removed is kept as a former participant (`Channel::let_go`, issue 164). I
 channel - asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's
 name for one who joined, founded or left it -, lets the group of its participants follow and
 announces who joined or left. One whose actor then cannot start has the addition rolled back as the
-channel had them before (`Channel::undo_take_in`), announced as a leave. Events only announce;
-nothing changes a channel because an event arrived.
+channel had them before (`Channel::undo_take_in`), announced as a leave. The changes of one
+participant - taken in, let go, its actor following its agent's deletion and restoring - are made
+one at a time, so that two who add the same participant at once take them in once, and a rollback
+never takes out one whose actor another started. Events only announce; nothing changes a channel
+because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
