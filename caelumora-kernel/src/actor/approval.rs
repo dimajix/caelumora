@@ -634,7 +634,7 @@ mod tests {
             );
             assert_eq!(
                 (asked.context.sender_id, asked.context.initiator_id),
-                (ActorId::Approver(self.approver.approver.id), ActorId::Agent(self.agent)),
+                (self.approver.id(), ActorId::Agent(self.agent)),
                 "in its own name, for the agent that asked"
             );
         }

@@ -444,3 +444,25 @@ collected here, to be taken on one after the other, each a step of its own:
   the modification of - point 12 -, and `UserActor::modify_message`, its REST handler and
   CHANNELS.md say that of a message taken back every attachment it carried is not found, at once;
   a test of the kernel holds it.
+
+- **2026-11-14** — Two findings of step 12's review, at the maintainer's decision: the chat of the
+  web UI drew each of its notices in a dashed frame of its own, nine times the same markup; it
+  draws them with one component now (`Notice`, a file of its own), given an icon, a heading, what
+  it tells and the actions of its footer. And the test harness of the approver asked the
+  approver for its id through a private field instead of `Actor::id`.
+
+- **2026-11-14** — Points join the issue from the review of the notices, at the maintainer's
+  decision:
+  14. **The history panel draws its notices five times by hand.** `HistoryPanel.tsx` repeats the
+  same compact row - a dashed frame, an icon, a bold title with its time, what it tells - for
+  each kind of entry it shows apart, three of them in the same grey. `Notice` does not fit them:
+  they carry a time, not a message with its footer, and come in tones of their own. A component
+  of the panel's own, given icon, tone, title, time and what it tells, is to draw them.
+  15. **The chat writes the heading of a notice twice more by hand.** The marked message of the
+  user's own that was not let in, and the alert of a failed turn, draw their frames rightly apart
+  from `Notice`, but each repeats its heading row - an icon and an upper-case title - by hand.
+  Whether the row is to be shared is to be decided.
+  16. **`MessageView.tsx` holds more than one component.** Beside `MessageView` it exports
+  `MessageTime`, `Reasoning` and `MessageFooter`, while WEB-UI.md holds one component to a file.
+  Either the rule allows the parts of a message to share its file, or they move to files of their
+  own.

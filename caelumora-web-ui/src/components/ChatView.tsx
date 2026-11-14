@@ -86,6 +86,7 @@ import {cn} from '../classNames';
 import {MarkdownMessage} from './MarkdownMessage';
 import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
+import {Notice} from './Notice';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
 import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
@@ -1513,67 +1514,33 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       <span>{msg.content}</span>
     </div>
   ) : msg.activity ? (
-    <div
+    <Notice
       key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className={cn("flex items-center gap-2 text-xs font-semibold uppercase tracking-wider opacity-70", msg.content && "mb-1")}>
-        <Cog size={14} />
+      message={msg}
+      icon={Cog}
+      heading={
         <span className="inline-flex items-center gap-1.5">
           {msg.activity.agent} {msg.activity.underWay ? 'is' : 'was'} {msg.activity.activity}
           {msg.activity.underWay && <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-working" />}
         </span>
-      </div>
+      }
+    >
       {msg.content && <MarkdownMessage content={msg.content} />}
-      <MessageFooter message={msg} />
-    </div>
+    </Notice>
   ) : msg.commandOutput ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-        <ChevronRight size={14} />
-        {commandHeading(msg.commandOutput, msg.sender_name)}
-      </div>
+    <Notice key={key} message={msg} icon={ChevronRight} heading={commandHeading(msg.commandOutput, msg.sender_name)}>
       {msg.content && <MarkdownMessage content={msg.content} />}
-      <MessageFooter message={msg} />
-    </div>
+    </Notice>
   ) : msg.nudged ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider opacity-70">
-        <BellRing size={14} />
-        <span>{msg.sender_name ?? 'Someone'} asks you to respond · only visible to you</span>
-      </div>
-      <MessageFooter message={msg} />
-    </div>
+    <Notice key={key} message={msg} icon={BellRing} heading={<span>{msg.sender_name ?? 'Someone'} asks you to respond · only visible to you</span>} />
   ) : msg.chainCutOff ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-        <Unlink size={14} />
-        <span>Chain cut off</span>
-      </div>
+    <Notice key={key} message={msg} icon={Unlink} heading={<span>Chain cut off</span>}>
       <div className="wrap-break-word">{chainCutOffText(msg.chainCutOff)}</div>
-      <MessageFooter message={msg} />
-    </div>
+    </Notice>
   ) : msg.responderUndecided ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-        <AtSign size={14} />
-        <span>Nobody chosen to respond</span>
-      </div>
+    <Notice key={key} message={msg} icon={AtSign} heading={<span>Nobody chosen to respond</span>}>
       <div className="wrap-break-word">It could not be decided who should respond, so no agent was asked. Mention someone with @ to ask them.</div>
-      <MessageFooter message={msg} />
-    </div>
+    </Notice>
   ) : msg.givenUp?.kind === 'failed' ? (
     <div
       key={key}
@@ -1591,53 +1558,21 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
       <MessageFooter message={msg} actions={retryGivenUpAction(msg)} />
     </div>
   ) : msg.givenUp ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-        <Ban size={14} />
-        <span>{msg.sender_name || 'The agent'} gave its answer up</span>
-      </div>
+    <Notice key={key} message={msg} icon={Ban} heading={<span>{msg.sender_name || 'The agent'} gave its answer up</span>} actions={retryGivenUpAction(msg)}>
       <div className="wrap-break-word">{msg.content}</div>
-      <MessageFooter message={msg} actions={retryGivenUpAction(msg)} />
-    </div>
+    </Notice>
   ) : msg.messageRejected ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-        <Ban size={14} />
-        <span>Not let in</span>
-      </div>
+    <Notice key={key} message={msg} icon={Ban} heading={<span>Not let in</span>}>
       <div className="wrap-break-word">{rejectedText(msg.messageRejected.rejected)} was not let into the channel: {rejectionText(msg.messageRejected.reason)}.</div>
-      <MessageFooter message={msg} />
-    </div>
+    </Notice>
   ) : msg.eventRefused ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-        <Ban size={14} />
-        <span>Not taken</span>
-      </div>
+    <Notice key={key} message={msg} icon={Ban} heading={<span>Not taken</span>}>
       <div className="wrap-break-word">{rejectedText(msg.eventRefused.refused)} was not taken{msg.sender_name ? ` by ${msg.sender_name}` : ''}: {rejectionText(msg.eventRefused.reason)}.</div>
-      <MessageFooter message={msg} />
-    </div>
+    </Notice>
   ) : msg.retryRejected ? (
-    <div
-      key={key}
-      className="max-w-[80%] p-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-900/60 text-gray-800 dark:text-gray-200 text-sm"
-    >
-      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider mb-1 opacity-70">
-        <RotateCcw size={14} />
-        <span>Not answered again</span>
-      </div>
+    <Notice key={key} message={msg} icon={RotateCcw} heading={<span>Not answered again</span>}>
       <div className="wrap-break-word">{msg.sender_name || 'The agent'} did not answer again: {retryRefusedText(msg.retryRejected)}.</div>
-      <MessageFooter message={msg} />
-    </div>
+    </Notice>
   ) : msg.rejected ? (
     <div
       key={key}
