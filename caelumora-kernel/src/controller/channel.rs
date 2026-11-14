@@ -23,13 +23,13 @@ use tracing::error;
 /// permission is checked, on the channel's own attributes - and only then taken over live and
 /// announced.
 #[derive(Debug)]
-pub struct ChannelController {
+pub(crate) struct ChannelController {
     channel: LiveDocument<Channel>,
     groups: Arc<dyn EntityStore<Group>>,
 }
 
 impl ChannelController {
-    pub fn new(
+    pub(crate) fn new(
         channel: Channel,
         event_publisher: Arc<dyn EventPublisher>,
         stores: &EntityStores,
@@ -46,15 +46,15 @@ impl ChannelController {
         }
     }
 
-    pub fn load(&self) -> Guard<Arc<Channel>> {
+    pub(crate) fn load(&self) -> Guard<Arc<Channel>> {
         self.channel.load()
     }
 
-    pub fn id(&self) -> ChannelId {
+    pub(crate) fn id(&self) -> ChannelId {
         self.channel.address().1
     }
 
-    pub fn name(&self) -> Name {
+    pub(crate) fn name(&self) -> Name {
         self.channel.load().name.clone()
     }
 
@@ -64,7 +64,11 @@ impl ChannelController {
     /// `StoreError::Invalid` if `new_name` is no name, otherwise whatever
     /// the store reports, `StoreError::PermissionDenied` included; the
     /// channel is then unchanged.
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
+    pub(crate) async fn update_name(
+        &self,
+        ctx: &SecurityContext,
+        new_name: &str,
+    ) -> StoreResult<()> {
         let event = ChannelUpdateEvent::NameChanged(new_name.to_string());
         self.update(ctx, &event).await
     }
@@ -76,7 +80,7 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_classification(
+    pub(crate) async fn update_classification(
         &self,
         ctx: &SecurityContext,
         classification: Classification,
@@ -92,7 +96,7 @@ impl ChannelController {
     /// `StoreError::Invalid` if `language` is no language tag, otherwise
     /// whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_language(
+    pub(crate) async fn update_language(
         &self,
         ctx: &SecurityContext,
         language: Option<&str>,
@@ -107,7 +111,7 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied`
     /// included; the channel is then unchanged.
-    pub async fn update_uses_workspace(
+    pub(crate) async fn update_uses_workspace(
         &self,
         ctx: &SecurityContext,
         uses: bool,
@@ -123,7 +127,7 @@ impl ChannelController {
     /// `StoreError::Validation` if a rule does not only ask or deny
     /// (`ApprovalRule::check_restricting`), otherwise whatever the store
     /// reports; the channel is then unchanged.
-    pub async fn update_approval_rules(
+    pub(crate) async fn update_approval_rules(
         &self,
         ctx: &SecurityContext,
         rules: Vec<ApprovalRule>,
@@ -144,7 +148,7 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn add_participant(
+    pub(crate) async fn add_participant(
         &self,
         ctx: &SecurityContext,
         participant: Participant,
@@ -204,7 +208,7 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::NotFound` if `participant` takes no part in the channel;
     /// whatever the store reports otherwise.
-    pub async fn remove_participant(
+    pub(crate) async fn remove_participant(
         &self,
         ctx: &SecurityContext,
         participant: ActorId,
@@ -234,7 +238,7 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::Invalid` if one does not fit (`Channel::describe`),
     /// otherwise whatever the store reports; the channel is then unchanged.
-    pub async fn update_description(
+    pub(crate) async fn update_description(
         &self,
         ctx: &SecurityContext,
         summary: Option<&str>,

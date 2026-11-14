@@ -222,7 +222,7 @@ mod tests {
     use caelumora_domain::channel::{self, Channel, HistoryAccess};
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::group::GroupId;
-    use caelumora_domain::security::{AclEntry, Grant, SecurityAttributes, Subject};
+    use caelumora_domain::security::{AclEntry, SecurityAttributes};
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::{Session, SessionUpdateEvent};
     use caelumora_domain::store::StoreError;
@@ -323,8 +323,9 @@ mod tests {
         let (_, manager) = owned_kernel(Default::default());
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let (bob_id, carol_id) = (ActorId::User(bob.id), ActorId::User(carol.id));
-        let invited = |attributes: SecurityAttributes| {
-            attributes.granting(Subject::Actor(bob_id), Grant::Join)
+        let invited = |mut attributes: SecurityAttributes| {
+            attributes.acl.push(AclEntry::invitation(bob_id));
+            attributes
         };
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(manager.kernel().entity_stores(), &[&alice]).await;
@@ -354,9 +355,8 @@ mod tests {
             "in the session"
         );
         assert!(main.participants().iter().any(|m| m.id == bob_id), "and in the channel");
-        let invitation = AclEntry { subject: Subject::Actor(bob_id), grant: Grant::Join };
         assert!(
-            !session.session().security_attributes.acl.contains(&invitation),
+            !session.session().security_attributes.acl.contains(&AclEntry::invitation(bob_id)),
             "his invitation is used up"
         );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();

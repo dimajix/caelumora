@@ -1,6 +1,6 @@
 # 564 — Taking someone into a session and a channel is rolled back in part only
 
-**Status:** open
+**Status:** in progress
 **Type:** bug
 **Priority:** low
 **Area:** Sessions and channels
@@ -72,3 +72,19 @@ channel had the participant before (`ChannelController::roll_back_participant_ad
 - **2026-11-12** — Opened from the findings of the reviews of issue
   [563](563-a-channel-invitation-is-never-used-up.md), gathered in one issue as the maintainer
   asked.
+- **2026-11-14** — Decided with the maintainer: what the channel can refuse is asked before the
+  session is stored already (`SessionLoop::take_in`), and one who is not in the session has never
+  been in one of its channels - a session lets nobody go -, so after the session was stored only a
+  failure or a race is left. One the channel then cannot take in stays in the session, as one
+  taken in without a channel does, and can be taken into the channel again; the session's part is
+  not rolled back, which would need a way out of a session for this case alone. This is
+  documented as a deliberate exception and held by a test. Besides, a join is announced only
+  where who is listed changed - in the session too, which covers two joins of one person racing
+  there -, and takings-in of one participant into a channel are serialised in its `ChannelLoop`.
+  Four steps: the changes without behaviour (4 to 6), the announcements, the serialisation, the
+  exception.
+
+  Step 1 done: `ChannelController` is the kernel's (`pub(crate)`, the type, its operations and
+  `ControllerManager::new_channel_controller`), and so is `ChannelRuntime::new`, which takes it;
+  `take_back_entering` is `roll_back_project_change`; the test of 221 gives and checks the
+  invitation as `AclEntry::invitation`.
