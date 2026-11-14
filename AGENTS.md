@@ -105,7 +105,9 @@ under `## History`), and numbers are never reused.
     optional part changes no caller (see
     [CODING-GUIDELINES.md](docs/CODING-GUIDELINES.md#a-modules-manager)). Before adding a trait,
     check whether an existing one can be generalised to cover the case; before adding a family of
-    near-identical types, check whether one generic type would do.
+    near-identical types, check whether one generic type would do. Before adding a parameter, a
+    field or a facet, check whether an existing one is meant for it: a narrower interface that is
+    composed already beats a more powerful one that needs wiring of its own.
 *   **A clear and consistent public API.** The same concept has the same name everywhere (the
     `…_id` of what it identifies, `load_…` for loading, `…Provider` for a facet). Similar things
     are constructed, configured and fail the same way. Make visible only what is used from outside
@@ -129,7 +131,10 @@ under `## History`), and numbers are never reused.
     [issues/INDEX.md](issues/INDEX.md) for an issue covering it.
 2.  **Analyse.** Understand the requirement and where it belongs in the overall structure. Find
     the closest existing pattern. If the change only fits by bending the existing code, the
-    restructuring comes first, as a decision of its own.
+    restructuring comes first, as a decision of its own. If a narrow request shows that a general
+    capability is missing - an authentication setting that finds no handling of secrets at all -,
+    the plan proposes the general mechanism, built like the closest one the codebase has, instead
+    of a field for the one case.
 3.  **Plan.** Name the pattern you follow, write the interface of every new or changed public type,
     trait and method, and list the files and the tests. Where the work adds or changes a public
     interface or raises an architecture question, put the plan before the maintainer and wait for
@@ -195,12 +200,17 @@ own nor built around. It goes into a section *Findings* of your summary, each wi
 (`file:line`), what is wrong, and the refactoring you propose. The maintainer decides whether it
 becomes a step before the work, an issue of its own, or nothing.
 
+A finding about a rare case says how it arises - which actions, in which order - and how likely it
+is. Documenting the behaviour and holding it by a test is an option beside restructuring; choose by
+what the code looks like afterwards.
+
 ### Corrections become rules
 
 What the maintainer corrects in a review and no document states yet becomes a rule: propose its
-addition to the document on its subject, in the same work. A rule that has been missed twice is not
-written down more emphatically, but checked by a tool - a lint in `[workspace.lints]`, a test, a
-check of the pre-commit hook -; propose the tool as a finding.
+addition to the document on its subject, in the same work - not to an agent's own memory, which no
+other agent reads. A rule that has been missed twice is not written down more emphatically, but
+checked by a tool - a lint in `[workspace.lints]`, a test, a check of the pre-commit hook -; propose
+the tool as a finding.
 
 ### Branches and commits
 
@@ -240,5 +250,7 @@ instead of guessing. After a merge that needed conflict resolution, run the test
 *   Markdown is rewrapped by a script only one paragraph of prose at a time, never a list, a table
     or a code block, and never across files; then `scripts/wrapping.sh` runs and the resulting diff
     is read. A change of a few words is edited by hand, so that the diff shows what changed.
+*   A rename across the repository leaves `issues/` alone: an issue records the names as they were
+    then.
 *   Never use `pkill -f` with a pattern that appears in the current command line: it can kill your
     own shell. Find the exact PID first, and kill that PID.
