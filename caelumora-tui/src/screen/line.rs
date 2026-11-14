@@ -2,8 +2,8 @@
 //! read by rustyline (issue 569).
 
 use super::words::{
-    attachment, error_word, how_to_answer, how_to_approve, missed, outcome, question_rows,
-    Arguments, EXPLICIT,
+    attachment, error_word, how_to_answer, how_to_approve, missed, offered_words, outcome,
+    question_rows, what_is_asked, Arguments, EXPLICIT,
 };
 use super::{Screen, Typed};
 use crate::asking::{Asked, Asking};
@@ -199,9 +199,10 @@ fn approval_lines(request: &ApprovalRequest) -> Vec<String> {
 /// The lines that ask `asking`: what is asked, its choices numbered, and how to answer.
 fn asked_lines(asking: &Asking) -> Vec<String> {
     let choices = asking.choices();
-    let mut lines = vec![asking.what()];
+    let mut lines = vec![what_is_asked(asking)];
     let numbered = choices.iter().enumerate();
-    lines.extend(numbered.map(|(index, choice)| format!("   {}) {choice}", index + 1)));
+    let words = |(index, offered)| format!("   {}) {}", index + 1, offered_words(offered));
+    lines.extend(numbered.map(words));
     let how = match (choices.is_empty(), asking.multi_select(), asking.takes_words()) {
         (true, _, _) => "Type your answer, or '-' to decline it.",
         (false, _, false) => "Type the number of your choice.",
@@ -246,6 +247,8 @@ mod tests {
     use crate::printed::{ErrorKind, Words};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::testing::make_approval_request;
+    use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
     use caelumora_domain::channel::ChannelId;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::content::ContentRef;
@@ -393,6 +396,43 @@ mod tests {
         let request = make_question_request(SessionId::new(), ChannelId::new(), AgentId::new(), me);
         let asked = asked_lines(&Asking::questions(request));
         assert_eq!(asked, ["1. Name: Who?", "Type your answer, or '-' to decline it."]);
+    }
+
+    /// An approval is asked with its choices in words: yes - for the calls alike from now on, as
+    /// its tool suggests them, in the channel or the session -, and no.
+    #[test]
+    fn an_approval_is_asked_with_the_calls_alike_in_words() {
+        let request = make_approval_request(SessionId::new(), ChannelId::new(), AgentId::new());
+        let shell = ArgumentMatcher::Shell { shell: vec!["ls".to_string()] };
+        let arguments = [("command".to_string(), shell)].into_iter().collect();
+        let matcher = ToolMatcher { tool: "run_command".to_string(), arguments };
+        let request = ApprovalRequest { suggested: Some(matcher), ..request };
+        let alike =
+            "Yes, and from now on for calls of run_command with command beginning with `ls`";
+        assert_eq!(
+            asked_lines(&Asking::Approval(request)),
+            [
+                "Approve? call test_tool".to_string(),
+                "   1) Yes".to_string(),
+                format!("   2) {alike} in this channel"),
+                format!("   3) {alike} in this session"),
+                "   4) No".to_string(),
+                "Type the number of your choice.".to_string(),
+            ]
+        );
+    }
+
+    /// The calls alike are told on one line, shortened, whatever an argument they compare holds.
+    #[test]
+    fn the_calls_alike_are_told_on_one_line() {
+        let request = make_approval_request(SessionId::new(), ChannelId::new(), AgentId::new());
+        let content = ArgumentMatcher::Equals { equals: format!("a\nb{}", "c".repeat(500)) };
+        let arguments = [("content".to_string(), content)].into_iter().collect();
+        let matcher = ToolMatcher { tool: "write_file".to_string(), arguments };
+        let request = ApprovalRequest { suggested: Some(matcher), ..request };
+        let asked = asked_lines(&Asking::Approval(request));
+        assert!(asked[2].contains("content being `a⏎bccc"), "{asked:?}");
+        assert!(asked[2].chars().count() < 260 && asked[2].contains('…'), "{asked:?}");
     }
 
     #[test]

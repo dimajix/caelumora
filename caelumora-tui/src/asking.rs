@@ -1,10 +1,10 @@
 //! What the terminal asks the user to decide now (issue 571): an approval pending in the channel
-//! talked in, or the next of the questions put to them, with the choices they answer it by - which
-//! each way of drawing shows its own way.
+//! talked in, or the next of the questions put to them, with what the choices they answer it by
+//! mean - which both ways of drawing word alike (`screen/words.rs`), each styling them its own
+//! way.
 
-use crate::screen::{choice_words, question_line};
-use caelumora_domain::approval::ApprovalRequest;
-use caelumora_domain::question::{Question, QuestionRequest, Response};
+use caelumora_domain::approval::{ApprovalRequest, Reach, ToolMatcher};
+use caelumora_domain::question::{Choice, Question, QuestionRequest, Response};
 
 /// What the terminal asks the user to decide now.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +18,25 @@ pub(crate) enum Asking {
         /// The responses given so far, one per question before the next.
         responses: Vec<Response>,
     },
+}
+
+/// What a choice offered for what is asked means (`Asking::choices`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Offered {
+    /// The call approved.
+    Approve,
+    /// The call approved, and the calls `matcher` is about - those alike, as the call's tool
+    /// suggests - approved from now on within `reach`, by a rule of the user's.
+    ApproveFromNowOn {
+        /// The calls alike.
+        matcher: ToolMatcher,
+        /// Where the rule applies: the call's channel, or its session.
+        reach: Reach,
+    },
+    /// The call denied.
+    Deny,
+    /// A choice of the question asked.
+    Choice(Choice),
 }
 
 /// What is asked of the user, as the terminal holds it: shown, or put aside to type on.
@@ -69,24 +88,29 @@ impl Asking {
         Asking::Question { request, responses: Vec::new() }
     }
 
-    /// What is asked, in words: the call to be approved, or the next question with its number.
-    pub(crate) fn what(&self) -> String {
+    /// The choices it is answered by, by what they mean: for an approval, the call approved - and,
+    /// where its tool suggests the calls alike and no rule of a place asked for a person's own
+    /// decision, those approved from now on in its channel or its session -, or denied, as the web
+    /// UI offers them; for a question, its choices - none for one answered in words.
+    pub(crate) fn choices(&self) -> Vec<Offered> {
         match self {
-            Asking::Approval(request) => format!("Approve? {}", request.description),
-            Asking::Question { .. } => {
-                self.question().map(|(index, q)| question_line(index, q)).unwrap_or_default()
+            Asking::Approval(request) => {
+                let mut offered = vec![Offered::Approve];
+                if let Some(alike) = request.suggested.as_ref().filter(|_| !request.explicit) {
+                    for reach in
+                        [Reach::Channel(request.channel_id), Reach::Session(request.session_id)]
+                    {
+                        offered.push(Offered::ApproveFromNowOn { matcher: alike.clone(), reach });
+                    }
+                }
+                offered.push(Offered::Deny);
+                offered
             }
-        }
-    }
-
-    /// The choices it is answered by, in words: for an approval "yes" and "no"; for a question
-    /// its choices, recommended or described where they are - none for one answered in words.
-    pub(crate) fn choices(&self) -> Vec<String> {
-        match self {
-            Asking::Approval(_) => vec!["Yes".to_string(), "No".to_string()],
             Asking::Question { .. } => self
                 .question()
-                .map(|(_, question)| question.choices.iter().map(choice_words).collect())
+                .map(|(_, question)| {
+                    question.choices.iter().cloned().map(Offered::Choice).collect()
+                })
                 .unwrap_or_default(),
         }
     }
@@ -118,9 +142,10 @@ mod tests {
     use super::*;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::testing::make_approval_request;
     use caelumora_domain::channel::ChannelId;
     use caelumora_domain::question::testing::make_question_request;
-    use caelumora_domain::question::{Choice, Questions};
+    use caelumora_domain::question::Questions;
     use caelumora_domain::session::SessionId;
     use caelumora_domain::user::UserId;
 
@@ -153,12 +178,45 @@ mod tests {
         let questions =
             vec![question("Store", &["Postgres", "SQLite"], false), question("Name", &[], false)];
         let asking = Asking::questions(request(questions));
-        assert_eq!(asking.what(), "1. Store: Which?");
-        assert_eq!(asking.choices(), ["Postgres", "SQLite (recommended)"]);
+        let header = |asking: &Asking| asking.question().map(|(at, q)| (at, q.header.clone()));
+        assert_eq!(header(&asking), Some((0, "Store".to_string())));
+        let labels: Vec<String> = asking
+            .choices()
+            .into_iter()
+            .map(|offered| match offered {
+                Offered::Choice(choice) => choice.label,
+                other => panic!("no choice of a question: {other:?}"),
+            })
+            .collect();
+        assert_eq!(labels, ["Postgres", "SQLite"]);
         assert!(!asking.multi_select() && asking.takes_words());
         let Asking::Question { request, .. } = asking else { unreachable!("questions") };
         let next = Asking::Question { request, responses: vec![Response::Declined] };
-        assert_eq!(next.what(), "2. Name: Which?");
+        assert_eq!(header(&next), Some((1, "Name".to_string())));
         assert!(next.choices().is_empty(), "answered in words");
+    }
+
+    /// An approval is answered by yes or no - and, where its tool suggests the calls alike and no
+    /// rule of a place asked for a person's own decision, by yes from now on in its channel or its
+    /// session.
+    #[test]
+    fn an_approval_offers_the_calls_alike_from_now_on_where_suggested() {
+        let request = make_approval_request(SessionId::new(), ChannelId::new(), AgentId::new());
+        let plain = Asking::Approval(request.clone());
+        assert_eq!(plain.choices(), [Offered::Approve, Offered::Deny], "none suggested");
+        let matcher = ToolMatcher { tool: "test_tool".to_string(), arguments: Default::default() };
+        let suggested = ApprovalRequest { suggested: Some(matcher.clone()), ..request };
+        let alike = |reach| Offered::ApproveFromNowOn { matcher: matcher.clone(), reach };
+        assert_eq!(
+            Asking::Approval(suggested.clone()).choices(),
+            [
+                Offered::Approve,
+                alike(Reach::Channel(suggested.channel_id)),
+                alike(Reach::Session(suggested.session_id)),
+                Offered::Deny,
+            ]
+        );
+        let explicit = ApprovalRequest { explicit: true, ..suggested };
+        assert_eq!(Asking::Approval(explicit).choices(), [Offered::Approve, Offered::Deny]);
     }
 }

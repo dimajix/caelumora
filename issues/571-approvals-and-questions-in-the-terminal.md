@@ -1,6 +1,6 @@
 # 571 — Approvals in the terminal take a UUID typed, and no rule for calls alike
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -76,3 +76,11 @@ buttons (`Followed::may_approve`); what is asked is held as shown or put aside (
 flag beside it; switching the channel asks anew of the channel switched to. Step 3 begins with the
 choices told by their meaning instead of by their index. That the terminal remembers what the user
 answered (`Talk::answered`) beside the owners of approvals and questions is an issue of its own.
+
+**2026-11-14** - Step 3 done: what a choice means is `Offered` (`asking.rs`), which `Asking`
+answers its choices by - the call approved, approved with the calls alike from now on in its
+channel or its session, or denied; a question's choice -, and which `screen/words.rs` words for both
+ways of drawing. An approval whose tool suggests a matcher, and which no rule of a place asked a
+person to decide, offers the calls alike; chosen, the call is approved first, then the user's rule
+added by their controller (`UserController::add_approval_rule`), and where that fails, the answer
+stands and the user is told so.

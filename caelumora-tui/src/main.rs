@@ -26,6 +26,7 @@ use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
+use caelumora_kernel::controller::UserController;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
@@ -253,11 +254,8 @@ async fn main() -> Result<()> {
         .id;
     // The session is this terminal user's own; their context, with their
     // roles, is their controller's (issue 304).
-    let security = kernel
-        .controller_manager()
-        .user_controller(owner)
-        .await?
-        .security_context(Default::default(), Default::default());
+    let controller = kernel.controller_manager().user_controller(owner).await?;
+    let security = controller.security_context(Default::default(), Default::default());
 
     let session_manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
     let projects = ProjectManager::new(Arc::clone(&session_manager));
@@ -296,7 +294,8 @@ async fn main() -> Result<()> {
     // (issue 297): its actors keep what they are in the middle of, and only what does not outlive
     // the process ends with it.
     let bus = Arc::clone(kernel.event_bus());
-    let talked = talk(session_loop, views, sessions, bus, screen.as_mut(), signalled).await;
+    let talked =
+        talk(session_loop, views, sessions, controller, bus, screen.as_mut(), signalled).await;
     // The terminal given back first: the shutdown may take a while.
     drop(screen);
     session_manager.shutdown().await;
@@ -307,7 +306,8 @@ async fn main() -> Result<()> {
 /// line by line - in the channel talked in, or in none until they switch to one -, learning from
 /// `bus` of those they join meanwhile, shown and read by `screen`: from what the terminal opens
 /// with (`Channels::opening`) until they end it, or `signalled` completes - also before the talk
-/// began. The `sessions` of the directory are what the commands on sessions reach.
+/// began. The `sessions` of the directory are what the commands on sessions reach, the user's
+/// controller `user` what keeps the rules they give with an answer.
 ///
 /// # Errors
 /// If the user takes part in no channel of the session, or a message cannot be sent into a
@@ -316,13 +316,14 @@ async fn talk(
     session_loop: Arc<SessionLoop>,
     views: Views,
     sessions: Sessions,
+    user: Arc<UserController>,
     bus: Arc<EventBus>,
     screen: &mut dyn Screen,
     signalled: impl Future<Output = ()>,
 ) -> Result<()> {
     let mut signalled = std::pin::pin!(signalled);
     // Every channel of the session the user takes part in, talking in the first.
-    let begun = Talk::begin(session_loop, views, bus, sessions);
+    let begun = Talk::begin(session_loop, views, bus, sessions, user);
     let (mut talk, opening) = tokio::select! {
         () = &mut signalled => {
             screen.print(vec![Printed::Notice("Ending".to_string())]);
@@ -467,7 +468,7 @@ mod tests {
     /// why, for its caller to shut the session down after.
     #[tokio::test]
     async fn who_takes_part_in_no_channel_cannot_talk() {
-        let InDirectory { sessions, manager, kernel, directory: _directory, .. } =
+        let InDirectory { sessions, manager, kernel, owner, directory: _directory } =
             in_directory().await;
         let start = Opening::Start { template: None };
         let (session_loop, _) = sessions.open(&start).await.expect("started");
@@ -479,7 +480,10 @@ mod tests {
         let mut screen = LineScreen::new().expect("a screen");
         let bus = Arc::clone(kernel.event_bus());
         let signalled = future::pending();
-        let talked = talk(session_loop, views, sessions, bus, &mut screen, signalled).await;
+        // The owner's controller: whose rules matter not, the talk never beginning.
+        let ActorId::User(owner) = owner.caller_id else { unreachable!("a user") };
+        let user = kernel.controller_manager().user_controller(owner).await.expect("theirs");
+        let talked = talk(session_loop, views, sessions, user, bus, &mut screen, signalled).await;
         let error = talked.expect_err("no channel to talk in");
         assert!(error.to_string().contains("takes part in no channel"), "{error}");
     }

@@ -2,7 +2,7 @@
 //! typed does in them - a command of the terminal carried out, what is asked of the user answered,
 //! or what is left sent to the channel talked in -, what they show, and what is asked.
 
-use crate::asking::{Asked, Asking};
+use crate::asking::{Asked, Asking, Offered};
 use crate::channels::{Channels, Happened};
 use crate::commands::{beginning_with, terminal_help, TerminalCommand};
 use crate::followed::Followed;
@@ -11,7 +11,7 @@ use crate::sessions::{listing, Opening, Sessions, SessionsError};
 use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_api::command::CommandError;
-use caelumora_domain::approval::ApprovalRequest;
+use caelumora_domain::approval::{ApprovalRequest, ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::question::{Question, QuestionRequest, Response};
 #[cfg(test)]
@@ -19,6 +19,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::command::help::HELP_COMMAND_NAME;
+use caelumora_kernel::controller::UserController;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::session::SessionLoop;
@@ -80,12 +81,16 @@ pub(crate) struct Talk {
     answered: HashSet<Uuid>,
     /// The sessions of the directory, which the commands on sessions reach.
     sessions: Sessions,
+    /// The user's controller, which keeps their rules (`approve_from_now_on`), and their
+    /// context.
+    user: Arc<UserController>,
 }
 
 impl Talk {
     /// Begins the talk of the user `views` are read by in the channels of `session_loop` they take
     /// part in - learning from `bus` of those they join meanwhile -, among the `sessions` of the
-    /// directory, and answers what the terminal opens with (`Channels::opening`).
+    /// directory, keeping their rules by their controller `user`, and answers what the terminal
+    /// opens with (`Channels::opening`).
     ///
     /// # Errors
     /// If the user takes part in no channel of the session.
@@ -94,6 +99,7 @@ impl Talk {
         views: Views,
         bus: Arc<EventBus>,
         sessions: Sessions,
+        user: Arc<UserController>,
     ) -> Result<(Talk, Vec<Printed>)> {
         let session_id = session_loop.id();
         let mut channels = Channels::new(session_loop, views, bus).await.ok_or_else(|| {
@@ -101,7 +107,7 @@ impl Talk {
         })?;
         let opening = channels.opening().await;
         let answered = HashSet::new();
-        let mut talk = Talk { channels, asked: None, answered, sessions };
+        let mut talk = Talk { channels, asked: None, answered, sessions, user };
         talk.ask_next().await;
         Ok((talk, opening))
     }
@@ -151,23 +157,33 @@ impl Talk {
         self.asked.as_ref().and_then(Asked::shown)
     }
 
-    /// Takes the choices of what is asked, by their indices, `chosen`, as the answer to it, and
-    /// answers what the terminal prints of it: an approval approved by the first, denied by the
-    /// second; the next question answered by the choices taken. Then asks what waits next.
+    /// Takes the choices of what is asked, by their indices, `chosen`, as the answer to it - each
+    /// by what it means (`Asking::choices`) -, and answers what the terminal prints of it: an
+    /// approval approved, approved with the calls alike from now on (`approve_from_now_on`), or
+    /// denied; the next question answered by the choices taken. Then asks what waits next.
     pub(crate) async fn choose(&mut self, chosen: &[usize]) -> Vec<Printed> {
-        let printed = match self.shown().cloned() {
-            Some(Asking::Approval(request)) => match chosen {
-                [0] => self.approve(&request, true).await,
-                [1] => self.approve(&request, false).await,
-                _ => Vec::new(),
-            },
-            Some(asking @ Asking::Question { .. }) => {
-                let Some((_, question)) = asking.question() else { return Vec::new() };
-                let labels = chosen.iter().filter_map(|index| question.choices.get(*index));
-                let chosen = labels.map(|choice| choice.label.clone()).collect();
-                self.answer_question(Response::Chosen { chosen, other: None }).await
+        let Some(asking) = self.shown().cloned() else { return Vec::new() };
+        let offered = asking.choices();
+        let chosen: Vec<&Offered> = chosen.iter().filter_map(|index| offered.get(*index)).collect();
+        let printed = match (&asking, chosen.as_slice()) {
+            (Asking::Approval(request), [Offered::Approve]) => {
+                self.approve(request, true).await.err().into_iter().collect()
             }
-            None => Vec::new(),
+            (Asking::Approval(request), [Offered::Deny]) => {
+                self.approve(request, false).await.err().into_iter().collect()
+            }
+            (Asking::Approval(request), [Offered::ApproveFromNowOn { matcher, reach }]) => {
+                self.approve_from_now_on(request, matcher, *reach).await
+            }
+            (Asking::Question { .. }, chosen) => {
+                let labels = chosen.iter().filter_map(|offered| match offered {
+                    Offered::Choice(choice) => Some(choice.label.clone()),
+                    _ => None,
+                });
+                let response = Response::Chosen { chosen: labels.collect(), other: None };
+                self.answer_question(response).await
+            }
+            (Asking::Approval(_), _) => Vec::new(),
         };
         self.ask_next().await;
         printed
@@ -357,10 +373,11 @@ impl Talk {
     /// Answers the approval `named` - `approved` or not (`approval_named`) -, and answers what the
     /// terminal prints of it.
     async fn answer_approval(&mut self, named: &str, approved: bool) -> Vec<Printed> {
-        match self.approval_named(named) {
+        let approved = match self.approval_named(named) {
             Ok(request) => self.approve(&request, approved).await,
-            Err(printed) => vec![printed],
-        }
+            Err(printed) => Err(printed),
+        };
+        approved.err().into_iter().collect()
     }
 
     /// The approval `named` by the beginning of its id among those pending in the channels
@@ -381,22 +398,46 @@ impl Talk {
     }
 
     /// Answers the approval `request` - `approved` or not - in the channel followed where it is
-    /// pending, and answers what the terminal prints of it; once answered, it is asked no more.
-    async fn approve(&mut self, request: &ApprovalRequest, approved: bool) -> Vec<Printed> {
+    /// pending; once answered, it is asked no more.
+    ///
+    /// # Errors
+    /// What the terminal prints where it is pending no more, the user's actor there is between two
+    /// runs, or the answer cannot be sent.
+    async fn approve(&mut self, request: &ApprovalRequest, approved: bool) -> Result<(), Printed> {
         let Some(followed) = self.channels.awaiting(request.id) else {
-            return vec![Printed::Plain(format!("No pending approval with id {}", request.id.0))];
+            return Err(Printed::Plain(format!("No pending approval with id {}", request.id.0)));
         };
-        let actor = match acting(followed) {
-            Ok(actor) => actor,
-            Err(no_run) => return vec![no_run],
-        };
-        match actor.send_approval(request.id, approved).await {
-            Ok(_) => {
-                self.answered.insert(request.id.0);
-                Vec::new()
-            }
-            Err(e) => vec![error_printed(&e)],
+        let actor = acting(followed)?;
+        actor.send_approval(request.id, approved).await.map_err(|e| error_printed(&e))?;
+        self.answered.insert(request.id.0);
+        Ok(())
+    }
+
+    /// Approves the call of `request`, then adds the user's rule that approves the calls `matcher`
+    /// is about from now on within `reach` (`UserController::add_approval_rule`), and answers what
+    /// the terminal prints of it: the answer first, as the web UI gives it - where the rule cannot
+    /// be added, the answer stands, and the user is told so, with what of the cause may be told
+    /// (`error_printed`).
+    async fn approve_from_now_on(
+        &mut self,
+        request: &ApprovalRequest,
+        matcher: &ToolMatcher,
+        reach: Reach,
+    ) -> Vec<Printed> {
+        if let Err(printed) = self.approve(request, true).await {
+            return vec![printed];
         }
+        let rule = ApprovalRule::new(matcher.clone(), RuleDecision::Allow, reach, None);
+        let context = self.user.security_context(Default::default(), Default::default());
+        let added = match rule {
+            Ok(rule) => {
+                self.user.add_approval_rule(&context, rule).await.map_err(anyhow::Error::from)
+            }
+            Err(e) => Err(anyhow::Error::from(e)),
+        };
+        let Err(e) = added else { return Vec::new() };
+        let approved = "The call is approved, but the rule for the calls alike could not be added";
+        vec![Printed::Notice(approved.to_string()), error_printed(&e)]
     }
 
     /// Asks, in the channel talked in, for the answer under way, the turn given up or the last
@@ -645,6 +686,7 @@ mod tests {
     use crate::sessions::testing::{in_directory, InDirectory};
     use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::MAX_PERSONAL_RULES;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::Choice;
     use caelumora_kernel::actor::Shown;
@@ -710,9 +752,19 @@ mod tests {
         let (session_loop, _) = sessions.open(&start).await.expect("started");
         let views = manager.views(Viewer::new(owner.clone()));
         let bus = Arc::clone(kernel.event_bus());
-        let begun = Talk::begin(Arc::clone(&session_loop), views, bus, sessions).await;
+        let ActorId::User(user) = owner.caller_id else { unreachable!("a user") };
+        let controller = kernel.controller_manager().user_controller(user).await;
+        let user = controller.expect("the owner's controller");
+        let begun = Talk::begin(Arc::clone(&session_loop), views, bus, sessions, user).await;
         let (talk, _) = begun.expect("the owner takes part");
         (talk, session_loop, Running { kernel, owner, _directory: directory })
+    }
+
+    /// The controller of the owner of `running`, the one the talk keeps their rules by.
+    async fn owner_controller(running: &Running) -> Arc<UserController> {
+        let ActorId::User(owner) = running.owner.caller_id else { unreachable!("a user") };
+        let controller = running.kernel.controller_manager().user_controller(owner).await;
+        controller.expect("the owner's controller")
     }
 
     /// Questions an agent puts to the owner of `running` in the first channel of `session_loop` -
@@ -861,15 +913,28 @@ mod tests {
     async fn a_question_is_answered_by_its_choices() {
         let (mut talk, session_loop, running) = talking().await;
         put_to_the_owner(&mut talk, &session_loop, &running, &["red", "blue"]).await;
-        assert_eq!(talk.asking().map(Asking::choices), Some(vec!["red".into(), "blue".into()]));
+        let offered = talk.asking().map(Asking::choices).unwrap_or_default();
+        let labels: Vec<&str> = offered
+            .iter()
+            .filter_map(|offered| match offered {
+                Offered::Choice(choice) => Some(choice.label.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(labels, ["red", "blue"]);
         assert!(talk.choose(&[1]).await.is_empty());
         assert!(talk.asking().is_none(), "answered, not asked again");
     }
 
     /// What the channel shows as agent `agent` asks for approval in `channel`.
     fn approval_requested(channel: &ChannelLoop, agent: AgentId) -> Happened {
-        let requested = ActorEvent::ApprovalRequested(approval(channel, agent));
-        let shown = Shown::Envelope(from(channel, ActorId::Agent(agent), requested));
+        requested(channel, approval(channel, agent))
+    }
+
+    /// What the channel shows as `request` is asked for approval in `channel`.
+    fn requested(channel: &ChannelLoop, request: ApprovalRequest) -> Happened {
+        let agent = ActorId::Agent(request.agent_id);
+        let shown = Shown::Envelope(from(channel, agent, ActorEvent::ApprovalRequested(request)));
         Happened::Shown(channel.id(), Ok(shown))
     }
 
@@ -898,6 +963,63 @@ mod tests {
         let short = &second.id.0.to_string()[..8];
         assert!(typed(&mut talk, &format!("/deny {short}")).await.is_empty());
         assert!(talk.asking().is_none(), "answered, not asked again");
+    }
+
+    /// An approval whose tool suggests the calls alike is answered by "yes, and from now on" in the
+    /// channel: the call approved, and the user's rule for the calls alike added there.
+    #[tokio::test]
+    async fn an_approval_from_now_on_adds_the_user_s_rule() {
+        let (mut talk, session_loop, running) = talking().await;
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+        let agent = an_agent_in(&running.kernel, &session_loop, &running.owner, channel.id()).await;
+        let suggested =
+            ToolMatcher { tool: "test_tool".to_string(), arguments: Default::default() };
+        let request =
+            ApprovalRequest { suggested: Some(suggested.clone()), ..approval(&channel, agent) };
+        talk.take_in(requested(&channel, request)).await;
+        let matcher = suggested.clone();
+        let from_now_on =
+            Offered::ApproveFromNowOn { matcher, reach: Reach::Channel(channel.id()) };
+        assert_eq!(
+            talk.asking().map(Asking::choices).as_ref().and_then(|c| c.get(1)),
+            Some(&from_now_on)
+        );
+
+        let chosen = talk.choose(&[1]).await;
+        assert!(chosen.is_empty(), "{:?}", lines(&chosen));
+        assert!(talk.asking().is_none(), "approved");
+        let rules = owner_controller(&running).await.profile().approval_rules().to_vec();
+        assert_eq!(rules.len(), 1, "{rules:?}");
+        assert_eq!(
+            (&rules[0].matcher, rules[0].decision, rules[0].reach, rules[0].expires_at),
+            (&suggested, RuleDecision::Allow, Reach::Channel(channel.id()), None)
+        );
+    }
+
+    /// Where the user's rule cannot be added - they keep as many as they may -, the call stays
+    /// approved, and the user is told why the rule is not.
+    #[tokio::test]
+    async fn an_approval_stands_where_its_rule_cannot_be_added() {
+        let (mut talk, session_loop, running) = talking().await;
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+        let agent = an_agent_in(&running.kernel, &session_loop, &running.owner, channel.id()).await;
+        let matcher = ToolMatcher { tool: "test_tool".to_string(), arguments: Default::default() };
+        let controller = owner_controller(&running).await;
+        let context = controller.security_context(Default::default(), Default::default());
+        for _ in 0..MAX_PERSONAL_RULES {
+            let rule =
+                ApprovalRule::new(matcher.clone(), RuleDecision::Allow, Reach::Everywhere, None);
+            controller.add_approval_rule(&context, rule.expect("a rule")).await.expect("added");
+        }
+        let request = ApprovalRequest { suggested: Some(matcher), ..approval(&channel, agent) };
+        talk.take_in(requested(&channel, request)).await;
+
+        let chosen = lines(&talk.choose(&[1]).await);
+        assert_eq!(chosen.len(), 2, "{chosen:?}");
+        assert!(chosen[0].contains("is approved, but the rule"), "{chosen:?}");
+        assert!(chosen[1].starts_with("Error: "), "{chosen:?}");
+        assert!(talk.asking().is_none(), "approved, not asked again");
+        assert_eq!(controller.profile().approval_rules().len(), MAX_PERSONAL_RULES);
     }
 
     /// What is asked in the channel talked in is asked no more once the talk switches to another

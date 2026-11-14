@@ -142,7 +142,10 @@ clicked.
     every argument exactly, a command line of one command by its first two words, as far as they
     do not expand. Exactly is an escaped pattern, which the person can widen, or for a value too
     long for one the value as it is. A rule that could not be kept is not offered. The person
-    answers the call first; the rule is added after.
+    answers the call first; the rule is added after. The terminal offers the matcher as it is
+    suggested, in the call's channel or its session, without an end and only to approve (issue
+    [571](../issues/571-approvals-and-questions-in-the-terminal.md)): what more there is, the web
+    UI offers.
 *   Rules are changed through the user's controller, which stores them first, announces the profile
     and drops those expired. A rule is bound to no agent: whether the person may approve bounds it.
 

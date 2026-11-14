@@ -3,6 +3,7 @@
 
 use super::Typed;
 use crate::asking::{Asked, Asking};
+use crate::screen::words::{offered_words, what_is_asked};
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::Style;
 use ratatui::text::Line;
@@ -102,15 +103,15 @@ impl Choosing {
     pub(super) fn rows(&self) -> Vec<Line<'static>> {
         let Asked::Shown(asking) = &self.asked else { return Vec::new() };
         let several = asking.multi_select();
-        let mut rows = vec![Line::styled(asking.what(), Style::new().bold())];
-        for (index, choice) in asking.choices().into_iter().enumerate() {
+        let mut rows = vec![Line::styled(what_is_asked(asking), Style::new().bold())];
+        for (index, offered) in asking.choices().iter().enumerate() {
             let cursor = if index == self.selected { "❯ " } else { "  " };
             let check = match (several, self.marked.contains(&index)) {
                 (false, _) => "",
                 (true, true) => "[x] ",
                 (true, false) => "[ ] ",
             };
-            let row = format!("{cursor}{check}{}. {choice}", index + 1);
+            let row = format!("{cursor}{check}{}. {}", index + 1, offered_words(offered));
             rows.push(match index == self.selected {
                 true => Line::styled(row, Style::new().cyan()),
                 false => Line::from(row),

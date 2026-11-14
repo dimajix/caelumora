@@ -102,7 +102,9 @@ channel the program opens, continues or switches to what was said in it so far -
 among its last 50 items. An approval pending in the channel talked in - of an agent whose calls
 the user may approve -, and questions put to the user there, are asked as they come (issue 571): in `full` as a choice above the line typed - the
 arrows and Enter, or the number of a choice; Esc puts it aside to type on, and takes it up again -,
-in `line` with the choices numbered, the number typed. `/help` lists the commands of the channel
+in `line` with the choices numbered, the number typed. An approval whose tool suggests the calls
+alike - and which no rule of a place asks a person to decide - offers them from now on, in the
+channel or in the session, as the web UI does. `/help` lists the commands of the channel
 and those the terminal carries out itself: `/session list`, `/session new`, `/session resume` and
 `/session delete` reach the sessions of the directory while the program runs, `/exit` ends it.
 
