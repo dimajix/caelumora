@@ -128,7 +128,7 @@ channel had the participant before (`ChannelController::roll_back_participant_ad
   the join of `follow_agents` above, an agent deleted while its session was stopped and restored
   later - opens a second range (`Attendance::take`), and a later leave closes only the last one. The
   first stays open, and what the participant is shown of the history (`Attendance::of_reader`)
-  then reaches past their leave. Opened as issue [568](568-a-second-join-leaves-attendance-open.md).
+  then reaches past their leave.
 
   Step 4 done: one the channel cannot take in after the session took them in stays in the session,
   as decided - stated in CHANNELS.md, named as the exception in the rule of rolling back
@@ -136,4 +136,6 @@ channel had the participant before (`ChannelController::roll_back_participant_ad
   holds it: an agent brought in by its owner's invitations, which cannot start, stays in the
   session and out of the channel, and tries again by the channel's entry alone. That an invitation
   to the session stays used up is not held by a test: an agent is invited by its owner, whose
-  invitation stays, and a user's actor has no way to fail as it starts that a test reaches.
+  invitation stays, and a user's actor has no way to fail as it starts that a test reaches. The
+  finding of the review of step 3b is opened as issue
+  [568](568-a-second-join-leaves-attendance-open.md).

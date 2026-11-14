@@ -5378,11 +5378,14 @@ async fn one_the_channel_cannot_take_in_stays_in_the_session_and_may_try_again()
         checks(&[
             // Whether he may reach the session to join it (`SessionManager::join`).
             "bob: JoinSession(alice's) yes",
+            // Whoever takes them in reads them first (`SessionLoop::take_in`).
             "bob: GetAgent(bob's) yes",
-            // Nothing of the session in its name: it takes part already.
+            // Nothing of the session in its name, since it takes part already: the channel's
+            // entry, whether it may run and be cleared, before anything is stored.
             "bob as scout: JoinChannel(alice's) yes",
             "bob as scout: GetPersonality(bob's) yes",
             "bob: Cleared(scout) yes",
+            // Asked again by the channel as it takes them in (`ChannelLoop::join`).
             "bob as scout: JoinChannel(alice's) yes",
             "bob as scout: GetPersonality(bob's) yes",
             "bob: Cleared(scout) yes",
