@@ -1,3 +1,5 @@
+//! `ChannelController`: the one writer of a running channel's document.
+
 use super::check_restricting;
 use super::document::LiveDocument;
 use crate::group::keep_participants;
@@ -23,13 +25,13 @@ use tracing::error;
 /// permission is checked, on the channel's own attributes - and only then taken over live and
 /// announced.
 #[derive(Debug)]
-pub struct ChannelController {
+pub(crate) struct ChannelController {
     channel: LiveDocument<Channel>,
     groups: Arc<dyn EntityStore<Group>>,
 }
 
 impl ChannelController {
-    pub fn new(
+    pub(crate) fn new(
         channel: Channel,
         event_publisher: Arc<dyn EventPublisher>,
         stores: &EntityStores,
@@ -46,15 +48,15 @@ impl ChannelController {
         }
     }
 
-    pub fn load(&self) -> Guard<Arc<Channel>> {
+    pub(crate) fn load(&self) -> Guard<Arc<Channel>> {
         self.channel.load()
     }
 
-    pub fn id(&self) -> ChannelId {
+    pub(crate) fn id(&self) -> ChannelId {
         self.channel.address().1
     }
 
-    pub fn name(&self) -> Name {
+    pub(crate) fn name(&self) -> Name {
         self.channel.load().name.clone()
     }
 
@@ -64,7 +66,11 @@ impl ChannelController {
     /// `StoreError::Invalid` if `new_name` is no name, otherwise whatever
     /// the store reports, `StoreError::PermissionDenied` included; the
     /// channel is then unchanged.
-    pub async fn update_name(&self, ctx: &SecurityContext, new_name: &str) -> StoreResult<()> {
+    pub(crate) async fn update_name(
+        &self,
+        ctx: &SecurityContext,
+        new_name: &str,
+    ) -> StoreResult<()> {
         let event = ChannelUpdateEvent::NameChanged(new_name.to_string());
         self.update(ctx, &event).await
     }
@@ -76,7 +82,7 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_classification(
+    pub(crate) async fn update_classification(
         &self,
         ctx: &SecurityContext,
         classification: Classification,
@@ -92,7 +98,7 @@ impl ChannelController {
     /// `StoreError::Invalid` if `language` is no language tag, otherwise
     /// whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn update_language(
+    pub(crate) async fn update_language(
         &self,
         ctx: &SecurityContext,
         language: Option<&str>,
@@ -107,7 +113,7 @@ impl ChannelController {
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied`
     /// included; the channel is then unchanged.
-    pub async fn update_uses_workspace(
+    pub(crate) async fn update_uses_workspace(
         &self,
         ctx: &SecurityContext,
         uses: bool,
@@ -123,7 +129,7 @@ impl ChannelController {
     /// `StoreError::Validation` if a rule does not only ask or deny
     /// (`ApprovalRule::check_restricting`), otherwise whatever the store
     /// reports; the channel is then unchanged.
-    pub async fn update_approval_rules(
+    pub(crate) async fn update_approval_rules(
         &self,
         ctx: &SecurityContext,
         rules: Vec<ApprovalRule>,
@@ -132,34 +138,33 @@ impl ChannelController {
         self.update(ctx, &ChannelUpdateEvent::ApprovalRulesChanged(rules)).await
     }
 
-    /// Adds `participant` to the channel on behalf of `ctx` (issue 46), as
-    /// `Channel::take_in` takes one in - no longer a former participant,
-    /// their invitation used up (issue 563). How much of the history it is
-    /// given is the history's to record (`HistoryShared`, issue 417). Stored
-    /// first (`UpdateChannel`), then the group of its participants follows,
-    /// so that the newcomer may read it (issue 286), then taken over and
-    /// announced (`channel::JOINED`). Answers the channel as it was before,
-    /// for [`Self::roll_back_participant_addition`].
+    /// Adds `participant` to the channel on behalf of `ctx` (issue 46), as `Channel::take_in` takes
+    /// one in - no longer a former participant, their invitation used up (issue 563). How much of
+    /// the history it is given is the history's to record (`HistoryShared`, issue 417). Stored
+    /// first (`UpdateChannel`), then the group of its participants follows, so that the newcomer
+    /// may read it (issue 286), then taken over and announced (`channel::JOINED`) - only where they
+    /// were not listed before, as a leave is announced only where they were (issue 564). Answers
+    /// the channel as it was before, for [`Self::roll_back_participant_addition`].
     ///
     /// # Errors
     /// Whatever the store reports, `StoreError::PermissionDenied` included;
     /// the channel is then unchanged.
-    pub async fn add_participant(
+    pub(crate) async fn add_participant(
         &self,
         ctx: &SecurityContext,
         participant: Participant,
     ) -> StoreResult<Channel> {
         let mut writing = self.channel.write().await;
         let id = participant.actor_id();
-        let (before, channel) = writing
+        let ((before, joined), channel) = writing
             .change(ctx, |channel| {
                 let before = channel.clone();
-                channel.take_in(participant.clone());
-                Ok(before)
+                let joined = channel.take_in(participant.clone());
+                Ok((before, joined))
             })
             .await?;
         self.keep_participants(&channel).await;
-        if let Some(event) = self.joined_or_left_event(id, true) {
+        if let Some(event) = self.joined_or_left_event(id, true).filter(|_| joined) {
             writing.announce(event, &channel);
         }
         Ok(before)
@@ -183,9 +188,7 @@ impl ChannelController {
         let mut writing = self.channel.write().await;
         let (left, channel) = writing
             .change(&SecurityContext::system(), |channel| {
-                let listed = channel.lists(participant);
-                channel.undo_take_in(participant, before);
-                Ok(listed && !channel.lists(participant))
+                Ok(channel.undo_take_in(participant, before))
             })
             .await?;
         self.keep_participants(&channel).await;
@@ -204,7 +207,7 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::NotFound` if `participant` takes no part in the channel;
     /// whatever the store reports otherwise.
-    pub async fn remove_participant(
+    pub(crate) async fn remove_participant(
         &self,
         ctx: &SecurityContext,
         participant: ActorId,
@@ -234,7 +237,7 @@ impl ChannelController {
     /// # Errors
     /// `StoreError::Invalid` if one does not fit (`Channel::describe`),
     /// otherwise whatever the store reports; the channel is then unchanged.
-    pub async fn update_description(
+    pub(crate) async fn update_description(
         &self,
         ctx: &SecurityContext,
         summary: Option<&str>,
@@ -300,5 +303,46 @@ impl ChannelController {
     /// whatever the store reports.
     async fn update(&self, ctx: &SecurityContext, event: &ChannelUpdateEvent) -> StoreResult<()> {
         self.channel.update(ctx, event).await.map(drop)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::testing::test_kernel;
+    use caelumora_domain::channel::testing::make_channel;
+    use caelumora_domain::session::SessionId;
+    use caelumora_domain::user::UserId;
+
+    /// Issue 564: a join is announced where who is listed changed, not for one added again - a
+    /// listed agent whose actor did not run, or two takings-in of one participant racing. The
+    /// channel's document is stored alone, without a session: the test is about what its
+    /// controller stores and announces. The controller is made as the kernel makes it
+    /// (`ControllerManager::new_channel_controller`), and what it announces read from the bus.
+    #[tokio::test]
+    async fn one_added_again_is_not_announced_again() {
+        let kernel = test_kernel();
+        let system = SecurityContext::system();
+        let mut channel = make_channel(SessionId::new(), "main");
+        kernel.entity_stores().channels.create(&system, &mut channel).await.unwrap();
+        let controller = kernel.controller_manager().new_channel_controller(channel);
+        let bob = UserId::new();
+        let mut events = kernel.event_bus().subscribe_all();
+
+        controller.add_participant(&system, Participant::User(bob)).await.expect("added");
+        controller.add_participant(&system, Participant::User(bob)).await.expect("added again");
+
+        let joins = events
+            .drain()
+            .await
+            .iter()
+            .filter(|e| {
+                let joined =
+                    e.about::<Channel>().and_then(|(_, c)| c.data::<ActorId>(channel::JOINED));
+                joined == Some(ActorId::User(bob))
+            })
+            .count();
+        assert_eq!(joins, 1, "announced once");
+        assert!(controller.load().lists(ActorId::User(bob)), "listed");
     }
 }

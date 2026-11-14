@@ -21,6 +21,7 @@ use crate::attachment::AttachmentManager;
 use crate::component::BuildContext;
 use crate::controller::{ChannelController, ControllerManager};
 use crate::kernel::ChannelRuntime;
+use crate::lock::LocksById;
 use crate::moderator::Moderator;
 use crate::session::SessionError;
 use crate::session::SessionLoop;
@@ -235,6 +236,11 @@ pub struct ChannelLoop {
     /// channel runs - a closed `TaskTracker`, a few bytes each, which only
     /// grows with removals.
     leaving: sync::Mutex<HashMap<ActorId, TaskTracker>>,
+    /// Held per participant while its part in the channel changes - taken in, let go, its actor
+    /// started again or stopped as its agent is restored or deleted (issue 564) -, so that two
+    /// changes of one participant do not cross: two takings-in would start two actors, and one
+    /// that fails would roll back the listing of an actor the other started.
+    changing: LocksById<ActorId>,
     moderator: ComponentImpl<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
@@ -315,6 +321,7 @@ impl ChannelLoop {
             runtime,
             actors: ArcSwap::from_pointee(HashMap::new()),
             leaving: sync::Mutex::new(HashMap::new()),
+            changing: LocksById::new(),
             moderator,
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
             changes_tx,

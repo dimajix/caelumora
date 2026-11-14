@@ -39,7 +39,7 @@ mod user;
 mod workspace;
 
 pub use agent::AgentController;
-pub use channel::ChannelController;
+pub(crate) use channel::ChannelController;
 pub use manager::ControllerManager;
 pub use personality::PersonalityController;
 pub use project::ProjectController;

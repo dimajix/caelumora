@@ -1,10 +1,11 @@
 //! `LocksById`: one lock per id, kept in its table only while it is held or waited for.
 //!
-//! A manager that must not run two operations on one entity at once - starting and deleting a
-//! session, restoring and purging a project - holds a table of them by the entity's id. An id's
-//! lock comes into the table with the first caller who asks for it and leaves it with the last who
-//! lets go, holder or waiter, so that the table grows with nothing but the ids in use, and no
-//! caller is given a new lock while another still holds or waits for the old one (issue 495).
+//! Whoever must not run two operations on one entity at once - a manager starting and deleting a
+//! session, restoring and purging a project, a running channel changing one participant's part in
+//! it (issue 564) - holds a table of them by the entity's id. An id's lock comes into the table
+//! with the first caller who asks for it and leaves it with the last who lets go, holder or waiter,
+//! so that the table grows with nothing but the ids in use, and no caller is given a new lock while
+//! another still holds or waits for the old one (issue 495).
 
 use dashmap::DashMap;
 use std::hash::Hash;
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 /// One lock per id, each in the table only while it is held or waited for.
+#[derive(Debug)]
 pub(crate) struct LocksById<K: Eq + Hash> {
     locks: DashMap<K, Arc<Mutex<()>>>,
 }

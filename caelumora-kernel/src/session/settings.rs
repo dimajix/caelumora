@@ -172,7 +172,7 @@ impl SessionLoop {
     ///
     /// The project it goes to is shared, or its new own made, before the session is stored as
     /// lying there, so that it never lies where its participants read nothing; if storing the
-    /// session fails, that is taken back. One change at a time (`moving`).
+    /// session fails, that is rolled back. One change at a time (`moving`).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session,
@@ -228,7 +228,7 @@ impl SessionLoop {
                 .await?;
         }
         if let Err(error) = self.session_controller.update_project(context, target.id).await {
-            self.take_back_entering(&target, made).await;
+            self.roll_back_project_change(&target, made).await;
             return Err(error.into());
         }
         if made {
@@ -265,12 +265,12 @@ impl SessionLoop {
         Ok(target)
     }
 
-    /// Takes back what `update_project` did for `target` before storing the session failed: its new
+    /// Rolls back what `update_project` did for `target` before storing the session failed: its new
     /// own purged if it was `made`, the entry of a shared one taken away; in the kernel's name.
     /// What cannot be is logged.
-    async fn take_back_entering(&self, target: &Project, made: bool) {
+    async fn roll_back_project_change(&self, target: &Project, made: bool) {
         let system = SecurityContext::system();
-        let taken_back = async {
+        let rolled_back = async {
             if made {
                 purge_for_good(self.stores.groups.as_ref(), GroupId::of_project(target.id)).await?;
                 purge_for_good(self.stores.projects.as_ref(), target.id).await?;
@@ -284,7 +284,7 @@ impl SessionLoop {
             Ok::<_, Error>(())
         }
         .await;
-        if let Err(e) = taken_back {
+        if let Err(e) = rolled_back {
             warn!(session = %self.id, project = %target.id, "What was done for a project a session did not go to stays: {e}");
         }
     }

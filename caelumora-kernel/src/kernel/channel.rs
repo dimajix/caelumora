@@ -69,7 +69,7 @@ impl ChannelHandle {
 impl ChannelRuntime {
     /// A runtime for the channel `channel` holds, of the session `session` holds and
     /// `session_loop` runs, whose user commands are `command_executor`.
-    pub fn new(
+    pub(crate) fn new(
         kernel: Arc<Kernel>,
         command_executor: Arc<CommandExecutor>,
         session: Arc<SessionController>,

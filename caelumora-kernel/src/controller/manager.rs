@@ -106,7 +106,7 @@ impl ControllerManager {
         ))
     }
 
-    pub fn new_channel_controller(&self, channel: Channel) -> Arc<ChannelController> {
+    pub(crate) fn new_channel_controller(&self, channel: Channel) -> Arc<ChannelController> {
         Arc::new(ChannelController::new(
             channel,
             Arc::<EventBus>::clone(&self.event_bus),

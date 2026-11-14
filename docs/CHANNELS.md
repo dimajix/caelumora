@@ -545,8 +545,11 @@ who is removed is kept as a former participant (`Channel::let_go`, issue 164). I
 channel - asked as `UpdateChannel` of whoever changes it, by default its owner, and in the kernel's
 name for one who joined, founded or left it -, lets the group of its participants follow and
 announces who joined or left. One whose actor then cannot start has the addition rolled back as the
-channel had them before (`Channel::undo_take_in`), announced as a leave. Events only announce;
-nothing changes a channel because an event arrived.
+channel had them before (`Channel::undo_take_in`), announced as a leave. The changes of one
+participant - taken in, let go, its actor following its agent's deletion and restoring - are made
+one at a time, so that two who add the same participant at once take them in once, and a rollback
+never takes out one whose actor another started. Events only announce; nothing changes a channel
+because an event arrived.
 
 Adding is asked first as `UpdateChannel`, before anything of the newcomer is looked at, and then as
 `cleared` with the channel's classification, where a policy can hold the channel's level against the
@@ -578,8 +581,14 @@ themselves or their own agent, never someone else.
     whether the one taken in is theirs comes first, then the `Join` entries in their own context,
     and only then anything else in their name. Only the channel is cleared for; joining the session
     as such asks no clearance, since each of its channels is read by those cleared for it.
-*   **The session first, then the channel.** One the channel refuses after all stays in the session.
-    Who is in the session already is added to a channel by whoever may change the channel alone.
+*   **The session first, then the channel.** One the channel cannot take in after all - refused,
+    or failed as their actor starts - stays in the session, and is not rolled back out of it (issue
+    [564](../issues/564-taking-someone-in-is-rolled-back-in-part.md)): what the channel can refuse
+    is asked before the session is stored, so only a failure or a race is left; being in the session
+    and in none of its channels is a state of its own, as for one taken in without a channel; and a
+    session lets nobody go. Who is in the session already is added to a channel by whoever may
+    change the channel alone, and joins it by the channel's entry alone - so one left so can be
+    taken in again.
 *   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
     personal `Join` entry - an invitation - is used up as the person comes into the session or the
     channel, whoever takes them in (`Session::take_in`, `Channel::take_in`), so that one removed
@@ -587,8 +596,9 @@ themselves or their own agent, never someone else.
     a channel by themselves sees all of its history: whoever let them join let them read it.
 *   **What follows**: the session's document gains the participant, the group of its participants
     follows before it is announced (`SessionUpdateEvent::ParticipantJoined`), so that the new one
-    hears of it, too, and a running session follows an agent taken in as it follows those it started
-    with.
+    hears of it, too - announced only for one who did not take part before, so that two who take
+    the same person in at once announce them once -, and a running session follows an agent taken
+    in as it follows those it started with.
 
 Whom one could take in is the session view's to answer (`SessionView::candidates`): the users and
 agents whose names are sought (`NameMatch`), each with whether they take part already and why they
@@ -708,12 +718,16 @@ one starts under the same id. An actor removed before the run loop started it is
 ### How others learn of it
 
 A join or a leave is announced on the event bus like every change of who takes part
-(`channel::JOINED`, `channel::LEFT`). In the channel itself, it is the channel's own word (issue
-408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission` rejects
-them), told in the name of whoever made the change - who added or removed the participant, the
-participant itself if it joined by itself, `System` if the kernel did, as for an agent deleted or
-restored. The event is named for what happened to the participant; who made it happen is its
-sender. Each carries the participant's name as it was, so that it reads the same after a renaming.
+(`channel::JOINED`, `channel::LEFT`): where it changed who is listed - one added while listed
+already, an agent whose actor did not run, is not announced again -, and as an agent rests or is
+restored, which changes no listing (see above). In the channel itself, it is the channel's own word
+(issue 408): `ParticipantJoined` and `ParticipantLeft`, which no actor may send (`admission`
+rejects them), told as an actor comes or goes by someone's act - for one added while listed
+already, too, whose actor starts now -, in the name of whoever made the change - who added or
+removed the participant, the participant itself if it joined by itself, `System` if the kernel did,
+as for an agent deleted or restored. The event is named for what happened to the participant; who
+made it happen is its sender. Each carries the participant's name as it was, so that it reads the
+same after a renaming.
 
 *   **Recorded where it happened.** The channel keeps it in its history
     (`HistoryEntry::ParticipantJoined`, `ParticipantLeft`, with who made it and when), among what

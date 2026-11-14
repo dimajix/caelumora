@@ -21,7 +21,9 @@ impl SessionLoop {
     /// channel (`UpdateChannel`). One in the session already is only added to the channel, which
     /// needs no right to change the session (issue 46). Everything is asked before anything is
     /// stored - their clearance for the channel too; the session is stored first, then the
-    /// channel: one the channel refuses after all stays in the session.
+    /// channel: one the channel cannot take in after all - refused, or failed as their actor
+    /// starts - stays in the session, as one taken in without a channel does, and is not rolled
+    /// back out of it (issue 564).
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session or the channel;
@@ -72,7 +74,8 @@ impl SessionLoop {
     /// session by their own act, where an entry of its access list lets them join (`JOIN`), and
     /// with `into` into that channel at once, where the channel's list lets them join as well
     /// (`ChannelLoop::join`). Asked and stored as `add_participant`, but stored in the kernel's
-    /// name once joining was permitted.
+    /// name once joining was permitted; one the channel cannot take in stays in the session, their
+    /// invitation to it used up, and joins the channel later by its entry alone.
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if they may not join the session or the channel;
@@ -222,7 +225,7 @@ mod tests {
     use caelumora_domain::channel::{self, Channel, HistoryAccess};
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::group::GroupId;
-    use caelumora_domain::security::{AclEntry, Grant, SecurityAttributes, Subject};
+    use caelumora_domain::security::{AclEntry, SecurityAttributes};
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::session::{Session, SessionUpdateEvent};
     use caelumora_domain::store::StoreError;
@@ -323,8 +326,9 @@ mod tests {
         let (_, manager) = owned_kernel(Default::default());
         let (alice, bob, carol) = (make_user("alice"), make_user("bob"), make_user("carol"));
         let (bob_id, carol_id) = (ActorId::User(bob.id), ActorId::User(carol.id));
-        let invited = |attributes: SecurityAttributes| {
-            attributes.granting(Subject::Actor(bob_id), Grant::Join)
+        let invited = |mut attributes: SecurityAttributes| {
+            attributes.acl.push(AclEntry::invitation(bob_id));
+            attributes
         };
         let mut session = make_session("hers", alice.id);
         session.participants = record_users(manager.kernel().entity_stores(), &[&alice]).await;
@@ -354,9 +358,8 @@ mod tests {
             "in the session"
         );
         assert!(main.participants().iter().any(|m| m.id == bob_id), "and in the channel");
-        let invitation = AclEntry { subject: Subject::Actor(bob_id), grant: Grant::Join };
         assert!(
-            !session.session().security_attributes.acl.contains(&invitation),
+            !session.session().security_attributes.acl.contains(&AclEntry::invitation(bob_id)),
             "his invitation is used up"
         );
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();

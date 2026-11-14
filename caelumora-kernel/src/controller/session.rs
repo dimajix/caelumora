@@ -172,24 +172,28 @@ impl SessionController {
         self.update(ctx, SessionUpdateEvent::ProjectChanged(project)).await
     }
 
-    /// Takes `participant` into the session on behalf of `ctx` (issue 221) as [`Self::update`]
-    /// does - whoever may change it (`UpdateSession`), or the kernel for one who joined by
-    /// themselves (`JOIN`) - using up an invitation (`Session::take_in`). The group of its
-    /// participants follows (issue 286) before it is announced, so that the new one hears of it
-    /// too. Whether they may be taken in is the caller's to have asked.
+    /// Takes `participant` into the session on behalf of `ctx` (issue 221), as `Session::take_in`
+    /// takes one in - their invitation used up: stored first, on behalf of whoever may change it
+    /// (`UpdateSession`) or of the kernel for one who joined by themselves (`JOIN`), then taken
+    /// over. The group of its participants follows (issue 286) before it is announced
+    /// (`ParticipantJoined`), so that the new one hears of it too - announced only where they were
+    /// listed anew (issue 564). Whether they may be taken in is the caller's to have asked.
     ///
     /// # Errors
-    /// See [`Self::update`].
+    /// Whatever the store reports, `StoreError::PermissionDenied` included; the session is then
+    /// unchanged.
     pub async fn add_participant(
         &self,
         ctx: &SecurityContext,
         participant: Participant,
     ) -> StoreResult<()> {
-        let event = SessionUpdateEvent::ParticipantJoined(participant);
         let mut writing = self.session.write().await;
-        let session = writing.apply(ctx, &event).await?;
+        let (joined, session) =
+            writing.change(ctx, |session| Ok(session.take_in(participant.clone()))).await?;
         self.keep_participants(&session).await;
-        writing.announce_update(&event, &session);
+        if joined {
+            writing.announce_update(&SessionUpdateEvent::ParticipantJoined(participant), &session);
+        }
         Ok(())
     }
 
@@ -269,9 +273,11 @@ impl SessionController {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::actor::ActorId;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::security::SecurityAttributes;
     use caelumora_domain::session::testing::bare_session;
+    use caelumora_domain::user::UserId;
     use caelumora_domain::value::ValueError;
     use caelumora_security::Policies;
     use caelumora_store::Persistence;
@@ -360,6 +366,43 @@ mod tests {
         assert_eq!(controller.load().updated_at, renamed, "live as stored");
         controller.add_channel(&ctx, ChannelId::new()).await.unwrap();
         assert!(stored().await > renamed, "by a channel added");
+    }
+
+    /// Issue 564: a join is announced where who is listed changed, not for one taken in again - as
+    /// when two takings-in of one person race.
+    #[tokio::test]
+    async fn one_taken_in_again_is_not_announced_again() {
+        let mut session = session();
+        let store = Persistence::in_memory();
+        let stores = EntityStores::open(&store, &Policies::permitting_all()).unwrap();
+        let ctx = SecurityContext::default();
+        stores.sessions.create(&ctx, &mut session).await.unwrap();
+        let announced = Arc::new(Announced::default());
+        let controller =
+            SessionController::new(session.clone(), Arc::<Announced>::clone(&announced), &stores);
+        let bob = UserId::new();
+
+        controller.add_participant(&ctx, Participant::User(bob)).await.expect("taken in");
+        controller.add_participant(&ctx, Participant::User(bob)).await.expect("taken in again");
+
+        let joins = announced
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| {
+                let update =
+                    event.about::<Session>().and_then(|(_, c)| c.update::<SessionUpdateEvent>());
+                matches!(
+                    update,
+                    Some(SessionUpdateEvent::ParticipantJoined(Participant::User(id))) if id == bob
+                )
+            })
+            .count();
+        assert_eq!(joins, 1, "announced once");
+        let listed: Vec<_> =
+            controller.load().participants.iter().map(Participant::actor_id).collect();
+        assert_eq!(listed, [ActorId::User(bob)], "and listed once");
     }
 
     #[tokio::test]
