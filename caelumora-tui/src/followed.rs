@@ -6,6 +6,7 @@ use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_api::reader::ViewResult;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope};
+use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::history::{HistoryEntry, HistoryPage};
@@ -25,7 +26,6 @@ use caelumora_kernel::view::{ChannelView, Views};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::warn;
-use uuid::Uuid;
 
 /// How many items of a channel's history the terminal reads as the user begins to talk in it, of
 /// which it prints what was said.
@@ -69,6 +69,9 @@ pub(crate) struct Followed {
     /// with an id find the channel they wait in. Which are open is their actor's to tell
     /// (`UserActor::questions_to_answer`).
     known_questions: HashSet<QuestionId>,
+    /// Whether the user may approve the calls of an agent, by agent, as the channel's view told it
+    /// once (`may_approve`).
+    approvable: HashMap<AgentId, bool>,
     /// The last answer of an agent shown, which `/retry` asks it to give again (issue 234) unless
     /// one of the two below is known.
     last_answer: Option<MessageId>,
@@ -115,6 +118,7 @@ impl Followed {
             handles,
             pending_approvals: Vec::new(),
             known_questions: HashSet::new(),
+            approvable: HashMap::new(),
             last_answer: None,
             under_way: Vec::new(),
             quiet_calls: HashMap::new(),
@@ -243,9 +247,8 @@ impl Followed {
     /// is shown as it shows it, and not twice.
     pub(crate) fn waiting(&self) -> Vec<Printed> {
         let approvals = self.pending_approvals.iter().map(approval_printed);
-        let mut put_to_user = self.put_to_user();
-        put_to_user.retain(|q| self.knows_questions(q.id));
-        let put_to_user = put_to_user.iter().map(|q| questions_printed(q, self.me()));
+        let to_answer = self.questions_to_answer();
+        let put_to_user = to_answer.iter().map(|q| questions_printed(q, self.me()));
         approvals.chain(put_to_user).collect()
     }
 
@@ -374,16 +377,9 @@ impl Followed {
         self.pending_approvals.iter().any(|request| request.id == id)
     }
 
-    /// The open questions put to the user that `arg` names by id, or without one the last put to
-    /// them, as their actor tells; none between two runs of it.
-    pub(crate) fn questions_put_to_user(&self, arg: &str) -> Option<QuestionRequest> {
-        let mut put_to_user = self.put_to_user().into_iter();
-        match arg.trim() {
-            "" => put_to_user.next_back(),
-            id => {
-                Uuid::parse_str(id).ok().and_then(|id| put_to_user.find(|q| q.id == QuestionId(id)))
-            }
-        }
+    /// The approvals known as pending (`is_pending`), in the order they became known.
+    pub(crate) fn pending_approvals(&self) -> &[ApprovalRequest] {
+        &self.pending_approvals
     }
 
     /// Whether questions `id` of this channel are still the user's to answer, as their actor
@@ -437,6 +433,37 @@ impl Followed {
     fn take_pending(&mut self, id: ApprovalId) -> Option<ApprovalRequest> {
         let at = self.pending_approvals.iter().position(|request| request.id == id)?;
         Some(self.pending_approvals.remove(at))
+    }
+
+    /// Whether the user may approve the calls of agent `agent_id` here, as the web UI offers its
+    /// buttons (`ParticipantView::may_approve`): asked of the channel's view once per agent, for as
+    /// long as the channel is followed - an offer, which the approver asks again as it counts an
+    /// answer. `false` where the channel or the agent cannot be read, asked again next time.
+    pub(crate) async fn may_approve(&mut self, agent_id: AgentId) -> bool {
+        if let Some(may) = self.approvable.get(&agent_id) {
+            return *may;
+        }
+        let read = async { self.view().await?.participant(ActorId::Agent(agent_id)).await };
+        match read.await {
+            Ok(participant) => {
+                let may = participant.may_approve().await;
+                self.approvable.insert(agent_id, may);
+                may
+            }
+            Err(error) => {
+                let channel_id = self.channel_id();
+                warn!("The terminal could not read agent {agent_id} in channel {channel_id}: {error:#}");
+                false
+            }
+        }
+    }
+
+    /// The open questions put to the user that are known (`knows_questions`) - what the terminal
+    /// asks and names -, in the order they were asked.
+    pub(crate) fn questions_to_answer(&self) -> Vec<QuestionRequest> {
+        let mut put_to_user = self.put_to_user();
+        put_to_user.retain(|q| self.knows_questions(q.id));
+        put_to_user
     }
 
     /// The open questions put to the user, in the order they were asked, as their actor tells
@@ -710,6 +737,7 @@ pub(crate) mod testing {
     use caelumora_domain::actor::{ActorEvent, ActorId, Envelope, EventContext};
     use caelumora_domain::agent::testing::{make_personality, waiting_for_approval};
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::testing::make_approval_request;
     use caelumora_domain::approval::{
         ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalRuleId,
     };
@@ -808,16 +836,7 @@ pub(crate) mod testing {
     }
 
     pub(crate) fn approval(channel: &ChannelLoop, agent_id: AgentId) -> ApprovalRequest {
-        ApprovalRequest {
-            suggested: None,
-            explicit: false,
-            id: ApprovalId::new(),
-            session_id: channel.session_id(),
-            channel_id: channel.id(),
-            agent_id,
-            tool_call: make_tool_call("test_tool"),
-            description: "call test_tool".to_string(),
-        }
+        make_approval_request(channel.session_id(), channel.id(), agent_id)
     }
 }
 
@@ -867,6 +886,11 @@ mod tests {
         let followed =
             Followed::new(Arc::clone(&channel), views).await.expect("the owner takes part");
         (followed, channel, ctx.caller_id)
+    }
+
+    /// The ids of the questions `requests`.
+    fn ids(requests: &[QuestionRequest]) -> Vec<QuestionId> {
+        requests.iter().map(|request| request.id).collect()
     }
 
     /// Whether `followed` shows what `wanted` asks for within five seconds, passing over what it
@@ -1056,17 +1080,17 @@ mod tests {
         assert!(!routed(&mut followed, asked.clone()).await.is_empty());
         assert!(routed(&mut followed, asked).await.is_empty(), "asked anew");
         assert!(followed.is_to_answer(id));
-        assert_eq!(followed.questions_put_to_user("").map(|q| q.id), Some(id), "the last");
-        assert_eq!(followed.questions_put_to_user(&id.0.to_string()).map(|q| q.id), Some(id));
+        assert_eq!(ids(&followed.questions_to_answer()), [id]);
         let closed = from(&channel, agent, ActorEvent::QuestionClosed { id, shown_to: None });
         routed(&mut followed, closed).await;
         assert!(!followed.is_to_answer(id));
-        assert!(followed.questions_put_to_user("").is_none());
+        assert!(followed.questions_to_answer().is_empty());
     }
 
-    /// What `/answer` and `/decline` name: questions put to the user alone, by id or the last.
+    /// What the terminal asks the user, and `/answer` and `/decline` name: questions put to them
+    /// alone.
     #[tokio::test]
-    async fn only_questions_put_to_the_user_are_named_for_answer_and_decline() {
+    async fn only_questions_put_to_the_user_are_theirs_to_answer() {
         let (mut followed, channel, me) = followed().await;
         let agent_id = AgentId::new();
         let agent = ActorId::Agent(agent_id);
@@ -1083,11 +1107,7 @@ mod tests {
                 .await;
         }
         assert!(!followed.is_to_answer(other_id), "not the user's to answer");
-        let put_to_user = |arg: &str| followed.questions_put_to_user(arg).map(|q| q.id);
-        assert_eq!(put_to_user(&other_id.0.to_string()), None, "put to another");
-        assert_eq!(put_to_user(""), Some(id), "the last put to the user, asked before");
-        assert_eq!(put_to_user(&id.0.to_string()), Some(id));
-        assert_eq!(put_to_user("no id"), None);
+        assert_eq!(ids(&followed.questions_to_answer()), [id], "not those put to another");
     }
 
     /// What waits for the user - an approval, questions put to them, a message that mentions
@@ -1590,7 +1610,7 @@ mod tests {
             ActorEvent::QuestionRequested(request),
         );
         routed(&mut followed, asked).await;
-        assert_eq!(followed.questions_put_to_user("").map(|q| q.id), Some(id), "theirs to answer");
+        assert_eq!(ids(&followed.questions_to_answer()), [id], "theirs to answer");
 
         channel.leave(&theirs, other).await.expect("they may leave");
         assert!(shows(&mut followed, |shown| matches!(shown, Shown::Ended)).await, "it stopped");
@@ -1602,7 +1622,7 @@ mod tests {
         let again = followed.actor().expect("their new actor runs");
         assert!(!Arc::ptr_eq(&first, &again), "not the actor that ended");
         assert!(
-            followed.questions_put_to_user("").is_none() && !followed.is_to_answer(id),
+            followed.questions_to_answer().is_empty() && !followed.is_to_answer(id),
             "none the new actor would refuse"
         );
     }

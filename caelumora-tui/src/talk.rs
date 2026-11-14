@@ -1,17 +1,17 @@
 //! The talk of the user in the terminal (issues 28, 570, 571): the channels it follows, what a line
-//! typed does in them - a command of the terminal carried out, questions put to the user answered,
-//! or what is left sent to the channel talked in -, and what they show.
+//! typed does in them - a command of the terminal carried out, what is asked of the user answered,
+//! or what is left sent to the channel talked in -, what they show, and what is asked.
 
+use crate::asking::{Asked, Asking};
 use crate::channels::{Channels, Happened};
-use crate::commands::{terminal_help, TerminalCommand};
+use crate::commands::{beginning_with, terminal_help, TerminalCommand};
 use crate::followed::Followed;
 use crate::printed::{ErrorKind, Printed};
-use crate::screen::question_line;
 use crate::sessions::{listing, Opening, Sessions, SessionsError};
 use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_api::command::CommandError;
-use caelumora_domain::approval::ApprovalId;
+use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::question::{Question, QuestionRequest, Response};
 #[cfg(test)]
@@ -23,21 +23,10 @@ use caelumora_kernel::error::user_message;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::Views;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::warn;
 use uuid::Uuid;
-
-/// What the prompt for question `index` of `question` says.
-fn prompt_of(index: usize, question: &Question) -> String {
-    let how = if question.choices.is_empty() {
-        "your answer"
-    } else if question.multi_select {
-        "the numbers of your choices, e.g. 1,3, or another answer"
-    } else {
-        "the number of your choice, or another answer"
-    };
-    format!("{} Type {how}; '-' skips:", question_line(index, question))
-}
 
 /// The response `line` gives to `question`: `-` skips it; for one with
 /// choices, numbers of choices - separated by commas, several only with
@@ -77,14 +66,18 @@ pub(crate) enum Handled {
 }
 
 /// The talk of the user in the terminal (issue 571): the channels of the session it talks in that
-/// it follows, the questions put to them being answered, and the sessions of the directory - what
-/// a line typed and what a channel shows change.
+/// it follows, what is asked of the user, and the sessions of the directory - what a line typed
+/// and what a channel shows change.
 pub(crate) struct Talk {
     /// The channels followed.
     channels: Channels,
-    /// The questions being answered, with the responses given so far: while they are, every line
-    /// but a command of the terminal - the approvals and `/retry` excepted - answers the next.
-    answering: Option<(QuestionRequest, Vec<Response>)>,
+    /// What is asked of the user now (`ask_next`), shown or put aside: while questions are shown,
+    /// every line but a command answers the next; while an approval is, the number of a choice
+    /// answers it.
+    asked: Option<Asked>,
+    /// The approvals and questions the user answered, by id, whose end their channel has yet to
+    /// show: not asked again meanwhile. Kept for the run of the program, ids being given once.
+    answered: HashSet<Uuid>,
     /// The sessions of the directory, which the commands on sessions reach.
     sessions: Sessions,
 }
@@ -107,7 +100,10 @@ impl Talk {
             anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
         })?;
         let opening = channels.opening().await;
-        Ok((Talk { channels, answering: None, sessions }, opening))
+        let answered = HashSet::new();
+        let mut talk = Talk { channels, asked: None, answered, sessions };
+        talk.ask_next().await;
+        Ok((talk, opening))
     }
 
     /// What happens next in the channels followed (`Channels::next`).
@@ -116,18 +112,108 @@ impl Talk {
     }
 
     /// Takes in what `happened` in the channels followed, and answers what the terminal prints of
-    /// it (`Channels::take_in`) - with that the questions being answered closed, where their
-    /// channel tells so or is followed no more.
+    /// it (`Channels::take_in`) - with that the questions asked closed, where their channel tells
+    /// so or is followed no more; then asks what waits next (`ask_next`).
     pub(crate) async fn take_in(&mut self, happened: Happened) -> Vec<Printed> {
         let mut printed = self.channels.take_in(happened).await;
-        let channels = &self.channels;
-        let closed = |(q, _): &mut (QuestionRequest, Vec<Response>)| {
-            channels.followed(q.channel_id).is_none_or(|f| !f.is_to_answer(q.id))
-        };
-        if let Some((request, _)) = self.answering.take_if(closed) {
-            printed.push(closed_before_answered(&request));
+        if let Some(Asking::Question { request, .. }) = self.asking() {
+            if !self.is_open(request) {
+                printed.push(closed_before_answered(request));
+            }
         }
+        self.ask_next().await;
         printed
+    }
+
+    /// What is asked of the user now, shown or put aside.
+    pub(crate) fn asked(&self) -> Option<&Asked> {
+        self.asked.as_ref()
+    }
+
+    /// Puts what is asked aside: shown as waiting only, and no line an answer to it, until it is
+    /// taken up again (`take_up`, `/question answer`) or something else is asked.
+    pub(crate) fn put_aside(&mut self) {
+        self.asked = self.asked.take().map(Asked::put_aside);
+    }
+
+    /// Takes what was put aside up again.
+    pub(crate) fn take_up(&mut self) {
+        self.asked = self.asked.take().map(Asked::taken_up);
+    }
+
+    /// What is asked of the user, shown or put aside.
+    fn asking(&self) -> Option<&Asking> {
+        self.asked.as_ref().map(Asked::asking)
+    }
+
+    /// What is asked of the user and shown: what a line typed answers.
+    fn shown(&self) -> Option<&Asking> {
+        self.asked.as_ref().and_then(Asked::shown)
+    }
+
+    /// Takes the choices of what is asked, by their indices, `chosen`, as the answer to it, and
+    /// answers what the terminal prints of it: an approval approved by the first, denied by the
+    /// second; the next question answered by the choices taken. Then asks what waits next.
+    pub(crate) async fn choose(&mut self, chosen: &[usize]) -> Vec<Printed> {
+        let printed = match self.shown().cloned() {
+            Some(Asking::Approval(request)) => match chosen {
+                [0] => self.approve(&request, true).await,
+                [1] => self.approve(&request, false).await,
+                _ => Vec::new(),
+            },
+            Some(asking @ Asking::Question { .. }) => {
+                let Some((_, question)) = asking.question() else { return Vec::new() };
+                let labels = chosen.iter().filter_map(|index| question.choices.get(*index));
+                let chosen = labels.map(|choice| choice.label.clone()).collect();
+                self.answer_question(Response::Chosen { chosen, other: None }).await
+            }
+            None => Vec::new(),
+        };
+        self.ask_next().await;
+        printed
+    }
+
+    /// Asks what waits next for the user in the channel talked in, where what is asked is no longer
+    /// to be decided - or nothing is (`next_to_ask`). What is asked and still to be decided stays
+    /// asked, also when put aside.
+    async fn ask_next(&mut self) {
+        let still = match self.asking() {
+            Some(Asking::Approval(request)) => self.is_pending(request),
+            Some(Asking::Question { request, .. }) => self.is_open(request),
+            None => false,
+        };
+        if !still {
+            self.asked = self.next_to_ask().await.map(Asked::Shown);
+        }
+    }
+
+    /// What waits for the user in the channel talked in, none they answered already: the oldest
+    /// approval pending there of an agent whose calls they may approve (`Followed::may_approve`),
+    /// else the oldest questions put to them there.
+    async fn next_to_ask(&mut self) -> Option<Asking> {
+        let answered = &self.answered;
+        let talked_in = self.channels.talked_in_mut()?;
+        let pending = talked_in.pending_approvals().iter().filter(|r| !answered.contains(&r.id.0));
+        for request in pending.cloned().collect::<Vec<_>>() {
+            if talked_in.may_approve(request.agent_id).await {
+                return Some(Asking::Approval(request));
+            }
+        }
+        let to_answer = talked_in.questions_to_answer().into_iter();
+        to_answer.into_iter().find(|q| !answered.contains(&q.id.0)).map(Asking::questions)
+    }
+
+    /// Whether the approval `request` is still pending, and not answered by the user.
+    fn is_pending(&self, request: &ApprovalRequest) -> bool {
+        self.channels.awaiting(request.id).is_some() && !self.answered.contains(&request.id.0)
+    }
+
+    /// Whether the questions `request` are still open for the user in their channel, and not
+    /// answered by them.
+    fn is_open(&self, request: &QuestionRequest) -> bool {
+        let channel = self.channels.followed(request.channel_id);
+        channel.is_some_and(|f| f.is_to_answer(request.id))
+            && !self.answered.contains(&request.id.0)
     }
 
     /// The answers under way in the channel talked in (`Channels::under_way`).
@@ -137,8 +223,9 @@ impl Talk {
 
     /// Does what the user typed, `input`, and answers what it came to: a command of the terminal
     /// carried out - one that takes no arguments refused with them, one on the sessions of the
-    /// directory asked of them -; while questions are being answered, any other line the answer to
-    /// the next; else the line sent to the channel talked in (`send_line`).
+    /// directory asked of them -; while questions are asked, any other line the answer to the
+    /// next, while an approval is, the number of a choice its answer; else the line sent to the
+    /// channel talked in (`send_line`). Then asks what waits next.
     ///
     /// # Errors
     /// As `send_line`.
@@ -161,9 +248,10 @@ impl Talk {
                 }]));
             }
         }
+        let chosen = self.chosen_by(input);
         let printed = match terminal {
             Some((TerminalCommand::Exit, _)) => return Ok(Handled::Exit),
-            Some((TerminalCommand::ChannelSwitch, name)) => self.channels.switch(name).await,
+            Some((TerminalCommand::ChannelSwitch, name)) => self.switch_channel(name).await,
             Some((TerminalCommand::SessionNew, template)) => {
                 let template = (!template.is_empty()).then(|| template.to_string());
                 self.switch_session(&Opening::Start { template }).await
@@ -181,14 +269,40 @@ impl Talk {
             }
             Some((TerminalCommand::QuestionDecline, id)) => self.decline_questions(id).await,
             Some((TerminalCommand::QuestionAnswer, id)) => self.begin_answering(id),
-            // While questions are answered, each other line answers the next.
-            _ if self.answering.is_some() => self.answer_next(input).await,
             Some((TerminalCommand::ApprovalApprove, id)) => self.answer_approval(id, true).await,
             Some((TerminalCommand::ApprovalDeny, id)) => self.answer_approval(id, false).await,
             Some((TerminalCommand::AgentRetry, _)) => self.retry().await,
+            // While questions are asked, each message answers the next; a command of the channel
+            // goes to it.
+            None if matches!(self.shown(), Some(Asking::Question { .. }))
+                && matches!(parsed, UserInput::Message(_)) =>
+            {
+                self.answer_in_words(input).await
+            }
+            None if chosen.is_some() => self.choose(chosen.as_slice()).await,
             None => self.send_line(&parsed).await?,
         };
+        self.ask_next().await;
         Ok(Handled::Printed(printed))
+    }
+
+    /// The choice of what is asked - an approval - that `input` names by its number; `None` where
+    /// nothing is asked, or `input` names none of its choices.
+    fn chosen_by(&self, input: &str) -> Option<usize> {
+        let asking @ Asking::Approval(_) = self.shown()? else { return None };
+        let number = input.trim().parse::<usize>().ok()?;
+        (1..=asking.choices().len()).contains(&number).then(|| number - 1)
+    }
+
+    /// Talks in the channel named `name` from now on (`Channels::switch`), and answers what tells
+    /// so; what was asked in the channel left is asked no more, where the switch is made.
+    async fn switch_channel(&mut self, name: &str) -> Vec<Printed> {
+        let left = self.channels.talked_in().map(Followed::channel_id);
+        let printed = self.channels.switch(name).await;
+        if self.channels.talked_in().map(Followed::channel_id) != left {
+            self.asked = None;
+        }
+        printed
     }
 
     /// What tells of the sessions of the directory, the one spoken in last first, the one talked in
@@ -204,11 +318,11 @@ impl Talk {
     }
 
     /// Talks in the session of the directory that `opening` asks for from now on, its channels
-    /// followed in place of those of the session left (`Channels::of_session`), the questions of
-    /// the session left that are being answered so no more, and the session left stopped; answers
-    /// what tells so, as the terminal opens with. Where the session cannot be opened, or the user
-    /// takes part in none of its channels, or it is the one talked in already, the talk stays where
-    /// it is, and the user is told why.
+    /// followed in place of those of the session left (`Channels::of_session`), what was asked
+    /// there asked no more, and the session left stopped; answers what tells so, as the terminal
+    /// opens with. Where the session cannot be opened, or the user takes part in none of its
+    /// channels, or it is the one talked in already, the talk stays where it is, and the user is
+    /// told why.
     async fn switch_session(&mut self, opening: &Opening) -> Vec<Printed> {
         let left = self.channels.session_id();
         let (session, told) = match self.sessions.open(opening).await {
@@ -233,28 +347,56 @@ impl Talk {
         printed.push(Printed::Notice(format!("Talking in the session {id} now")));
         printed.extend(followed.opening().await);
         self.channels = followed;
-        self.answering = None;
+        self.asked = None;
         if let Err(e) = self.sessions.stop(left).await {
             printed.push(error_printed(&e.into()));
         }
         printed
     }
 
-    /// Answers the approval `id` names - `approved` or not - in the channel followed where it is
-    /// pending, and answers what the terminal prints of it.
-    async fn answer_approval(&self, id: &str, approved: bool) -> Vec<Printed> {
-        let Ok(id) = Uuid::parse_str(id.trim()).map(ApprovalId) else {
-            return vec![Printed::Plain(format!("Invalid approval id: {}", id.trim()))];
-        };
-        let Some(followed) = self.channels.awaiting(id) else {
-            return vec![Printed::Plain(format!("No pending approval with id {}", id.0))];
+    /// Answers the approval `named` - `approved` or not (`approval_named`) -, and answers what the
+    /// terminal prints of it.
+    async fn answer_approval(&mut self, named: &str, approved: bool) -> Vec<Printed> {
+        match self.approval_named(named) {
+            Ok(request) => self.approve(&request, approved).await,
+            Err(printed) => vec![printed],
+        }
+    }
+
+    /// The approval `named` by the beginning of its id among those pending in the channels
+    /// followed - without one, the approval asked -; what tells why not, where none or several are.
+    fn approval_named(&self, named: &str) -> Result<ApprovalRequest, Printed> {
+        let prefix = named.trim();
+        if prefix.is_empty() {
+            return match self.asking() {
+                Some(Asking::Approval(request)) => Ok(request.clone()),
+                _ => Err(Printed::Plain(
+                    "No approval is asked of you: name one by the beginning of its id".to_string(),
+                )),
+            };
+        }
+        let pending = self.channels.pending_approvals();
+        let named = beginning_with(pending, |request| request.id.0.to_string(), prefix);
+        named.cloned().map_err(|not| Printed::Plain(not.told("pending approvals")))
+    }
+
+    /// Answers the approval `request` - `approved` or not - in the channel followed where it is
+    /// pending, and answers what the terminal prints of it; once answered, it is asked no more.
+    async fn approve(&mut self, request: &ApprovalRequest, approved: bool) -> Vec<Printed> {
+        let Some(followed) = self.channels.awaiting(request.id) else {
+            return vec![Printed::Plain(format!("No pending approval with id {}", request.id.0))];
         };
         let actor = match acting(followed) {
             Ok(actor) => actor,
             Err(no_run) => return vec![no_run],
         };
-        let failed = actor.send_approval(id, approved).await.err();
-        failed.map(|e| error_printed(&e)).into_iter().collect()
+        match actor.send_approval(request.id, approved).await {
+            Ok(_) => {
+                self.answered.insert(request.id.0);
+                Vec::new()
+            }
+            Err(e) => vec![error_printed(&e)],
+        }
     }
 
     /// Asks, in the channel talked in, for the answer under way, the turn given up or the last
@@ -271,82 +413,106 @@ impl Talk {
         }
     }
 
-    /// The questions `id` names - by id in whichever channel followed knows them, else the last in
-    /// the channel talked in, as the user's actor there tells -, with that actor; what tells why,
-    /// if there are none, or no run of it.
-    fn questions_named(&self, id: &str) -> Result<(QuestionRequest, Arc<UserActor>), Printed> {
-        let none_named = || {
-            Printed::Plain(match id.trim() {
-                "" => "No open questions put to you".to_string(),
-                id => format!("No open questions put to you with id {id}"),
-            })
+    /// The questions `named` by the beginning of their id among those put to the user in the
+    /// channels followed (`Channels::questions_to_answer`) - without one, those asked, also when
+    /// put aside -, with the user's actor in their channel; what tells why not, where none or
+    /// several are, or no run of it.
+    fn questions_named(&self, named: &str) -> Result<(QuestionRequest, Arc<UserActor>), Printed> {
+        let asked = match self.asking() {
+            Some(Asking::Question { request, .. }) => Some(request.id.0.to_string()),
+            _ => None,
         };
-        let asking = self.channels.asking(id).ok_or_else(none_named)?;
-        let actor = acting(asking)?;
-        let request = asking.questions_put_to_user(id).ok_or_else(none_named)?;
-        Ok((request, actor))
+        let named = match (named.trim(), asked) {
+            ("", Some(asked)) => asked,
+            ("", None) => {
+                let none = "No questions are asked of you: name them by the beginning of their id";
+                return Err(Printed::Plain(none.to_string()));
+            }
+            (named, _) => named.to_string(),
+        };
+        let to_answer = self.channels.questions_to_answer();
+        let (followed, request) = beginning_with(to_answer, |(_, q)| q.id.0.to_string(), &named)
+            .map_err(|not| Printed::Plain(not.told("open questions put to you")))?;
+        Ok((request, acting(followed)?))
     }
 
-    /// Declines the questions `id` names (`questions_named`), and answers what the terminal prints
-    /// of it; questions being answered are so no more.
+    /// Declines the questions `id` names (`questions_named`) - without one, those asked -, and
+    /// answers what the terminal prints of it; once declined, they are asked no more.
     async fn decline_questions(&mut self, id: &str) -> Vec<Printed> {
         let (request, actor) = match self.questions_named(id) {
             Ok(named) => named,
             Err(printed) => return vec![printed],
         };
-        self.answering = None;
-        let failed = actor.answer_questions(request.id, None).await.err();
-        failed.map(|e| error_printed(&e)).into_iter().collect()
+        match actor.answer_questions(request.id, None).await {
+            Ok(_) => {
+                self.answered.insert(request.id.0);
+                Vec::new()
+            }
+            Err(e) => vec![error_printed(&e)],
+        }
     }
 
-    /// Begins to answer the questions `id` names (`questions_named`), which are being answered from
-    /// now on, and answers the prompt of the first.
+    /// Asks the questions `id` names (`questions_named`) from now on - without one, those
+    /// asked -, taken up where they were put aside, and answers what tells why not, where there
+    /// are none.
     fn begin_answering(&mut self, id: &str) -> Vec<Printed> {
-        let request = match self.questions_named(id) {
-            Ok((request, _)) => request,
-            Err(printed) => return vec![printed],
-        };
-        let first = request.questions.questions.first();
-        let prompt = first.map(|first| Printed::Plain(prompt_of(0, first)));
-        if prompt.is_some() {
-            self.answering = Some((request, Vec::new()));
+        match self.questions_named(id) {
+            Ok((request, _)) => {
+                let asked = matches!(
+                    self.asking(),
+                    Some(Asking::Question { request: asked, .. }) if asked.id == request.id
+                );
+                match asked {
+                    true => self.take_up(),
+                    false => self.asked = Some(Asked::Shown(Asking::questions(request))),
+                }
+                Vec::new()
+            }
+            Err(printed) => vec![printed],
         }
-        prompt.into_iter().collect()
     }
 
-    /// Takes `input` as the answer to the next of the questions being answered, and answers the
-    /// prompt of the one after - or, the last answered, sends the answers in the channel that asked
-    /// them. Between two runs of the user's actor there, only that nothing can be done there now,
-    /// and the last question asked again.
-    async fn answer_next(&mut self, input: &str) -> Vec<Printed> {
-        let Some((request, mut responses)) = self.answering.take() else { return Vec::new() };
-        if let Some(question) = request.questions.questions.get(responses.len()) {
-            responses.push(response_of(question, input));
+    /// Takes `input` as the answer in words to the question asked (`response_of`).
+    async fn answer_in_words(&mut self, input: &str) -> Vec<Printed> {
+        let Some((_, question)) = self.shown().and_then(Asking::question) else {
+            return Vec::new();
+        };
+        let response = response_of(question, input);
+        self.answer_question(response).await
+    }
+
+    /// Takes `response` as the answer to the question asked; the next of its questions is asked
+    /// then, or - the last answered - the answers are sent in the channel that asked them, after
+    /// which they are asked no more. Between two runs of the user's actor there, only that nothing
+    /// can be done there now, the last question still asked.
+    async fn answer_question(&mut self, response: Response) -> Vec<Printed> {
+        let Some(Asking::Question { request, mut responses }) =
+            self.asked.take().map(Asked::into_asking)
+        else {
+            return Vec::new();
+        };
+        responses.push(response);
+        if responses.len() < request.questions.questions.len() {
+            self.asked = Some(Asked::Shown(Asking::Question { request, responses }));
+            return Vec::new();
         }
-        if let Some(next) = request.questions.questions.get(responses.len()) {
-            let prompt = Printed::Plain(prompt_of(responses.len(), next));
-            self.answering = Some((request, responses));
-            return vec![prompt];
-        }
-        // Closed with its channel, if it is followed no more - which `take_in` tells as it drops
-        // them.
+        // Closed with its channel, if it is followed no more.
         let Some(followed) = self.channels.followed(request.channel_id) else {
             return vec![closed_before_answered(&request)];
         };
         match acting(followed) {
-            Ok(actor) => {
-                let failed = actor.answer_questions(request.id, Some(responses)).await.err();
-                failed.map(|e| error_printed(&e)).into_iter().collect()
-            }
-            // The last answer is typed again once the user's actor runs.
+            Ok(actor) => match actor.answer_questions(request.id, Some(responses)).await {
+                Ok(_) => {
+                    self.answered.insert(request.id.0);
+                    Vec::new()
+                }
+                Err(e) => vec![error_printed(&e)],
+            },
+            // The last answer is given again once the user's actor runs.
             Err(no_run) => {
                 responses.pop();
-                let mut printed = vec![no_run];
-                if let Some(question) = request.questions.questions.get(responses.len()) {
-                    printed.push(Printed::Plain(prompt_of(responses.len(), question)));
-                }
-                self.answering = Some((request, responses));
-                printed
+                self.asked = Some(Asked::Shown(Asking::Question { request, responses }));
+                vec![no_run]
             }
         }
     }
@@ -396,7 +562,7 @@ impl Talk {
 }
 
 /// What the tests do with the talk past its own API: tell the session it talks in and whether
-/// questions are being answered, and reach the sessions of the directory.
+/// questions are asked, and reach the sessions of the directory.
 #[cfg(test)]
 impl Talk {
     /// The session talked in.
@@ -404,9 +570,9 @@ impl Talk {
         self.channels.session_id()
     }
 
-    /// Whether questions are being answered.
-    fn is_answering(&self) -> bool {
-        self.answering.is_some()
+    /// Whether questions are asked, and shown.
+    fn asks_questions(&self) -> bool {
+        matches!(self.shown(), Some(Asking::Question { .. }))
     }
 
     /// The sessions of the directory.
@@ -474,13 +640,17 @@ fn error_printed(error: &anyhow::Error) -> Printed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::followed::testing::from;
+    use crate::followed::testing::{an_agent_in, approval, from};
     use crate::screen::testing::lines;
     use crate::sessions::testing::{in_directory, InDirectory};
     use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::Choice;
+    use caelumora_kernel::actor::Shown;
+    use caelumora_kernel::channel::ChannelLoop;
+    use caelumora_kernel::kernel::Kernel;
+    use caelumora_kernel::session::testing::spec;
     use caelumora_kernel::session::{SessionError, SessionLoop};
     use caelumora_kernel::view::Viewer;
     use caelumora_security::SecurityContext;
@@ -524,6 +694,8 @@ mod tests {
 
     /// What a talk runs in, kept as long as the test runs.
     struct Running {
+        /// The kernel the session runs in.
+        kernel: Arc<Kernel>,
         /// The owner of the directory, who talks.
         owner: SecurityContext,
         /// The directory.
@@ -540,20 +712,44 @@ mod tests {
         let bus = Arc::clone(kernel.event_bus());
         let begun = Talk::begin(Arc::clone(&session_loop), views, bus, sessions).await;
         let (talk, _) = begun.expect("the owner takes part");
-        (talk, session_loop, Running { owner, _directory: directory })
+        (talk, session_loop, Running { kernel, owner, _directory: directory })
     }
 
-    /// Questions an agent puts to the owner of `running` in the first channel of `session_loop`,
-    /// routed to their actor there as the channel would.
-    async fn put_to_the_owner(session_loop: &SessionLoop, running: &Running) -> QuestionRequest {
+    /// Questions an agent puts to the owner of `running` in the first channel of `session_loop` -
+    /// one, of the `choices` labelled so -, routed to their actor there as the channel would, and
+    /// asked by `talk` as it takes in what the channel shows of them.
+    async fn put_to_the_owner(
+        talk: &mut Talk,
+        session_loop: &SessionLoop,
+        running: &Running,
+        choices: &[&str],
+    ) -> QuestionRequest {
         let me = running.owner.caller_id;
         let channel = session_loop.channels().into_iter().next().expect("its first channel");
         let ActorId::User(user) = me else { unreachable!("a user") };
         let actor = channel.user_actor(user).expect("the owner's actor runs");
         let agent = AgentId::new();
-        let request = make_question_request(session_loop.id(), channel.id(), agent, me);
+        let mut request = make_question_request(session_loop.id(), channel.id(), agent, me);
+        for question in &mut request.questions.questions {
+            question.choices = choices
+                .iter()
+                .map(|label| Choice {
+                    label: label.to_string(),
+                    description: None,
+                    recommended: false,
+                })
+                .collect();
+        }
         let asked = ActorEvent::QuestionRequested(request.clone());
         actor.take_in_as_routed(from(&channel, ActorId::Agent(agent), asked)).await;
+        let asked = Asking::questions(request.clone());
+        let until = async {
+            while talk.asking() != Some(&asked) {
+                let happened = talk.next().await;
+                talk.take_in(happened).await;
+            }
+        };
+        time::timeout(Duration::from_secs(5), until).await.expect("asked");
         request
     }
 
@@ -615,35 +811,118 @@ mod tests {
     async fn a_line_that_cannot_be_done_is_told_why() {
         let (mut talk, _, _running) = talking().await;
         assert!(typed(&mut talk, "").await.is_empty());
-        let invalid = typed(&mut talk, "/approve nope").await;
-        assert_eq!(invalid, ["Invalid approval id: nope"]);
+        let not_asked = typed(&mut talk, "/approve").await;
+        assert_eq!(not_asked, ["No approval is asked of you: name one by the beginning of its id"]);
+        let invalid = typed(&mut talk, "/approve Nope").await;
+        assert_eq!(invalid, ["None of the pending approvals begins with 'nope'"]);
         let id = Uuid::new_v4();
         let not_pending = typed(&mut talk, &format!("/deny {id}")).await;
-        assert_eq!(not_pending, [format!("No pending approval with id {id}")]);
+        assert_eq!(not_pending, [format!("None of the pending approvals begins with '{id}'")]);
         let retried = typed(&mut talk, "/retry").await;
         assert_eq!(retried, ["No answer of an agent to give again"]);
         let none = typed(&mut talk, "/answer").await;
-        assert_eq!(none, ["No open questions put to you"]);
+        assert_eq!(none, ["No questions are asked of you: name them by the beginning of their id"]);
         let none_named = typed(&mut talk, &format!("/decline {id}")).await;
-        assert_eq!(none_named, [format!("No open questions put to you with id {id}")]);
+        let none_put = format!("None of the open questions put to you begins with '{id}'");
+        assert_eq!(none_named, [none_put]);
         let switched = typed(&mut talk, "/switch nowhere").await;
         let unknown = "You take part in no channel 'nowhere'";
         assert_eq!(switched.first().map(String::as_str), Some(unknown));
     }
 
-    /// Questions put to the user are answered line by line after `/answer`, each line prompted by
-    /// the next question, and are no longer being answered once the last is.
+    /// Questions put to the user are asked of the talk's own accord, and answered line by line;
+    /// put aside, a line is no answer, until they are taken up again. Answered, they are asked no
+    /// more, though the channel has yet to tell that they closed.
     #[tokio::test]
-    async fn questions_are_answered_line_by_line() {
+    async fn questions_are_asked_and_answered_line_by_line() {
         let (mut talk, session_loop, running) = talking().await;
-        let request = put_to_the_owner(&session_loop, &running).await;
+        put_to_the_owner(&mut talk, &session_loop, &running, &[]).await;
+        assert!(talk.asks_questions(), "asked of its own accord");
+        let retried = typed(&mut talk, "/retry").await;
+        assert_eq!(retried, ["No answer of an agent to give again"], "a command, no answer");
+        talk.put_aside();
+        assert!(!talk.asks_questions() && talk.asking().is_some(), "waiting");
+        talk.take_up();
+        let help = typed(&mut talk, "/help exit").await;
+        assert!(help.join("\n").contains("/exit"), "a command of the channel, no answer: {help:?}");
+        assert!(talk.asks_questions(), "still asked");
+        assert!(talk.asks_questions(), "taken up");
+        talk.put_aside();
+        typed(&mut talk, "/answer").await;
+        assert!(talk.asks_questions(), "taken up by the command");
 
-        let prompt = typed(&mut talk, "/answer").await;
-        assert_eq!(prompt, [prompt_of(0, &request.questions.questions[0])]);
-        assert!(talk.is_answering(), "being answered");
         let answered = typed(&mut talk, "Kaya").await;
         assert!(answered.is_empty(), "{answered:?}");
-        assert!(!talk.is_answering(), "answered");
+        assert!(talk.asking().is_none(), "answered, not asked again");
+    }
+
+    /// A question with choices is answered by the choices taken, and asked no more.
+    #[tokio::test]
+    async fn a_question_is_answered_by_its_choices() {
+        let (mut talk, session_loop, running) = talking().await;
+        put_to_the_owner(&mut talk, &session_loop, &running, &["red", "blue"]).await;
+        assert_eq!(talk.asking().map(Asking::choices), Some(vec!["red".into(), "blue".into()]));
+        assert!(talk.choose(&[1]).await.is_empty());
+        assert!(talk.asking().is_none(), "answered, not asked again");
+    }
+
+    /// What the channel shows as agent `agent` asks for approval in `channel`.
+    fn approval_requested(channel: &ChannelLoop, agent: AgentId) -> Happened {
+        let requested = ActorEvent::ApprovalRequested(approval(channel, agent));
+        let shown = Shown::Envelope(from(channel, ActorId::Agent(agent), requested));
+        Happened::Shown(channel.id(), Ok(shown))
+    }
+
+    /// An approval pending in the channel talked in is asked of the talk's own accord, where the
+    /// user may approve the calls of its agent; answered by the number of a choice - or by a
+    /// command with the beginning of its id -, and asked no more once answered.
+    #[tokio::test]
+    async fn an_approval_is_asked_and_answered_by_its_number() {
+        let (mut talk, session_loop, running) = talking().await;
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+        let agent = an_agent_in(&running.kernel, &session_loop, &running.owner, channel.id()).await;
+        talk.take_in(approval_requested(&channel, AgentId::new())).await;
+        assert_eq!(talk.asking(), None, "not of an agent whose calls the user may approve");
+        talk.take_in(approval_requested(&channel, agent)).await;
+        let Some(Asking::Approval(first)) = talk.asking().cloned() else {
+            panic!("asked: {:?}", talk.asking())
+        };
+        talk.take_in(approval_requested(&channel, agent)).await;
+        assert_eq!(talk.asking(), Some(&Asking::Approval(first)), "the first, until answered");
+
+        assert!(typed(&mut talk, "3").await.is_empty(), "no choice, but a message");
+        assert!(typed(&mut talk, "1").await.is_empty());
+        let Some(Asking::Approval(second)) = talk.asking().cloned() else {
+            panic!("the next asked: {:?}", talk.asking())
+        };
+        let short = &second.id.0.to_string()[..8];
+        assert!(typed(&mut talk, &format!("/deny {short}")).await.is_empty());
+        assert!(talk.asking().is_none(), "answered, not asked again");
+    }
+
+    /// What is asked in the channel talked in is asked no more once the talk switches to another
+    /// channel, and asked again as it switches back.
+    #[tokio::test]
+    async fn what_is_asked_follows_the_channel_talked_in() {
+        let (mut talk, session_loop, running) = talking().await;
+        let main = session_loop.channels().into_iter().next().expect("its first channel");
+        let side = spec("side", vec![running.owner.caller_id]);
+        let side = session_loop.create_channel(&running.owner, side).await.expect("created");
+        let followed = async {
+            while talk.channels.followed(side.id()).is_none() {
+                let happened = talk.next().await;
+                talk.take_in(happened).await;
+            }
+        };
+        time::timeout(Duration::from_secs(5), followed).await.expect("followed");
+        let agent = an_agent_in(&running.kernel, &session_loop, &running.owner, main.id()).await;
+        talk.take_in(approval_requested(&main, agent)).await;
+        assert!(talk.asking().is_some(), "asked in main");
+
+        typed(&mut talk, "/switch side").await;
+        assert_eq!(talk.asking(), None, "nothing waits in side");
+        typed(&mut talk, "/switch main").await;
+        assert!(talk.asking().is_some(), "asked again in main");
     }
 
     /// The commands on the sessions of the directory: listed, the one talked in marked; deleted,
@@ -653,11 +932,10 @@ mod tests {
         let (mut talk, talked_in, running) = talking().await;
         let start = Opening::Start { template: None };
         let (other, _) = talk.sessions().open(&start).await.expect("started");
-        // Also while questions are being answered, which stay so.
-        put_to_the_owner(&talked_in, &running).await;
-        typed(&mut talk, "/answer").await;
+        // Also while questions are asked, which stay so.
+        put_to_the_owner(&mut talk, &talked_in, &running, &[]).await;
         let listed = typed(&mut talk, "/session list").await.join("\n");
-        assert!(talk.is_answering(), "still being answered");
+        assert!(talk.asks_questions(), "still asked");
         let marked: Vec<&str> =
             listed.lines().filter(|line| line.ends_with(", talked in")).collect();
         assert_eq!(marked.len(), 1, "{listed}");
@@ -670,8 +948,8 @@ mod tests {
         let deleted = typed(&mut talk, &format!("/session delete {theirs}")).await;
         assert_eq!(deleted, [format!("The session {} is deleted", other.id())]);
 
-        // Switched to another session, the talk follows its channels, the questions being
-        // answered dropped, and the one left is stopped; to the one talked in, to none that can be
+        // Switched to another session, the talk follows its channels, the questions asked
+        // dropped, and the one left is stopped; to the one talked in, to none that can be
         // opened, or to one the user takes part in no channel of, it stays where it is.
         let mine = talked_in.id().to_string();
         let same = typed(&mut talk, &format!("/resume {mine}")).await;
@@ -681,13 +959,13 @@ mod tests {
         let empty = typed(&mut talk, "/session new empty").await;
         assert!(empty.join("\n").contains("no channel"), "{empty:?}");
         assert_eq!(talk.session_id(), talked_in.id(), "stays where it is");
-        assert!(talk.is_answering(), "still being answered");
+        assert!(talk.asks_questions(), "still asked");
 
         let told = typed(&mut talk, "/new").await.join("\n");
         assert_ne!(talk.session_id(), talked_in.id(), "the other followed");
         assert!(told.contains("Talking in the session") && told.contains("Talking in main now"));
         assert!(!told.contains("Error"), "{told}");
-        assert!(!talk.is_answering(), "the questions of the session left");
+        assert!(talk.asking().is_none(), "the questions of the session left");
         // Stopped: opened again, it is started anew, not the one that ran.
         let resumed = Opening::Resume(mine);
         let (again, _) = talk.sessions().open(&resumed).await.expect("opened again");
@@ -724,14 +1002,12 @@ mod tests {
         assert_eq!(told(hidden), ["Error: The sessions of this directory cannot be read"]);
     }
 
-    /// Questions being answered that close meanwhile are told as such as the talk takes in what
-    /// the channel shows, and the next line is no answer any more.
+    /// Questions asked that close meanwhile are told as such as the talk takes in what the channel
+    /// shows, and asked no more.
     #[tokio::test]
     async fn questions_that_close_while_answered_are_told() {
         let (mut talk, session_loop, running) = talking().await;
-        let request = put_to_the_owner(&session_loop, &running).await;
-        typed(&mut talk, "/answer").await;
-        assert!(talk.is_answering());
+        let request = put_to_the_owner(&mut talk, &session_loop, &running, &[]).await;
         let channel = session_loop.channels().into_iter().next().expect("its first channel");
         let ActorId::User(user) = running.owner.caller_id else { unreachable!("a user") };
         let actor = channel.user_actor(user).expect("the owner's actor runs");
@@ -747,6 +1023,6 @@ mod tests {
             }
         };
         time::timeout(Duration::from_secs(5), told).await.expect("told");
-        assert!(!talk.is_answering(), "no longer being answered");
+        assert!(talk.asking().is_none(), "no longer asked");
     }
 }

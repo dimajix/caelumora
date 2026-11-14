@@ -2,6 +2,7 @@
 //! reaches them: those of its project, listed by their last message, newest first, started,
 //! continued, resumed, stopped as the terminal leaves them, and deleted.
 
+use crate::commands::{beginning_with, NotNamed};
 use crate::here::HERE;
 use crate::printed::Printed;
 use caelumora_domain::history::HistoryEntry;
@@ -187,14 +188,19 @@ impl Sessions {
         read.await.map_err(unreadable)
     }
 
-    /// The session of the directory whose id begins with `prefix`.
+    /// The session of the directory whose id begins with `prefix` (`beginning_with`), as
+    /// `--resume`, `/session resume` and `/session delete` name a session.
     ///
     /// # Errors
     /// If the program works in no directory, its sessions cannot be read, or none of
     /// them or several begin so.
     async fn id_beginning_with(&self, prefix: &str) -> SessionsResult<SessionId> {
-        let sessions = self.of_directory().await?;
-        beginning_with(sessions.iter().map(|session| session.id()), prefix)
+        let ids = self.of_directory().await?.iter().map(|session| session.id()).collect::<Vec<_>>();
+        beginning_with(ids, SessionId::to_string, prefix).map_err(|not| match not {
+            NotNamed::Blank => SessionsError::NoneNamed,
+            NotNamed::None(prefix) => SessionsError::NoneBeginning(prefix),
+            NotNamed::Several(prefix) => SessionsError::SeveralBeginning(prefix),
+        })
     }
 
     /// A new session of the user, started from the template named `template` - among those they
@@ -352,24 +358,6 @@ fn beginning(content: &str) -> String {
     }
 }
 
-/// The one of `ids` that begins with `prefix`, as `--resume`, `/session resume` and
-/// `/session delete` name a session.
-///
-/// # Errors
-/// If `prefix` is blank, none of them begins so, or several do.
-fn beginning_with(ids: impl Iterator<Item = SessionId>, prefix: &str) -> SessionsResult<SessionId> {
-    let prefix = prefix.trim().to_lowercase();
-    if prefix.is_empty() {
-        return Err(SessionsError::NoneNamed);
-    }
-    let mut found = ids.filter(|id| id.to_string().starts_with(&prefix));
-    match (found.next(), found.next()) {
-        (Some(id), None) => Ok(id),
-        (Some(_), Some(_)) => Err(SessionsError::SeveralBeginning(prefix)),
-        (None, _) => Err(SessionsError::NoneBeginning(prefix)),
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod testing {
     //! What the tests of the terminal reach the sessions of a directory by: a directory the program
@@ -467,24 +455,6 @@ mod tests {
     use caelumora_domain::message::MessageId;
     use caelumora_kernel::session::testing::{running_session_of_a_user, test_kernel};
     use chrono::TimeDelta;
-    use uuid::Uuid;
-
-    fn id(text: &str) -> SessionId {
-        SessionId(Uuid::parse_str(text).unwrap())
-    }
-
-    #[test]
-    fn a_session_is_named_by_the_beginning_of_its_id_if_no_other_begins_so() {
-        let ids = [
-            id("0a1b2c3d-0000-4000-8000-000000000001"),
-            id("0a1b9999-0000-4000-8000-000000000002"),
-        ];
-        let named = |prefix| beginning_with(ids.into_iter(), prefix);
-        assert_eq!(named("0A1B2").unwrap(), ids[0], "as written, in any case");
-        assert!(named("0a1b").is_err(), "two of them");
-        assert!(named("ff").is_err(), "none");
-        assert!(named(" ").unwrap_err().to_string().starts_with("No session named"), "nothing");
-    }
 
     /// The session spoken in last comes first; one nobody spoke in counts by when it was made, and
     /// shows nothing said.

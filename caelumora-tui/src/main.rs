@@ -3,6 +3,7 @@
 //! directory continued or resumed -, in one at a time (issue 561); or it is asked what a
 //! definition's file is to its store (`id`).
 
+mod asking;
 mod channels;
 mod commands;
 mod followed;
@@ -333,43 +334,47 @@ async fn talk(
     let started =
         "Chat Session Started (Type '/exit' to stop, '/help' for the commands)".to_string();
     screen.print(vec![Printed::Notice(started)]);
-    // What is under way as the channels were followed, before anything happens in them.
+    // What is under way and asked as the channels were followed, before anything happens in them.
     screen.show_under_way(talk.under_way());
+    screen.ask(talk.asked());
     loop {
-        tokio::select! {
+        let printed = tokio::select! {
             // A signal ends the talk as `/exit` does, so that the session is shut down in order
             // (issue 297).
             () = &mut signalled => {
                 screen.print(vec![Printed::Notice("Ending".to_string())]);
                 break;
             }
-            happened = talk.next() => {
-                let printed = talk.take_in(happened).await;
-                screen.print(printed);
-                screen.show_under_way(talk.under_way());
-            }
-            typed = screen.next_input() => {
-                let line = match typed {
-                    Typed::Line(line) => line,
-                    Typed::Interrupted => {
-                        screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
-                        break;
-                    }
-                    Typed::Failed(message) => {
-                        screen.print(vec![Printed::Error { kind: ErrorKind::Failed, message }]);
-                        break;
-                    }
-                    Typed::Ended => break,
-                };
-                let printed = match talk.take_line(line.trim()).await? {
+            happened = talk.next() => talk.take_in(happened).await,
+            typed = screen.next_input() => match typed {
+                Typed::Line(line) => match talk.take_line(line.trim()).await? {
                     Handled::Printed(printed) => printed,
                     Handled::Exit => break,
-                };
-                screen.print(printed);
-                // Another channel may be talked in now.
-                screen.show_under_way(talk.under_way());
-            }
-        }
+                },
+                Typed::Chosen(chosen) => talk.choose(&chosen).await,
+                Typed::PutAside => {
+                    talk.put_aside();
+                    Vec::new()
+                }
+                Typed::TakenUp => {
+                    talk.take_up();
+                    Vec::new()
+                }
+                Typed::Interrupted => {
+                    screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
+                    break;
+                }
+                Typed::Failed(message) => {
+                    screen.print(vec![Printed::Error { kind: ErrorKind::Failed, message }]);
+                    break;
+                }
+                Typed::Ended => break,
+            },
+        };
+        screen.print(printed);
+        // Another channel may be talked in now, and something else asked.
+        screen.show_under_way(talk.under_way());
+        screen.ask(talk.asked());
     }
     Ok(())
 }

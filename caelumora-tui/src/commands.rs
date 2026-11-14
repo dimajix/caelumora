@@ -1,5 +1,6 @@
 //! The commands the terminal carries out itself (issue 570): their names, by the rules of the
-//! commands of a channel, and what `/help` tells of them.
+//! commands of a channel, what `/help` tells of them, and how they name what they act on by the
+//! beginning of its id (issue 571).
 
 use caelumora_domain::command::Command;
 use caelumora_domain::value::command_name::CommandName;
@@ -24,11 +25,11 @@ pub(crate) enum TerminalCommand {
     SessionDelete,
     /// Asks an agent for its answer again.
     AgentRetry,
-    /// Approves a call waiting for approval.
+    /// Approves a call waiting for approval, the one asked or one named.
     ApprovalApprove,
-    /// Denies a call waiting for approval.
+    /// Denies a call waiting for approval, the one asked or one named.
     ApprovalDeny,
-    /// Begins to answer questions put to the user.
+    /// Asks questions put to the user: those named, or those put aside.
     QuestionAnswer,
     /// Declines questions put to the user.
     QuestionDecline,
@@ -107,28 +108,28 @@ impl TerminalCommand {
             TerminalCommand::ApprovalApprove => Command {
                 name: CommandName::fixed("approval approve"),
                 aliases: vec![CommandName::fixed("approve")],
-                description: "Approves the call waiting for approval of that id.".to_string(),
-                usage: Some("<id>".to_string()),
+                description: "Approves the call asked of you, or the one waiting for approval whose id begins so.".to_string(),
+                usage: Some("[id]".to_string()),
                 owners_only: false,
             },
             TerminalCommand::ApprovalDeny => Command {
                 name: CommandName::fixed("approval deny"),
                 aliases: vec![CommandName::fixed("deny")],
-                description: "Denies the call waiting for approval of that id.".to_string(),
-                usage: Some("<id>".to_string()),
+                description: "Denies the call asked of you, or the one waiting for approval whose id begins so.".to_string(),
+                usage: Some("[id]".to_string()),
                 owners_only: false,
             },
             TerminalCommand::QuestionAnswer => Command {
                 name: CommandName::fixed("question answer"),
                 aliases: vec![CommandName::fixed("answer")],
-                description: "Begins to answer the questions put to you of that id, or the last, one by one.".to_string(),
+                description: "Asks the questions put to you whose id begins so, or those put aside, one by one.".to_string(),
                 usage: Some("[id]".to_string()),
                 owners_only: false,
             },
             TerminalCommand::QuestionDecline => Command {
                 name: CommandName::fixed("question decline"),
                 aliases: vec![CommandName::fixed("decline")],
-                description: "Declines the questions put to you of that id, or the last.".to_string(),
+                description: "Declines the questions asked of you, or those put to you whose id begins so.".to_string(),
                 usage: Some("[id]".to_string()),
                 owners_only: false,
             },
@@ -165,6 +166,51 @@ pub(crate) fn terminal_help(args: &str) -> Option<String> {
     (!listed.is_empty()).then(|| format!("Commands of this terminal:\n\n{}", listed.join("\n")))
 }
 
+/// Why the beginning of an id given to a command names none of what it looks among
+/// (`beginning_with`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NotNamed {
+    /// No beginning was given.
+    Blank,
+    /// None begins with it, the beginning given.
+    None(String),
+    /// Several begin with it, the beginning given.
+    Several(String),
+}
+
+impl NotNamed {
+    /// What tells why, of what the command looks among, `among` - in the plural.
+    pub(crate) fn told(&self, among: &str) -> String {
+        match self {
+            NotNamed::Blank => format!("None of the {among} named: give the beginning of its id"),
+            NotNamed::None(prefix) => format!("None of the {among} begins with '{prefix}'"),
+            NotNamed::Several(prefix) => format!("Several of the {among} begin with '{prefix}'"),
+        }
+    }
+}
+
+/// The one of `items` whose id - as `id_of` writes it - begins with `prefix`, as the commands of
+/// the terminal name a session, an approval or questions: no id typed in full (issue 571).
+///
+/// # Errors
+/// If `prefix` is blank, none of them begins so, or several do.
+pub(crate) fn beginning_with<T>(
+    items: impl IntoIterator<Item = T>,
+    id_of: impl Fn(&T) -> String,
+    prefix: &str,
+) -> Result<T, NotNamed> {
+    let prefix = prefix.trim().to_lowercase();
+    if prefix.is_empty() {
+        return Err(NotNamed::Blank);
+    }
+    let mut found = items.into_iter().filter(|item| id_of(item).starts_with(&prefix));
+    match (found.next(), found.next()) {
+        (Some(item), None) => Ok(item),
+        (Some(_), Some(_)) => Err(NotNamed::Several(prefix)),
+        (None, _) => Err(NotNamed::None(prefix)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +229,18 @@ mod tests {
         assert_eq!(TerminalCommand::find("retry"), Some((TerminalCommand::AgentRetry, "")));
         assert_eq!(TerminalCommand::find("approvals"), None, "a word of its own");
         assert_eq!(TerminalCommand::find("channel list"), None, "the channel's");
+    }
+
+    /// What a command names by the beginning of an id is the one alone that begins so, whatever
+    /// the case of what is typed.
+    #[test]
+    fn the_one_beginning_so_is_named() {
+        let ids = ["ab12", "ab34", "cd56"];
+        let named = |prefix| beginning_with(ids, |id| id.to_string(), prefix);
+        assert_eq!(named(" AB1 "), Ok("ab12"));
+        assert_eq!(named("ab"), Err(NotNamed::Several("ab".to_string())));
+        assert_eq!(named("ef"), Err(NotNamed::None("ef".to_string())));
+        assert_eq!(named(" "), Err(NotNamed::Blank));
     }
 
     /// No name or short form of the terminal's commands begins another, nor one of the commands

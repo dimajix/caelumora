@@ -42,7 +42,8 @@ bytes.workspace = true
 # channels, sessions, users, templates and personalities they write
 # (`message::testing`, `content::testing`, `channel::testing`,
 # `session::testing`, `user::testing`, `template::testing`, `agent::testing`),
-# the classifications and compartments they write (`confidentiality::testing`)
+# the classifications and compartments they write (`confidentiality::testing`),
+# the approvals and questions agents ask (`approval::testing`, `question::testing`)
 # and the actors and attributes they share an entity with (`security::testing`).
 test-support = []
 

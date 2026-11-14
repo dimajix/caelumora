@@ -4,9 +4,13 @@
 use crate::printed::ErrorKind;
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::content::ContentRef;
-use caelumora_domain::question::{Question, QuestionRequest};
+use caelumora_domain::question::{Choice, Question, QuestionRequest};
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use serde_json::Value;
+use uuid::Uuid;
+
+/// How many hexadecimal digits of an id the terminal names it by (`short_id`).
+const SHORT_ID: usize = 8;
 
 /// How long a tool's arguments, or the first line of its result, are told at most, in characters.
 const SHORTENED: usize = 160;
@@ -88,15 +92,29 @@ pub(crate) fn question_line(index: usize, question: &Question) -> String {
     format!("{}. {}: {}", index + 1, question.header, question.question)
 }
 
+/// The words of `choice`: its label, recommended and described where it is.
+pub(crate) fn choice_words(choice: &Choice) -> String {
+    let recommended = if choice.recommended { " (recommended)" } else { "" };
+    let description = choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
+    format!("{}{recommended}{description}", choice.label)
+}
+
 /// What tells that so many `events` of a channel were missed.
 pub(super) fn missed(events: u64) -> String {
     format!("{events} events of this channel missed.")
 }
 
-/// What tells how to answer the approval `request`.
+/// What tells how to answer the approval `request` by a command, the beginning of its id naming
+/// it - also where it is asked (`Asking`), in the channel talked in.
 pub(super) fn how_to_approve(request: &ApprovalRequest) -> String {
-    let id = request.id.0;
+    let id = short_id(&request.id.0);
     format!("Type '/approve {id}' or '/deny {id}' to respond.")
+}
+
+/// The beginning of `id` the terminal names it by: enough for the commands, which take the
+/// beginning of an id (`commands::beginning_with`).
+pub(super) fn short_id(id: &Uuid) -> String {
+    id.simple().to_string()[..SHORT_ID].to_string()
 }
 
 /// The rows that ask the questions of `request`, each with its choices below it.
@@ -105,10 +123,7 @@ pub(super) fn question_rows(request: &QuestionRequest) -> Vec<String> {
     for (index, question) in request.questions.questions.iter().enumerate() {
         rows.push(question_line(index, question));
         for (number, choice) in question.choices.iter().enumerate() {
-            let recommended = if choice.recommended { " (recommended)" } else { "" };
-            let description =
-                choice.description.as_deref().map(|d| format!(" - {d}")).unwrap_or_default();
-            rows.push(format!("   {}) {}{recommended}{description}", number + 1, choice.label));
+            rows.push(format!("   {}) {}", number + 1, choice_words(choice)));
         }
     }
     rows
@@ -117,7 +132,7 @@ pub(super) fn question_rows(request: &QuestionRequest) -> Vec<String> {
 /// What tells how to answer the questions of `request` if they are `put_to_user` - with a
 /// warning where they are sensitive -, else that they are put to others.
 pub(super) fn how_to_answer(request: &QuestionRequest, put_to_user: bool) -> Vec<String> {
-    let id = request.id.0;
+    let id = short_id(&request.id.0);
     if !put_to_user {
         return vec!["They are put to others.".to_string()];
     }
@@ -130,8 +145,8 @@ pub(super) fn how_to_answer(request: &QuestionRequest, put_to_user: bool) -> Vec
         );
     }
     how.push(format!(
-        "Type '/answer {id}' to answer them one by one, or '/decline {id}'. A message instead \
-         declines them."
+        "They are asked one by one in the channel talked in, else by '/answer {id}'; '/decline \
+         {id}' declines them."
     ));
     how
 }

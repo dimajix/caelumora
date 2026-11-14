@@ -6,6 +6,7 @@ use super::words::{
     Arguments, EXPLICIT,
 };
 use super::{Screen, Typed};
+use crate::asking::{Asked, Asking};
 use crate::printed::{Printed, Said, Saying};
 use crate::under_way::UnderWay;
 use async_trait::async_trait;
@@ -31,6 +32,8 @@ pub(crate) struct LineScreen {
     start: Option<std_mpsc::Sender<()>>,
     /// The lines the editor reads, in a thread of its own.
     input: mpsc::UnboundedReceiver<Result<String, ReadlineError>>,
+    /// What was shown asked last, written once as it was shown.
+    shown: Option<Asking>,
 }
 
 impl LineScreen {
@@ -44,7 +47,7 @@ impl LineScreen {
         let printer = printer.map(|printer| Box::new(printer) as Box<dyn ExternalPrinter + Send>);
         let (start, started) = std_mpsc::channel();
         let input = spawn_rustyline_input(editor, started);
-        Ok(Self { printer, start: Some(start), input })
+        Ok(Self { printer, start: Some(start), input, shown: None })
     }
 
     /// Writes `lines` above the line being typed, where there is a printer for it; else, or where
@@ -76,6 +79,18 @@ impl Screen for LineScreen {
     /// Nothing: an answer is told once as it begins (`Printed::Answering`), and no more until it
     /// says something, so that a screen reader reads what is said, not where an agent stands.
     fn show_under_way(&mut self, _under_way: &[UnderWay]) {}
+
+    /// Writes what is asked once, as it is shown, with its choices numbered and how to answer.
+    fn ask(&mut self, asked: Option<&Asked>) {
+        let shown = asked.and_then(Asked::shown);
+        if self.shown.as_ref() == shown {
+            return;
+        }
+        self.shown = shown.cloned();
+        if let Some(asking) = shown {
+            self.write(asked_lines(asking));
+        }
+    }
 
     async fn next_input(&mut self) -> Typed {
         if let Some(start) = self.start.take() {
@@ -178,6 +193,27 @@ fn approval_lines(request: &ApprovalRequest) -> Vec<String> {
         lines.push(EXPLICIT.to_string());
     }
     lines.push(how_to_approve(request));
+    lines
+}
+
+/// The lines that ask `asking`: what is asked, its choices numbered, and how to answer.
+fn asked_lines(asking: &Asking) -> Vec<String> {
+    let choices = asking.choices();
+    let mut lines = vec![asking.what()];
+    let numbered = choices.iter().enumerate();
+    lines.extend(numbered.map(|(index, choice)| format!("   {}) {choice}", index + 1)));
+    let how = match (choices.is_empty(), asking.multi_select(), asking.takes_words()) {
+        (true, _, _) => "Type your answer, or '-' to decline it.",
+        (false, _, false) => "Type the number of your choice.",
+        (false, false, true) => {
+            "Type the number of your choice, or an answer of your own; '-' declines it."
+        }
+        (false, true, true) => {
+            "Type the numbers of your choices, separated by commas, or an answer of your own; \
+             '-' declines it."
+        }
+    };
+    lines.push(how.to_string());
     lines
 }
 
@@ -293,7 +329,8 @@ mod tests {
         let mine = questions(&request, true);
         assert_eq!(mine.first(), Some(&format!("Questions of ask, id {id}:")));
         assert_eq!(mine.get(1).map(String::as_str), Some("1. Name: Who?"));
-        assert!(mine.last().is_some_and(|line| line.starts_with(&format!("Type '/answer {id}'"))));
+        let short = &id.simple().to_string()[..8];
+        assert!(mine.last().is_some_and(|line| line.contains(&format!("'/answer {short}'"))));
         assert!(!mine.join("\n").contains("Sensitive"), "{mine:?}");
         let sensitive = QuestionRequest {
             questions: Questions { sensitive: true, ..request.questions.clone() },
@@ -347,6 +384,15 @@ mod tests {
         let classification = Default::default();
         let hidden = ToolCallResult::of(&call, ToolResultStatus::Ok, String::new(), classification);
         assert_eq!(result_line(&hidden), "read answered, its result not shown");
+    }
+
+    /// What is asked is written with its choices numbered and how to answer it.
+    #[test]
+    fn what_is_asked_is_written_with_its_choices_numbered() {
+        let me = ActorId::User(UserId::new());
+        let request = make_question_request(SessionId::new(), ChannelId::new(), AgentId::new(), me);
+        let asked = asked_lines(&Asking::questions(request));
+        assert_eq!(asked, ["1. Name: Who?", "Type your answer, or '-' to decline it."]);
     }
 
     #[test]

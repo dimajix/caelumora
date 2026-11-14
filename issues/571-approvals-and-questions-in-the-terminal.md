@@ -58,3 +58,21 @@ matcher edited: what more there is, the web UI offers.
 channels, the questions being answered, the sessions of the directory -, whose methods take in a
 line typed and what the channels show; `commands.rs` holds the terminal's commands alone
 (`TerminalCommand`, `terminal_help`). What the program is asked by its options is `Invocation`.
+
+**2026-11-14** - Step 2 done: what is asked of the user is `Asking` (`asking.rs`), which `Talk`
+asks of its own accord - the oldest approval pending in the channel talked in, else the oldest
+questions put to the user there, none answered already -, and each way of drawing shows its own
+way (`Screen::ask`): `full` as a choice above the line typed (`screen/full/choosing.rs`), Esc
+putting it aside and taking it up again, `line` with the choices numbered. The commands name an
+approval or questions by the beginning of the id (`commands::beginning_with`, which the sessions
+use too), without one the one asked - not by a number, which names a choice. While questions are
+asked, a command - the terminal's or the channel's - is carried out, and only a message answers;
+a message typed while they are put aside declines them, as the user's actor does. The tests build
+an approval request by `approval::testing::make_approval_request` of the domain.
+
+**2026-11-14** - Decided with the maintainer after the review of step 2, and done in it: an
+approval is asked only where the user may approve its agent's calls, as the web UI offers its
+buttons (`Followed::may_approve`); what is asked is held as shown or put aside (`Asked`), not by a
+flag beside it; switching the channel asks anew of the channel switched to. Step 3 begins with the
+choices told by their meaning instead of by their index. That the terminal remembers what the user
+answered (`Talk::answered`) beside the owners of approvals and questions is an issue of its own.

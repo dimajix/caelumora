@@ -235,8 +235,9 @@ the record of the answers, nothing raw.
     channel at all (`AnswerQuestion`) the channel decides as it admits the answer. Which questions
     are open and put to the user is the actor's to tell (`UserActor::questions_to_answer`): a
     frontend in the kernel's process, as the terminal is, offers those to be answered, rather than
-    keeping a list beside it; a client of the REST API learns them from the channel's snapshot and
-    stream. The answer goes
+    keeping a list beside it - the terminal remembers only which it answered, until the channel
+    tells that they closed (issue 571); a client of the REST API learns them from the channel's
+    snapshot and stream. The answer goes
     to the asking agent alone, which takes it only if its sender was asked and the questions are
     still open, and checks the responses again; who answered it takes from the envelope, never from
     what was said. The first answer that counts settles the call.
