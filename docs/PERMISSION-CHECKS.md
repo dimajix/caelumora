@@ -64,7 +64,7 @@ error what was refused (`Refused`, see [SECURITY.md](SECURITY.md)). The flow is 
 |---|---|---|---|
 | **Store** (`caelumora-store/src/access.rs`), rule 1 and reach | `Get*` on every read; `List*`, then the admission of `Get*` (`ReadDeleted` for what was deleted) handed to the storage and the verb per item as a filter; `Create*` with the new attributes; `Get*` then `Update*`/`Delete*` on the stored ones; `ReadDeleted` then `Restore`/`Purge` - always Read before the verb; after the Read, for what is classified, `cleared_for` (issue 322) | `require`, `require_cleared_for`; `may_reach` as the list filter | `NotFound` for what may not be read or is not cleared for, `PermissionDenied` for what may not be changed, `Ok(false)` for what cannot be deleted |
 | **Managers** (`SessionManager`, `SessionLoop`, `AgentManager`, `WorkspaceManager`, `ProjectController`, `ArtifactManager`, `AttachmentManager`, `SkillManager`, `GroupManager`, `SecretManager`), rules 2 and 4 | their verb before they act, where they act before they store; the flow of what they keep or make | `require`, `require_*` | the manager's error |
-| **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `MessageRejected` to the sender |
+| **Channel loop** (`ChannelLoop`), rules 2 and 3 | what changes the channel, who is admitted, and what enters it (`admission`) | `require`, `require_*` | `ChannelError::Forbidden`, `NotCleared`; `EventRejected` to the sender |
 | **Owners of acts** (`ToolExecutor` - asking the kernel through the agent's runtime, issue 516 -, `CommandExecutor`, the approver, components on what they keep - asking it the same way), rule 4 | the act's own question, once | `require` | the act's own answer: a forbidden result, an answer refused (`EventRefused`, issue 567) |
 | **Views** (`caelumora-kernel/src/view`), rule 5 and reach | reaching (concept 4) and the flags of a snapshot | `may_*`; `require` for reading a participant's tools, components and context | `*NotFound`, a flag false, `Forbidden` |
 | **Filters** (event bus, command lists, store lists), rule 5 | the read question per item | `check` | silently left out |
@@ -144,7 +144,7 @@ manager's - counts once: it is one write.
 
 `ChannelLoop::admission`, in the envelope's context (**E**), in the loop, in order, against the
 channel as it is when the event is taken in; a refusal is answered to the sender alone with
-`MessageRejected`. The actors ask nothing for what they send. All rows R3; the sender's own
+`EventRejected`. The actors ask nothing for what they send. All rows R3; the sender's own
 permission first, then the flow of what it carries.
 
 | Event | Questions in order | `Rejection` |

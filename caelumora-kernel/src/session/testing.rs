@@ -151,12 +151,12 @@ pub fn spec(name: &str, participants: Vec<ActorId>) -> ChannelSpec {
     ChannelSpec { participants, ..ChannelSpec::new(name) }
 }
 
-/// The message and the reason of the next `MessageRejected` `events`
-/// show: why the channel did not let in what their user sent (issue 304).
+/// The message and the reason of the next `EventRejected` `events` show: why the channel did not
+/// let in what their user sent (issue 304).
 pub async fn rejection(events: &mut ChannelWatch) -> (Option<MessageId>, Rejection) {
     time::timeout(Duration::from_secs(5), async {
         loop {
-            if let ActorEvent::MessageRejected { message, reason, .. } =
+            if let ActorEvent::EventRejected { message, reason, .. } =
                 events.recv().await.expect("the channel is running").event
             {
                 return (message, reason);

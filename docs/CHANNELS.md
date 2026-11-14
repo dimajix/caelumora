@@ -402,7 +402,7 @@ may act so, then whether what it carries may flow in:
 
 A message is admitted as it arrives, so one said after the channel was lowered below its turn is
 refused. What is refused is written nowhere and delivered to nobody. The channel tells its sender
-alone why, in the system's name (`MessageRejected`, with a `Rejection`), recorded to the sender
+alone why, in the system's name (`EventRejected`, with a `Rejection`), recorded to the sender
 alone (issue 417). What an actor does not take of what was let in and went to it - the approver an
 answer it does not count - it tells its sender alike, in its own name (`EventRefused`, with a
 `Rejection`, issue 567), recorded to that sender alone. A
@@ -498,11 +498,11 @@ naming a message or a turn.
 
 *   **A user** asks through their actor, which refuses at once, without an event, only a message
     not there - what it reads of the channel to know whom it asks; one taken back the channel
-    refuses (`MessageRejected`, issue 567).
+    refuses (`EventRejected`, issue 567).
 *   **The channel** admits it (`RetryMessage` - as cancelling and waking, whoever may read the
     channel) of a message an agent taking part said, or of a turn of such an agent that is either
     its turn under way or its last turn given up that may be answered again
-    (`ChannelLoop::retryable_turn`), and refuses any other (`MessageRejected`, issue 567) - the
+    (`ChannelLoop::retryable_turn`), and refuses any other (`EventRejected`, issue 567) - the
     actor of the user reaches into no other actor to know. The moderator routes it to the agent
     alone, which the channel wakes first - ending being quiet, as for a nudge; no
     `WakeupRequested` goes ahead of it, which would wake every agent. A turn

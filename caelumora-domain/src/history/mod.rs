@@ -248,7 +248,7 @@ impl Chain<Recorded> {
             | HistoryEntry::RetryRejected { .. }
             | HistoryEntry::ChainCutOff { .. }
             | HistoryEntry::ResponderUndecided { .. }
-            | HistoryEntry::MessageRejected { .. }
+            | HistoryEntry::EventRejected { .. }
             | HistoryEntry::EventRefused { .. }
             | HistoryEntry::ResponseRequested { .. }
             | HistoryEntry::CommandRequested { .. }

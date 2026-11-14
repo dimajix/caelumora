@@ -466,3 +466,33 @@ collected here, to be taken on one after the other, each a step of its own:
   `MessageTime`, `Reasoning` and `MessageFooter`, while WEB-UI.md holds one component to a file.
   Either the rule allows the parts of a message to share its file, or they move to files of their
   own.
+
+- **2026-11-14** — Step 13, point 11: what the channel does not let in is told as `EventRejected`
+  (`ActorEvent`, `HistoryEntry`), and the REST API names its entry `event_rejected`; the web UI's
+  notice (`eventRejected`, `eventRejectedNotice`) and the TUI follow, as does the domain tag of its
+  digest (`caelumora.history-event-rejected.v1`). The issues name it as it was named then. Stored
+  histories with an entry `MessageRejected` no longer load and have to be deleted.
+
+- **2026-11-14** — The review of step 13, applied: the doc comments the rename changed are
+  rewrapped to 100 columns, the `matches!` it touched broken by hand; the web UI's type says that
+  an `EventRejected` is part of the history, as it is since issue 417, and REST-SERVER.md and
+  `HistoryItemResponse` name `event_refused` beside `event_rejected` among a reader's notices.
+
+- **2026-11-14** — Points join the issue from the review of step 13, at the maintainer's decision:
+  17. **Rejected and refused are not kept apart.** Since point 11, what the channel's door does not
+  let in is rejected (`EventRejected`), what an actor does not take is refused (`EventRefused`).
+  Many places still call the door's rejection a refusal: the prose of CHANNELS.md, SECURITY.md,
+  COMMANDS.md and PERMISSION-CHECKS.md and of the docs of `UserActor` and the REST handlers,
+  locals named `refused` that hold an `EventRejected`, the test helpers `retry_refused` and
+  `retry_of_turn_refused` and two test names; the TUI prints `[refused]` for both, and the web UI
+  words an `EventRefused` with `rejectedText`. What both share is a `Rejection`. Each is to be
+  called by its own word, and what they share by the type's.
+  18. **The channel builds its rejection by hand.** `Envelope::refusal` makes an `EventRefused` of
+  an event, its kind and the message it is about; `ChannelLoop::reject` builds its
+  `EventRejected` of the same inline. An `Envelope::rejection` beside it is to build it.
+  19. **`Envelope::describe` describes a rejection but not a refusal.** `EventRejected` has an arm
+  of its own, `EventRefused` falls through to its `Debug` form; both or neither are to have one.
+  The docs of `Envelope::refusal` call it "a `EventRefused`".
+  20. **`RetryRejected` is an actor's refusal.** The agent asked to answer again does not, for a
+  reason of the type `RetryRefused`; by the words of point 17 the event is a refusal. Whether it
+  is to be renamed is to be decided.

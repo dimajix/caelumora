@@ -811,7 +811,7 @@ export interface Message {
   rejected?: Rejection;
   // UI only: the channel did not let in what the user sent (issue 304).
   // Part of the history, also for a message of theirs (issue 417).
-  messageRejected?: {rejected: string; reason: Rejection};
+  eventRejected?: {rejected: string; reason: Rejection};
   // UI only: the actor it went to did not take what the user sent (issue 567). Part of the
   // history.
   eventRefused?: {refused: string; reason: Rejection};
@@ -970,11 +970,11 @@ export interface ActorEvent {
   /** The sender does not answer again instead of `target`, for `reason` (issues 234, 235). */
   RetryRejected?: { target: RetryTarget; reason: RetryRefused };
   /**
-   * The channel did not let in the user's own event of the kind `rejected`
-   * (issue 304), about the message `message` if it was one, for `reason`.
-   * Sent by the channel to its sender alone, never part of the history.
+   * The channel did not let in the user's own event of the kind `rejected` (issue 304), about the
+   * message `message` if it was one, for `reason`. Sent by the channel to its sender alone, and
+   * part of the history (issue 417).
    */
-  MessageRejected?: { rejected: string; message: string | null; reason: Rejection };
+  EventRejected?: { rejected: string; message: string | null; reason: Rejection };
   /**
    * The actor an event of the user's of the kind `refused` went to did not take it (issue 567) -
    * the approver an answer it does not count -, about the message `message` if it was one, for
@@ -1436,7 +1436,7 @@ export type HistoryItemKind<M> =
   /** It could not be decided who responds to `message`, and nobody was asked (issue 441). */
   | {responder_undecided: {message: string; at: string}}
   /** What the reader sent was not let into the channel (issue 304). */
-  | {message_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
+  | {event_rejected: {rejected: string; message: string | null; reason: Rejection; at: string}}
   /** What the reader sent was not taken by `by`, the actor it went to (issue 567). */
   | {event_refused: {by: ActorId; refused: string; message: string | null; reason: Rejection; at: string}}
   /**

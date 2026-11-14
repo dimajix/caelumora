@@ -503,7 +503,7 @@ mod tests {
                 not_asked: vec![agent],
             },
             ActorEvent::ResponderUndecided { message: heard.id },
-            ActorEvent::MessageRejected {
+            ActorEvent::EventRejected {
                 rejected: "MessageModified".to_string(),
                 message: Some(heard.id),
                 reason: Rejection::Invalid,

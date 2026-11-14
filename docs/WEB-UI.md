@@ -375,7 +375,7 @@ it is fetched anew as it starts.
     a line has being the server's to read; a value too long for a pattern as it is. Where the server
     proposes no rule, none is offered. A request a rule of this user's answered says so. An answer
     names the request alone; one the approver does not count is told in a notice (`EventRefused`),
-    as what the channel does not let in is (`MessageRejected`), and the request is no longer marked
+    as what the channel does not let in is (`EventRejected`), and the request is no longer marked
     answered: the refusal names the answer's event as its correlation.
 *   **Questions** an agent's call waits for are shown to everybody the server sends them to, above
     the approvals, with the controls only for the users they are put to. A question may be skipped,

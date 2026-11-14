@@ -572,7 +572,7 @@ with the initiator the event names (issue 516): an envelope carries none, and an
 its rights is never taken. The actor that sends asks nothing of the policy. So a message, a change
 of one, a reclassification, a request to answer again and an answer to questions are each asked
 once, in the sender's name - first whether it may act so, then the flow of what it carries -, and
-what is refused is answered to its sender alone (`MessageRejected`), recorded to it alone; what was
+what is refused is answered to its sender alone (`EventRejected`), recorded to it alone; what was
 refused entered nothing and is not recorded (issue 417). An answer to an approval request names the
 request alone, and the approver, which holds it, asks whether its sender may approve the calls of
 the agent that asked (`ApproveToolCall`), in the context the channel admits them in, and refuses

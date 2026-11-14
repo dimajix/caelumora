@@ -88,7 +88,7 @@ import {GrowingTextarea} from './GrowingTextarea';
 import {MessageFooter, MessageView, Reasoning} from './MessageView';
 import {Notice} from './Notice';
 import {ShownChannelContext, type ShownChannel} from '../shownChannel';
-import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, messageRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
+import {activityNotice, activityUnderWay, attachedByTurn, chainCutOffNotice, responderUndecidedNotice, channelCommandNotice, chatMessages, chatRows, commandFailedNotice, commandNotice, eventRefusedNotice, eventRejectedNotice, nudgeNotice, retryRejectedNotice, endedCommands, formatArguments, givenUpNotice, formatTimestamp, formatTokens, formatTokensShort, isOwn, joinsSteps, mayBeAnsweredAgain, mergeToolResults, participantNotice, withoutQuietCalls, planStepMark, rowTurn, turnGroups, type ChatRow} from '../messages';
 import {PlanSteps} from './PlanSteps';
 import {TokenGauge} from './TokenGauge';
 import {HoverCard} from './HoverCard';
@@ -912,14 +912,14 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
           setAnswers(prev => withAnswer(prev.filter(a => a.sender !== answerer), answerer, answererName, a => a));
         } else if (actorEvent.RetryRejected) {
           showOnce(retryRejectedNotice(actorEvent.RetryRejected.reason, envelope.context.sender_name, envelope.timestamp, position));
-        } else if (actorEvent.MessageRejected) {
+        } else if (actorEvent.EventRejected) {
           // What the user sent, which the channel did not let in (issue
           // 304). A message of theirs, shown as they sent it, is marked as
           // not let in - after a reload, the history's notice stands in its
           // place. Anything else is told in a notice; a change of a
           // message, shown as they made it, is undone by what the channel
           // holds.
-          const {rejected, message, reason} = actorEvent.MessageRejected;
+          const {rejected, message, reason} = actorEvent.EventRejected;
           if (message && rejected === 'CompleteMessageGenerated') {
             setMessages(prev => prev.map(m => m.id === message ? {...m, rejected: reason} : m));
           } else {
@@ -928,7 +928,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 .then(standing => setMessages(prev => prev.map(m => m.id === message ? standing : m)))
                 .catch(error => reportError('Failed to read the message back', error));
             }
-            showOnce(messageRejectedNotice(rejected, reason, envelope.timestamp, position));
+            showOnce(eventRejectedNotice(rejected, reason, envelope.timestamp, position));
           }
         } else if (actorEvent.EventRefused) {
           // What the user sent that the actor it went to did not take (issue 567) - the approver
@@ -1561,9 +1561,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     <Notice key={key} message={msg} icon={Ban} heading={<span>{msg.sender_name || 'The agent'} gave its answer up</span>} actions={retryGivenUpAction(msg)}>
       <div className="wrap-break-word">{msg.content}</div>
     </Notice>
-  ) : msg.messageRejected ? (
+  ) : msg.eventRejected ? (
     <Notice key={key} message={msg} icon={Ban} heading={<span>Not let in</span>}>
-      <div className="wrap-break-word">{rejectedText(msg.messageRejected.rejected)} was not let into the channel: {rejectionText(msg.messageRejected.reason)}.</div>
+      <div className="wrap-break-word">{rejectedText(msg.eventRejected.rejected)} was not let into the channel: {rejectionText(msg.eventRejected.reason)}.</div>
     </Notice>
   ) : msg.eventRefused ? (
     <Notice key={key} message={msg} icon={Ban} heading={<span>Not taken</span>}>

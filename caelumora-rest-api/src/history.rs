@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 /// `{"command_executed": {…}}`, `{"compacted": {…}}`, `{"withdrawn": {…}}`,
 /// `{"participant_joined": {…}}`, `{"participant_left": {…}}`, and the notices a reader was given
 /// (issue 417): `{"command_failed": {…}}`, `{"retry_accepted": {…}}`, `{"retry_rejected": {…}}`,
-/// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"message_rejected": {…}}`,
-/// `{"response_requested": {…}}`.
+/// `{"chain_cut_off": {…}}`, `{"responder_undecided": {…}}`, `{"event_rejected": {…}}`,
+/// `{"event_refused": {…}}`, `{"response_requested": {…}}`.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryItemResponse<M> {
@@ -134,7 +134,7 @@ pub enum HistoryItemResponse<M> {
         at: DateTime<Utc>,
     },
     /// What the reader sent was not let into the channel (issue 304).
-    MessageRejected {
+    EventRejected {
         rejected: String,
         message: Option<MessageId>,
         reason: Rejection,
@@ -247,8 +247,8 @@ impl<M> HistoryItemResponse<M> {
             HistoryEntry::ResponderUndecided { message, at } => {
                 Some(Self::ResponderUndecided { message, at })
             }
-            HistoryEntry::MessageRejected { rejected, message, reason, at } => {
-                Some(Self::MessageRejected { rejected, message, reason, at })
+            HistoryEntry::EventRejected { rejected, message, reason, at } => {
+                Some(Self::EventRejected { rejected, message, reason, at })
             }
             HistoryEntry::EventRefused { by, refused, message, reason, at, .. } => {
                 Some(Self::EventRefused { by, refused, message, reason, at })

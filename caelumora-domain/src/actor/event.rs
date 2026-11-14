@@ -377,22 +377,20 @@ pub enum ActorEvent {
         from: Digest,
         to: Digest,
     },
-    /// The channel did not let in an event of the receiver's own (issue
-    /// 304): `rejected` names its kind (`ActorEvent::kind`), `message` the
-    /// message it was or was about, if any, and `reason` is one of a known
-    /// few, which a user interface words itself - the channel's one decision
-    /// of what enters it, made in order as it takes the event in. Sent by the
-    /// channel to the event's sender alone, and recorded to it alone
-    /// (`HistoryEntry::MessageRejected`, issue 417); what was rejected
-    /// entered nothing.
-    MessageRejected {
+    /// The channel did not let in an event of the receiver's own (issue 304): `rejected` names its
+    /// kind (`ActorEvent::kind`), `message` the message it was or was about, if any, and `reason`
+    /// is one of a known few, which a user interface words itself - the channel's one decision of
+    /// what enters it, made in order as it takes the event in. Sent by the channel to the event's
+    /// sender alone, and recorded to it alone (`HistoryEntry::EventRejected`, issue 417); what was
+    /// rejected entered nothing.
+    EventRejected {
         rejected: String,
         message: Option<MessageId>,
         reason: Rejection,
     },
     /// The actor an event of `to`'s went to does not take it (issue 567): `refused` names its kind,
     /// `message` the message it was or was about, if any, and `reason` is one of the known few, as
-    /// for `MessageRejected` - which tells what the channel did not let in, this what an actor did
+    /// for `EventRejected` - which tells what the channel did not let in, this what an actor did
     /// not take. Sent by that actor to `to` alone, and recorded to it alone
     /// (`HistoryEntry::EventRefused`); what was refused changed nothing there.
     EventRefused {
@@ -524,7 +522,7 @@ impl ActorEvent {
             | ActorEvent::RetryRejected { .. }
             | ActorEvent::ChainCutOff { .. }
             | ActorEvent::ResponderUndecided { .. }
-            | ActorEvent::MessageRejected { .. }
+            | ActorEvent::EventRejected { .. }
             | ActorEvent::EventRefused { .. }
             | ActorEvent::ApprovalAnswered { .. }
             | ActorEvent::MessageGiven { .. }
@@ -533,9 +531,8 @@ impl ActorEvent {
         }
     }
 
-    /// The message the event is or is about, if any: a message said, or one
-    /// it changes, takes back, reclassifies or asks to be answered again -
-    /// what a rejection of it names (`MessageRejected`).
+    /// The message the event is or is about, if any: a message said, or one it changes, takes back,
+    /// reclassifies or asks to be answered again - what a rejection of it names (`EventRejected`).
     pub fn subject_message(&self) -> Option<MessageId> {
         match self {
             ActorEvent::PartialMessageGenerated(m)
@@ -632,7 +629,7 @@ impl ActorEvent {
             ActorEvent::RetryRequested { .. } => "RetryRequested",
             ActorEvent::RetryAccepted { .. } => "RetryAccepted",
             ActorEvent::RetryRejected { .. } => "RetryRejected",
-            ActorEvent::MessageRejected { .. } => "MessageRejected",
+            ActorEvent::EventRejected { .. } => "EventRejected",
             ActorEvent::EventRefused { .. } => "EventRefused",
             ActorEvent::MessageGiven { .. } => "MessageGiven",
             ActorEvent::MessageWithdrawn { .. } => "MessageWithdrawn",
@@ -641,7 +638,7 @@ impl ActorEvent {
     }
 }
 
-/// Why the channel did not let an event in (`ActorEvent::MessageRejected`, issue 304), or the actor
+/// Why the channel did not let an event in (`ActorEvent::EventRejected`, issue 304), or the actor
 /// it went to did not take it (`ActorEvent::EventRefused`, issue 567) - the approver an answer to
 /// a request it does not hold as `Invalid`, one of someone who may not approve as `Forbidden` -,
 /// worded for its sender, as the web UI and the TUI word it after "… was not let in:" or "… was

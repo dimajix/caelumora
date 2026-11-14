@@ -712,23 +712,20 @@ async fn interrupting_one_tool_call_is_for_whoever_may_cancel_the_channel() {
 /// That what `watch` shows next of a refusal is the channel's of a request to answer again, as it
 /// admits it (issue 567).
 async fn retry_refused(watch: &mut ChannelWatch) {
-    let ActorEvent::MessageRejected { rejected, reason, .. } =
-        shown(watch, "MessageRejected").await
+    let ActorEvent::EventRejected { rejected, reason, .. } = shown(watch, "EventRejected").await
     else {
         unreachable!()
     };
     assert_eq!((rejected.as_str(), reason), ("RetryRequested", Rejection::Invalid));
 }
 
-/// M2: asking an agent to answer again (issue 234) is an act on the
-/// conversation, like cancelling it: whoever takes part may - bob as well
-/// as alice - asked as `RetryMessage` of the channel by the channel alone,
-/// as it admits the request (issue 304). His actor asks nothing; the
-/// channel, after his permission, refuses a message no agent said, or a
-/// turn that is neither an answer under way (issue 235) nor the agent's
-/// last turn given up (issue 259), and tells him (`MessageRejected`, issue
-/// 567). Whether the agent answers again is its own to decide. It is
-/// offered of an agent by the same question (issue 242).
+/// M2: asking an agent to answer again (issue 234) is an act on the conversation, like cancelling
+/// it: whoever takes part may - bob as well as alice - asked as `RetryMessage` of the channel by
+/// the channel alone, as it admits the request (issue 304). His actor asks nothing; the channel,
+/// after his permission, refuses a message no agent said, or a turn that is neither an answer under
+/// way (issue 235) nor the agent's last turn given up (issue 259), and tells him (`EventRejected`,
+/// issue 567). Whether the agent answers again is its own to decide. It is offered of an agent by
+/// the same question (issue 242).
 #[tokio::test]
 async fn asking_an_agent_to_answer_again_is_for_whoever_takes_part() {
     use caelumora_domain::actor::ActorEvent;

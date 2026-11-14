@@ -329,7 +329,7 @@ fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<String>
             Some(format!("{sender} cannot answer again: {reason}"))
         }
         // What this user sent that the channel did not let in (issue 304), told to them alone.
-        ActorEvent::MessageRejected { rejected, reason, .. } => {
+        ActorEvent::EventRejected { rejected, reason, .. } => {
             Some(format!("[refused] the channel did not let in your {rejected}: {reason}"))
         }
         // What this user sent that the actor it went to did not take (issue 567), told to them

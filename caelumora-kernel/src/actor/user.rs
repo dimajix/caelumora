@@ -211,15 +211,13 @@ impl UserActor {
         open.iter().filter(|request| request.questions.is_asked(self.id())).cloned().collect()
     }
 
-    /// Answers the questions `id` put to this user with `responses`, one per
-    /// question (issue 165) - or, with `None`, declines them. Looked at
-    /// here, so that the user learns at once if the answer cannot be given:
-    /// whether the questions are open and put to them, and whether
-    /// `responses` answer them as asked. Whether they may answer in the
-    /// channel at all (`AnswerQuestion`) is the channel's to decide as it
-    /// admits the answer, which tells them of a refusal (`MessageRejected`,
-    /// issue 304); the agent asking checks again what it takes. Returns the
-    /// `span_id`, as `send_message` does.
+    /// Answers the questions `id` put to this user with `responses`, one per question (issue 165) -
+    /// or, with `None`, declines them. Looked at here, so that the user learns at once if the
+    /// answer cannot be given: whether the questions are open and put to them, and whether
+    /// `responses` answer them as asked. Whether they may answer in the channel at all
+    /// (`AnswerQuestion`) is the channel's to decide as it admits the answer, which tells them of a
+    /// refusal (`EventRejected`, issue 304); the agent asking checks again what it takes. Returns
+    /// the `span_id`, as `send_message` does.
     ///
     /// # Errors
     /// `ChannelError::Question` with why the answer cannot be given; an
@@ -255,15 +253,13 @@ impl UserActor {
         Ok(span_id)
     }
 
-    /// Sends a message from this user into the channel - its text `content`
-    /// and the attachments `attachments` names, which the user uploaded for
-    /// the channel (`AttachmentManager::create`, issue 282) -, classified
-    /// `classification` - the channel's if `None` (issue 133). A user may
-    /// release what they write: classify it for a wider audience or a
-    /// lower level than the channel, as long as it may flow into the
-    /// channel. Whether it may is the channel's to decide as it admits the
-    /// message, which tells the user of a refusal (`MessageRejected`, issue
-    /// 304) - the user asks nothing of the policy for what they send.
+    /// Sends a message from this user into the channel - its text `content` and the attachments
+    /// `attachments` names, which the user uploaded for the channel (`AttachmentManager::create`,
+    /// issue 282) -, classified `classification` - the channel's if `None` (issue 133). A user may
+    /// release what they write: classify it for a wider audience or a lower level than the channel,
+    /// as long as it may flow into the channel. Whether it may is the channel's to decide as it
+    /// admits the message, which tells the user of a refusal (`EventRejected`, issue 304) - the
+    /// user asks nothing of the policy for what they send.
     ///
     /// Returns the `span_id` of the envelopes it starts, which every envelope
     /// caused by the message carries as well (see `caelumora_api::logging`).
@@ -436,17 +432,14 @@ impl UserActor {
         self.send_retry(RetryTarget::Message(message), author).await
     }
 
-    /// Asks the agent `author` to answer again instead of its answer under
-    /// way, its turn `turn` (issue 235). Whether this user may ask it
-    /// (`RetryMessage`), whether `author` is an agent of the channel, and
-    /// whether the turn can be answered again - the turn under way, or the
-    /// agent's last turn given up for a failure or a lowering, with nothing
-    /// after it (issue 259) - the channel decides as it admits the request,
-    /// and tells the user if it does not (`MessageRejected`, issue 567). The
-    /// channel ends a turn under way as it delivers the request - if it is
-    /// still the one under way, else it drops it - and the agent answers
-    /// anew with `RetryAccepted`; this returns once the request is on its
-    /// way, as `request_retry` sends it.
+    /// Asks the agent `author` to answer again instead of its answer under way, its turn `turn`
+    /// (issue 235). Whether this user may ask it (`RetryMessage`), whether `author` is an agent of
+    /// the channel, and whether the turn can be answered again - the turn under way, or the agent's
+    /// last turn given up for a failure or a lowering, with nothing after it (issue 259) - the
+    /// channel decides as it admits the request, and tells the user if it does not
+    /// (`EventRejected`, issue 567). The channel ends a turn under way as it delivers the request -
+    /// if it is still the one under way, else it drops it - and the agent answers anew with
+    /// `RetryAccepted`; this returns once the request is on its way, as `request_retry` sends it.
     ///
     /// # Errors
     /// An error if the channel is gone.
@@ -674,7 +667,7 @@ impl UserActor {
     /// command's. Whom it names is found among the agents that carry it out as this user sees them
     /// (`ChannelLoop::agent_commands`, `ShowAgentCommand`) - offering, which asks nothing of the
     /// agent's queue. Whether this user may ask for it (`ExecuteAgentCommand`) is decided at the
-    /// channel's door; a refusal is its `MessageRejected` (issue 516). Sent as `CommandRequested`,
+    /// channel's door; a refusal is its `EventRejected` (issue 516). Sent as `CommandRequested`,
     /// by the command's name, one per agent under one span, through this actor's transport; no
     /// wakeup ahead of it - a sleeping agent carries a command out asleep.
     ///
@@ -798,17 +791,14 @@ impl UserActor {
         }
     }
 
-    /// Forwards what the user sent into the channel, and shows it to those
-    /// who follow this actor first, so that why the channel did not let it
-    /// in (`MessageRejected`, issue 304) always follows it: the channel
-    /// sends nothing back to its sender, so as an agent takes its own
-    /// messages in itself, this actor shows what its user says itself
-    /// (issue 220) - all but the requests to wake the channel and to nudge
-    /// an agent (issue 278), which are not said to anyone, and answers to
-    /// questions, which are for the tool asking alone (issue 165): their
-    /// closing tells the user's frontends that they were answered. Shown
-    /// here rather than when it is queued, so that it falls within the run
-    /// it is said in (issue 386).
+    /// Forwards what the user sent into the channel, and shows it to those who follow this actor
+    /// first, so that why the channel did not let it in (`EventRejected`, issue 304) always follows
+    /// it: the channel sends nothing back to its sender, so as an agent takes its own messages in
+    /// itself, this actor shows what its user says itself (issue 220) - all but the requests to
+    /// wake the channel and to nudge an agent (issue 278), which are not said to anyone, and
+    /// answers to questions, which are for the tool asking alone (issue 165): their closing tells
+    /// the user's frontends that they were answered. Shown here rather than when it is queued, so
+    /// that it falls within the run it is said in (issue 386).
     ///
     /// `false` once the channel's inbox is gone - the only way the
     /// in-memory transport fails - and with it the channel: the actor then

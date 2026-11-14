@@ -210,8 +210,8 @@ impl Envelope {
             ActorEvent::ResponderUndecided { message } => {
                 HistoryEntry::ResponderUndecided { message: *message, at }
             }
-            ActorEvent::MessageRejected { rejected, message, reason } => {
-                HistoryEntry::MessageRejected {
+            ActorEvent::EventRejected { rejected, message, reason } => {
+                HistoryEntry::EventRejected {
                     rejected: rejected.clone(),
                     message: *message,
                     reason: *reason,
@@ -593,9 +593,9 @@ impl Envelope {
                     ctx.sender_id, target, reason
                 )
             }
-            ActorEvent::MessageRejected { rejected, message, .. } => {
+            ActorEvent::EventRejected { rejected, message, .. } => {
                 format!(
-                    "MessageRejected(sender_id={}, rejected={}, mid={:?})",
+                    "EventRejected(sender_id={}, rejected={}, mid={:?})",
                     ctx.sender_id, rejected, message
                 )
             }
@@ -1050,7 +1050,7 @@ mod tests {
                 not_asked: Vec::new(),
             },
             ActorEvent::ResponderUndecided { message: MessageId::new() },
-            ActorEvent::MessageRejected {
+            ActorEvent::EventRejected {
                 rejected: "CompleteMessageGenerated".to_string(),
                 message: None,
                 reason: Rejection::Forbidden,

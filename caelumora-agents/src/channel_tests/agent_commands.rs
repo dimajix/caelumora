@@ -136,16 +136,14 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
     let refused = time::timeout(Duration::from_secs(5), async {
         loop {
             let envelope = watch.recv().await.expect("the channel is running");
-            if matches!(envelope.event, ActorEvent::MessageRejected { .. }) {
+            if matches!(envelope.event, ActorEvent::EventRejected { .. }) {
                 break envelope;
             }
         }
     })
     .await
     .expect("told that it was not let in");
-    let ActorEvent::MessageRejected { rejected, reason, .. } = refused.event else {
-        unreachable!()
-    };
+    let ActorEvent::EventRejected { rejected, reason, .. } = refused.event else { unreachable!() };
     assert_eq!(
         (rejected.as_str(), reason),
         ("CommandRequested", Rejection::Forbidden),
@@ -155,7 +153,7 @@ async fn a_command_its_issuer_may_see_but_not_ask_for_is_refused_at_the_door() {
     assert!(state.notes.current().is_empty() && state.turn.is_none(), "nothing reached the agent");
     let recorded = channel.history_entries().await.split_off(before);
     assert!(
-        matches!(recorded.as_slice(), [HistoryEntry::MessageRejected { .. }]),
+        matches!(recorded.as_slice(), [HistoryEntry::EventRejected { .. }]),
         "in the channel's history only that it was not let in, to her (issue 417): {recorded:?}"
     );
     running.abort();

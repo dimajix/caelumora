@@ -468,7 +468,7 @@ impl ChannelLoop {
     /// Nothing if `event` may enter the channel; why not otherwise (issue 304) - the channel's one
     /// decision of what enters it, made here, in order, against the channel as it is when the event
     /// is taken in, so that nothing changed between a check and the entry. Actors ask nothing for
-    /// what they send; who sent what is not let in is told (`MessageRejected`). Whether whoever
+    /// what they send; who sent what is not let in is told (`EventRejected`). Whether whoever
     /// sends it may act so is asked before the flow of what it carries. Decided:
     ///
     /// - a message, by the actor that is acting - only who acts puts something into the channel -,
@@ -696,11 +696,10 @@ impl ChannelLoop {
         Ok(())
     }
 
-    /// Tells the sender of `event`, which the channel did not let in, why
-    /// (`MessageRejected`, issue 304) - it alone, in the channel's name; not
-    /// one that left, whose inbox is closed. The notice is recorded, to the
-    /// sender alone, so that it is shown after a reload (issue 417); what
-    /// was rejected entered nothing and is not.
+    /// Tells the sender of `event`, which the channel did not let in, why (`EventRejected`, issue
+    /// 304) - it alone, in the channel's name; not one that left, whose inbox is closed. The notice
+    /// is recorded, to the sender alone, so that it is shown after a reload (issue 417); what was
+    /// rejected entered nothing and is not.
     async fn reject(
         &self,
         event: &Envelope,
@@ -712,7 +711,7 @@ impl ChannelLoop {
         let Some(inbox) = running.get(&sender).and_then(|actor| actor.inbox.as_ref()) else {
             return;
         };
-        let rejected = ActorEvent::MessageRejected {
+        let rejected = ActorEvent::EventRejected {
             rejected: event.event.kind().to_string(),
             message: event.event.subject_message(),
             reason,
@@ -1432,8 +1431,18 @@ mod tests {
             .await;
 
         let recorded = channel.history_entries().await;
-        assert!(matches!(recorded.as_slice(), [HistoryEntry::ParticipantJoined { .. }, HistoryEntry::MessageRejected { .. }, HistoryEntry::MessageRejected { .. }]),
-            "after her own join, nothing of it is recorded, only that it was not let in (issue 417): {recorded:?}");
+        assert!(
+            matches!(
+                recorded.as_slice(),
+                [
+                    HistoryEntry::ParticipantJoined { .. },
+                    HistoryEntry::EventRejected { .. },
+                    HistoryEntry::EventRejected { .. }
+                ]
+            ),
+            "after her own join, nothing of it is recorded, only that it was not let in (issue 417): \
+             {recorded:?}"
+        );
         let to_her_alone = channel
             .reading_history(|history| {
                 history.entries().skip(1).all(|node| {
@@ -1445,7 +1454,7 @@ mod tests {
         assert!(to_her_alone, "told to her alone, in the system's name");
         let mut rejected = Vec::new();
         while let Some(envelope) = hers.try_recv().await {
-            if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
+            if let ActorEvent::EventRejected { rejected: kind, reason, .. } = envelope.event {
                 rejected.push((kind, reason));
             }
         }
@@ -1504,7 +1513,7 @@ mod tests {
 
         let mut rejected = Vec::new();
         while let Some(envelope) = hers.try_recv().await {
-            if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
+            if let ActorEvent::EventRejected { rejected: kind, reason, .. } = envelope.event {
                 rejected.push((kind, reason));
             }
         }
@@ -1559,7 +1568,7 @@ mod tests {
 
         let mut rejected = Vec::new();
         while let Some(envelope) = agents.try_recv().await {
-            if let ActorEvent::MessageRejected { rejected: kind, reason, .. } = envelope.event {
+            if let ActorEvent::EventRejected { rejected: kind, reason, .. } = envelope.event {
                 rejected.push((kind, reason));
             }
         }
@@ -2007,7 +2016,7 @@ mod tests {
         let rejected = async |rx: &mut InboxReceiver| {
             let mut rejections = Vec::new();
             while let Some(envelope) = rx.try_recv().await {
-                if let ActorEvent::MessageRejected { rejected, message, reason } = envelope.event {
+                if let ActorEvent::EventRejected { rejected, message, reason } = envelope.event {
                     assert_eq!(
                         envelope.context.sender_id,
                         ActorId::System,

@@ -307,12 +307,12 @@ it (`activity_finished`), who joined or left the channel, by whose act and named
 (`participant_joined`, `participant_left`), the notices its reader was given - an answer to a
 request to answer again (`retry_accepted`, `retry_rejected`), a chain cut off (`chain_cut_off`),
 that it could not be decided who responds (`responder_undecided`), something of theirs not let in
-(`message_rejected`), a request to respond (`response_requested`) -, and - in an agent's history
-only - compactions of its context, what it was given to read, as said items, and where it stopped
-reading a prompt part given (`withdrawn`), an item of its own, since what it read stays as it read
-it. A reader is given what went to them: a private answer, a refusal, a request to the one it went
-to. Read from another channel, a history holds only the messages released, and neither a turn's end
-nor the start of a step.
+(`event_rejected`) or not taken (`event_refused`), a request to respond (`response_requested`) -,
+and - in an agent's history only - compactions of its context, what it was given to read, as said
+items, and where it stopped reading a prompt part given (`withdrawn`), an item of its own, since
+what it read stays as it read it. A reader is given what went to them: a private answer, a refusal,
+a request to the one it went to. Read from another channel, a history holds only the messages
+released, and neither a turn's end nor the start of a step.
 
 Both histories are read in pages, alike (issue 218): `?limit=` items (50 unless asked, at most 200)
 before `?before=`, the last ones without it, as `{"items": […], "earlier": …}`. `earlier` is the
@@ -333,7 +333,7 @@ branch (issue 380).
 A channel is followed live only by its participants, through their own actor's outbox
 (`ChannelView::user_follow`, see [CHANNELS.md](CHANNELS.md#acting-in-a-channel)). The stream is what
 their actor shows: what the moderator routes to the user, what it says for them, why the channel
-did not let in what the user sent (`MessageRejected` with its reason), and why the actor it went
+did not let in what the user sent (`EventRejected` with its reason), and why the actor it went
 to did not take it (`EventRefused` with its reason - the approver an answer it does not count,
 issue 567). A request that sends
 something into the channel is answered once it is on its way, so a refusal arrives on the stream,

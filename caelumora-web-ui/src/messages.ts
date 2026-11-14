@@ -292,8 +292,8 @@ export function retryRejectedNotice(reason: RetryRefused, agentName: string | un
 /**
  * The notice that what you sent, of the kind `rejected`, was not let in, for `reason` (issue 304).
  */
-export function messageRejectedNotice(rejected: string, reason: Rejection, at: string, position?: number): Message {
-  return {id: entryId(position), role: 'System', content: null, messageRejected: {rejected, reason}, timestamp: at};
+export function eventRejectedNotice(rejected: string, reason: Rejection, at: string, position?: number): Message {
+  return {id: entryId(position), role: 'System', content: null, eventRejected: {rejected, reason}, timestamp: at};
 }
 
 /**
@@ -401,9 +401,9 @@ export function chatMessages(items: HistoryItem<Message>[], nameOf: (actor: Acto
     if ('responder_undecided' in item) {
       return [responderUndecidedNotice(item.responder_undecided.at, item.seq)];
     }
-    if ('message_rejected' in item) {
-      const {rejected, reason, at} = item.message_rejected;
-      return [messageRejectedNotice(rejected, reason, at, item.seq)];
+    if ('event_rejected' in item) {
+      const {rejected, reason, at} = item.event_rejected;
+      return [eventRejectedNotice(rejected, reason, at, item.seq)];
     }
     if ('event_refused' in item) {
       const {by, refused, reason, at} = item.event_refused;

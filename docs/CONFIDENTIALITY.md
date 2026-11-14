@@ -75,7 +75,7 @@ Every message carries a classification. It is not optional, and a `Message` has 
     `ConfidentialityPolicy::may_publish`, asked by the `ChannelLoop` for every message of every
     event as it takes the event in - the one gate for every actor, which asks nothing itself for
     what it sends. An event with a message it may not admit is written nowhere, and its sender is
-    told why (`MessageRejected`, see [CHANNELS.md](CHANNELS.md)). The rules allow it if every
+    told why (`EventRejected`, see [CHANNELS.md](CHANNELS.md)). The rules allow it if every
     compartment is configured and the classification flows into the channel; that only the actor
     acting puts something into a channel is the channel's own check of the event, not a question of
     the flow.

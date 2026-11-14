@@ -320,8 +320,8 @@ async fn a_turn_that_cannot_be_answered_again_is_refused_at_the_door() {
     let alice = channel.user_actor(alice_of(&context)).unwrap();
     let mut hers = alice.watch();
     alice.request_retry_of_turn(ActorId::Agent(agent), TurnId::new()).await.expect("on its way");
-    let ActorEvent::MessageRejected { rejected, reason, .. } =
-        shown(&mut hers, "MessageRejected").await
+    let ActorEvent::EventRejected { rejected, reason, .. } =
+        shown(&mut hers, "EventRejected").await
     else {
         unreachable!()
     };
@@ -348,8 +348,8 @@ async fn only_someone_else_in_the_channel_is_nudged() {
     // Whether whom it asks takes part is the channel's to decide, as it admits the request.
     let mut hers = actor.watch();
     actor.request_response(ActorId::Agent(AgentId::new())).await.expect("on its way");
-    let ActorEvent::MessageRejected { rejected, reason, .. } =
-        shown(&mut hers, "MessageRejected").await
+    let ActorEvent::EventRejected { rejected, reason, .. } =
+        shown(&mut hers, "EventRejected").await
     else {
         unreachable!()
     };

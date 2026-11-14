@@ -67,14 +67,14 @@ use tokio::task::JoinHandle;
 use tokio::time;
 
 /// That the request of `user` to answer the turn `turn` of `agent` again is refused by the
-/// channel as it admits it, and they are told (`MessageRejected`, issue 567): no turn of `agent`'s
+/// channel as it admits it, and they are told (`EventRejected`, issue 567): no turn of `agent`'s
 /// it can answer again.
 async fn retry_of_turn_refused(channel: &ChannelLoop, user: UserId, agent: AgentId, turn: TurnId) {
     let actor = channel.user_actor(user).expect("they take part");
     let mut theirs = actor.watch();
     actor.request_retry_of_turn(ActorId::Agent(agent), turn).await.expect("on its way");
-    let ActorEvent::MessageRejected { rejected, reason, .. } =
-        shown(&mut theirs, "MessageRejected").await
+    let ActorEvent::EventRejected { rejected, reason, .. } =
+        shown(&mut theirs, "EventRejected").await
     else {
         unreachable!()
     };
