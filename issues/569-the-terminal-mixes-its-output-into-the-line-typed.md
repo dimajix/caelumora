@@ -1,6 +1,6 @@
 # 569 — The terminal mixes what a channel shows into the line typed, and hides what agents do
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -98,3 +98,47 @@ Steps, each reviewed on its own:
 
 **2026-11-14** - Opened from the maintainer's use of the terminal; the two ways of drawing and the
 cut between them decided before the work began.
+
+**2026-11-14** - Step 1 done: what the terminal prints is `Printed`, by its meaning, and only a
+`Screen` prints it; `LineScreen` writes as before.
+
+**2026-11-14** - Step 2 done: `line` writes above the line being typed through rustyline's
+`ExternalPrinter`, tells an answer as it begins, and shows tool calls and how they ended - a call
+presented `quiet` only where it did not succeed. The answers under way are `UnderWay`, kept by the
+channel followed. The review of the step found that `main` returns without shutting the session
+down where the channels of a session it opened cannot be followed (`Channels::new`); planned as
+step 5: whatever fails once a session is opened ends through its shutdown.
+
+**2026-11-14** - Step 3 done: `full`, the default of `--screen`, draws the whole window with
+`ratatui` - what was printed scrolled by the user alone, staying where it is as text streams, the
+text the answers under way streamed at its end, a status line of who answers and where they stand,
+and the line typed. `line` is taken wherever input or output is no terminal. The answers under way
+are read anew as the terminal catches up. The words both ways of drawing share are theirs
+(`screen/words.rs`).
+
+**2026-11-14** - Step 4 done: as the user begins to talk in a channel - at the start, continued,
+or switched to -, the terminal prints what was said among the last 50 items of its history, in
+both ways of drawing; a message the channel shows after is not printed twice. Who joined, commands
+and turns given up are told live alone: they carry no id to tell them from what the channel shows
+after. Planned as step 6, on the maintainer's word: `line` tells in words what it marks by symbols
+today - `helper> `, `--- … ---`, `[working]`, `[channel]` - and drops the colour of mentions.
+
+**2026-11-14** - Step 5 done: what the user does once a session is opened - its channels followed,
+the talk in them - is `talk`, after which the program shuts the session down however it ended,
+also where the user takes part in no channel of it. The signals that end the program are caught
+from before a session is opened, not only once the talk began, so that one sent as the program
+starts ends it through the shutdown too. Planned as step 7, on the maintainer's word,
+from the review of step 4: the channels followed are found by their id in one place, not by their
+position in `Channels::take_in_shown` and `Channels::unfollow_if_ended` each.
+
+**2026-11-14** - Step 6 done: `line` tells in words what it marked by symbols - `helper: `,
+`helper, working: `, `In side: `, `Error: `, notices without dashes - and writes mentions without
+colour. Left as they are: the choices of a question (`1) label`), which issue
+[571](571-approvals-and-questions-in-the-terminal.md) makes choices of its own, the cut mark of a
+result shortened, and rustyline's prompt `>> `.
+
+**2026-11-14** - Step 7 done, without a change of behaviour: the channels followed are found by
+their id in one place (`Channels::followed`, `Channels::followed_mut`), no longer by their position
+in `take_in_shown` and `unfollow_if_ended` each. Every step of the issue is done; what the full
+view shows of other channels is issue
+[572](572-the-full-screen-terminal-tells-nothing-of-other-channels-at-work.md).

@@ -91,6 +91,16 @@ defaults, key by key (see `docs/CONFIGURATION.md`); `--config <file>` replaces t
 `--config examples/config.yaml --template sassy-session` does with the demo data of `examples/seed`.
 The TUI writes its log to `~/.local/state/caelumora/tui.log`.
 
+The TUI is drawn in one of two ways, chosen with `--screen` (issue 569). `full`, the default, takes
+the whole window, as Claude Code does: what the channel shows above - scrolled with Page Up and
+Page Down, Shift and the arrows, or the mouse wheel, and following its end again with Ctrl+End -,
+the answers of agents as they stream at its end, a status line that tells who answers and where
+they stand, and the line typed below; text is selected with Shift held. `line` writes line by line,
+each line once, above the line being typed - for a screen reader, and wherever input or output is
+no terminal. Both show what agents say, the tools they call and how the calls ended, and of a
+channel the program opens, continues or switches to what was said in it so far - its last 50
+items.
+
 ### Running the Program
 
 ```bash

@@ -38,6 +38,10 @@ caelumora-compaction.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["full"] }
 rustyline.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+unicode-width.workspace = true
+async-trait.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 chrono.workspace = true
