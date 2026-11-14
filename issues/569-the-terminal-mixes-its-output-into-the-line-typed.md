@@ -1,6 +1,6 @@
 # 569 — The terminal mixes what a channel shows into the line typed, and hides what agents do
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -98,3 +98,13 @@ Steps, each reviewed on its own:
 
 **2026-11-14** - Opened from the maintainer's use of the terminal; the two ways of drawing and the
 cut between them decided before the work began.
+
+**2026-11-14** - Step 1 done: what the terminal prints is `Printed`, by its meaning, and only a
+`Screen` prints it; `LineScreen` writes as before.
+
+**2026-11-14** - Step 2 done: `line` writes above the line being typed through rustyline's
+`ExternalPrinter`, tells an answer as it begins, and shows tool calls and how they ended - a call
+presented `quiet` only where it did not succeed. The answers under way are `UnderWay`, kept by the
+channel followed. The review of the step found that `main` returns without shutting the session
+down where the channels of a session it opened cannot be followed (`Channels::new`); planned as
+step 5: whatever fails once a session is opened ends through its shutdown.

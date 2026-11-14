@@ -2,6 +2,7 @@
 //! and what the user's commands there need of it (issue 561).
 
 use crate::printed::{ErrorKind, Printed, Said, Saying, Words};
+use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_domain::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
@@ -9,6 +10,7 @@ use caelumora_domain::channel::ChannelId;
 use caelumora_domain::mention::{is_group_handle, mention_spans};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::{QuestionId, QuestionRequest};
+use caelumora_domain::tool::ToolPresentation;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::Name;
@@ -25,7 +27,8 @@ use uuid::Uuid;
 /// A channel the user takes part in, as the terminal follows it - as the channel stream of the
 /// REST server does (`docs/CHANNELS.md`, issue 386): the channel, the views it is read through in
 /// their name and what their actor in it shows, the approvals pending there, which questions it
-/// knows, and what `/retry` asks to be given again.
+/// knows, the answers under way, the quiet calls whose results are to come, and what `/retry` asks
+/// to be given again.
 pub(crate) struct Followed {
     /// The channel followed, in which the user's actor is reached where they act: a run of it may
     /// have ended and another begun since it was followed - they left and joined again. Held, not
@@ -62,8 +65,15 @@ pub(crate) struct Followed {
     /// The last answer of an agent shown, which `/retry` asks it to give again (issue 234) unless
     /// one of the two below is known.
     last_answer: Option<MessageId>,
-    /// The answer under way, by the agent and its turn, which `/retry` asks for first (issue 235).
-    under_way: Option<(ActorId, TurnId)>,
+    /// The answers under way, in the order they began: what the screen shows as such, and of which
+    /// `/retry` asks for the last first (issue 235).
+    under_way: Vec<UnderWay>,
+    /// The calls presented `quiet` whose results are yet to come, by id, with the agent that made
+    /// them and what would be printed of them: a result of one is left out where it succeeded, as
+    /// its call was, and printed with the call where it did not. Dropped as the agent's turn ends,
+    /// whose results will not come any more; a result whose call was missed - the watch lagged -
+    /// is printed as any other.
+    quiet_calls: HashMap<String, (ActorId, Printed)>,
     /// The turn given up that may be answered anew, with nothing said since (issue 259).
     given_up: Option<(ActorId, TurnId)>,
 }
@@ -93,7 +103,8 @@ impl Followed {
             pending_approvals: Vec::new(),
             known_questions: HashSet::new(),
             last_answer: None,
-            under_way: None,
+            under_way: Vec::new(),
+            quiet_calls: HashMap::new(),
             given_up: None,
         };
         followed.catch_up().await;
@@ -215,11 +226,11 @@ impl Followed {
         approvals.chain(put_to_user).collect()
     }
 
-    /// Takes in what the channel showed: keeps what the user's commands need of it, and answers
-    /// what the terminal prints of it. What was sent in the user's name is passed over and printed
-    /// not at all, since what they typed is on the screen already, as typed - but for an answer of
-    /// theirs to an approval, after which it is theirs to give no longer, as on the web UI, and
-    /// which is told where a rule of theirs gave it (issue 13).
+    /// Takes in what the channel showed: keeps what the user's commands and what is printed later
+    /// need of it, and answers what the terminal prints of it. What was sent in the user's name is
+    /// passed over and printed not at all, since what they typed is on the screen already, as
+    /// typed - but for an answer of theirs to an approval, after which it is theirs to give no
+    /// longer, as on the web UI, and which is told where a rule of theirs gave it (issue 13).
     pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
         let sender_id = envelope.context.sender_id;
         if sender_id == self.me() {
@@ -235,13 +246,14 @@ impl Followed {
         }
         let is_agent = matches!(sender_id, ActorId::Agent(_));
         match &envelope.event {
-            ActorEvent::ResponseStarted { turn_id } => {
-                self.under_way = is_agent.then_some((sender_id, *turn_id));
-                Vec::new()
+            ActorEvent::ResponseStarted { turn_id } if is_agent => {
+                self.end_under_way(sender_id);
+                self.under_way.push(UnderWay { agent: sender_id, turn: *turn_id });
+                vec![Printed::Answering { sender: envelope.context.sender_name.clone() }]
             }
             // Its answer has ended, said or not.
-            ActorEvent::TurnFinished { .. } if self.is_under_way(sender_id) => {
-                self.under_way = None;
+            ActorEvent::TurnFinished { .. } => {
+                self.end_under_way(sender_id);
                 Vec::new()
             }
             // Each message as soon as it is complete, as the web UI shows it; the full response
@@ -251,12 +263,14 @@ impl Followed {
                     self.last_answer = Some(message.id);
                 }
                 self.given_up = None;
-                said_printed(message, &self.handles, Saying::Complete).into_iter().collect()
+                self.message_printed(message, Saying::Complete)
+            }
+            // A step of a plan under way, with the calls it made and their results.
+            ActorEvent::IntermediateMessageGenerated(message) => {
+                self.message_printed(message, Saying::Step)
             }
             ActorEvent::TurnGivenUp { turn_id, reason } => {
-                if self.is_under_way(sender_id) {
-                    self.under_way = None;
-                }
+                self.end_under_way(sender_id);
                 self.given_up =
                     (is_agent && reason.may_be_answered_again()).then_some((sender_id, *turn_id));
                 vec![given_up(&envelope.context.sender_name, reason)]
@@ -340,7 +354,8 @@ impl Followed {
     /// # Errors
     /// As `UserActor::request_retry_of_turn` and `UserActor::request_retry`.
     pub(crate) async fn retry(&self, actor: &UserActor) -> Result<bool> {
-        match (self.under_way.or(self.given_up), self.last_answer) {
+        let under_way = self.under_way.last().map(|answer| (answer.agent, answer.turn));
+        match (under_way.or(self.given_up), self.last_answer) {
             (Some((agent, turn)), _) => actor.request_retry_of_turn(agent, turn).await?,
             (None, Some(answer)) => actor.request_retry(answer).await?,
             (None, None) => return Ok(false),
@@ -380,23 +395,51 @@ impl Followed {
         self.actor().map(|actor| actor.questions_to_answer()).unwrap_or_default()
     }
 
-    /// Whether `sender` gives the answer under way.
-    fn is_under_way(&self, sender: ActorId) -> bool {
-        self.under_way.is_some_and(|(agent, _)| agent == sender)
+    /// Ends the answer under way of `agent`, if it gives one, and forgets its quiet calls, whose
+    /// results will not come any more.
+    fn end_under_way(&mut self, agent: ActorId) {
+        self.under_way.retain(|answer| answer.agent != agent);
+        self.quiet_calls.retain(|_, (by, _)| *by != agent);
+    }
+
+    /// What the terminal prints of `message`, said in a message of the kind `saying`: its words
+    /// and what it carries (`said_printed`), the tools it calls and how calls ended - but a call
+    /// presented `quiet`, and its result where it succeeded; where it did not, the call is printed
+    /// with it, as the web UI shows them.
+    fn message_printed(&mut self, message: &Message, saying: Saying) -> Vec<Printed> {
+        let mut printed: Vec<Printed> =
+            said_printed(message, &self.handles, saying).into_iter().collect();
+        for call in &message.tool_calls {
+            let sender = message.sender_name.clone();
+            let called = Printed::ToolCall { sender, call: Box::new(call.clone()) };
+            match (&call.id, call.presentation == ToolPresentation::QUIET) {
+                (Some(id), true) => {
+                    self.quiet_calls.insert(id.clone(), (message.sender_id, called));
+                }
+                _ => printed.push(called),
+            }
+        }
+        for result in &message.tool_results {
+            let quiet = result.id.as_ref().and_then(|id| self.quiet_calls.remove(id));
+            match quiet {
+                Some(_) if result.status.is_ok() => continue,
+                Some((_, called)) => printed.push(called),
+                None => {}
+            }
+            printed.push(Printed::ToolResult(Box::new(result.clone())));
+        }
+        printed
     }
 }
 
 /// What the terminal prints of `envelope` that the user's commands need nothing of, by the
-/// `handles` of the channel's participants: what was said in a step or changed, and what was done
+/// `handles` of the channel's participants: what was changed of what was said, and what was done
 /// in the channel.
 fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<Printed> {
     let sender_id = envelope.context.sender_id;
     let sender = &envelope.context.sender_name;
     let plain = |line: String| Some(Printed::Plain(line));
     let printed = match &envelope.event {
-        ActorEvent::IntermediateMessageGenerated(message) => {
-            said_printed(message, handles, Saying::Step)
-        }
         // What another changed of what was said (issue 234).
         ActorEvent::MessageModified(message) => said_printed(message, handles, Saying::Edited),
         ActorEvent::MessageRevoked { .. } => plain(format!("{sender} took a message back")),
@@ -653,6 +696,8 @@ mod tests {
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::question::testing::make_question_request;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::session::testing::{
         owned_kernel, running_session_of_a_user, spec, test_kernel,
@@ -1003,6 +1048,86 @@ mod tests {
         assert!(followed.catch_up().await.is_empty(), "known since");
         let shown = next_taken_in(&mut followed).await;
         assert!(shown.is_empty(), "{shown:?}");
+    }
+
+    /// The tools a message calls and how calls ended are printed after what it says - but a call
+    /// presented `quiet`, and its result where it succeeded (issue 569).
+    #[tokio::test]
+    async fn tool_calls_and_their_results_are_printed_but_quiet_ones() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let shown = make_tool_call("terminal");
+        let quiet = |id: &str| ToolCall {
+            id: Some(id.to_string()),
+            presentation: ToolPresentation::QUIET,
+            ..make_tool_call("attach")
+        };
+        let (attached, failing) = (quiet("call_2"), quiet("call_3"));
+        let calls = vec![shown.clone(), attached.clone(), failing.clone()];
+        let calling = Message { tool_calls: calls, ..message(agent, "let me look") };
+        let said = ActorEvent::CompleteMessageGenerated(calling);
+        assert_eq!(
+            lines(&followed.take_in(&from(&channel, agent, said))),
+            ["other> let me look", "other calls terminal, its arguments not shown"]
+        );
+
+        let result = |call: &ToolCall, status| {
+            ToolCallResult::of(call, status, "done".to_string(), Default::default())
+        };
+        let results = vec![
+            result(&shown, ToolResultStatus::Ok),
+            result(&attached, ToolResultStatus::Ok),
+            result(&failing, ToolResultStatus::Failed),
+        ];
+        let ended = Message { content: None, tool_results: results, ..message(agent, "") };
+        let step = ActorEvent::IntermediateMessageGenerated(ended);
+        assert_eq!(
+            lines(&followed.take_in(&from(&channel, agent, step))),
+            [
+                "terminal answered: done",
+                "other calls attach, its arguments not shown",
+                "attach failed: done"
+            ]
+        );
+    }
+
+    /// The quiet calls of an agent are forgotten as its turn ends: their results will not come.
+    #[tokio::test]
+    async fn quiet_calls_are_forgotten_as_the_turn_ends() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let quiet = ToolCall { presentation: ToolPresentation::QUIET, ..make_tool_call("attach") };
+        let calling = Message { tool_calls: vec![quiet.clone()], ..message(agent, "") };
+        followed.take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(calling)));
+        let finished = ActorEvent::TurnFinished { turn_id: TurnId::new(), messages: Vec::new() };
+        followed.take_in(&from(&channel, agent, finished));
+
+        let result = ToolCallResult::of(
+            &quiet,
+            ToolResultStatus::Failed,
+            "no".to_string(),
+            Default::default(),
+        );
+        let ended = Message { tool_results: vec![result], ..message(agent, "") };
+        let printed = lines(&followed.take_in(&from(
+            &channel,
+            agent,
+            ActorEvent::CompleteMessageGenerated(ended),
+        )));
+        assert_eq!(printed, ["attach failed: no"], "its call forgotten");
+    }
+
+    /// That an agent began to answer is printed; another user's response is no answer of an
+    /// agent (issue 569).
+    #[tokio::test]
+    async fn an_answer_begun_is_printed() {
+        let (mut followed, channel, _) = followed().await;
+        let helper = ActorId::Agent(AgentId::new());
+        let another = ActorId::User(UserId::new());
+        let started = ActorEvent::ResponseStarted { turn_id: TurnId::new() };
+        let begun = lines(&followed.take_in(&from(&channel, helper, started.clone())));
+        assert_eq!(begun, [format!("{helper} is answering...")]);
+        assert!(followed.take_in(&from(&channel, another, started)).is_empty(), "no agent");
     }
 
     #[tokio::test]

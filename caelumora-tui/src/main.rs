@@ -10,6 +10,7 @@ mod home;
 mod printed;
 mod screen;
 mod sessions;
+mod under_way;
 
 use anyhow::Context;
 use anyhow::Result;
@@ -538,6 +539,8 @@ async fn main() -> Result<()> {
         }
         return Ok(());
     }
+    // Made before a session is opened, so that what fails here needs no shutdown.
+    let mut screen = LineScreen::new().context("The terminal cannot be read from")?;
     let chosen = match project {
         Some(project) => sessions::chosen(&views, project, &asked).await?,
         None => None,
@@ -558,7 +561,6 @@ async fn main() -> Result<()> {
         Channels::new(Arc::clone(&session_loop), views, kernel.event_bus()).await.ok_or_else(
             || anyhow::anyhow!("The user takes part in no channel of the session {session_id}"),
         )?;
-    let mut screen = LineScreen::new();
     screen.print(channels.opening().await);
 
     // Start the interactive loop; however it ends, the session is shut

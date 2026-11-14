@@ -4,12 +4,13 @@
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::question::QuestionRequest;
+use caelumora_domain::tool::{ToolCall, ToolCallResult};
 use caelumora_domain::value::name::Name;
 use std::ops::Range;
 
 /// One thing the terminal prints: what was said, asked or told, not yet how it looks - so that a
 /// way of drawing for a screen reader can say in words what another shows by colour.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) enum Printed {
     /// What a participant said.
     Said {
@@ -20,6 +21,20 @@ pub(crate) enum Printed {
         /// In which kind of message.
         saying: Saying,
     },
+    /// That an agent began to answer.
+    Answering {
+        /// The agent, by name.
+        sender: String,
+    },
+    /// A tool a participant calls, with its arguments - `Null` where they are not shown.
+    ToolCall {
+        /// Who calls it, by name.
+        sender: String,
+        /// The call.
+        call: Box<ToolCall>,
+    },
+    /// How a tool call ended, with its result - empty where it is not shown.
+    ToolResult(Box<ToolCallResult>),
     /// An approval requested, with how to answer it.
     Approval(Box<ApprovalRequest>),
     /// Questions a tool asks, with how to answer them if they are put to the user.

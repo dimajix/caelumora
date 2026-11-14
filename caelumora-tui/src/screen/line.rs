@@ -5,38 +5,78 @@ use super::{Screen, Typed};
 use crate::printed::{ErrorKind, Printed, Said, Saying, Words};
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::question::QuestionRequest;
+use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
-use rustyline::Editor;
-use std::io::Error;
+use rustyline::{Editor, ExternalPrinter};
+use serde_json::Value;
+use std::sync::mpsc as std_mpsc;
 use std::thread;
 use tokio::sync::mpsc;
+use tracing::warn;
 
-/// The way of drawing `line`: each line written once, after those before it.
+/// How long a tool's arguments, or the first line of its result, are written at most, in
+/// characters.
+const SHORTENED: usize = 160;
+
+/// The way of drawing `line`: each line written once, after those before it, above the line being
+/// typed.
 pub(crate) struct LineScreen {
-    /// The lines read by rustyline, in a thread of its own, which begins to read as the first line
-    /// is asked for: what is printed before stands before its first prompt.
-    input: Option<mpsc::UnboundedReceiver<Result<String, ReadlineError>>>,
+    /// What writes above the line being typed and keeps it; `None` where the terminal is no TTY,
+    /// where lines are written as they come.
+    printer: Option<Box<dyn ExternalPrinter + Send>>,
+    /// What lets the editor begin to read, until the first line is asked for: what is written
+    /// before stands before its first prompt.
+    start: Option<std_mpsc::Sender<()>>,
+    /// The lines the editor reads, in a thread of its own.
+    input: mpsc::UnboundedReceiver<Result<String, ReadlineError>>,
 }
 
 impl LineScreen {
     /// The way of drawing `line`, yet to read anything.
-    pub(crate) fn new() -> Self {
-        Self { input: None }
+    ///
+    /// # Errors
+    /// If the terminal cannot be read from.
+    pub(crate) fn new() -> Result<Self, ReadlineError> {
+        let mut editor = Editor::new()?;
+        let printer = editor.create_external_printer().ok();
+        let printer = printer.map(|printer| Box::new(printer) as Box<dyn ExternalPrinter + Send>);
+        let (start, started) = std_mpsc::channel();
+        let input = spawn_rustyline_input(editor, started);
+        Ok(Self { printer, start: Some(start), input })
+    }
+
+    /// Writes `lines` above the line being typed, where there is a printer for it; else, or where
+    /// it fails, after what was written.
+    #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
+    fn write(&mut self, lines: Vec<String>) {
+        if lines.is_empty() {
+            return;
+        }
+        if let Some(printer) = &mut self.printer {
+            let text: String = lines.iter().map(|line| format!("{line}\r\n")).collect();
+            match printer.print(text) {
+                Ok(()) => return,
+                Err(error) => warn!("The terminal could not write above the line typed: {error}"),
+            }
+        }
+        for line in lines {
+            println!("\r{line}");
+        }
     }
 }
 
 impl Screen for LineScreen {
-    #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
     fn print(&mut self, printed: Vec<Printed>) {
-        for line in printed.iter().flat_map(lines_of) {
-            println!("\r{line}");
-        }
+        self.write(printed.iter().flat_map(lines_of).collect());
     }
 
     async fn next_input(&mut self) -> Typed {
-        let input = self.input.get_or_insert_with(spawn_rustyline_input);
-        match input.recv().await {
+        if let Some(start) = self.start.take() {
+            // Fails only where the thread ended already, which the input then tells.
+            let _ = start.send(());
+        }
+        match self.input.recv().await {
             Some(Ok(line)) => Typed::Line(line),
             Some(Err(ReadlineError::Interrupted)) => Typed::Interrupted,
             Some(Err(err)) => Typed::Failed(format!("{err:?}")),
@@ -45,20 +85,19 @@ impl Screen for LineScreen {
     }
 }
 
-/// Reads lines with rustyline, in a thread of its own, until reading fails or nobody takes them.
-fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
+/// Reads lines with `editor`, in a thread of its own, once `started` tells it to begin, until
+/// reading fails or nobody takes them.
+fn spawn_rustyline_input(
+    mut editor: Editor<(), DefaultHistory>,
+    started: std_mpsc::Receiver<()>,
+) -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
     let (input_tx, input_rx) = mpsc::unbounded_channel::<Result<String, ReadlineError>>();
     thread::spawn(move || {
-        let mut rl = match Editor::<(), DefaultHistory>::new() {
-            Ok(rl) => rl,
-            Err(err) => {
-                let _ = input_tx.send(Err(ReadlineError::Io(Error::other(err.to_string()))));
-                return;
-            }
-        };
-
+        if started.recv().is_err() {
+            return;
+        }
         loop {
-            match rl.readline(">> ") {
+            match editor.readline(">> ") {
                 Ok(line) => {
                     if input_tx.send(Ok(line)).is_err() {
                         break;
@@ -71,7 +110,6 @@ fn spawn_rustyline_input() -> mpsc::UnboundedReceiver<Result<String, ReadlineErr
             }
         }
     });
-
     input_rx
 }
 
@@ -87,6 +125,9 @@ fn lines_of(printed: &Printed) -> Vec<String> {
             };
             vec![line]
         }
+        Printed::Answering { sender } => vec![format!("{sender} is answering...")],
+        Printed::ToolCall { sender, call } => vec![call_line(sender, call)],
+        Printed::ToolResult(result) => vec![result_line(result)],
         Printed::Approval(request) => approval_lines(request),
         Printed::Questions { request, put_to_user } => questions_lines(request, *put_to_user),
         Printed::Notice(notice) => vec![format!("--- {notice} ---")],
@@ -109,6 +150,55 @@ fn said_line(said: &Said) -> String {
     });
     let parts: Vec<String> = words.into_iter().chain(attachments).collect();
     parts.join(" ")
+}
+
+/// The line that tells that `sender` calls the tool of `call`, and with what: its arguments in
+/// one line, shortened.
+fn call_line(sender: &str, call: &ToolCall) -> String {
+    let tool = &call.function_name;
+    match &call.arguments {
+        Value::Null => format!("{sender} calls {tool}, its arguments not shown"),
+        Value::Object(arguments) if arguments.is_empty() => format!("{sender} calls {tool}"),
+        arguments => format!("{sender} calls {tool} with {}", shortened(&arguments.to_string())),
+    }
+}
+
+/// The line that tells how a call of the tool of `result` ended: what it answered, shortened to
+/// its first line - or that it is not shown -, or why it did not.
+fn result_line(result: &ToolCallResult) -> String {
+    let tool = &result.tool_name;
+    let not_shown = !result.visibility.result.is_channel() && result.content.is_empty();
+    if not_shown && result.status.is_ok() {
+        return format!("{tool} answered, its result not shown");
+    }
+    let first = result.content.lines().find(|line| !line.trim().is_empty()).map(shortened);
+    let more = result.content.lines().filter(|line| !line.trim().is_empty()).count();
+    let said = |how: &str| match &first {
+        Some(first) if more > 1 => format!("{tool} {how}: {first} (and {} lines more)", more - 1),
+        Some(first) => format!("{tool} {how}: {first}"),
+        None => format!("{tool} {how}"),
+    };
+    match result.status {
+        ToolResultStatus::Ok => said("answered"),
+        ToolResultStatus::Failed => said("failed"),
+        ToolResultStatus::InvalidArguments => said("refused its arguments"),
+        ToolResultStatus::Denied => format!("{tool} was denied"),
+        ToolResultStatus::Forbidden => format!("{tool} is forbidden here"),
+        ToolResultStatus::TimedOut => format!("{tool} was not approved in time"),
+        ToolResultStatus::Declined => format!("{tool} did not run: its questions were declined"),
+        ToolResultStatus::NotExecuted => format!("{tool} did not run"),
+        ToolResultStatus::Interrupted => format!("{tool} was interrupted"),
+        ToolResultStatus::UnknownTool => format!("{tool} is no tool"),
+        ToolResultStatus::Withheld => format!("{tool} answered what may not be shown here"),
+    }
+}
+
+/// `text` shortened to at most `SHORTENED` characters, the cut marked.
+fn shortened(text: &str) -> String {
+    match text.char_indices().nth(SHORTENED) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text.to_string(),
+    }
 }
 
 /// The word `kind` is told by, in brackets before what went wrong.
@@ -214,7 +304,10 @@ mod tests {
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::Questions;
     use caelumora_domain::session::SessionId;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::ToolVisibility;
     use caelumora_domain::user::UserId;
+    use serde_json::json;
 
     fn said(words: Option<&str>, attachments: Vec<ContentRef>, saying: Saying) -> Printed {
         let words = words.map(|text| Words { text: text.to_string(), mentions: Vec::new() });
@@ -282,5 +375,57 @@ mod tests {
         };
         assert!(questions(&sensitive, true).join("\n").contains("Sensitive"));
         assert!(!questions(&sensitive, false).join("\n").contains("Sensitive"), "not the user's");
+    }
+
+    /// A tool called is written with its arguments in one line, shortened, or as not shown.
+    #[test]
+    fn a_tool_called_is_written_with_its_arguments() {
+        let call = |arguments| ToolCall { arguments, ..make_tool_call("terminal") };
+        let called = |arguments| call_line("helper", &call(arguments));
+        assert_eq!(called(Value::Null), "helper calls terminal, its arguments not shown");
+        assert_eq!(called(json!({})), "helper calls terminal");
+        assert_eq!(
+            called(json!({"command": "ls -la"})),
+            r#"helper calls terminal with {"command":"ls -la"}"#
+        );
+        let long = called(json!({"text": "ä".repeat(500)}));
+        assert!(long.ends_with('…') && long.chars().count() < 200, "{long}");
+    }
+
+    /// How a call ended is written by its first line and how many follow, or by why it did not.
+    #[test]
+    fn how_a_call_ended_is_written_by_its_first_line_or_why_not() {
+        let call = make_tool_call("terminal");
+        let ended = |status, content: &str| {
+            let classification = Default::default();
+            result_line(&ToolCallResult::of(&call, status, content.to_string(), classification))
+        };
+        assert_eq!(ended(ToolResultStatus::Ok, "done"), "terminal answered: done");
+        assert_eq!(
+            ended(ToolResultStatus::Ok, "\na\n\nb\nc\n"),
+            "terminal answered: a (and 2 lines more)"
+        );
+        assert_eq!(ended(ToolResultStatus::Ok, ""), "terminal answered");
+        assert_eq!(
+            ended(ToolResultStatus::Failed, "no such file"),
+            "terminal failed: no such file"
+        );
+        assert_eq!(ended(ToolResultStatus::Denied, "denied by a user"), "terminal was denied");
+    }
+
+    /// A result not shown in the channel is told as such, not as an empty one.
+    #[test]
+    fn a_result_not_shown_is_told_so() {
+        let call =
+            ToolCall { visibility: ToolVisibility::WITHOUT_RESULT, ..make_tool_call("read") };
+        let classification = Default::default();
+        let hidden = ToolCallResult::of(&call, ToolResultStatus::Ok, String::new(), classification);
+        assert_eq!(result_line(&hidden), "read answered, its result not shown");
+    }
+
+    #[test]
+    fn an_answer_begun_is_told() {
+        let answering = Printed::Answering { sender: "helper".to_string() };
+        assert_eq!(lines_of(&answering), ["helper is answering..."]);
     }
 }
