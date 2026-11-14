@@ -85,13 +85,17 @@ impl Channels {
 
     /// The channel talked in, to change; `None` once it ended.
     fn talked_in_mut(&mut self) -> Option<&mut Followed> {
-        let talked_in = self.talked_in?;
-        self.followed.iter_mut().find(|followed| followed.channel_id() == talked_in)
+        self.followed_mut(self.talked_in?)
     }
 
     /// The channel `channel_id`, if it is followed.
     pub(crate) fn followed(&self, channel_id: ChannelId) -> Option<&Followed> {
         self.followed.iter().find(|followed| followed.channel_id() == channel_id)
+    }
+
+    /// The channel `channel_id`, to change, if it is followed.
+    fn followed_mut(&mut self, channel_id: ChannelId) -> Option<&mut Followed> {
+        self.followed.iter_mut().find(|followed| followed.channel_id() == channel_id)
     }
 
     /// The channel in which approval `id` is pending.
@@ -217,10 +221,9 @@ impl Channels {
         shown: Result<Shown, Lagged>,
     ) -> Vec<Printed> {
         let talked_in = self.talked_in == Some(channel_id);
-        let Some(at) = self.followed.iter().position(|f| f.channel_id() == channel_id) else {
+        let Some(followed) = self.followed_mut(channel_id) else {
             return Vec::new();
         };
-        let followed = &mut self.followed[at];
         let name = followed.name();
         let told = |printed: Vec<Printed>| match talked_in {
             true => printed,
@@ -240,9 +243,10 @@ impl Channels {
             // whether they still take part, as the channel stream of the REST server does.
             Ok(Shown::Started) => {
                 let ended = self.unfollow_if_ended(channel_id).await;
-                match self.followed.get_mut(at) {
-                    Some(followed) if ended.is_empty() => told(followed.catch_up().await),
-                    _ => ended,
+                match self.followed_mut(channel_id) {
+                    Some(followed) => told(followed.catch_up().await),
+                    // Followed no more: what tells so.
+                    None => ended,
                 }
             }
             Ok(Shown::Ended) => self.unfollow_if_ended(channel_id).await,
@@ -258,13 +262,14 @@ impl Channels {
     /// views read it now (`Followed::ended`), and answers what tells so - with where the user
     /// could talk, if it was the channel talked in -; nothing if they still take part.
     async fn unfollow_if_ended(&mut self, channel_id: ChannelId) -> Vec<Printed> {
-        let Some(at) = self.followed.iter().position(|f| f.channel_id() == channel_id) else {
+        let Some(followed) = self.followed(channel_id) else {
             return Vec::new();
         };
-        if !self.followed[at].ended().await {
+        if !followed.ended().await {
             return Vec::new();
         }
-        let name = self.followed.remove(at).name();
+        let name = followed.name();
+        self.followed.retain(|followed| followed.channel_id() != channel_id);
         let mut printed = vec![Printed::Notice(format!(
             "You no longer take part in channel {name}, or it was deleted"
         ))];

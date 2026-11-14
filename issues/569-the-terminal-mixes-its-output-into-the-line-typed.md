@@ -1,6 +1,6 @@
 # 569 — The terminal mixes what a channel shows into the line typed, and hides what agents do
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -136,3 +136,9 @@ position in `Channels::take_in_shown` and `Channels::unfollow_if_ended` each.
 colour. Left as they are: the choices of a question (`1) label`), which issue
 [571](571-approvals-and-questions-in-the-terminal.md) makes choices of its own, the cut mark of a
 result shortened, and rustyline's prompt `>> `.
+
+**2026-11-14** - Step 7 done, without a change of behaviour: the channels followed are found by
+their id in one place (`Channels::followed`, `Channels::followed_mut`), no longer by their position
+in `take_in_shown` and `unfollow_if_ended` each. Every step of the issue is done; what the full
+view shows of other channels is issue
+[572](572-the-full-screen-terminal-tells-nothing-of-other-channels-at-work.md).
