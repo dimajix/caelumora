@@ -9,6 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [568](568-a-second-join-leaves-attendance-open.md) | open | medium | bug | A channel records a join for a participant whose range of attendance is still open in three cases, which opens a second range; a later leave closes only the last, the first stays open, and what the participant is shown of the history then reaches past their leave. |
+| [576](576-text-cannot-be-selected-with-the-mouse-in-the-full-screen-terminal.md) | open | medium | bug | `caelumora-tui`'s full-screen view captures the mouse to scroll with its wheel, so selecting text by dragging, copying it and pasting it with the middle button - as every terminal on Linux does - works only with Shift held, which nobody expects. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Sessions and channels
@@ -51,6 +52,9 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [208](208-generated-artifacts.md) | open | high | feature | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
 | [571](571-approvals-and-questions-in-the-terminal.md) | open | medium | feature | An approval is answered in `caelumora-tui` only by typing `/approve` or `/deny` with its UUID, questions put to the user by typing their answers line by line, and nothing offers the rule "and from now on" for calls alike that the web UI offers on its approval card. |
+| [573](573-how-full-an-agent-s-context-is-cannot-be-asked.md) | open | medium | feature | The web UI shows under each agent a gauge of how full its context is, but no command tells it, so the terminal - which has no participant list - cannot show it at all, and nobody can ask before deciding on `/compact`. |
+| [574](574-notes-and-memory-cannot-be-read-by-a-command.md) | open | medium | feature | What an agent noted - its published notes, its private notes, its memory - is read only in the web UI's panels, and its memory only as the prompt part an agent was given, so the terminal cannot show any of it, and nobody can look up what an agent remembers without opening the context of one of its answers. |
+| [579](579-commands-and-mentions-are-not-completed-in-the-terminal.md) | open | medium | feature | `caelumora-tui` completes nothing that is typed: commands - the channel's, the agents' and the terminal's own - their arguments, and the handles of participants after `@` all have to be typed out, though the terminal knows every one of them. |
 
 ## Context and knowledge
 
@@ -60,6 +64,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [550](550-a-skill-is-an-entity-alone.md) | open | medium | feature | A skill exists only as a `Skill` entity and cannot come from a Markdown file with a header, as other agent tools keep them, and it says nothing of itself but its name and one line, so nothing but the model's reading of that line can bring it into a turn without being asked. |
+| [575](575-an-agent-is-not-told-the-names-of-its-session-and-channel.md) | open | medium | feature | The prompt part `channel_briefing` tells an agent what its session and channel are for - their summaries and briefings - but not what they are called, and no other prompt part names them, so an agent cannot refer to the channel it talks in by its name, nor tell it apart from the others of its session. |
 
 ## Maintenance
 
@@ -118,3 +123,5 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [540](540-what-an-agent-saw-worded-anew.md) | open | low | feature | What an agent saw when it wrote a message is resolved with the catalogue's texts and the resolver's code as they are when it is asked, so it differs from what was sent once a template or the resolver changed, and nothing tells that it does. |
 | [543](543-told-when-a-file-read-changed.md) | open | low | feature | A file the agent read and somebody else changed since is refused to be written over, but the agent learns of the change only when it tries to write, and answers and plans from what it read until then. |
 | [572](572-the-full-screen-terminal-tells-nothing-of-other-channels-at-work.md) | open | low | feature | In `caelumora-tui`'s full-screen view the status line shows only the answers under way in the channel talked in, so whoever follows several channels of a session does not see that an agent works in another one - the line-wise view at least tells that one began to answer there. |
+| [577](577-an-agent-is-not-told-where-it-runs.md) | open | low | feature | No prompt part tells an agent the ids of its session and channel, nor - in the terminal program - where the program writes its log, so an agent asked to look into what went wrong cannot search the log for its own session with the terminal it is given. |
+| [578](578-the-full-screen-terminal-is-drawn-in-few-colours.md) | open | low | feature | `caelumora-tui`'s full-screen view draws nearly everything in the terminal's own colour - senders bold, the rest dimmed or plain, colour only for mentions, approvals and errors -, so who said what, the user's own lines, tool calls and the status line are hard to tell apart at a glance. |
