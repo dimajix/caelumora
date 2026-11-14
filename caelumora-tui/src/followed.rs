@@ -42,17 +42,18 @@ pub(crate) struct Followed {
     /// The handles of the participants, as the channel was followed: what a message's mentions
     /// are highlighted by.
     handles: HashMap<ActorId, String>,
-    /// The approval requests pending - those the agents' turns waited for as the channel was
-    /// followed (issue 565), in the order of the participants and their calls, then those shown,
-    /// in the order they were requested -, until the approver ends them - decided, timed out or
-    /// withdrawn - or the user answered them, as the web UI keeps them: so that `/approve` and
+    /// The approval requests pending - those the agents' turns waited for as they were last read
+    /// (`catch_up`), in the order of the participants and their calls, then those shown, in the
+    /// order they were requested -, until the approver ends them - decided, timed out or
+    /// withdrawn -, the user answered them, or the turns read anew no longer hold them, as the web
+    /// UI keeps them: so that `/approve` and
     /// `/deny` find the channel a request waits in, and `/switch` shows it again. Which agent
     /// asked, and whether an answer counts, the approver tells, which holds the request (issue
     /// 567). Covers both plan proposals and regular tool calls - both flow through the same
     /// generic `ApprovalRequested` event.
     pending_approvals: Vec<ApprovalRequest>,
-    /// The questions known - those put to the user that were open as the channel was followed
-    /// (issue 565), then those shown (issue 165) -, until they close: so that questions are shown
+    /// The questions known - those put to the user that were open as what waits was read
+    /// (`catch_up`), and those shown (issue 165) -, until they close: so that questions are shown
     /// once, also those asked anew by an agent that resumed its turn, and `/answer` and `/decline`
     /// with an id find the channel they wait in. Which are open is their actor's to tell
     /// (`UserActor::questions_to_answer`).
@@ -69,27 +70,17 @@ pub(crate) struct Followed {
 impl Followed {
     /// Follows `channel` for the user `views` are read by, from now on, as the views let them
     /// (`ChannelView::user_follow`), knowing its participants' handles as they are now, and what
-    /// waits for the user there (issue 565): the approvals pending, as the agents' turns hold them
-    /// (`ChannelView::pending_approvals`), and the open questions put to them, as their actor
-    /// tells. What waits is read after the watch began, as the channel stream of the REST server
-    /// reads its snapshot, so that nothing is lost in between; what comes in both is shown once
-    /// (`take_in`). An approval decided just before the watch began may still be held by a turn
-    /// not stored anew yet: it is known as pending while the terminal runs - nothing that comes
-    /// after ends it -, and an answer to it the approver refuses, which the user is told
-    /// (`EventRefused`). Approvals that cannot be read are not known, and the
-    /// channel is followed all the same. `None` if the viewer is no user the channel lists, or
-    /// cannot read it.
+    /// waits for the user there, as `catch_up` reads it - which whoever follows the channel tells
+    /// (`waiting`). `None` if the viewer is no user the channel lists, or cannot read it.
     pub(crate) async fn new(channel: Arc<ChannelLoop>, views: Views) -> Option<Self> {
         let ActorId::User(user) = views.context().caller_id else { return None };
-        let view = views.channel(channel.session_id(), channel.id()).await.ok()?;
-        let watch = view.user_follow().await.ok()??;
-        let pending_approvals = view.pending_approvals().await.unwrap_or_else(|error| {
-            warn!(
-                "The terminal follows channel {} without the approvals pending there: {error:#}",
-                channel.id()
-            );
-            Vec::new()
-        });
+        let watch = views
+            .channel(channel.session_id(), channel.id())
+            .await
+            .ok()?
+            .user_follow()
+            .await
+            .ok()??;
         let handles =
             channel.participants().into_iter().filter_map(|m| Some((m.id, m.handle?))).collect();
         let mut followed = Self {
@@ -98,14 +89,49 @@ impl Followed {
             views,
             watch,
             handles,
-            pending_approvals,
+            pending_approvals: Vec::new(),
             known_questions: HashSet::new(),
             last_answer: None,
             under_way: None,
             given_up: None,
         };
-        followed.known_questions = followed.put_to_user().into_iter().map(|q| q.id).collect();
+        followed.catch_up().await;
         Some(followed)
+    }
+
+    /// Reads anew what waits for the user in the channel (issue 565), and answers the lines that
+    /// show what it did not know: the approvals pending, as the agents' turns hold them
+    /// (`ChannelView::pending_approvals`), which take the place of those known - one that ended
+    /// meanwhile is known no more -, and the open questions put to the user, as their actor tells,
+    /// which become known. Read as the channel is followed, and where what it showed may have been
+    /// lost - its watch lagged, or a run of the user's actor began -, always after the watch
+    /// began, as the channel stream of the REST server reads its snapshot: nothing is lost in
+    /// between, and what the channel shows of it after is shown once (`take_in`). Approvals that
+    /// cannot be read stay as they were known.
+    ///
+    /// The turns are read as stored, which may lag behind what the channel showed. Rare cases,
+    /// each in the short time between an event and the agent storing its turn, or after a lag:
+    /// an approval decided may still be held by a turn - it is known as pending until it is read
+    /// anew, and an answer to it the approver refuses, which the user is told (`EventRefused`);
+    /// an approval requested may not be held by a turn yet, or not stored at all where storing
+    /// failed - it is known no more, though the approver holds it; an approval withdrawn while
+    /// the watch lagged ends without the withdrawal being told; and one the user answered that is
+    /// yet to be decided is shown again, since it is still pending. A new run of the user's actor
+    /// knows none of the questions put to the one before (issue 561), so where one began, only
+    /// approvals are made up for.
+    pub(crate) async fn catch_up(&mut self) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(pending) = self.read_pending_approvals().await {
+            let unknown = pending.iter().filter(|request| !self.is_pending(request.id));
+            lines.extend(unknown.flat_map(approval_shown));
+            self.pending_approvals = pending;
+        }
+        for questions in self.put_to_user() {
+            if self.known_questions.insert(questions.id) {
+                lines.extend(questions_shown(&questions, self.me()));
+            }
+        }
+        lines
     }
 
     /// The channel followed.
@@ -235,8 +261,8 @@ impl Followed {
                     (is_agent && reason.may_be_answered_again()).then_some((sender_id, *turn_id));
                 vec![given_up(&envelope.context.sender_name, reason)]
             }
-            // Shown once: known as the channel was followed, or asked again by an agent that
-            // resumed its turn.
+            // Shown once: known as what waits was read (`catch_up`), or asked again by an agent
+            // that resumed its turn.
             ActorEvent::ApprovalRequested(request) if self.is_pending(request.id) => Vec::new(),
             ActorEvent::ApprovalRequested(request) => {
                 self.pending_approvals.push(request.clone());
@@ -261,8 +287,8 @@ impl Followed {
                     .into_iter()
                     .collect()
             }
-            // Shown once: known as the channel was followed, or asked anew by an agent that
-            // resumed its turn.
+            // Shown once: known as what waits was read (`catch_up`), or asked anew by an agent
+            // that resumed its turn.
             ActorEvent::QuestionRequested(request) => {
                 match self.known_questions.insert(request.id) {
                     true => questions_shown(request, self.me()),
@@ -277,8 +303,8 @@ impl Followed {
         }
     }
 
-    /// Whether approval `id` is known as pending - waited for as the channel was followed, or
-    /// shown since -, and is not over.
+    /// Whether approval `id` is known as pending - read as what waits (`catch_up`), or shown
+    /// since -, and is not over.
     pub(crate) fn is_pending(&self, id: ApprovalId) -> bool {
         self.pending_approvals.iter().any(|request| request.id == id)
     }
@@ -302,8 +328,8 @@ impl Followed {
         self.actor().is_none_or(|actor| actor.questions_to_answer().iter().any(|q| q.id == id))
     }
 
-    /// Whether questions `id` of this channel are known - open for the user as it was followed,
-    /// or shown since -, and not closed.
+    /// Whether questions `id` of this channel are known - open for the user as what waits was read
+    /// (`catch_up`), or shown since -, and not closed.
     pub(crate) fn knows_questions(&self, id: QuestionId) -> bool {
         self.known_questions.contains(&id)
     }
@@ -325,6 +351,21 @@ impl Followed {
     /// The user, as an actor of the channel.
     fn me(&self) -> ActorId {
         ActorId::User(self.user)
+    }
+
+    /// The approvals pending in the channel, as the views read them in the user's name; `None`,
+    /// logged, if they cannot be read.
+    async fn read_pending_approvals(&self) -> Option<Vec<ApprovalRequest>> {
+        let (session_id, channel_id) = (self.channel.session_id(), self.channel_id());
+        let read =
+            async { self.views.channel(session_id, channel_id).await?.pending_approvals().await };
+        match read.await {
+            Ok(pending) => Some(pending),
+            Err(error) => {
+                warn!("The terminal could not read the approvals pending in channel {channel_id}: {error:#}");
+                None
+            }
+        }
     }
 
     /// Takes approval `id` out of those pending; `None` if it was not.
@@ -542,11 +583,17 @@ pub(crate) mod testing {
     use caelumora_store::testing::stored_agent;
 
     /// Routes `envelope` to the user's actor in the channel `followed` follows, as the channel
-    /// would (`UserActor::take_in_as_routed`), and takes in what the actor shows of it, passing
-    /// over where a run of it begins or ends: the lines the terminal prints.
+    /// would (`UserActor::take_in_as_routed`), and takes in what the actor shows of it
+    /// (`next_taken_in`): the lines the terminal prints.
     pub(crate) async fn routed(followed: &mut Followed, envelope: Envelope) -> Vec<String> {
         let actor = followed.actor().expect("the user's actor runs");
         actor.take_in_as_routed(envelope).await;
+        next_taken_in(followed).await
+    }
+
+    /// Takes in the next envelope the channel `followed` follows shows, passing over where a run
+    /// of the user's actor begins or ends: the lines the terminal prints.
+    pub(crate) async fn next_taken_in(followed: &mut Followed) -> Vec<String> {
         loop {
             if let Ok(Shown::Envelope(shown)) = followed.next().await {
                 return followed.take_in(&shown);
@@ -635,7 +682,7 @@ pub(crate) mod testing {
 #[cfg(test)]
 mod tests {
     use super::testing::{
-        an_agent_in, answered, approval, approval_waiting_in, from, message, routed,
+        an_agent_in, answered, approval, approval_waiting_in, from, message, next_taken_in, routed,
     };
     use super::*;
     use anyhow::Error;
@@ -965,13 +1012,29 @@ mod tests {
         let later_id = later.id.0.to_string();
         actor.take_in_as_routed(from(&channel, agent, ActorEvent::QuestionRequested(later))).await;
         assert!(!followed.waiting().join("\n").contains(&later_id), "not known yet");
-        let shown = loop {
-            if let Ok(Shown::Envelope(shown)) = followed.next().await {
-                break followed.take_in(&shown);
-            }
-        };
+        let shown = next_taken_in(&mut followed).await;
         assert!(shown.join("\n").contains(&later_id), "{shown:?}");
         assert!(followed.waiting().join("\n").contains(&later_id), "known once shown");
+    }
+
+    /// Catching up tells the questions put to the user that it did not know, once, and the
+    /// channel showing them after shows them no more (issue 565).
+    #[tokio::test]
+    async fn catching_up_tells_the_questions_not_known_once() {
+        let (mut followed, channel, me) = followed().await;
+        let agent_id = AgentId::new();
+        let agent = ActorId::Agent(agent_id);
+        assert!(followed.catch_up().await.is_empty(), "nothing waits");
+        let questions = make_question_request(channel.session_id(), channel.id(), agent_id, me);
+        let id = questions.id.0.to_string();
+        let asked = from(&channel, agent, ActorEvent::QuestionRequested(questions));
+        let actor = followed.actor().expect("the owner's actor runs");
+        actor.take_in_as_routed(asked).await;
+
+        assert!(followed.catch_up().await.join("\n").contains(&id), "not known before");
+        assert!(followed.catch_up().await.is_empty(), "known since");
+        let shown = next_taken_in(&mut followed).await;
+        assert!(shown.is_empty(), "{shown:?}");
     }
 
     #[tokio::test]

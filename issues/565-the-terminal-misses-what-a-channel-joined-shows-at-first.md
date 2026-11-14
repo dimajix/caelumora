@@ -76,3 +76,16 @@ The window is short, and the same as for what a channel showed before the termin
   tests of the views and of the terminal built by hand, is the domain's fixture
   (`agent::testing::waiting_for_approval`). The tests of the domain's resumption and of the
   Postgres store build theirs on: theirs differ in what else the state holds.
+- **2026-11-14** — Second step decided on the findings of the review: where the watch of a channel
+  lagged, or a run of the user's actor there began - after a leave and a join while it stayed
+  followed -, the terminal reads anew what waits for the user, as the channel stream of the REST
+  server starts again from a snapshot, and tells what it did not know (`Followed::catch_up`, by
+  which `Followed::new` reads it too): the approvals read take the place of those known, so that
+  one that ended meanwhile is no longer pending - also one known since it was decided just before
+  the watch began -, and the open questions put to the user become known; a new run of their
+  actor knows none put to the one before, so where one began only approvals are made up for. The
+  turns are read as stored, which may lag behind what the channel showed: the rare cases that
+  follow - an approval requested and not stored yet is known no more, a withdrawal while the watch
+  lagged is not told, an approval the user answered and yet to be decided is shown again - are
+  documented at `Followed::catch_up`. Whether the user still takes part is asked before what
+  waits is read anew, as the REST server does.

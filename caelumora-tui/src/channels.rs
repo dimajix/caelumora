@@ -193,8 +193,10 @@ impl Channels {
 
     /// Takes in what the channel `channel_id` showed (`Followed::take_in`), and answers the lines
     /// the terminal prints of it: all of the channel talked in; of another, what concerns the
-    /// user (`Followed::concerns_user`), marked with the channel's name. Where a run of the user's
-    /// actor began or ended, whether they still take part is read anew (`unfollow_if_ended`).
+    /// user (`Followed::concerns_user`), marked with the channel's name. Where the watch lagged or
+    /// a run of the user's actor began, what waits for them is read anew (`Followed::catch_up`),
+    /// and told where it was not known; where a run began or ended, whether they still take part
+    /// (`unfollow_if_ended`).
     async fn take_in_shown(
         &mut self,
         channel_id: ChannelId,
@@ -220,8 +222,21 @@ impl Channels {
                     Vec::new()
                 }
             }
-            Ok(Shown::Started | Shown::Ended) => self.unfollow_if_ended(channel_id).await,
-            Err(Lagged(lost)) => told(vec![format!("[{lost} events missed]")]),
+            // What it showed between two runs never reached the user's actor; asked first
+            // whether they still take part, as the channel stream of the REST server does.
+            Ok(Shown::Started) => {
+                let ended = self.unfollow_if_ended(channel_id).await;
+                match self.followed.get_mut(at) {
+                    Some(followed) if ended.is_empty() => told(followed.catch_up().await),
+                    _ => ended,
+                }
+            }
+            Ok(Shown::Ended) => self.unfollow_if_ended(channel_id).await,
+            Err(Lagged(lost)) => {
+                let mut lines = vec![format!("[{lost} events missed]")];
+                lines.extend(followed.catch_up().await);
+                told(lines)
+            }
         }
     }
 
@@ -482,8 +497,6 @@ mod tests {
             told.first(),
             Some(&format!("[side] --- Approval requested (id: {}) ---", id.0))
         );
-        let lost = channels.take_in(Happened::Shown(side.id(), Err(Lagged(3)))).await;
-        assert_eq!(lost, ["[side] [3 events missed]"]);
 
         let first = channels.talked_in().expect("talked in").channel_id();
         let main = session_loop.channel(first).expect("the first channel");
@@ -572,6 +585,48 @@ mod tests {
         let approval_line = format!("[side] --- Approval requested (id: {}) ---", id.0);
         assert!(opening.contains(&approval_line), "{opening:?}");
         assert_eq!(opening.last(), Some(&channels.hint()), "{opening:?}");
+    }
+
+    /// Where the watch of another channel lagged, or a run of the user's actor there began, what
+    /// waits for them is read anew and told where it was not known, marked with its name; one that
+    /// ended meanwhile is no longer pending (issue 565). Where a run began of a user who no longer
+    /// takes part, only that is told.
+    #[tokio::test]
+    async fn what_was_missed_in_another_channel_is_caught_up() {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let side = spec("side", vec![owner.caller_id]);
+        let side = session_loop.create_channel(&owner, side).await.expect("the owner creates it");
+        let agent_id = an_agent_in(&kernel, &session_loop, &owner, side.id()).await;
+        let views = manager.views(Viewer::new(owner.clone()));
+        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("the owner takes part");
+        let requested =
+            |id: ApprovalId| format!("[side] --- Approval requested (id: {}) ---", id.0);
+
+        let first = approval_waiting_in(&kernel, &side, agent_id).await;
+        let lost = channels.take_in(Happened::Shown(side.id(), Err(Lagged(3)))).await;
+        assert_eq!(lost.first().map(String::as_str), Some("[side] [3 events missed]"));
+        assert!(lost.contains(&requested(first)), "{lost:?}");
+        let started = Happened::Shown(side.id(), Ok(Shown::Started));
+        assert!(channels.take_in(started).await.is_empty(), "known already");
+
+        let second = approval_waiting_in(&kernel, &side, agent_id).await;
+        let started = Happened::Shown(side.id(), Ok(Shown::Started));
+        let told = channels.take_in(started).await;
+        assert!(told.contains(&requested(second)) && !told.contains(&requested(first)), "{told:?}");
+        assert!(channels.awaiting(first).is_none(), "ended meanwhile");
+        assert_eq!(channels.awaiting(second).map(Followed::channel_id), Some(side.id()));
+
+        approval_waiting_in(&kernel, &side, agent_id).await;
+        assert!(session_loop.delete_channel(&owner, side.id()).await.unwrap());
+        let started = Happened::Shown(side.id(), Ok(Shown::Started));
+        assert_eq!(
+            channels.take_in(started).await,
+            ["--- You no longer take part in channel side, or it was deleted ---"]
+        );
     }
 
     #[tokio::test]
