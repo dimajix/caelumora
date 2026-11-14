@@ -1,6 +1,6 @@
 # 571 — Approvals in the terminal take a UUID typed, and no rule for calls alike
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -44,3 +44,17 @@ Decided (2026-11-14), on the ways of drawing of issue
 
 **2026-11-14** - Opened from the maintainer's use of the terminal, with the choice in both ways of
 drawing decided.
+
+**2026-11-14** - Decided with the maintainer before the work began, in three steps: a restructuring
+without a change of behaviour, the talk's state - its channels, the questions being answered, the
+sessions - one type, `Talk`, whose methods take a line typed in; then what is asked of the user as
+one model, `Asking` (the options of the program becoming `Invocation`), asked of its own accord
+as an approval waits or questions are put to the user, Esc putting it aside; then the rule. An
+approval offers "yes", "yes, and from now on for the calls the tool suggests" in this channel or in
+this session, without an end, and "no" - no rule that denies, none everywhere, no time limit, no
+matcher edited: what more there is, the web UI offers.
+
+**2026-11-14** - Step 1 done, without a change of behaviour: the talk is `Talk` (`talk.rs`) - its
+channels, the questions being answered, the sessions of the directory -, whose methods take in a
+line typed and what the channels show; `commands.rs` holds the terminal's commands alone
+(`TerminalCommand`, `terminal_help`). What the program is asked by its options is `Invocation`.

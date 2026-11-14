@@ -11,6 +11,7 @@ mod home;
 mod printed;
 mod screen;
 mod sessions;
+mod talk;
 mod under_way;
 
 use anyhow::Context;
@@ -24,7 +25,6 @@ use caelumora_artifacts::plugin::ArtifactsPlugin;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_decision::plugin::DecisionPlugin;
 use caelumora_domain::config::AppConfig;
-use caelumora_domain::question::{QuestionRequest, Response};
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::kernel::KernelBuilder;
 use caelumora_kernel::plugin::Plugin;
@@ -51,21 +51,20 @@ use caelumora_tool_image::library::ImageToolLibrary;
 use caelumora_tool_mcp::library::McpToolLibrary;
 use caelumora_tool_web::library::WebToolLibrary;
 use caelumora_tool_workspace::library::WorkspaceToolLibrary;
-use channels::Channels;
 use clap::{Parser, Subcommand, ValueEnum};
-use commands::{closed_before_answered, handle_line, Handled};
 use futures::future::select_all;
 use here::{place_of, HERE};
 use home::Home;
 use printed::{ErrorKind, Printed};
 use screen::{FullScreen, LineScreen, Screen, Typed};
 use serde_json::Value;
-use sessions::{listing, Asked, Opening, Sessions};
+use sessions::{listing, Invocation, Opening, Sessions};
 use std::env;
 use std::future::{self, Future};
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use talk::{Handled, Talk};
 use tokio::signal::unix::{signal, Signal, SignalKind};
 
 #[derive(Parser, Debug)]
@@ -159,12 +158,12 @@ impl Args {
 
     /// What the program is asked to do with the sessions of its directory - one thing at most, as
     /// the options exclude each other.
-    fn asked(&self) -> Asked {
+    fn invocation(&self) -> Invocation {
         match (&self.resume, self.continues, self.sessions) {
-            (Some(prefix), _, _) => Asked::Open(Opening::Resume(prefix.clone())),
-            (None, true, _) => Asked::Open(Opening::Continue),
-            (None, false, true) => Asked::List,
-            (None, false, false) => Asked::Open(Opening::Start { template: None }),
+            (Some(prefix), _, _) => Invocation::Open(Opening::Resume(prefix.clone())),
+            (None, true, _) => Invocation::Open(Opening::Continue),
+            (None, false, true) => Invocation::List,
+            (None, false, false) => Invocation::Open(Opening::Start { template: None }),
         }
     }
 }
@@ -275,14 +274,14 @@ async fn main() -> Result<()> {
         place,
         args.template.clone(),
     );
-    let opening = match args.asked() {
-        Asked::List => {
+    let opening = match args.invocation() {
+        Invocation::List => {
             for line in listing(&sessions.list().await?, None) {
                 println!("{line}");
             }
             return Ok(());
         }
-        Asked::Open(opening) => opening,
+        Invocation::Open(opening) => opening,
     };
     // Made before a session is opened, so that what fails here needs no shutdown.
     let mut screen = args.drawing().screen()?;
@@ -296,7 +295,7 @@ async fn main() -> Result<()> {
     // (issue 297): its actors keep what they are in the middle of, and only what does not outlive
     // the process ends with it.
     let bus = Arc::clone(kernel.event_bus());
-    let talked = talk(session_loop, views, &sessions, bus, screen.as_mut(), signalled).await;
+    let talked = talk(session_loop, views, sessions, bus, screen.as_mut(), signalled).await;
     // The terminal given back first: the shutdown may take a while.
     drop(screen);
     session_manager.shutdown().await;
@@ -311,26 +310,19 @@ async fn main() -> Result<()> {
 ///
 /// # Errors
 /// If the user takes part in no channel of the session, or a message cannot be sent into a
-/// channel (`commands::handle_line`).
+/// channel (`Talk::take_line`).
 async fn talk(
     session_loop: Arc<SessionLoop>,
     views: Views,
-    sessions: &Sessions,
+    sessions: Sessions,
     bus: Arc<EventBus>,
     screen: &mut dyn Screen,
     signalled: impl Future<Output = ()>,
 ) -> Result<()> {
     let mut signalled = std::pin::pin!(signalled);
-    let session_id = session_loop.id();
     // Every channel of the session the user takes part in, talking in the first.
-    let begun = async {
-        let mut channels = Channels::new(session_loop, views, bus).await.ok_or_else(|| {
-            anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
-        })?;
-        let opening = channels.opening().await;
-        anyhow::Ok((channels, opening))
-    };
-    let (mut channels, opening) = tokio::select! {
+    let begun = Talk::begin(session_loop, views, bus, sessions);
+    let (mut talk, opening) = tokio::select! {
         () = &mut signalled => {
             screen.print(vec![Printed::Notice("Ending".to_string())]);
             return Ok(());
@@ -338,16 +330,11 @@ async fn talk(
         begun = begun => begun?,
     };
     screen.print(opening);
-    // The questions being answered, with the responses given so far: while they are, every line
-    // but a command of the terminal - the approvals and `/retry` excepted - answers the next
-    // question (`handle_line`).
-    let mut answering: Option<(QuestionRequest, Vec<Response>)> = None;
-
     let started =
         "Chat Session Started (Type '/exit' to stop, '/help' for the commands)".to_string();
     screen.print(vec![Printed::Notice(started)]);
     // What is under way as the channels were followed, before anything happens in them.
-    screen.show_under_way(channels.under_way());
+    screen.show_under_way(talk.under_way());
     loop {
         tokio::select! {
             // A signal ends the talk as `/exit` does, so that the session is shut down in order
@@ -356,17 +343,10 @@ async fn talk(
                 screen.print(vec![Printed::Notice("Ending".to_string())]);
                 break;
             }
-            happened = channels.next() => {
-                let mut printed = channels.take_in(happened).await;
-                // As the channel that asked them tells; one followed no more has closed them.
-                let closed = |(q, _): &mut (QuestionRequest, Vec<Response>)| {
-                    channels.followed(q.channel_id).is_none_or(|f| !f.is_to_answer(q.id))
-                };
-                if let Some((request, _)) = answering.take_if(closed) {
-                    printed.push(closed_before_answered(&request));
-                }
+            happened = talk.next() => {
+                let printed = talk.take_in(happened).await;
                 screen.print(printed);
-                screen.show_under_way(channels.under_way());
+                screen.show_under_way(talk.under_way());
             }
             typed = screen.next_input() => {
                 let line = match typed {
@@ -381,15 +361,13 @@ async fn talk(
                     }
                     Typed::Ended => break,
                 };
-                let handled =
-                    handle_line(line.trim(), &mut channels, &mut answering, sessions).await?;
-                let printed = match handled {
+                let printed = match talk.take_line(line.trim()).await? {
                     Handled::Printed(printed) => printed,
                     Handled::Exit => break,
                 };
                 screen.print(printed);
                 // Another channel may be talked in now.
-                screen.show_under_way(channels.under_way());
+                screen.show_under_way(talk.under_way());
             }
         }
     }
@@ -455,7 +433,7 @@ fn signalled() -> impl Future<Output = ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::testing::in_directory;
+    use crate::sessions::testing::{in_directory, InDirectory};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::user::UserId;
     use caelumora_security::SecurityContext;
@@ -467,10 +445,10 @@ mod tests {
         Args::command().debug_assert();
         let resumed = Args::try_parse_from(["caelumora", "--resume", "0a1b"]).unwrap();
         let resumes =
-            |asked| matches!(asked, Asked::Open(Opening::Resume(prefix)) if prefix == "0a1b");
-        assert!(resumes(resumed.asked()));
-        let started = Args::try_parse_from(["caelumora"]).unwrap().asked();
-        assert!(matches!(started, Asked::Open(Opening::Start { template: None })));
+            |asked| matches!(asked, Invocation::Open(Opening::Resume(prefix)) if prefix == "0a1b");
+        assert!(resumes(resumed.invocation()));
+        let started = Args::try_parse_from(["caelumora"]).unwrap().invocation();
+        assert!(matches!(started, Invocation::Open(Opening::Start { template: None })));
         assert!(Args::try_parse_from(["caelumora", "--continue", "--sessions"]).is_err());
         assert!(Args::try_parse_from(["caelumora", "--resume", "0a1b", "--sessions"]).is_err());
         let id = Args::try_parse_from(["caelumora", "id", "personalities/a.yaml"]).unwrap();
@@ -484,18 +462,18 @@ mod tests {
     /// why, for its caller to shut the session down after.
     #[tokio::test]
     async fn who_takes_part_in_no_channel_cannot_talk() {
-        let directory = in_directory().await;
+        let InDirectory { sessions, manager, kernel, directory: _directory, .. } =
+            in_directory().await;
         let start = Opening::Start { template: None };
-        let (session_loop, _) = directory.sessions.open(&start).await.expect("started");
+        let (session_loop, _) = sessions.open(&start).await.expect("started");
         // Someone outside the session, whom `Channels` follows no channel for, as it follows none
         // for a participant of the session in none of its channels.
         let stranger = ActorId::User(UserId::new());
         let stranger = SecurityContext::new(stranger, session_loop.id(), Default::default());
-        let views = directory.manager.views(Viewer::new(stranger));
+        let views = manager.views(Viewer::new(stranger));
         let mut screen = LineScreen::new().expect("a screen");
-        let bus = Arc::clone(directory.kernel.event_bus());
+        let bus = Arc::clone(kernel.event_bus());
         let signalled = future::pending();
-        let sessions = &directory.sessions;
         let talked = talk(session_loop, views, sessions, bus, &mut screen, signalled).await;
         let error = talked.expect_err("no channel to talk in");
         assert!(error.to_string().contains("takes part in no channel"), "{error}");

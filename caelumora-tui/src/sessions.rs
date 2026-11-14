@@ -26,7 +26,7 @@ use tracing::warn;
 const SHOWN: usize = 60;
 
 /// What the program is asked to do with the sessions of its directory.
-pub(crate) enum Asked {
+pub(crate) enum Invocation {
     /// List them, and open none.
     List,
     /// Open one, to talk in it.
@@ -231,7 +231,7 @@ impl Sessions {
 
 /// Why what was asked of the sessions of the directory (`Sessions`) failed: what the user asked
 /// that cannot be - told as it is -, or what failed of the kernel - told with what of its cause may
-/// be shown (`commands::error_printed`).
+/// be shown (`talk::error_printed`).
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum SessionsError {
     #[error(
@@ -406,8 +406,8 @@ pub(crate) mod testing {
         pub(crate) kernel: Arc<Kernel>,
         /// The user they are reached for.
         pub(crate) owner: SecurityContext,
-        /// The directory, kept as long as the test runs.
-        _directory: TempDir,
+        /// The directory, to be kept as long as the test runs.
+        pub(crate) directory: TempDir,
     }
 
     /// The sessions of a new directory the program works in: its storage `here` is a `local` one in
@@ -432,7 +432,7 @@ pub(crate) mod testing {
         let projects = ProjectManager::new(Arc::clone(&manager));
         let place = place_of(&kernel, &projects, &owner, user.id, directory.path()).await.unwrap();
         let sessions = sessions_of(&kernel, &manager, &owner, Some(place)).await;
-        InDirectory { sessions, manager, kernel, owner, _directory: directory }
+        InDirectory { sessions, manager, kernel, owner, directory }
     }
 
     /// The sessions of the user `owner` acts for, run by `manager` in `kernel`, in `place`; the
