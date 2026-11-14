@@ -21,8 +21,8 @@ use tracing::warn;
 use uuid::Uuid;
 
 /// The channels of a session the terminal follows for the user - every one they take part in,
-/// those they join meanwhile too - and the one they talk in: of the others, it tells what waits
-/// for the user.
+/// those they join meanwhile too - and the one they talk in: of the others, it tells what concerns
+/// the user (`Followed::concerns_user`).
 pub(crate) struct Channels {
     /// The session, where the channels the user joins meanwhile are found.
     session: Arc<SessionLoop>,
@@ -111,9 +111,20 @@ impl Channels {
             return vec![format!("--- You take part in no channel '{wanted}' ---"), self.hint()];
         };
         self.talked_in = Some(followed.channel_id());
-        let mut lines = vec![format!("--- Talking in {} now ---", followed.name())];
-        lines.extend(followed.who_answers().await);
-        lines.extend(followed.waiting());
+        followed.talking_in().await
+    }
+
+    /// The lines the terminal opens with (issue 566): those of the channel talked in, as a switch
+    /// to it tells them (`Followed::talking_in`), and, if the user takes part in others, where
+    /// they could switch to.
+    pub(crate) async fn opening(&self) -> Vec<String> {
+        let mut lines = match self.talked_in() {
+            Some(followed) => followed.talking_in().await,
+            None => Vec::new(),
+        };
+        if self.followed.len() > 1 {
+            lines.push(self.hint());
+        }
         lines
     }
 
@@ -173,9 +184,9 @@ impl Channels {
     }
 
     /// Takes in what the channel `channel_id` showed (`Followed::take_in`), and answers the lines
-    /// the terminal prints of it: all of the channel talked in; of another, what waits for the
-    /// user, marked with the channel's name. Where a run of the user's actor began or ended,
-    /// whether they still take part is read anew (`unfollow_if_ended`).
+    /// the terminal prints of it: all of the channel talked in; of another, what concerns the
+    /// user (`Followed::concerns_user`), marked with the channel's name. Where a run of the user's
+    /// actor began or ended, whether they still take part is read anew (`unfollow_if_ended`).
     async fn take_in_shown(
         &mut self,
         channel_id: ChannelId,
@@ -193,7 +204,7 @@ impl Channels {
         };
         match shown {
             Ok(Shown::Envelope(envelope)) => {
-                let printed = talked_in || followed.waits_for_user(&envelope);
+                let printed = talked_in || followed.concerns_user(&envelope);
                 let lines = followed.take_in(&envelope);
                 if printed {
                     marked(lines)
@@ -297,15 +308,17 @@ fn changes_taking_part(event: &GlobalEvent, me: ActorId) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::followed::testing::{approval, from, message};
+    use crate::followed::testing::{answered, approval, from, message};
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::ApprovalRuleId;
     use caelumora_domain::channel::{HistoryAccess, AGENT_STATE_CHANGED, LEFT};
     use caelumora_domain::message::Message;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::SessionId;
     use caelumora_domain::user::UserId;
     use caelumora_kernel::channel::ChannelLoop;
+    use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::session::testing::{
         owned_kernel, running_session_of_a_user, spec, test_kernel,
     };
@@ -333,6 +346,19 @@ mod tests {
             .await
             .expect("the owner takes part");
         (channels, session_loop, owner, other)
+    }
+
+    /// A running session's channels as its owner follows them, who takes part in its first
+    /// channel alone, with the session, the owner's context and the kernel.
+    async fn alone() -> (Channels, Arc<SessionLoop>, SecurityContext, Arc<Kernel>) {
+        let kernel = test_kernel();
+        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
+        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
+        let views = manager.views(Viewer::new(owner.clone()));
+        let channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
+            .await
+            .expect("the owner takes part");
+        (channels, session_loop, owner, kernel)
     }
 
     fn named(session_loop: &SessionLoop, name: &str) -> Arc<ChannelLoop> {
@@ -406,10 +432,10 @@ mod tests {
         assert_eq!((channel_id, content.as_deref()), (side.id(), Some("hello")));
     }
 
-    /// Of a channel not talked in, only what waits for the user is told, marked with its name;
+    /// Of a channel not talked in, only what concerns the user is told, marked with its name;
     /// switched to, it shows again what still waits.
     #[tokio::test]
-    async fn of_another_channel_only_what_waits_for_the_user_is_told() {
+    async fn of_another_channel_only_what_concerns_the_user_is_told() {
         let (mut channels, session_loop, owner, other) = followed().await;
         let me = owner.caller_id;
         let side = named(&session_loop, "side");
@@ -452,6 +478,60 @@ mod tests {
         let approval_line = format!("--- Approval requested (id: {}) ---", id.0);
         assert!(switched.contains(&approval_line), "what waits there: {switched:?}");
         assert_eq!(channels.talked_in().map(|f| f.channel_id()), Some(side.id()));
+    }
+
+    /// The end of an approval told of another channel is told as well, marked with its name:
+    /// withdrawn, or answered by a rule of the user's (issue 566).
+    #[tokio::test]
+    async fn the_end_of_an_approval_in_another_channel_is_told() {
+        let (mut channels, session_loop, owner, _) = followed().await;
+        let me = owner.caller_id;
+        let side = named(&session_loop, "side");
+        let agent_id = AgentId::new();
+        let agent = ActorId::Agent(agent_id);
+        let request = approval(&side, agent_id);
+        let id = request.id;
+        channels
+            .take_in(envelope_shown(&side, agent, ActorEvent::ApprovalRequested(request)))
+            .await;
+        let withdrawn =
+            || envelope_shown(&side, agent, ActorEvent::ApprovalRequestWithdrawn { id });
+        assert_eq!(
+            channels.take_in(withdrawn()).await,
+            [format!("[side] --- Approval {} withdrawn: the turn ended ---", id.0)]
+        );
+        assert!(channels.take_in(withdrawn()).await.is_empty(), "told once");
+
+        let request = approval(&side, agent_id);
+        let id = request.id;
+        channels
+            .take_in(envelope_shown(&side, agent, ActorEvent::ApprovalRequested(request)))
+            .await;
+        let by_rule = answered(me, id, Some(ApprovalRuleId::new()));
+        assert_eq!(
+            channels.take_in(envelope_shown(&side, me, by_rule)).await,
+            [format!("[side] --- Approval {} answered by your rule ---", id.0)]
+        );
+        assert!(channels.awaiting(id).is_none(), "no longer pending");
+    }
+
+    /// At its start the terminal tells the channel it talks in, as a switch to it does, and where
+    /// the user could switch to - only if they take part in another (issue 566).
+    #[tokio::test]
+    async fn the_opening_tells_the_channel_talked_in_and_the_others() {
+        let (channels, _, _, _) = followed().await;
+        let talked_in = channels.talked_in().expect("talked in");
+        let opening = channels.opening().await;
+        assert_eq!(opening[..opening.len() - 1], talked_in.talking_in().await[..]);
+        assert_eq!(opening.last(), Some(&channels.hint()), "{opening:?}");
+        assert!(channels.hint().contains("side"), "the other channel");
+
+        let (alone, _, _, _) = alone().await;
+        let talked_in = alone.talked_in().expect("talked in");
+        let name = talked_in.name();
+        let opening = alone.opening().await;
+        assert_eq!(opening, talked_in.talking_in().await, "no other channel");
+        assert_eq!(opening.first(), Some(&format!("--- Talking in {name} now ---")));
     }
 
     #[tokio::test]
@@ -598,13 +678,7 @@ mod tests {
     /// it while the bus lost the announcement is followed all the same.
     #[tokio::test]
     async fn a_loss_on_the_bus_follows_anew() {
-        let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-        let (session_loop, owner, _) = running_session_of_a_user(&manager).await;
-        let views = manager.views(Viewer::new(owner.clone()));
-        let mut channels = Channels::new(Arc::clone(&session_loop), views, kernel.event_bus())
-            .await
-            .expect("the owner takes part");
+        let (mut channels, session_loop, owner, kernel) = alone().await;
         channels.settled().await;
 
         let late = spec("late", vec![owner.caller_id]);

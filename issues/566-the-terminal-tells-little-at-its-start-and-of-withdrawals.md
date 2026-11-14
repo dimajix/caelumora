@@ -1,6 +1,6 @@
 # 566 — The terminal tells little at its start, and nothing of an approval withdrawn elsewhere
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** User interaction
@@ -42,3 +42,12 @@ channel of its session the user takes part in, talks in one of them, and switche
 
 - **2026-11-13** — Opened at the maintainer's request on the review of step 12 of issue
   [561](561-the-terminal-shows-one-channel-of-a-session.md).
+- **2026-11-14** — Decided with the maintainer: at its start the terminal tells what `/switch`
+  tells of the channel talked in (`Followed::talking_in`, which both use), and, where the user
+  takes part in more than one channel, the hint where they could switch to (`Channels::opening`);
+  what waits in the others is not listed - a switch to one shows it. Of another channel the
+  terminal tells what concerns the user (`Followed::concerns_user`, formerly `waits_for_user`):
+  what waits for them, and the end of an approval for them, of which `Followed::take_in` tells
+  what it tells in the channel talked in - a withdrawal of one shown, and, a gap of the same kind
+  found on the way, an answer given by a rule of theirs, after which `/approve` found the approval
+  pending no longer without telling why. Done.

@@ -100,9 +100,18 @@ impl Followed {
         self.channel.name()
     }
 
+    /// The lines that tell the user they talk in the channel now: its name, who answers there, and
+    /// what waits for them there.
+    pub(crate) async fn talking_in(&self) -> Vec<String> {
+        let mut lines = vec![format!("--- Talking in {} now ---", self.name())];
+        lines.extend(self.who_answers().await);
+        lines.extend(self.waiting());
+        lines
+    }
+
     /// The line that tells who answers in the channel, as the views tell it (issue 174); `None` if
     /// the channel cannot be read.
-    pub(crate) async fn who_answers(&self) -> Option<String> {
+    async fn who_answers(&self) -> Option<String> {
         let view = self.views.channel(self.channel.session_id(), self.channel_id()).await.ok()?;
         let unknown = || "from a bundle".to_string();
         let moderator = view.moderator().unwrap_or_else(unknown);
@@ -136,11 +145,14 @@ impl Followed {
         !self.views.listed_in(self.channel.session_id(), self.channel_id()).await
     }
 
-    /// Whether `envelope` asks something of the user: an approval, questions put to them, or a
-    /// message that mentions them.
-    pub(crate) fn waits_for_user(&self, envelope: &Envelope) -> bool {
+    /// Whether `envelope` concerns the user wherever they talk: it asks something of them - an
+    /// approval, questions put to them, a message that mentions them -, or ends an approval for
+    /// them - withdrawn, or answered by them (issue 566). Of the end of an approval, `take_in`
+    /// tells what concerns them: a withdrawal of one shown, an answer given by a rule of theirs.
+    pub(crate) fn concerns_user(&self, envelope: &Envelope) -> bool {
         match &envelope.event {
-            ActorEvent::ApprovalRequested(_) => true,
+            ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => true,
+            ActorEvent::ApprovalAnswered { .. } => envelope.context.sender_id == self.me(),
             ActorEvent::QuestionRequested(request) => request.questions.is_asked(self.me()),
             ActorEvent::CompleteMessageGenerated(message) => message.mentions.contains(&self.me()),
             _ => false,
@@ -806,17 +818,42 @@ mod tests {
         ];
         for event in asked {
             let envelope = from(&channel, agent, event);
-            assert!(followed.waits_for_user(&envelope), "{:?}", envelope.event);
+            assert!(followed.concerns_user(&envelope), "{:?}", envelope.event);
             routed(&mut followed, envelope).await;
         }
         for event in not_asked {
             let envelope = from(&channel, agent, event);
-            assert!(!followed.waits_for_user(&envelope), "{:?}", envelope.event);
+            assert!(!followed.concerns_user(&envelope), "{:?}", envelope.event);
             routed(&mut followed, envelope).await;
         }
         let waiting = followed.waiting().join("\n");
         assert!(waiting.contains(&ids[0]) && waiting.contains(&ids[1]), "{waiting}");
         assert!(!waiting.contains(&ids[2]), "put to another: {waiting}");
+    }
+
+    /// What ends an approval for the user concerns them - withdrawn, or answered by them -, not
+    /// another's answer; of it, what is told is a withdrawal of one shown, and an answer of theirs
+    /// given by a rule (issue 566).
+    #[tokio::test]
+    async fn the_end_of_an_approval_concerns_the_user() {
+        let (mut followed, channel, me) = followed().await;
+        let agent_id = AgentId::new();
+        let agent = ActorId::Agent(agent_id);
+        let other = ActorId::User(UserId::new());
+        let request = approval(&channel, agent_id);
+        let id = request.id;
+        let withdrawn = from(&channel, agent, ActorEvent::ApprovalRequestWithdrawn { id });
+        let by_rule = |by| from(&channel, by, answered(by, id, Some(ApprovalRuleId::new())));
+        let typed = from(&channel, me, answered(me, id, None));
+        assert!(followed.concerns_user(&withdrawn));
+        assert!(followed.concerns_user(&by_rule(me)));
+        assert!(followed.concerns_user(&typed));
+        assert!(!followed.concerns_user(&by_rule(other)), "another's answer");
+
+        assert!(followed.take_in(&withdrawn).is_empty(), "not shown: nothing told");
+        followed.take_in(&from(&channel, agent, ActorEvent::ApprovalRequested(request)));
+        assert!(followed.take_in(&typed).is_empty(), "typed by the user: nothing told");
+        assert_eq!(followed.take_in(&by_rule(me)).len(), 1, "given by their rule: told");
     }
 
     #[tokio::test]

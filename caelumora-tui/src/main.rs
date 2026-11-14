@@ -596,11 +596,7 @@ async fn main() -> Result<()> {
         Channels::new(Arc::clone(&session_loop), views, kernel.event_bus()).await.ok_or_else(
             || anyhow::anyhow!("The user takes part in no channel of the session {session_id}"),
         )?;
-    let who_answers = match channels.talked_in() {
-        Some(followed) => followed.who_answers().await,
-        None => None,
-    };
-    if let Some(line) = who_answers {
+    for line in channels.opening().await {
         println!("{line}");
     }
 
