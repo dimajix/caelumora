@@ -63,7 +63,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | [55](55-notes-by-reflection.md) | open | medium | feature | Notes are written only when the model thinks of calling a note tool while answering, so what an agent learnt in a turn is kept unreliably and never tidied up. |
 | [166](166-memory-as-topic-documents.md) | open | medium | feature | Agent memory is a flat list of one-line entries, all of them in every prompt, with nothing to group, revise or fetch them by topic. |
 | [550](550-a-skill-is-an-entity-alone.md) | open | medium | feature | A skill exists only as a `Skill` entity and cannot come from a Markdown file with a header, as other agent tools keep them, and it says nothing of itself but its name and one line, so nothing but the model's reading of that line can bring it into a turn without being asked. |
-| [575](575-an-agent-is-not-told-the-names-of-its-session-and-channel.md) | open | medium | feature | The prompt part `channel_briefing` tells an agent what its session and channel are for - their summaries and briefings - but not what they are called, and no other prompt part names them, so an agent cannot refer to the channel it talks in by its name, nor tell it apart from the others of its session. |
 
 ## Maintenance
 

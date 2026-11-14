@@ -37,6 +37,9 @@ pub trait SessionReader: Send + Sync {
     /// The session read.
     fn id(&self) -> SessionId;
 
+    /// Its name.
+    fn name(&self) -> &Name;
+
     /// The project its results go to (issue 467).
     fn project(&self) -> ProjectId;
 

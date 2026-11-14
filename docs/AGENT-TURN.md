@@ -810,7 +810,7 @@ the system prompt by default, since they change rarely.
 
 An external agent's remote agent keeps its conversation, so it is given a part only when it changed,
 and told when one it was given holds nothing any more (`PromptProvider::withdrawn`, see
-[CHANNELS.md](CHANNELS.md#external-agents)); the briefing and the language word their withdrawal.
+[CHANNELS.md](CHANNELS.md#external-agents)); the language words its withdrawal.
 
 ### Who is in the channel
 
@@ -862,11 +862,13 @@ long queue. It changes with every turn, so it goes before the turn's input or, a
 at the end of every call, not into the system prompt, whose every change invalidates the cache.
 Within a turn it stays as it was read when the turn began, also through a long plan.
 
-### What the session and channel are for
+### The session and channel
 
-`channel_briefing` gives the summary and briefing of the session and the channel (see
+`channel_briefing` names the session and the channel, so that the agent can refer to the channel it
+talks in and tell it from the others, and gives their summaries and briefings (see
 [CHANNELS.md](CHANNELS.md#what-it-is-for)). It steers what the agent says, never what it may do:
-permissions and approvals are untouched by it.
+permissions and approvals are untouched by it. The channel's name is part of the channel, so the
+part is classified as the channel is.
 
 ### Its workspace
 

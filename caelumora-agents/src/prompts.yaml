@@ -17,16 +17,19 @@ titled: |-
   [{{ title }}]
   {{ text }}{{ "\n" if text is not endingwith "\n" }}
 
-# `channel_briefing`: what the session and the channel are
-# for, each `place` as its owner describes it (`kind` "session" or
-# "channel"), the session's first.
+# `channel_briefing`: the session and the channel, each `place`
+# by its `name` and, where it has them, its `summary` and `briefing` as its
+# owner describes it (`kind` "session" or "channel"), the session's first.
 channel_briefing: |
   {% for place in places %}
   {% if not loop.first %}
 
   {% endif %}
   [About this {{ place.kind }}]
+  This {{ place.kind }} is called "{{ place.name }}".
+  {% if place.summary or place.briefing %}
   What this {{ place.kind }} is for, as its owner describes it.
+  {% endif %}
   {% if place.summary %}
   In short: {{ place.summary }}
   {% endif %}
@@ -35,11 +38,6 @@ channel_briefing: |
   {{ place.briefing }}
   {% endif %}
   {% endfor %}
-
-# An agent that keeps what it was told, after both stopped describing themselves.
-channel_briefing_withdrawn: |
-  [About this session and channel]
-  What you were told of them before no longer holds: neither says anything about itself now.
 
 # `channel_language`: the language of the channel by its
 # BCP 47 `tag`, and by its `english` and `native` names where they are known.

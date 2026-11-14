@@ -1,6 +1,6 @@
 # 575 — An agent is not told the names of its session and channel
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** Context and knowledge
@@ -35,3 +35,11 @@ channels of its session (`read_channel`, issue 264), it has nothing to name it b
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-14** - Done in `channel_briefing`, which now names every place by its name - the
+session's read through `SessionReader::name`, added for it -, and adds what it is for where its
+owner wrote it. The part is classified as the channel always, since the channel's name is part of
+the channel; and since it holds something whenever there is a channel, it has no withdrawal any
+more. The ids (issue [577](577-an-agent-is-not-told-where-it-runs.md)) are not given: what they
+are for, searching the log, is still open there. Before it, `SessionView::name` answers a `Name`,
+as `ChannelView::name` does.

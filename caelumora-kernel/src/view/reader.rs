@@ -28,6 +28,10 @@ impl SessionReader for SessionView {
         SessionView::id(self)
     }
 
+    fn name(&self) -> &Name {
+        SessionView::name(self)
+    }
+
     fn project(&self) -> ProjectId {
         SessionView::project(self)
     }

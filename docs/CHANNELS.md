@@ -248,7 +248,7 @@ every agent there on every turn. They are kept exactly as written; trimming is t
 A session's descriptions are public, as its name is: everybody in the session reads them, and every
 agent in each of its channels, external ones too. A channel's are part of the channel and classified
 as it is now. Agents are told both by a prompt part (see
-[AGENT-TURN.md](AGENT-TURN.md#what-the-session-and-channel-are-for)).
+[AGENT-TURN.md](AGENT-TURN.md#the-session-and-channel)), with their names.
 
 ### Its workspace
 
