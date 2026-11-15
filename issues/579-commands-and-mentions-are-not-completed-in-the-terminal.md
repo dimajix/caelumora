@@ -1,6 +1,6 @@
 # 579 — Commands and mentions are not completed in the terminal
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -78,4 +78,13 @@ candidates at a second, with no hint.
 in (`JoinedChannel`) is a kind of its own, which the terminal's `/channel switch` takes, beside a
 channel of the session (`Channel`), which `/channel join` and the others take - each kind naming
 what its commands search among.
+
+**2026-11-15** - Step 3 done: in `full`, Tab completes the line typed up to the cursor from what was
+offered (`InputLine::complete`), as rustyline does in `line` - with the one candidate, or with what
+several begin with where that is longer than what is typed; several are shown dim above the line,
+whole, in at most three rows and the room left beside the line typed, the last telling how many
+more there are, until another key is pressed or text pasted.
+
+**2026-11-15** - Done: Tab completes commands, their arguments as decided, and mentions, in both
+ways of drawing.
 
