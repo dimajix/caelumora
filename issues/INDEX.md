@@ -275,6 +275,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [547](547-long-page-kept-whole-as-media.md) | done | A page of the web too long for one result is fetched anew for every part the agent reads, may change between the parts, and can be neither searched nor handed on, because a tool can keep nothing but an image beside its result. |
 | [552](552-a-tool-result-has-no-bound.md) | done | The result of an MCP tool is put into the model's context whole, whatever its size, is sent again with every call of the turn, and cannot be read on or searched, while `fetch_page` can already keep what is too long for one result beside a preview. |
 | [553](553-a-fetched-page-keeps-no-original.md) | done | `fetch_page` keeps at most the Markdown it made of a page, so the bytes the server sent - links, tables, what the conversion left out - are gone after the call, and whoever needs them has to fetch the page again, which may have changed. |
+| [584](584-a-tool-has-no-object-of-its-own.md) | open | A `ToolProvider` answers for all of its tools by their names - it carries a call out, asks its questions, proposes its matcher and describes it, each by a `match` of the name or a search of its list -, so what belongs to one tool is spread over the methods of its provider, as a command's was before issue 583. |
 
 ## User interaction
 
