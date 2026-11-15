@@ -76,7 +76,7 @@ stands:
 | `CommandProvider<C>` | The facet of a component: the commands of the kind `C` it contributes, as objects. One generic facet for every kind. | `caelumora-api` |
 | `CommandSet<C>` | The commands of whoever runs them - a session's, an agent's, the terminal's -, holding the commands themselves: finds the one a line begins, refuses two a line cannot tell apart. | `caelumora-api` |
 
-In four steps:
+In five steps:
 
 1.  **The rule, and commands as objects.** The rule on a `match` as a multiplexer goes into
     CODING-GUIDELINES.md; `Command` is renamed `CommandDescription`; the traits above replace
@@ -87,7 +87,10 @@ In four steps:
 3.  **The terminal's commands follow.** `TerminalCommand`, an enum dispatched by a `match` in
     `talk.rs` today, becomes the trait of the terminal's commands, found in a `CommandSet` of
     them.
-4.  **Typed parameters** in `CommandDescription`, replacing `usage`. Whether the kind of a
+4.  **What step 3 came across.** What `/help` is asked about is decided in one place for the
+    channel's `/help` and the terminal's; finding by the beginning of an id gets a module of its
+    own in the terminal.
+5.  **Typed parameters** in `CommandDescription`, replacing `usage`. Whether the kind of a
     parameter comes now or with 579, which is the first to need it, and how the keyword of
     `/agent create <personality> [as <name>]` is described, is decided before the step.
 
@@ -144,3 +147,12 @@ group - `/approval approve` and `deny` one type, differing in the answer -, foun
 `CommandSet`. Since no component contributes them, the set is made by `CommandSet::of`, which
 checks them as `new` checks those of components. `/help` lists the terminal's commands by name,
 as it lists the channel's, no longer `/exit` first.
+
+**2026-11-15** - Decided with the maintainer after step 3: what its review came across is step 4,
+before the typed parameters, now step 5.
+
+**2026-11-15** - Step 4 done: `help_topic` in `caelumora_domain::command` is what `/help` is asked
+about - every command, or the name its words make, of one command (`CommandDescription::is_named`)
+or of a group -, for the channel's `/help` and the terminal's, which repeated it; `beginning_with`
+and `NotNamed` lie in a module of their own in `caelumora-tui`, `id_prefix`, no longer among the
+commands, none of which uses them.

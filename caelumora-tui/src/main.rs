@@ -9,6 +9,7 @@ mod commands;
 mod followed;
 mod here;
 mod home;
+mod id_prefix;
 mod printed;
 mod screen;
 mod sessions;

@@ -9,6 +9,7 @@
 
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::value::command_name::CommandName;
+use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
 use std::iter;
 
@@ -91,6 +92,26 @@ impl CommandDescription {
     /// Its name and its aliases.
     pub fn names(&self) -> impl Iterator<Item = &CommandName> {
         iter::once(&self.name).chain(&self.aliases)
+    }
+
+    /// Whether `name` is its name or one of its aliases.
+    pub fn is_named(&self, name: &CommandName) -> bool {
+        self.names().any(|own| own == name)
+    }
+}
+
+/// What `/help` is asked about by `args`, the words after it - a leading slash ignored -, wherever
+/// it is answered (issue 560): `None` for every command; else the name its words make, of one
+/// command - by its name or a short form (`CommandDescription::is_named`) - or of a group, the
+/// commands whose names it begins (`CommandName::begins`).
+///
+/// # Errors
+/// `ValueError` if its words make no command name: no command or group is named so.
+pub fn help_topic(args: &str) -> Result<Option<CommandName>, ValueError> {
+    let words: Vec<&str> = args.trim().trim_start_matches('/').split_whitespace().collect();
+    match words.is_empty() {
+        true => Ok(None),
+        false => CommandName::new(words.join(" ")).map(Some),
     }
 }
 
@@ -231,6 +252,16 @@ mod tests {
         }
     }
 
+    /// `/help` asks about every command without words, else about the name its words make,
+    /// however they are separated; words no command name is made of name nothing.
+    #[test]
+    fn help_is_asked_about_the_name_its_words_make() {
+        let topic = |args| help_topic(args).map(|t| t.map(|name| name.to_string()));
+        assert_eq!(topic("  ").ok(), Some(None));
+        assert_eq!(topic(" /participant   add ").ok(), Some(Some("participant add".to_string())));
+        assert!(topic("Participant").is_err());
+    }
+
     #[test]
     fn a_command_is_found_by_its_name_and_its_aliases() {
         let add = named("participant add", &["add"]);
@@ -238,6 +269,8 @@ mod tests {
         assert_eq!(add.strip_from("add  Bob"), Some("Bob"));
         assert_eq!(add.strip_from("participant"), None);
         assert_eq!(add.strip_from("adds Bob"), None);
+        assert!(add.is_named(&CommandName::new("add").unwrap()), "by a short form");
+        assert!(!add.is_named(&CommandName::new("participant").unwrap()), "not by its group");
     }
 
     #[test]

@@ -4,8 +4,9 @@
 
 use crate::asking::{Asked, Asking, Offered};
 use crate::channels::{Channels, Happened};
-use crate::commands::{beginning_with, commands, terminal_help, TerminalCommand};
+use crate::commands::{commands, terminal_help, TerminalCommand};
 use crate::followed::Followed;
+use crate::id_prefix::beginning_with;
 use crate::printed::{ErrorKind, Printed};
 use crate::sessions::{listing, Opening, Sessions, SessionsError};
 use crate::under_way::UnderWay;

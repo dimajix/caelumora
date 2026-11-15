@@ -161,7 +161,7 @@ pub(super) fn how_to_approve(request: &ApprovalRequest) -> String {
 }
 
 /// The beginning of `id` the terminal names it by: enough for the commands, which take the
-/// beginning of an id (`commands::beginning_with`).
+/// beginning of an id (`id_prefix::beginning_with`).
 pub(super) fn short_id(id: &Uuid) -> String {
     id.simple().to_string()[..SHORT_ID].to_string()
 }

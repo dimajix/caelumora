@@ -5,7 +5,7 @@ use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_domain::command::{CommandDescription, CommandOutput, HELP_KIND};
+use caelumora_domain::command::{help_topic, CommandDescription, CommandOutput, HELP_KIND};
 use caelumora_domain::value::command_name::CommandName;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -77,16 +77,14 @@ impl ChannelCommand for HelpCommand {
             .visible(&context.issuer.security_context(), &context.channel.security_attributes())
             .await;
         let of_agents = agents_commands(context).await;
-        let wanted = args.trim().trim_start_matches('/');
         // Unknown and invisible alike, as for running a command.
-        let unknown = || CommandError::Unknown(wanted.to_string());
-        if !wanted.is_empty() {
-            // By its name or a short form.
-            let named = |command: &CommandDescription| command.strip_from(wanted) == Some("");
-            if let Some(command) = visible.iter().find(|c| named(c)) {
+        let unknown = || CommandError::Unknown(args.trim().trim_start_matches('/').to_string());
+        let topic = help_topic(args).map_err(|_| unknown())?;
+        if let Some(name) = &topic {
+            if let Some(command) = visible.iter().find(|c| c.is_named(name)) {
                 return Ok(CommandOutput::private(command.help_line()));
             }
-            if let Some((command, handles)) = of_agents.values().find(|(c, _)| named(c)) {
+            if let Some((command, handles)) = of_agents.values().find(|(c, _)| c.is_named(name)) {
                 return Ok(CommandOutput::private(format!(
                     "{} Carried out by {}.",
                     command.agent_help_line(),
@@ -96,21 +94,14 @@ impl ChannelCommand for HelpCommand {
         }
 
         // All of them, or those of the group asked for: whose name begins with it.
-        let group = match wanted {
-            "" => None,
-            _ => {
-                let words: Vec<&str> = wanted.split_whitespace().collect();
-                Some(CommandName::new(words.join(" ")).map_err(|_| unknown())?)
-            }
-        };
         let in_group =
-            |command: &CommandDescription| group.as_ref().is_none_or(|g| g.begins(&command.name));
+            |command: &CommandDescription| topic.as_ref().is_none_or(|g| g.begins(&command.name));
         let listed: Vec<&CommandDescription> = visible.iter().filter(|c| in_group(c)).collect();
         let of_agents: Vec<_> = of_agents.values().filter(|(c, _)| in_group(c)).collect();
         if listed.is_empty() && of_agents.is_empty() {
             return Err(unknown());
         }
-        let mut text = match &group {
+        let mut text = match &topic {
             Some(group) => format!("Commands of `/{group}`:\n\n"),
             None => String::from("Commands:\n\n"),
         };

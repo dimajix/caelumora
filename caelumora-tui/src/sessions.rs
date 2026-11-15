@@ -2,8 +2,8 @@
 //! reaches them: those of its project, listed by their last message, newest first, started,
 //! continued, resumed, stopped as the terminal leaves them, and deleted.
 
-use crate::commands::{beginning_with, NotNamed};
 use crate::here::HERE;
+use crate::id_prefix::{beginning_with, NotNamed};
 use crate::printed::Printed;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::Message;
