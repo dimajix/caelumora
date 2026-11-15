@@ -6,6 +6,7 @@ use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
+use caelumora_domain::value::name::Name;
 
 pub(super) const LIST_COMMAND_NAME: &str = "participant list";
 
@@ -36,7 +37,7 @@ pub(super) async fn execute(
     }
     let mut text = String::from("Taking part in this channel:\n\n");
     for participant in taking_part(LIST_COMMAND_NAME, context).await? {
-        let name = participant.name().unwrap_or("someone who no longer exists");
+        let name = participant.name().map_or("someone who no longer exists", Name::as_str);
         let handle = participant.handle().map(|h| format!(" (@{h})")).unwrap_or_default();
         let kind = match participant.id() {
             ActorId::User(_) => "user".to_string(),

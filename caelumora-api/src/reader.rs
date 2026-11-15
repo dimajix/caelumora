@@ -136,7 +136,7 @@ pub trait ParticipantReader: Send + Sync {
     fn id(&self) -> ActorId;
 
     /// Its name; `None` for a user or agent that no longer exists.
-    fn name(&self) -> Option<&str>;
+    fn name(&self) -> Option<&Name>;
 
     /// What of the participant is public to everyone in the channel (issue 176); `None` for one
     /// that no longer exists.

@@ -881,7 +881,7 @@ impl Views {
                 .map(|user| user.username.to_string()),
             ActorId::Agent(id) => match self.agent_of(id).await {
                 Some(agent) => Some(agent.name.to_string()),
-                None => self.deleted_agent_name(id).await,
+                None => self.deleted_agent_name(id).await.map(|name| name.to_string()),
             },
             other => other.fixed_name().map(str::to_string),
         }
@@ -889,13 +889,13 @@ impl Views {
 
     /// The name of agent `id` if it was deleted and not purged (issue 164): what it said keeps its
     /// sender. Read in the kernel's name, like its name while it exists.
-    pub(super) async fn deleted_agent_name(&self, id: AgentId) -> Option<String> {
+    pub(super) async fn deleted_agent_name(&self, id: AgentId) -> Option<Name> {
         self.stores
             .agents
             .get_deleted(&SecurityContext::system(), id)
             .await
             .ok()
-            .map(|agent| agent.entity.name.to_string())
+            .map(|agent| agent.entity.name.name)
     }
 
     /// Who deleted agent `id` and when, if it was deleted and not purged (issue 314): when it left
@@ -2125,7 +2125,7 @@ mod tests {
             manager.views(as_user(alice.id)).channel(session.id, channel.id).await.unwrap();
         let participant = for_alice.participant(ActorId::Agent(helper.id)).await.unwrap();
         assert_eq!(
-            (participant.name(), participant.handle().as_deref()),
+            (participant.name().map(Name::as_str), participant.handle().as_deref()),
             (Some("Helper"), Some("helper"))
         );
         assert!(
@@ -2549,7 +2549,7 @@ mod tests {
             views.channel_of(session.id, channel.id).await.unwrap().there().expect("there");
         let former =
             reached.participant(ActorId::Agent(helper.id)).await.expect("known by what it said");
-        assert!(former.former() && former.name() == Some("Helper"));
+        assert!(former.former() && former.name().map(Name::as_str) == Some("Helper"));
         assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
         assert!(
             reached.participants().await.iter().all(|m| m.id() != ActorId::Agent(helper.id)),
@@ -2753,7 +2753,7 @@ mod tests {
         assert!(former.former() && former.left() == Some(&removed));
         assert!(former.context().await.is_ok(), "what it saw is still the owner's to read");
         let bob_left = reached.participant(ActorId::User(bob.id)).await.expect("a user too");
-        assert!(bob_left.former() && bob_left.name() == Some("bob"));
+        assert!(bob_left.former() && bob_left.name().map(Name::as_str) == Some("bob"));
         assert_eq!(
             reached.former_participants().await.iter().map(ParticipantView::id).collect::<Vec<_>>(),
             [ActorId::User(bob.id), ActorId::Agent(helper.id)],

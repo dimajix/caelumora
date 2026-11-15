@@ -1195,7 +1195,7 @@ mod tests {
     use caelumora_domain::user::UserProfile;
     use caelumora_domain::user::{User, UserId};
     use caelumora_domain::value::language::Language;
-    use caelumora_domain::value::name::ScopedName;
+    use caelumora_domain::value::name::{Name, ScopedName};
     use caelumora_domain::value::time_zone::TimeZone;
     use caelumora_domain::value::ValueError;
     use caelumora_domain::workspace::{Workspace, WorkspaceChoice};
@@ -1487,7 +1487,7 @@ mod tests {
         let reached = views.channel_of(running.id(), talk.id()).await.unwrap().there().unwrap();
         let former = reached.participant(actor).await.unwrap();
         assert!(
-            former.former() && former.name() == Some("helper"),
+            former.former() && former.name().map(Name::as_str) == Some("helper"),
             "what it said keeps its sender"
         );
         assert_eq!(former.left().map(|left| left.by), Some(ctx.caller_id), "left as its mark says");

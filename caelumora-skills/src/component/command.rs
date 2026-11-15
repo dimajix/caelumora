@@ -13,6 +13,7 @@ use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::value::command_name::CommandName;
+use caelumora_domain::value::name::Name;
 use chrono::Utc;
 use tracing::warn;
 
@@ -106,7 +107,7 @@ impl AgentCommandProvider for SkillsComponent {
                         .participant(issuer)
                         .await
                         .ok()
-                        .and_then(|m| m.name().map(str::to_string)),
+                        .and_then(|m| m.name().map(Name::to_string)),
                     Ok(None) | Err(_) => None,
                 };
                 let given = Message {

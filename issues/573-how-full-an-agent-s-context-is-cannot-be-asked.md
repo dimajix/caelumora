@@ -1,6 +1,6 @@
 # 573 — How full an agent's context is cannot be asked by a command
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -84,3 +84,8 @@ and `/channel leave` share with it.
 and the web UI's `readUsage` reads it there (`api.getParticipantUsage`). Decided with the
 maintainer after its review: `GET …/participants/{aid}` no longer answers the usage - it read the
 agent's whole state, its transcript loaded with it, for what the profile panel does not show.
+
+**2026-11-15** - Done besides, at the maintainer's word, from a finding of step 1: a participant's
+name is a `Name` (`ParticipantView::name`, `ParticipantReader::name`), as the readers of a session
+and a channel answer theirs since issue 575; a deleted agent's name is kept as one. The commands no
+longer parse it again (`command::named_participants`).

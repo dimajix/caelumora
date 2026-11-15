@@ -20,7 +20,6 @@ use caelumora_domain::actor::{ActorDescription, ActorId};
 use caelumora_domain::agent::{Agent, AgentChannelState, AgentId, Personality};
 use caelumora_domain::channel::{ChannelId, Participant};
 use caelumora_domain::digest::Digest;
-use caelumora_domain::mention::handle_of;
 use caelumora_domain::note::Note;
 use caelumora_domain::prompt_catalogue::PromptCatalogue;
 use caelumora_domain::security::SecurityAttributes;
@@ -41,12 +40,11 @@ use tracing::warn;
 #[async_trait]
 pub(super) trait ParticipantState: Send + Sync + Debug {
     /// Its name; `None` for a user or agent that no longer exists.
-    fn name(&self) -> Option<&str>;
+    fn name(&self) -> Option<&Name>;
 
-    /// The handle it is `@`-mentioned by (see `crate::mention`), or `None`
-    /// if it cannot be mentioned.
+    /// The handle it is `@`-mentioned by (`Name::handle`), or `None` if it cannot be mentioned.
     fn handle(&self) -> Option<String> {
-        self.name().map(handle_of).filter(|handle| !handle.is_empty())
+        self.name().map(Name::handle).filter(|handle| !handle.is_empty())
     }
 
     /// How it is introduced (issue 176). Public, like the name.
@@ -146,8 +144,8 @@ struct UserParticipant {
 
 #[async_trait]
 impl ParticipantState for UserParticipant {
-    fn name(&self) -> Option<&str> {
-        Some(self.name.as_str())
+    fn name(&self) -> Option<&Name> {
+        Some(&self.name)
     }
 
     async fn introduction(&self) -> ViewResult<Option<Introduction>> {
@@ -185,12 +183,12 @@ impl ParticipantState for UserParticipant {
 /// (issue 164).
 #[derive(Debug)]
 struct GoneParticipant {
-    name: Option<String>,
+    name: Option<Name>,
 }
 
 impl ParticipantState for GoneParticipant {
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
+    fn name(&self) -> Option<&Name> {
+        self.name.as_ref()
     }
 
     fn handle(&self) -> Option<String> {
@@ -242,8 +240,8 @@ struct AgentParticipantState {
 
 #[async_trait]
 impl ParticipantState for AgentParticipantState {
-    fn name(&self) -> Option<&str> {
-        Some(self.agent.name.as_str())
+    fn name(&self) -> Option<&Name> {
+        Some(&self.agent.name.name)
     }
 
     /// How its personality introduces it; nothing if the personality is

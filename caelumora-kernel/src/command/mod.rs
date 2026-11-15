@@ -299,7 +299,7 @@ pub(crate) async fn taking_part(
 pub(crate) fn named_participants(
     participants: Vec<ParticipantView>,
 ) -> Vec<(Name, ParticipantView)> {
-    participants.into_iter().filter_map(|p| Some((Name::new(p.name()?).ok()?, p))).collect()
+    participants.into_iter().filter_map(|p| Some((p.name()?.clone(), p))).collect()
 }
 
 /// What `error` of an operation the command `command` ran means for its issuer: a refusal is the

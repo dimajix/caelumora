@@ -152,7 +152,7 @@ impl ParticipantReader for ParticipantView {
         ParticipantView::id(self)
     }
 
-    fn name(&self) -> Option<&str> {
+    fn name(&self) -> Option<&Name> {
         ParticipantView::name(self)
     }
 

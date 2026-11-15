@@ -24,6 +24,7 @@ use caelumora_domain::message::{Message, MessageId, TokenUsage};
 use caelumora_domain::question::QuestionId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
+use caelumora_domain::value::name::Name;
 use caelumora_kernel::actor::user::{ChannelWatch, Lagged, UserActor};
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::channel::ChannelLoop;
@@ -814,7 +815,7 @@ async fn knowledge_response(
     };
     let agent_name = match (agent_id, &channel) {
         (Some(id), Some(channel)) => {
-            channel.participant(id).await.ok().and_then(|m| m.name().map(str::to_string))
+            channel.participant(id).await.ok().and_then(|m| m.name().map(Name::to_string))
         }
         _ => None,
     };

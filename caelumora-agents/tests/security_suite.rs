@@ -425,7 +425,7 @@ async fn an_agents_introduction_reaches_whoever_sees_it_but_not_its_personality(
     let participants = view.participants().await;
     let participant =
         participants.iter().find(|m| m.id() == ActorId::Agent(helper)).expect("he sees the agent");
-    assert_eq!(participant.name(), Some("helper"));
+    assert_eq!(participant.name().map(Name::as_str), Some("helper"));
     assert_eq!(
         participant
             .introduction()

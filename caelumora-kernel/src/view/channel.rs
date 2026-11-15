@@ -719,13 +719,12 @@ impl ParticipantView {
     }
 
     /// `None` for a user or agent that no longer exists.
-    pub fn name(&self) -> Option<&str> {
+    pub fn name(&self) -> Option<&Name> {
         self.state.name()
     }
 
-    /// The handle the participant is `@`-mentioned by (see `crate::mention`), or
-    /// `None` if it cannot be mentioned - participants that no longer exist,
-    /// names that yield no handle.
+    /// The handle the participant is `@`-mentioned by (`Name::handle`), or `None` if it cannot be
+    /// mentioned - participants that no longer exist, names that yield no handle.
     pub fn handle(&self) -> Option<String> {
         self.state.handle()
     }
@@ -999,7 +998,7 @@ impl ParticipantView {
         let notes = self.notes_in(&state).await;
         Ok(Some(PublishedNotes {
             agent: self.id(),
-            name: self.name().unwrap_or_default().to_string(),
+            name: self.name().map(Name::to_string).unwrap_or_default(),
             notes,
             digest: state.notes.digest(),
         }))
@@ -1158,7 +1157,7 @@ impl ParticipantView {
         }
         ChannelParticipantSnapshot {
             id: self.id(),
-            name: self.name().map(str::to_string),
+            name: self.name().map(Name::to_string),
             handle: self.handle(),
             can_read_context: self.may_read_context().await,
             can_read_tools: self.may_read_tools().await,

@@ -22,7 +22,7 @@ use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::snapshot::DeletedSnapshot;
 use caelumora_domain::store::{Address, StoreResultExt};
-use caelumora_domain::value::name::ScopedName;
+use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_kernel::view::{ChannelView, ProjectView, Views};
 use std::collections::BTreeMap;
 use std::mem;
@@ -298,7 +298,7 @@ impl ArtifactView {
             }
         };
         let published_by = match channel.participant(version.published_by).await {
-            Ok(participant) => participant.name().map(str::to_string),
+            Ok(participant) => participant.name().map(Name::to_string),
             Err(_) => None,
         };
         Some(PublicationSnapshot {
