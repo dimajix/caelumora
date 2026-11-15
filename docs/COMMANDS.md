@@ -38,16 +38,17 @@ not offer - end the program, switch the channel or the session it talks in, list
 delete the sessions of its directory, answer an approval or questions - the one asked without an
 argument, else the one whose id begins so (`beginning_with`, issue
 [571](../issues/571-approvals-and-questions-in-the-terminal.md)) -, ask an agent to answer again
-(`TerminalCommand`, issue
-[570](../issues/570-the-terminal-s-commands-and-its-sessions.md)). They are named by the rules below
-as the channel's are, with the domain's `CommandDescription`, and a line is tried against them
-before it goes to the channel: so no name or short form of them may begin, or be the beginning of,
-one of the channel's - which a test holds for the commands a session has by default, not for those a
-configuration, a template or an agent adds. One that takes no arguments refuses them, by the rule
-of every command ([below](#commands-are-components)). `/help` lists them after the channel's, and
-tells of one of them, or of a group of them, where the channel knows nothing of what is asked or no
-channel is talked in. `/exit` (`/quit`) belongs to no group, as
-`/help` does: ending the program acts on no entity of a channel.
+(issue [570](../issues/570-the-terminal-s-commands-and-its-sessions.md)). Each is an object of its
+own, a `TerminalCommand` ([below](#commands-are-components)), found in the terminal's `CommandSet`,
+which no component contributes to (`CommandSet::of`). They are named by the rules below as the
+channel's are, and a line is tried against them before it goes to the channel: so no name or short
+form of them may begin, or be the beginning of, one of the channel's - which a test holds for the
+commands a session has by default, not for those a configuration, a template or an agent adds. One
+that takes no arguments refuses them, by the rule of every command
+([below](#commands-are-components)). `/help` lists them after the channel's, and tells of one of
+them, or of a group of them, where the channel knows nothing of what is asked or no channel is
+talked in. `/exit` (`/quit`) belongs to no group, as `/help` does: ending the program acts on no
+entity of a channel.
 
 ### Names
 
@@ -61,8 +62,9 @@ arguments, handed to it unparsed.
 No name or short form of a set of commands is the beginning of another - `channel` beside
 `channel list`, two equal names, a short form equal to another's name -, so that a line begins at
 most one command of the set and no rule of the longest is needed. A set that breaks this refuses to
-be built (`CommandSet::new`), as does a name the code gave unchecked (`CommandName::fixed`). What
-is recorded and announced of a command is its name, whichever it was issued by.
+be built (`CommandSet::new`, `CommandSet::of`), as does a name the code gave unchecked
+(`CommandName::fixed`). What is recorded and announced of a command is its name, whichever it was
+issued by.
 
 The commands of the channel are grouped by the kind of entity they act on, as command line tools
 group theirs - `participant`, `agent`, `channel` -: the group is a command's first word, nothing of
@@ -77,10 +79,11 @@ A command is an object of its own (issue 583): it holds its `CommandDescription`
 it does, what it takes, whether it is for an agent's owners alone - and gives it as a `Command`, the
 trait every command implements; how it is carried out is the trait of its kind, derived from
 `Command`: `ChannelCommand` for one run on the channel, given the issuer's actor and the channel,
-`AgentCommand` for one an agent carries out in its `Turn`. A component contributes commands of a
-kind through the one facet `CommandProvider<C>`, as a list of them - mostly made as it is built,
-`Vec<Arc<C>>` being one. No provider dispatches by a command's name: whoever runs a command finds
-the command itself. The channel's commands come from two places:
+`AgentCommand` for one an agent carries out in its `Turn`, `TerminalCommand` for one the terminal
+carries out itself in the user's `Talk`. A component contributes commands of a kind through the one
+facet `CommandProvider<C>`, as a list of them - mostly made as it is built, `Vec<Arc<C>>` being
+one. No provider dispatches by a command's name: whoever runs a command finds the command itself.
+The channel's commands come from two places:
 
 *   `AppConfig::commands`, the global set - by default `/help` and the groups `participant`,
     `agent` and `channel`, a component each; an empty list switches them off (see

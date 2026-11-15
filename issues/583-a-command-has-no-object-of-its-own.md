@@ -137,3 +137,10 @@ runs that command, asking `ShowCommand` and `ExecuteCommand` of it, instead of l
 name again; `CommandSet::named` is left to an agent's actor, which a request reaches by the
 command's name. The executor's `find`, `execute`, `colliding` and `visible` are the kernel's alone
 (`pub(crate)`), so that no other crate hands `execute` a command `find` did not give.
+
+**2026-11-15** - Step 3 done: `TerminalCommand` is the trait of the terminal's commands, carried
+out in the user's `Talk`, each a type of its own in `caelumora-tui/src/commands/`, one file per
+group - `/approval approve` and `deny` one type, differing in the answer -, found in a
+`CommandSet`. Since no component contributes them, the set is made by `CommandSet::of`, which
+checks them as `new` checks those of components. `/help` lists the terminal's commands by name,
+as it lists the channel's, no longer `/exit` first.

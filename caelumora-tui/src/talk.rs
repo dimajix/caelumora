@@ -4,13 +4,13 @@
 
 use crate::asking::{Asked, Asking, Offered};
 use crate::channels::{Channels, Happened};
-use crate::commands::{beginning_with, terminal_help, TerminalCommand};
+use crate::commands::{beginning_with, commands, terminal_help, TerminalCommand};
 use crate::followed::Followed;
 use crate::printed::{ErrorKind, Printed};
 use crate::sessions::{listing, Opening, Sessions, SessionsError};
 use crate::under_way::UnderWay;
 use anyhow::Result;
-use caelumora_api::command::{check_arguments, CommandError};
+use caelumora_api::command::{check_arguments, CommandError, CommandSet};
 use caelumora_domain::approval::{ApprovalRequest, ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::question::{Question, QuestionRequest, Response};
@@ -84,6 +84,8 @@ pub(crate) struct Talk {
     /// The user's controller, which keeps their rules (`approve_from_now_on`), and their
     /// context.
     user: Arc<UserController>,
+    /// The commands the terminal carries out itself (`commands`).
+    commands: CommandSet<dyn TerminalCommand>,
 }
 
 impl Talk {
@@ -93,7 +95,8 @@ impl Talk {
     /// opens with (`Channels::opening`).
     ///
     /// # Errors
-    /// If the user takes part in no channel of the session.
+    /// If the user takes part in no channel of the session, or the terminal's commands cannot be
+    /// told apart (`commands`).
     pub(crate) async fn begin(
         session_loop: Arc<SessionLoop>,
         views: Views,
@@ -107,7 +110,8 @@ impl Talk {
         })?;
         let opening = channels.opening().await;
         let answered = HashSet::new();
-        let mut talk = Talk { channels, asked: None, answered, sessions, user };
+        let commands = commands()?;
+        let mut talk = Talk { channels, asked: None, answered, sessions, user, commands };
         talk.ask_next().await;
         Ok((talk, opening))
     }
@@ -251,41 +255,25 @@ impl Talk {
         }
         let parsed = parse_input(input);
         let terminal = match &parsed {
-            UserInput::Command(line) => TerminalCommand::find(line),
+            UserInput::Command(line) => {
+                self.commands.find(line).map(|(command, args)| (Arc::clone(command), args))
+            }
             UserInput::Message(_) => None,
         };
-        if let Some((terminal, args)) = terminal {
-            if let Err(e) = check_arguments(&terminal.command(), args) {
-                return Ok(Handled::Printed(vec![Printed::Error {
-                    kind: ErrorKind::Failed,
-                    message: e.to_string(),
-                }]));
-            }
-        }
         let chosen = self.chosen_by(input);
         let printed = match terminal {
-            Some((TerminalCommand::Exit, _)) => return Ok(Handled::Exit),
-            Some((TerminalCommand::ChannelSwitch, name)) => self.switch_channel(name).await,
-            Some((TerminalCommand::SessionNew, template)) => {
-                let template = (!template.is_empty()).then(|| template.to_string());
-                self.switch_session(&Opening::Start { template }).await
-            }
-            Some((TerminalCommand::SessionResume, id)) => {
-                let opening = Opening::Resume(id.to_string());
-                self.switch_session(&opening).await
-            }
-            Some((TerminalCommand::SessionList, _)) => self.listed().await,
-            Some((TerminalCommand::SessionDelete, id)) => {
-                match self.sessions.delete(id, self.channels.session_id()).await {
-                    Ok(id) => vec![Printed::Notice(format!("The session {id} is deleted"))],
-                    Err(e) => vec![error_printed(&e.into())],
+            Some((command, args)) => {
+                if let Err(e) = check_arguments(command.description(), args) {
+                    return Ok(Handled::Printed(vec![Printed::Error {
+                        kind: ErrorKind::Failed,
+                        message: e.to_string(),
+                    }]));
+                }
+                match command.execute(args, self).await {
+                    Handled::Printed(printed) => printed,
+                    Handled::Exit => return Ok(Handled::Exit),
                 }
             }
-            Some((TerminalCommand::QuestionDecline, id)) => self.decline_questions(id).await,
-            Some((TerminalCommand::QuestionAnswer, id)) => self.begin_answering(id),
-            Some((TerminalCommand::ApprovalApprove, id)) => self.answer_approval(id, true).await,
-            Some((TerminalCommand::ApprovalDeny, id)) => self.answer_approval(id, false).await,
-            Some((TerminalCommand::AgentRetry, _)) => self.retry().await,
             // While questions are asked, each message answers the next; a command of the channel
             // goes to it.
             None if matches!(self.shown(), Some(Asking::Question { .. }))
@@ -310,7 +298,7 @@ impl Talk {
 
     /// Talks in the channel named `name` from now on (`Channels::switch`), and answers what tells
     /// so; what was asked in the channel left is asked no more, where the switch is made.
-    async fn switch_channel(&mut self, name: &str) -> Vec<Printed> {
+    pub(crate) async fn switch_channel(&mut self, name: &str) -> Vec<Printed> {
         let left = self.channels.talked_in().map(Followed::channel_id);
         let printed = self.channels.switch(name).await;
         if self.channels.talked_in().map(Followed::channel_id) != left {
@@ -321,12 +309,21 @@ impl Talk {
 
     /// What tells of the sessions of the directory, the one spoken in last first, the one talked in
     /// marked as such.
-    async fn listed(&self) -> Vec<Printed> {
+    pub(crate) async fn listed(&self) -> Vec<Printed> {
         match self.sessions.list().await {
             Ok(listed) => {
                 let talked_in = self.channels.session_id();
                 vec![Printed::Plain(listing(&listed, Some(talked_in)).join("\n"))]
             }
+            Err(e) => vec![error_printed(&e.into())],
+        }
+    }
+
+    /// Deletes the session of the directory whose id begins with `id` (`Sessions::delete`) - not
+    /// the one talked in -, and answers what tells so.
+    pub(crate) async fn delete_session(&self, id: &str) -> Vec<Printed> {
+        match self.sessions.delete(id, self.channels.session_id()).await {
+            Ok(id) => vec![Printed::Notice(format!("The session {id} is deleted"))],
             Err(e) => vec![error_printed(&e.into())],
         }
     }
@@ -337,7 +334,7 @@ impl Talk {
     /// opens with. Where the session cannot be opened, or the user takes part in none of its
     /// channels, or it is the one talked in already, the talk stays where it is, and the user is
     /// told why.
-    async fn switch_session(&mut self, opening: &Opening) -> Vec<Printed> {
+    pub(crate) async fn switch_session(&mut self, opening: &Opening) -> Vec<Printed> {
         let left = self.channels.session_id();
         let (session, told) = match self.sessions.open(opening).await {
             Ok(opened) => opened,
@@ -370,7 +367,7 @@ impl Talk {
 
     /// Answers the approval `named` - `approved` or not (`approval_named`) -, and answers what the
     /// terminal prints of it.
-    async fn answer_approval(&mut self, named: &str, approved: bool) -> Vec<Printed> {
+    pub(crate) async fn answer_approval(&mut self, named: &str, approved: bool) -> Vec<Printed> {
         let approved = match self.approval_named(named) {
             Ok(request) => self.approve(&request, approved).await,
             Err(printed) => Err(printed),
@@ -440,7 +437,7 @@ impl Talk {
 
     /// Asks, in the channel talked in, for the answer under way, the turn given up or the last
     /// answer of an agent again (`Followed::retry`), and answers what the terminal prints of it.
-    async fn retry(&self) -> Vec<Printed> {
+    pub(crate) async fn retry(&self) -> Vec<Printed> {
         let (followed, actor) = match self.talking() {
             Ok(talking) => talking,
             Err(printed) => return vec![printed],
@@ -477,7 +474,7 @@ impl Talk {
 
     /// Declines the questions `id` names (`questions_named`) - without one, those asked -, and
     /// answers what the terminal prints of it; once declined, they are asked no more.
-    async fn decline_questions(&mut self, id: &str) -> Vec<Printed> {
+    pub(crate) async fn decline_questions(&mut self, id: &str) -> Vec<Printed> {
         let (request, actor) = match self.questions_named(id) {
             Ok(named) => named,
             Err(printed) => return vec![printed],
@@ -494,7 +491,7 @@ impl Talk {
     /// Asks the questions `id` names (`questions_named`) from now on - without one, those
     /// asked -, taken up where they were put aside, and answers what tells why not, where there
     /// are none.
-    fn begin_answering(&mut self, id: &str) -> Vec<Printed> {
+    pub(crate) fn begin_answering(&mut self, id: &str) -> Vec<Printed> {
         match self.questions_named(id) {
             Ok((request, _)) => {
                 let asked = matches!(
@@ -572,9 +569,9 @@ impl Talk {
     /// If a message cannot be sent into the channel.
     async fn send_line(&self, input: &UserInput) -> Result<Vec<Printed>> {
         let help = match input {
-            UserInput::Command(line) => {
-                CommandName::fixed(HELP_COMMAND_NAME).strip_from(line).and_then(terminal_help)
-            }
+            UserInput::Command(line) => CommandName::fixed(HELP_COMMAND_NAME)
+                .strip_from(line)
+                .and_then(|args| terminal_help(&self.commands, args)),
             UserInput::Message(_) => None,
         };
         let actor = match self.talking() {

@@ -2,7 +2,8 @@
 //! description (`Command`); the facet of a component that contributes commands (`CommandProvider`);
 //! the set they are found in (`CommandSet`); which arguments one takes (`check_arguments`, issue
 //! 574) and how one fails (`CommandError`). Each kind of command adds how it is carried out: a
-//! session's the kernel's `ChannelCommand`, an agent's the agents' `AgentCommand`.
+//! session's the kernel's `ChannelCommand`, an agent's the agents' `AgentCommand`, the terminal's
+//! its `TerminalCommand`.
 
 use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use caelumora_domain::command::CommandDescription;
@@ -54,7 +55,7 @@ pub fn check_arguments(command: &CommandDescription, args: &str) -> CommandResul
 
 /// A command that can be carried out (issue 583), of whichever kind: what every command says of
 /// itself, by which its set finds it. How it is carried out is its kind's - `ChannelCommand`,
-/// `AgentCommand` -, since what it is given to run with differs.
+/// `AgentCommand`, `TerminalCommand` -, since what it is given to run with differs.
 pub trait Command: Send + Sync + Debug {
     /// The command as users see it: its names, what it does, what it takes - held by the command.
     fn description(&self) -> &CommandDescription;
@@ -75,11 +76,12 @@ impl<C: ?Sized + Command> CommandProvider<C> for Vec<Arc<C>> {
 }
 
 /// The commands of whoever runs them - a session's, from the global ones and the session's own; an
-/// agent's (`caelumora_agents::command`, issue 370) -, each found by the line it
-/// begins (issue 560), no two that a line could not tell apart. Generic over the kind of command,
-/// since what a command is given to run with is its kind's; finding one and refusing two that
-/// collide are the same for every kind. Who may see and run one is asked by whoever runs it: the
-/// `CommandExecutor` for the channel's, the channel's door for an agent's (issue 516).
+/// agent's (`caelumora_agents::command`, issue 370); the terminal's, of no component -, each found
+/// by the line it begins (issue 560), no two that a line could not tell apart. Generic over the
+/// kind of command, since what a command is given to run with is its kind's; finding one and
+/// refusing two that collide are the same for every kind. Who may see and run one is asked by
+/// whoever runs it: the `CommandExecutor` for the channel's, the channel's door for an agent's
+/// (issue 516).
 #[derive(Debug)]
 pub struct CommandSet<C: ?Sized> {
     commands: Vec<Arc<C>>,
@@ -94,17 +96,35 @@ impl<C: ?Sized + Command> CommandSet<C> {
     /// two of them collide (`CommandDescription::collides_with`): that is a mistake in the
     /// configuration, and resolving it by order or by the longer name would silently hide one.
     pub fn new(providers: Vec<ComponentImpl<dyn CommandProvider<C>>>) -> ComponentResult<Self> {
-        // Each with the component it came from, to name it should another collide with it.
+        Self::checked(
+            providers
+                .into_iter()
+                .map(|provider| (format!("component '{}'", provider.id), provider.commands()))
+                .collect(),
+        )
+    }
+
+    /// The commands `commands`, which no component contributes - the terminal's -, named
+    /// `origin` should they not be told apart.
+    ///
+    /// # Errors
+    /// As `new`.
+    pub fn of(origin: &str, commands: Vec<Arc<C>>) -> ComponentResult<Self> {
+        Self::checked(vec![(origin.to_string(), commands)])
+    }
+
+    /// The commands of `origins`, each with what it came from, to name it should one of them not
+    /// be a command name or another collide with it (`new`).
+    fn checked(origins: Vec<(String, Vec<Arc<C>>)>) -> ComponentResult<Self> {
         let mut found: Vec<(Arc<C>, String)> = Vec::new();
-        for provider in providers {
-            for command in provider.commands() {
+        for (origin, commands) in origins {
+            for command in commands {
                 let described = command.description();
                 if let Some(name) =
                     described.names().find(|name| CommandName::new(name.as_str()).is_err())
                 {
                     return Err(ComponentError::InvalidConfig(format!(
-                        "component '{}' provides a command named '{name}', which is no command name",
-                        provider.id
+                        "{origin} provides a command named '{name}', which is no command name"
                     )));
                 }
                 let names: Vec<&CommandName> = described.names().collect();
@@ -112,24 +132,22 @@ impl<C: ?Sized + Command> CommandSet<C> {
                     names[i + 1..].iter().any(|other| name.begins(other) || other.begins(name))
                 }) {
                     return Err(ComponentError::InvalidConfig(format!(
-                        "command /{} of component '{}' has names a line cannot tell apart: '{name}' \
-                         and another of its names begin one another",
-                        described.name, provider.id
+                        "command /{} of {origin} has names a line cannot tell apart: '{name}' and \
+                         another of its names begin one another",
+                        described.name
                     )));
                 }
-                if let Some((existing, component)) =
+                if let Some((existing, other)) =
                     found.iter().find(|(c, _)| c.description().collides_with(described))
                 {
                     return Err(ComponentError::InvalidConfig(format!(
-                        "command /{} of component '{}' and command /{} of component '{}' cannot \
-                         be told apart: a name of one begins a name of the other",
+                        "command /{} of {origin} and command /{} of {other} cannot be told apart: \
+                         a name of one begins a name of the other",
                         described.name,
-                        provider.id,
-                        existing.description().name,
-                        component
+                        existing.description().name
                     )));
                 }
-                found.push((command, provider.id.clone()));
+                found.push((command, origin.clone()));
             }
         }
         Ok(Self { commands: found.into_iter().map(|(command, _)| command).collect() })
@@ -294,6 +312,22 @@ mod tests {
         let commands = set(vec![provider("help", vec![command("help", &[])])]);
         assert!(commands.colliding(&command("help me", &[])).is_some());
         assert!(commands.colliding(&command("helper", &[])).is_none());
+    }
+
+    /// Commands no component contributes are checked as those of components are, named by
+    /// where they came from.
+    #[test]
+    fn commands_of_no_component_are_checked_alike() {
+        let of = |commands: Vec<CommandDescription>| {
+            let commands =
+                commands.into_iter().map(|c| Arc::new(Described(c)) as Arc<dyn Command>).collect();
+            CommandSet::of("the terminal", commands)
+        };
+        let commands = of(vec![command("exit", &["quit"]), command("help", &[])]).expect("apart");
+        assert!(commands.find("quit").is_some(), "by an alias");
+        let error = of(vec![command("exit", &["quit"]), command("quit now", &[])])
+            .expect_err("one would hide the other");
+        assert!(error.to_string().contains("of the terminal"), "{error}");
     }
 
     #[test]
