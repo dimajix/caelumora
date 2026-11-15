@@ -1,6 +1,6 @@
 # 574 — An agent's notes and memory cannot be read by a command
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -60,7 +60,8 @@ agent, as its owner's.
     alone as where an agent's owner sees its private notes. After step 3 besides: a heading of
     MEMORY.md is not bold; the kernel drops why the session of a work could not be read for its
     readers and writers (`extension_of`) without logging it; and seven commands check alike that
-    they were given no arguments, which `caelumora_api::command::no_arguments` does for them all.
+    they were given no arguments, which whoever runs a command checks once instead
+    (`caelumora_api::command::check_arguments`).
 
 What a person reads by such a command is not recorded as knowledge: it is part of no turn's
 context.
@@ -91,3 +92,10 @@ one function gives both (`recalled`).
 **2026-11-15** - Step 3 done: `/memory @agent`, a command of the agent that `agent_memory` carries
 out for its owners alone (`component/command.rs` of `caelumora-memory`), shows what its
 `MemoryReader` gives the work - what may be recalled in the channel -, as the prompt part does.
+
+**2026-11-15** - Step 4 done. Decided with the maintainer beside: that a command takes no arguments
+is checked not by each command, but by whoever runs it, from what it says of itself - a command
+naming no parameters (`Command::usage`) takes none (`caelumora_api::command::check_arguments`), as
+the terminal already checked its own -, so that `/skills` also refuses what it was given; a
+`no_arguments` called by every command was weighed first. `extension_of` logs why the session of a
+work could not be read.

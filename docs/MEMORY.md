@@ -118,7 +118,7 @@ skills.
     changes, which the plugin commits when the turn completes (see
     [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Both are bound to the
     work's session as it reads it; a turn that reaches none neither recalls nor remembers.
-*   *Where it is recalled.** Every entry carries the label of the turn that wrote it
+*   **Where it is recalled.** Every entry carries the label of the turn that wrote it
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)) and is recalled only where that
     may be read. The plugin decides it as it makes the reader, in the context of the work - the
     agent's, with its owner's rights - once per channel the entries come from; the agent side is

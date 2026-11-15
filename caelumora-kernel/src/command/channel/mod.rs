@@ -57,7 +57,7 @@ impl ChannelCommandProvider for ChannelGroupComponent {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         match name.as_str() {
-            list::LIST_COMMAND_NAME => list::execute(args, context).await,
+            list::LIST_COMMAND_NAME => list::execute(context).await,
             describe::DESCRIBE_COMMAND_NAME => describe::execute(args, context).await,
             notes::NOTES_COMMAND_NAME => notes::execute(args, context).await,
             create::CREATE_COMMAND_NAME => create::execute(args, context).await,

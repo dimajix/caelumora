@@ -72,6 +72,10 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
     let error = hidden.user_actor(alice.id).unwrap().execute_command("help agent").await;
     let error = error.expect_err("a hidden group");
     assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
+    // Given arguments it takes none of, a hidden command is unknown still (issue 574).
+    let error = hidden.user_actor(alice.id).unwrap().execute_command("agent list all").await;
+    let error = error.expect_err("hidden");
+    assert!(matches!(as_command_error(&error), CommandError::Unknown(_)), "{error}");
 
     let quiet = time::timeout(Duration::from_millis(200), events.recv()).await;
     assert!(quiet.is_err(), "a private answer is not sent into the channel: {quiet:?}");

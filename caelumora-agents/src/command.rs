@@ -18,7 +18,8 @@ use caelumora_domain::value::command_name::CommandName;
 #[async_trait]
 pub trait AgentCommandProvider: ProvidesCommands {
     /// Carries out the command `name` - by its name, whichever it was asked for by - with `args`,
-    /// the rest of the input line after it and the agent's handle, which the command parses itself.
+    /// the rest of the input line after it and the agent's handle, which the command parses itself;
+    /// a command that names no parameters is never given any (`check_arguments`).
     ///
     /// # Errors
     /// As `ChannelCommandProvider::execute`.

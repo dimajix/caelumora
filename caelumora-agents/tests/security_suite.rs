@@ -1008,6 +1008,17 @@ async fn an_agents_private_notes_are_shown_by_command_to_its_owner_alone() {
     let session = world.manager.open(&World::as_user(world.alice), session.id()).await.unwrap();
     let alice = session.channels()[0].user_actor(world.alice).unwrap();
     let mut hers = alice.watch();
+    // It takes no arguments, which the agent refuses before it begins (`check_arguments`).
+    alice.execute_command("private-notes @helper now").await.expect("hers to ask for");
+    let refused = shown(&mut hers, "CommandFailed").await;
+    assert!(
+        matches!(
+            refused,
+            ActorEvent::CommandFailed { ref reason, turn_id: None, .. }
+                if reason.contains("it takes no arguments")
+        ),
+        "refused, never begun: {refused:?}"
+    );
     alice.execute_command("private-notes @helper").await.expect("hers, as its owner");
     let answer = shown(&mut hers, "CommandExecuted").await;
     assert!(
@@ -4109,7 +4120,10 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
 
     let refused = bob.execute_command("seal @helper").await.expect_err("not his");
     assert!(
-        matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "seal"),
+        matches!(
+            refused.downcast_ref::<CommandError>(),
+            Some(CommandError::Unknown(name)) if name == "seal"
+        ),
         "unknown to him: {refused}"
     );
     let mut hers = main.user_actor(world.alice).unwrap().watch();
@@ -4118,9 +4132,10 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
         .execute_command("seal @helper")
         .await
         .expect("hers, as its owner");
-    assert!(
-        matches!(shown(&mut hers, "CommandExecuted").await, ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done")
-    );
+    assert!(matches!(
+        shown(&mut hers, "CommandExecuted").await,
+        ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"
+    ));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

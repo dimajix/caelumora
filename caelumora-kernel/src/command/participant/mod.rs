@@ -36,7 +36,7 @@ impl ChannelCommandProvider for ParticipantGroupComponent {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         match name.as_str() {
-            list::LIST_COMMAND_NAME => list::execute(args, context).await,
+            list::LIST_COMMAND_NAME => list::execute(context).await,
             add::ADD_COMMAND_NAME => add::execute(args, context).await,
             remove::REMOVE_COMMAND_NAME => remove::execute(args, context).await,
             nudge::NUDGE_COMMAND_NAME => nudge::execute(args, context).await,

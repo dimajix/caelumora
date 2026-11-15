@@ -2,7 +2,7 @@
 
 use crate::command::CommandContext;
 use caelumora_api::actor::Actor;
-use caelumora_api::command::{CommandError, CommandResult};
+use caelumora_api::command::CommandResult;
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
 
@@ -23,16 +23,7 @@ pub(super) fn command() -> Command {
 /// (`SessionView::channels`), in the order of the session, a line each, with whether it is the one
 /// the command was issued in, whether the issuer takes part, and its summary. Only the issuer is
 /// answered.
-pub(super) async fn execute(
-    args: &str,
-    context: &CommandContext<'_>,
-) -> CommandResult<CommandOutput> {
-    if !args.trim().is_empty() {
-        return Err(CommandError::InvalidArguments {
-            command: LIST_COMMAND_NAME.to_string(),
-            reason: "it takes no arguments".to_string(),
-        });
-    }
+pub(super) async fn execute(context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
     let session = context.session_view(LIST_COMMAND_NAME).await?;
     let issuer = context.issuer.id();
     let mut text = String::from("The channels of this session:\n\n");

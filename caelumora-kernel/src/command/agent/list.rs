@@ -3,7 +3,7 @@
 use super::session_agents;
 use crate::command::{command_error, CommandContext};
 use anyhow::Error;
-use caelumora_api::command::{CommandError, CommandResult};
+use caelumora_api::command::CommandResult;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
@@ -25,16 +25,7 @@ pub(super) fn command() -> Command {
 /// Runs `/agent list`: the agents of the session the issuer may read (`SessionView::agents`), a
 /// line each, with the handle, the personality, and whether it takes part in this channel, in
 /// another of the session or in none. Only the issuer is answered.
-pub(super) async fn execute(
-    args: &str,
-    context: &CommandContext<'_>,
-) -> CommandResult<CommandOutput> {
-    if !args.trim().is_empty() {
-        return Err(CommandError::InvalidArguments {
-            command: LIST_COMMAND_NAME.to_string(),
-            reason: "it takes no arguments".to_string(),
-        });
-    }
+pub(super) async fn execute(context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
     let failed = |e: Error| command_error(LIST_COMMAND_NAME, &e);
     let (session, agents) = session_agents(LIST_COMMAND_NAME, context).await?;
     if agents.is_empty() {

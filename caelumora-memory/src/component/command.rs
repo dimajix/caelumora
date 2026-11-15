@@ -35,17 +35,11 @@ impl AgentCommandProvider for AgentMemoryComponent {
     async fn execute(
         &self,
         name: &CommandName,
-        args: &str,
+        _args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
         if name.as_str() != MEMORY_COMMAND_NAME {
             return Err(CommandError::Unknown(name.to_string()));
-        }
-        if !args.trim().is_empty() {
-            return Err(CommandError::InvalidArguments {
-                command: name.to_string(),
-                reason: "it takes no arguments".to_string(),
-            });
         }
         // None where the work reaches no session or its memory cannot be read.
         let memory = turn.situation().reader::<dyn MemoryReader>().await.ok_or_else(|| {

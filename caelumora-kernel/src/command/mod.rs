@@ -26,7 +26,9 @@ use crate::session::SessionLoop;
 use crate::view::{ChannelView, ParticipantView, SessionView, Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
-use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
+use caelumora_api::command::{
+    check_arguments, CommandError, CommandResult, CommandSet, ProvidesCommands,
+};
 use caelumora_api::component::{ComponentImpl, ComponentResult};
 use caelumora_domain::command::{Command, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
@@ -128,7 +130,8 @@ impl CommandContext<'_> {
 #[async_trait]
 pub trait ChannelCommandProvider: ProvidesCommands {
     /// Runs the command `name` - by its name, whichever it was issued by - with `args`, the rest of
-    /// the input line after it, which the command parses itself.
+    /// the input line after it, which the command parses itself; a command that names no
+    /// parameters is never given any (`check_arguments`).
     ///
     /// # Errors
     /// `CommandError::InvalidArguments` for arguments it cannot use,
@@ -210,7 +213,8 @@ impl CommandExecutor {
 
     /// Runs the command `name` with `args` for `context.issuer`: `Unknown` if there is no such
     /// command or the issuer may not see it, since one they may not see is unknown to them, not
-    /// refused; `Forbidden` if they may see but not run it.
+    /// refused; `Forbidden` if they may see but not run it; `InvalidArguments` if it takes no
+    /// arguments and was given some (`check_arguments`).
     ///
     /// # Errors
     /// As above; otherwise whatever the command reports.
@@ -235,6 +239,7 @@ impl CommandExecutor {
                 |refused| CommandError::Forbidden { name: name.to_string(), refused },
             )
             .await?;
+        check_arguments(command, args)?;
         entry.provider().execute(name, args, context).await
     }
 }

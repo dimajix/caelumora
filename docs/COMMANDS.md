@@ -43,9 +43,10 @@ argument, else the one whose id begins so (`beginning_with`, issue
 as the channel's are, with the domain's `Command`, and a line is tried against them before it goes
 to the channel: so no name or short form of them may begin, or be the beginning of, one of the
 channel's - which a test holds for the commands a session has by default, not for those a
-configuration, a template or an agent adds. One that takes no arguments refuses them. `/help` lists
-them after the channel's, and tells of one of them, or of a group of them, where the channel knows
-nothing of what is asked or no channel is talked in. `/exit` (`/quit`) belongs to no group, as
+configuration, a template or an agent adds. One that takes no arguments refuses them, by the rule
+of every command ([below](#commands-are-components)). `/help` lists them after the channel's, and
+tells of one of them, or of a group of them, where the channel knows nothing of what is asked or no
+channel is talked in. `/exit` (`/quit`) belongs to no group, as
 `/help` does: ending the program acts on no entity of a channel.
 
 ### Names
@@ -90,8 +91,11 @@ the command a line begins and refusing two that collide are the same whoever run
 an agent's actor keeps its commands in one too. What a command is given to run with - the session,
 or an agent's turn - and who asks whether it may be seen and run are the facet's: the channel's
 commands the executor itself (`ShowCommand`, `ExecuteCommand`), an agent's the channel's door as it
-admits the request (`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). How a command runs is the
-command's business, and there is nothing about running commands to try out.
+admits the request (`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). A command that names no
+parameters (`Command::usage`) takes no arguments: whoever runs it - the executor once it may be
+run, an agent's actor before it begins, the terminal - refuses them (`check_arguments`), so that
+no command checks it itself. How a command runs is the command's business, and there is nothing
+about running commands to try out.
 
 ### Seeing and running
 
@@ -214,8 +218,8 @@ external agent alike.
     contexts continued in the agent's name - its owner's rights, the issuer as initiator
     ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). The agent asks nothing: what reached
     it was admitted. Carried out, the turn is taken over and stored; not carried out - the command
-    failed, or the agent has none of that name -, it is dropped as if it had never begun, and the
-    agent answers `CommandFailed` to the issuer.
+    failed, its arguments were refused, or the agent has none of that name -, it is dropped as if it
+    had never begun, and the agent answers `CommandFailed` to the issuer.
 *   **Begun.** The agent tells the issuer alone that it began, whatever its answer's visibility:
     for `/compact`, the issuer sees it begin and everybody sees it done.
 *   **Answered.** Carried out, the agent answers `CommandExecuted` - to the issuer alone if the

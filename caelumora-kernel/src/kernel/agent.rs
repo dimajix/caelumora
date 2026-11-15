@@ -38,6 +38,7 @@ use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext}
 use chrono::Utc;
 use std::fmt::Debug;
 use std::sync::Arc;
+use tracing::warn;
 
 /// The `ActorRuntime` of an agent in its channel (issue 516): its participant's runtime, which
 /// builds the context it acts in, with the session's controller of the agent and the instance's of
@@ -84,8 +85,9 @@ impl AgentRuntime {
     /// the agent's work for `initiator` at `classification` (`KernelBuilder::extend_readers`,
     /// `extend_writers`): the service, acting as `session` reads. Its session is reached as
     /// `session` reaches it - asking `GetSession` - and not handed out. `None` if none is bound as
-    /// that face, if it is not offered there, if the agent may not read its session, or while the
-    /// channel is not attached to it.
+    /// that face, if it is not offered there, if the agent may not read its session or reading it
+    /// failed - either logged, since the work goes on without the service -, or while the channel
+    /// is not attached to it.
     async fn extension_of(
         &self,
         face: Face,
@@ -93,7 +95,16 @@ impl AgentRuntime {
         classification: Classification,
         key: TypeKey,
     ) -> Option<ErasedArc> {
-        let session = self.session_of_work(initiator, classification).await.ok()??;
+        let session = match self.session_of_work(initiator, classification).await {
+            Ok(session) => session?,
+            Err(e) => {
+                warn!(
+                    actor = %self.participant.actor,
+                    "The session of a work could not be read for its services: {e}"
+                );
+                return None;
+            }
+        };
         self.kernel.extensions().made(face, key, session).await
     }
 

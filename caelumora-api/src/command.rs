@@ -1,7 +1,8 @@
-//! What an agent's commands are made of (issues 28, 269): the commands a component provides
-//! (`ProvidesCommands`), the set they are found in (`CommandSet`), and how one fails
-//! (`CommandError`); how a session's commands are run is the kernel's
-//! (`caelumora_kernel::command`).
+//! What commands are made of, whoever runs them (issues 28, 269): the commands a component
+//! provides (`ProvidesCommands`), the set they are found in (`CommandSet`), which arguments one
+//! takes (`check_arguments`, issue 574) and how one fails (`CommandError`); how a session's
+//! commands are run is the kernel's (`caelumora_kernel::command`), how an agent's are the agents'
+//! (`caelumora_agents::command`).
 
 use crate::component::{ComponentError, ComponentImpl, ComponentResult};
 use caelumora_domain::command::Command;
@@ -33,6 +34,22 @@ pub enum CommandError {
 }
 
 pub type CommandResult<T> = Result<T, CommandError>;
+
+/// Whether `args` may be given to `command` (issue 574): a command that names no parameters
+/// (`Command::usage`) takes none. Whoever runs a command - the `CommandExecutor`, an agent's actor,
+/// the terminal - checks it once the command may be run, so that no command checks it itself.
+///
+/// # Errors
+/// `CommandError::InvalidArguments` if `command` takes no arguments and `args` holds some.
+pub fn check_arguments(command: &Command, args: &str) -> CommandResult<()> {
+    if command.usage.is_none() && !args.trim().is_empty() {
+        return Err(CommandError::InvalidArguments {
+            command: command.name.to_string(),
+            reason: "it takes no arguments".to_string(),
+        });
+    }
+    Ok(())
+}
 
 /// What every facet contributing commands says of them, whoever runs them:
 /// the part of a provider the `CommandExecutor` needs to find a command.
@@ -191,6 +208,25 @@ mod tests {
         providers: Vec<ComponentImpl<dyn ProvidesCommands>>,
     ) -> CommandSet<dyn ProvidesCommands> {
         CommandSet::new(providers).expect("no two collide")
+    }
+
+    /// A command that names no parameters takes no arguments (issue 574); one that names them
+    /// takes what it is given, and checks it itself.
+    #[test]
+    fn a_command_without_parameters_takes_no_arguments() {
+        let list = command("participant list", &[]);
+        assert!(check_arguments(&list, "").is_ok());
+        assert!(check_arguments(&list, "  ").is_ok(), "whitespace is none");
+        assert!(
+            matches!(
+                check_arguments(&list, "everyone"),
+                Err(CommandError::InvalidArguments { ref command, ref reason })
+                    if command == "participant list" && reason == "it takes no arguments"
+            ),
+            "refused"
+        );
+        let add = Command { usage: Some("<name>".to_string()), ..command("participant add", &[]) };
+        assert!(check_arguments(&add, "Bob Smith").is_ok(), "its own to check");
     }
 
     #[test]

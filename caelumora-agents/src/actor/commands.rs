@@ -4,7 +4,7 @@
 //! the request (issue 516). Its body's (`AgentBody`).
 
 use super::body::AgentBody;
-use caelumora_api::command::CommandError;
+use caelumora_api::command::{check_arguments, CommandError};
 use caelumora_api::transport::EventSender;
 use caelumora_domain::actor::{ActorEvent, Envelope};
 use caelumora_domain::agent::AgentChannelState;
@@ -53,8 +53,14 @@ impl AgentBody {
             return;
         };
         let mut started = false;
-        let carried_out = match self.commands.entry(command) {
-            Some(entry) => {
+        // Its arguments are checked before it begins, as the session's commands are.
+        let entry = self
+            .commands
+            .entry(command)
+            .ok_or_else(|| CommandError::Unknown(command.clone()))
+            .and_then(|entry| check_arguments(entry.command(), args).map(|()| entry));
+        let carried_out = match entry {
+            Ok(entry) => {
                 let start = ActorEvent::CommandStarted {
                     command: command.clone(),
                     args: args.clone(),
@@ -67,7 +73,7 @@ impl AgentBody {
                 started = true;
                 entry.provider().execute(&entry.command().name, args, &mut turn).await
             }
-            None => Err(CommandError::Unknown(command.clone())),
+            Err(e) => Err(e),
         };
         let event = match carried_out {
             Ok(answer) => {

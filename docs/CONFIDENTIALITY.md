@@ -477,7 +477,9 @@ writes is classified at least as everything it has seen: everything it wrote may
 all of that may, and no wider.
 
 "Private" means private from other agents and other users, not from the agent's owner: the owner
-sees private notes in the context panel, which is theirs alone.
+sees private notes and memory in the context panel, which is theirs alone, the private notes in
+the private notes panel too, and both by the commands `/private-notes` and `/memory`, answered to
+them alone (see [MEMORY.md](MEMORY.md)).
 
 ## Who applies the rules
 

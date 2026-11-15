@@ -670,13 +670,12 @@ mod tests {
         assert!(sessions.remembered(agent).await.is_empty());
     }
 
-    /// What `/memory` with `args` answers in a turn of `agent` in channel `at`.
+    /// What `/memory` answers in a turn of `agent` in channel `at`.
     async fn shown(
         memory: &Remembering,
         sessions: &Sessions,
         agent: AgentId,
         at: At,
-        args: &str,
     ) -> CommandResult<CommandOutput> {
         let mut state = AgentChannelState::default();
         memory.begin(&mut state, &at);
@@ -686,7 +685,7 @@ mod tests {
         )
         .expect("a turn was begun");
         let command: &dyn AgentCommandProvider = &memory.component;
-        command.execute(&CommandName::fixed(command::MEMORY_COMMAND_NAME), args, &mut turn).await
+        command.execute(&CommandName::fixed(command::MEMORY_COMMAND_NAME), "", &mut turn).await
     }
 
     /// `/memory` (issue 574) shows what the prompt part shows the model: what may be recalled
@@ -708,21 +707,19 @@ mod tests {
         remember(&memory, &sessions, agent, team.clone(), "Kaya likes tea.").await;
         remember(&memory, &sessions, agent, team.clone(), "Bob likes coffee.").await;
 
-        let answer = shown(&memory, &sessions, agent, team.clone(), "").await.expect("shown");
+        let answer = shown(&memory, &sessions, agent, team).await.expect("shown");
         assert_eq!(answer.visibility, CommandVisibility::Private, "to the issuer alone");
         assert_eq!(
             answer.text,
             "What agent recalls of its memory here:\n- #1 Kaya likes tea.\n- #2 Bob likes coffee.",
             "each entry with its number"
         );
-        let answer = shown(&memory, &sessions, agent, public, "").await.expect("shown");
+        let answer = shown(&memory, &sessions, agent, public).await.expect("shown");
         assert!(
             answer.text.ends_with("recalls nothing of its memory here."),
             "a public channel may not read an internal one: {}",
             answer.text
         );
-        let refused = shown(&memory, &sessions, agent, team, "all").await;
-        assert!(matches!(refused, Err(CommandError::InvalidArguments { .. })), "{refused:?}");
     }
 
     #[tokio::test]

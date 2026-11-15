@@ -294,17 +294,11 @@ impl AgentCommandProvider for PrivateNotesComponent {
     async fn execute(
         &self,
         name: &CommandName,
-        args: &str,
+        _args: &str,
         turn: &mut Turn<'_>,
     ) -> CommandResult<CommandOutput> {
         if name.as_str() != PRIVATE_NOTES_COMMAND_NAME {
             return Err(CommandError::Unknown(name.to_string()));
-        }
-        if !args.trim().is_empty() {
-            return Err(CommandError::InvalidArguments {
-                command: name.to_string(),
-                reason: "it takes no arguments".to_string(),
-            });
         }
         let (own, elsewhere) = recalled(&turn.situation()).await.map_err(|e| {
             warn!("/{} could not read the private notes: {}", name, e);
@@ -358,10 +352,9 @@ fn listed(agent: &str, own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> Str
     format!("The private notes {agent} recalls here:\n{}", text.trim_end())
 }
 
-/// The prompt part of `prompts` for the private notes of this channel
-/// (`own`) and of others, channels without notes left out; empty if there
-/// are none. Notes of other channels cannot be changed here, so they go
-/// unnumbered (issue 60).
+/// The prompt part of `prompts` for the private notes of this channel (`own`) and of others, which
+/// come without channels holding none (`SessionReader::own_private_notes`); empty if there are
+/// none. Notes of other channels cannot be changed here, so they go unnumbered (issue 60).
 fn render(
     prompts: &PromptTexts,
     own: &[Note],
@@ -370,7 +363,6 @@ fn render(
     let own: Vec<_> =
         own.iter().map(|n| context! { id => n.id.to_string(), text => n.text }).collect();
     let elsewhere: Vec<_> = elsewhere.iter()
-        .filter(|c| !c.notes.is_empty())
         .map(|c| context! { name => c.name, notes => c.notes.iter().map(|n| n.text.as_str()).collect::<Vec<_>>() })
         .collect();
     if own.is_empty() && elsewhere.is_empty() {
@@ -479,8 +471,8 @@ mod tests {
         );
     }
 
-    /// The agent carries out `/private-notes` from its state as stored, without arguments, and
-    /// answers the issuer alone.
+    /// The agent carries out `/private-notes` from its state as stored, and answers the issuer
+    /// alone.
     #[tokio::test]
     async fn private_notes_are_shown_from_the_agents_state_to_the_issuer_alone() {
         let mut state = AgentChannelState::default();
@@ -502,8 +494,6 @@ mod tests {
         let answer = component.execute(&name, "", &mut turn).await.expect("carried out");
         assert_eq!(answer.visibility, CommandVisibility::Private, "to the issuer alone");
         assert!(answer.text.ends_with("In this channel:\n- #1 secret"), "{}", answer.text);
-        let refused = component.execute(&name, "everything", &mut turn).await;
-        assert!(matches!(refused, Err(CommandError::InvalidArguments { .. })), "{refused:?}");
     }
 
     #[tokio::test]
