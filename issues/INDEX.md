@@ -444,6 +444,7 @@ issues are kept is described in [README.md](README.md); those open or in progres
 | [575](575-an-agent-is-not-told-the-names-of-its-session-and-channel.md) | done | The prompt part `channel_briefing` tells an agent what its session and channel are for - their summaries and briefings - but not what they are called, and no other prompt part names them, so an agent cannot refer to the channel it talks in by its name, nor tell it apart from the others of its session. |
 | [577](577-an-agent-is-not-told-where-it-runs.md) | open | No prompt part tells an agent the ids of its session and channel, nor - in the terminal program - where the program writes its log, so an agent asked to look into what went wrong cannot search the log for its own session with the terminal it is given. |
 | [581](581-the-notes-of-an-agent-that-left-fall-off-the-board.md) | open | What is noted in a channel is read from the agents taking part in it alone, so once an agent leaves or is removed, its notes vanish from the channel - from the other agents' prompts, `read_notes`, the web UI and `/channel notes` - though its state, and with it the notes, is kept; nothing says whether that is meant. |
+| [582](582-a-soul-the-agent-writes-itself.md) | open | An agent is what its personality makes it, word for word, so it cannot develop a character, a manner or values of its own over time, and what it learns about itself is either lost or mixed into its memory of facts. |
 
 ## Maintenance
 
