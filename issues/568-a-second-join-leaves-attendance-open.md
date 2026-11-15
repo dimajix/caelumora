@@ -107,3 +107,10 @@ may not -, and so how far what is shown reaches in practice.
   `LastMessages { count: 0 }` is no case of its own any more: no message granted. Shares recorded
   so from the history's start stay in the histories, and the ranges they began in the stores,
   until the stored histories are deleted.
+- **2026-11-15** — A finding of the review, fixed on the same branch as the maintainer asked:
+  `HistoryAccess::LastDays` subtracted its days from now with chrono's operator, which panics where
+  the result lies before any time it can hold, and the count comes from a client unchecked. A
+  client granting more than about 96 million days, up to the four billion it may send, thus made
+  the request's task panic as the participant was taken in. The start of the span is now computed
+  in one place (`HistoryAccess::since`), checked; a grant reaching further back than any time there
+  can be grants every message.

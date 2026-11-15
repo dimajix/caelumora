@@ -32,10 +32,8 @@ impl HistoryAccess {
         match *self {
             HistoryAccess::All | HistoryAccess::None => true,
             HistoryAccess::LastMessages { count } => newest.len() >= count as usize,
-            HistoryAccess::LastDays { count } => {
-                let since = now - Duration::days(i64::from(count));
-                newest.last().is_some_and(|m| m.timestamp < since)
-            }
+            HistoryAccess::LastDays { count } => Self::since(count, now)
+                .is_some_and(|since| newest.last().is_some_and(|m| m.timestamp < since)),
         }
     }
 
@@ -54,10 +52,16 @@ impl HistoryAccess {
             HistoryAccess::None => HistoryStart::Join,
             HistoryAccess::LastMessages { count } => from(count as usize),
             HistoryAccess::LastDays { count } => {
-                let since = now - Duration::days(i64::from(count));
-                from(newest.iter().take_while(|m| m.timestamp >= since).count())
+                let since = Self::since(count, now);
+                from(newest.iter().take_while(|m| since.is_none_or(|t| m.timestamp >= t)).count())
             }
         }
+    }
+
+    /// When the last `days` days before `now` began; `None` if that lies before any time there can
+    /// be - a grant reaching so far back reaches every message.
+    fn since(days: u32, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        now.checked_sub_signed(Duration::days(i64::from(days)))
     }
 }
 
@@ -172,11 +176,19 @@ mod tests {
         // grants, not past it to the joins and other events before.
         let newest: Vec<Message> = history.iter().rev().cloned().collect();
         let oldest = HistoryStart::From(history[0].id);
-        for more in [HistoryAccess::LastMessages { count: 9 }, HistoryAccess::LastDays { count: 9 }]
-        {
+        for more in [
+            HistoryAccess::LastMessages { count: 9 },
+            HistoryAccess::LastDays { count: 9 },
+            HistoryAccess::LastDays { count: u32::MAX },
+        ] {
             assert_eq!(more.start_in(&newest, now), oldest, "{more:?}: from the oldest message");
             assert_eq!(more.start_in(&[], now), HistoryStart::Join, "{more:?}: none to grant");
         }
+        assert_eq!(
+            granted(HistoryAccess::LastDays { count: u32::MAX }, &history, now),
+            ids(&history),
+            "days reaching further back than any time there can be: every message, read to the end"
+        );
         assert!(
             HistoryAccess::LastMessages { count: 2 }.read_enough(&newest[..2], now),
             "as many read as are granted"
