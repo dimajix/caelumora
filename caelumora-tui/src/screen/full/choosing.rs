@@ -1,8 +1,8 @@
 //! What is asked of the user in the full-screen terminal, as a choice above the line typed: the
-//! choice the cursor stands on, those checked, and the keys that move, check and choose (issue
-//! 571).
+//! choice the cursor stands on, those checked, and the keys and clicks that move, check and choose
+//! (issues 571, 576).
 
-use super::Typed;
+use super::{wrapped_rows, Typed};
 use crate::asking::{Asked, Asking};
 use crate::screen::words::{offered_words, what_is_asked};
 use crossterm::event::{KeyCode, KeyEvent};
@@ -11,7 +11,8 @@ use ratatui::text::Line;
 use std::collections::BTreeSet;
 
 /// What is asked, as it is chosen among: arrows move between its choices, a digit or Enter
-/// chooses, Space checks where several may be chosen; Esc puts it aside, and takes it up again.
+/// chooses, Space checks where several may be chosen, a click on a choice as its digit does; Esc
+/// puts it aside, and takes it up again.
 #[derive(Debug)]
 pub(super) struct Choosing {
     /// What is asked, shown or put aside.
@@ -22,14 +23,15 @@ pub(super) struct Choosing {
     checked: BTreeSet<usize>,
 }
 
-/// What a key came to as it was chosen with (`Choosing::take_key`).
+/// What a key or a click came to as it was chosen with (`Choosing::take_key`,
+/// `Choosing::take_click`).
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Taken {
-    /// The key is none of the choice's: the line typed takes it.
+    /// The key or the click is none of the choice's: the line typed takes the key.
     Passed,
-    /// The key moved or checked.
+    /// The key or the click moved or checked.
     Kept,
-    /// The key chose, or put what is asked aside, or took it up again.
+    /// The key or the click chose, or the key put what is asked aside, or took it up again.
     Typed(Typed),
 }
 
@@ -80,14 +82,7 @@ impl Choosing {
                 Taken::Kept
             }
             KeyCode::Char(digit) => match digit.to_digit(10).map(|d| d as usize) {
-                Some(number) if (1..=count).contains(&number) && several => {
-                    self.cursor = number - 1;
-                    self.check(number - 1);
-                    Taken::Kept
-                }
-                Some(number) if (1..=count).contains(&number) => {
-                    Taken::Typed(Typed::Chosen(vec![number - 1]))
-                }
+                Some(number) if (1..=count).contains(&number) => self.choose(number - 1),
                 _ => Taken::Passed,
             },
             KeyCode::Enter => match self.checked.is_empty() {
@@ -96,6 +91,24 @@ impl Choosing {
             },
             _ => Taken::Passed,
         }
+    }
+
+    /// Takes in a click on `row` of its rows as drawn `width` wide: one on a choice chooses it - or
+    /// checks it, where several may be chosen -, one elsewhere is passed.
+    pub(super) fn take_click(&mut self, row: u16, width: u16) -> Taken {
+        let count = self.asked.asking().choices().len();
+        let mut row = usize::from(row);
+        for (index, line) in self.rows().iter().enumerate() {
+            let height = wrapped_rows(line, width);
+            if row < height {
+                return match index.checked_sub(1) {
+                    Some(choice) if choice < count => self.choose(choice),
+                    _ => Taken::Passed,
+                };
+            }
+            row -= height;
+        }
+        Taken::Passed
     }
 
     /// The rows that show what is asked, where it is shown: the question, its choices - the one
@@ -135,6 +148,17 @@ impl Choosing {
                 Some("questions wait · Esc shows them · a message declines them".to_string())
             }
         }
+    }
+
+    /// Chooses the choice `index` - or, where several may be chosen, checks it, or takes its check
+    /// away, the cursor moved to it.
+    fn choose(&mut self, index: usize) -> Taken {
+        if !self.asked.asking().multi_select() {
+            return Taken::Typed(Typed::Chosen(vec![index]));
+        }
+        self.cursor = index;
+        self.check(index);
+        Taken::Kept
     }
 
     /// Checks the choice `index`, or takes its check away.

@@ -1,8 +1,8 @@
 //! What the full-screen terminal printed, and what streams after it, as the lines its upper part
 //! scrolls through (issue 569).
 
+use super::wrapped_rows;
 use ratatui::text::Line;
-use ratatui::widgets::{Paragraph, Wrap};
 
 /// The lines printed and, below them, the live lines of what streams, with how far the user
 /// scrolled up: following the end where they did not, staying where they are where they did - as
@@ -25,7 +25,8 @@ impl Scrollback {
     pub(super) fn push(&mut self, lines: impl IntoIterator<Item = Line<'static>>) {
         let start = self.lines.len();
         self.lines.extend(lines);
-        let added: usize = self.lines[start..].iter().map(|line| rows(line, self.width)).sum();
+        let added: usize =
+            self.lines[start..].iter().map(|line| wrapped_rows(line, self.width)).sum();
         if let Some(up) = &mut self.up {
             *up += added;
         }
@@ -80,7 +81,7 @@ impl Scrollback {
             if filled >= wanted {
                 break;
             }
-            filled += rows(line, width);
+            filled += wrapped_rows(line, width);
             seen.push(line.clone());
         }
         seen.reverse();
@@ -100,14 +101,8 @@ impl Scrollback {
 
     /// How many rows the live lines take at the width last drawn.
     fn live_rows(&self) -> usize {
-        self.live.iter().map(|line| rows(line, self.width)).sum()
+        self.live.iter().map(|line| wrapped_rows(line, self.width)).sum()
     }
-}
-
-/// How many rows `line` takes at `width` columns, broken at words as it is drawn - which
-/// ratatui's `Paragraph::line_count` counts, under its feature `unstable-rendered-line-info`.
-fn rows(line: &Line<'static>, width: u16) -> usize {
-    Paragraph::new(line.clone()).wrap(Wrap { trim: false }).line_count(width.max(1))
 }
 
 #[cfg(test)]
@@ -188,7 +183,7 @@ mod tests {
     #[test]
     fn a_long_line_counts_by_its_rows() {
         let long = "one two three four";
-        assert_eq!(rows(&Line::from(long), 14), 2, "broken at a word");
+        assert_eq!(wrapped_rows(&Line::from(long), 14), 2, "broken at a word");
         let mut scrollback = Scrollback::default();
         scrollback.push(lines(&[long, "end"]));
         let (seen, above) = scrollback.visible(14, 2);

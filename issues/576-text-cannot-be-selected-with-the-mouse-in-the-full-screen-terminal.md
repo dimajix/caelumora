@@ -84,3 +84,8 @@ choice taken among several is checked, the one the cursor stands on is the curso
 
 **2026-11-15** - Step 2 done: `Choosing` checks the choices taken among several (`checked`,
 `check`) and keeps its `cursor`; the keys tell "Space checks".
+
+**2026-11-15** - Step 3 done: a click on a choice of what is asked chooses it, as its digit does -
+where several may be chosen, it checks the choice or takes its check away, the cursor moved to it
+(`Choosing::take_click`); the window keeps where it drew what is asked. A click on a wrapped
+choice finds it on each of its rows. What is left is judging how it feels.

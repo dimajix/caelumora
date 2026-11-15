@@ -50,6 +50,12 @@ const FRAME: Duration = Duration::from_millis(50);
 /// How many rows the mouse wheel scrolls by.
 const WHEEL_ROWS: usize = 3;
 
+/// How many rows `line` takes at `width` columns, broken at words as it is drawn - which
+/// ratatui's `Paragraph::line_count` counts, under its feature `unstable-rendered-line-info`.
+fn wrapped_rows(line: &Line<'static>, width: u16) -> usize {
+    Paragraph::new(line.clone()).wrap(Wrap { trim: false }).line_count(width.max(1))
+}
+
 /// The way of drawing `full`: the terminal taken over until it is dropped, its window drawn as
 /// `Window` stands, at most once a frame, and what the user marked in it copied as it was drawn.
 pub(crate) struct FullScreen {
@@ -72,7 +78,8 @@ pub(crate) struct FullScreen {
 
 /// What the full-screen window shows, and how keys, the mouse and pasted text change it: what was
 /// printed and what streams, scrolled by the user alone; what is asked of the user; the status
-/// line of the answers under way; the line typed; and what the user marks with the mouse.
+/// line of the answers under way; the line typed; and what the user marks with the mouse, and the
+/// choice they click.
 #[derive(Debug, Default)]
 struct Window {
     /// What was printed, and what streams after it.
@@ -82,6 +89,8 @@ struct Window {
     /// What is asked of the user, as it is chosen among; told on the rule only, where it is put
     /// aside.
     choosing: Option<Choosing>,
+    /// Where what is asked was drawn last, which a click there chooses among.
+    asked_area: Rect,
     /// The line being typed.
     input: InputLine,
     /// What the user marks with the mouse, until a key or the left button is pressed, text pasted,
@@ -220,10 +229,7 @@ impl Window {
                 self.selection = None;
                 self.take_key(&key, page)
             }
-            Event::Mouse(mouse) => {
-                self.take_mouse(&mouse);
-                None
-            }
+            Event::Mouse(mouse) => self.take_mouse(&mouse),
             Event::Paste(text) => {
                 self.selection = None;
                 self.input.paste(&text);
@@ -238,8 +244,9 @@ impl Window {
     }
 
     /// Takes in `mouse`: the wheel scrolls, and drops what is marked; the left button marks what it
-    /// is dragged over.
-    fn take_mouse(&mut self, mouse: &MouseEvent) {
+    /// is dragged over, and a click with it chooses what it is on (`Window::take_click`) - answered
+    /// where that ends what is asked.
+    fn take_mouse(&mut self, mouse: &MouseEvent) -> Option<Typed> {
         let at = Position::new(mouse.column, mouse.row);
         match mouse.kind {
             MouseEventKind::ScrollUp => {
@@ -257,12 +264,26 @@ impl Window {
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                let marked = self.selection.as_mut().is_some_and(|selection| selection.release(at));
-                if !marked {
+                let selection = self.selection.as_mut()?;
+                if !selection.release(at) {
                     self.selection = None;
+                    return self.take_click(at);
                 }
             }
             _ => {}
+        }
+        None
+    }
+
+    /// Takes in a click at `at`: one on a choice of what is asked chooses it
+    /// (`Choosing::take_click`) - answered where that ends what is asked. Unlike a digit, which is
+    /// typed where something is, a click chooses also then: it is no text.
+    fn take_click(&mut self, at: Position) -> Option<Typed> {
+        let area = self.asked_area;
+        let choosing = self.choosing.as_mut().filter(|_| area.contains(at))?;
+        match choosing.take_click(at.y - area.y, area.width) {
+            Taken::Typed(typed) => Some(typed),
+            Taken::Passed | Taken::Kept => None,
         }
     }
 
@@ -326,6 +347,7 @@ impl Window {
             Constraint::Length(input_rows),
         ])
         .areas(area);
+        self.asked_area = asking;
 
         let (seen, above) = self.scrollback.visible(printed.width, printed.height);
         let seen = Paragraph::new(seen).wrap(Wrap { trim: false }).scroll((above, 0));
@@ -486,27 +508,32 @@ mod tests {
         assert_eq!(window.take_key(&key(KeyCode::Esc), 5), Some(Typed::TakenUp));
     }
 
-    /// Where several choices may be taken, digits and Space check them, and Enter takes those
-    /// checked.
-    #[test]
-    fn several_choices_are_checked_and_taken_together() {
+    /// A question of which several of the choices `labels` may be taken, the choice `b`
+    /// recommended.
+    fn several(labels: &[&str]) -> Asking {
         let me = ActorId::User(UserId::new());
         let request = make_question_request(SessionId::new(), ChannelId::new(), AgentId::new(), me);
-        let choice = |label: &str| Choice {
+        let choice = |label: &&str| Choice {
             label: label.to_string(),
             description: None,
-            recommended: label == "b",
+            recommended: *label == "b",
         };
         let question = Question {
             header: "Pick".to_string(),
             question: "Which?".to_string(),
-            choices: vec![choice("a"), choice("b"), choice("c")],
+            choices: labels.iter().map(choice).collect(),
             multi_select: true,
         };
         let questions = Questions { questions: vec![question], ..request.questions.clone() };
-        let asking = Asking::questions(QuestionRequest { questions, ..request });
+        Asking::questions(QuestionRequest { questions, ..request })
+    }
+
+    /// Where several choices may be taken, digits and Space check them, and Enter takes those
+    /// checked.
+    #[test]
+    fn several_choices_are_checked_and_taken_together() {
         let mut window = Window::default();
-        window.ask(Some(&Asked::Shown(asking.clone())));
+        window.ask(Some(&Asked::Shown(several(&["a", "b", "c"]))));
         let (rows, _) = drawn(&mut window, 60, 10);
         assert!(rows.contains(&"❯ [ ] 2. b (recommended)".to_string()), "{rows:?}");
         window.take_key(&key(KeyCode::Char('3')), 5);
@@ -587,5 +614,55 @@ mod tests {
         window.take_event(mouse(MouseEventKind::Down(left), 3, 0), 5);
         window.take_event(mouse(MouseEventKind::Up(left), 3, 0), 5);
         assert!(!marks(&mut window).0, "a click marks nothing");
+    }
+
+    /// The left button pressed and released at `column` and `row` of `window`: what that answered.
+    fn clicked(window: &mut Window, column: u16, row: u16) -> Option<Typed> {
+        let left = MouseButton::Left;
+        window.take_event(mouse(MouseEventKind::Down(left), column, row), 5);
+        window.take_event(mouse(MouseEventKind::Up(left), column, row), 5)
+    }
+
+    /// A click on a choice chooses it, also while something is typed; one on the question or the
+    /// keys chooses nothing, and dragging over the choices marks them.
+    #[test]
+    fn a_click_chooses_what_it_is_on() {
+        let mut window = Window::default();
+        window.ask(Some(&Asked::Shown(approval())));
+        let (rows, _) = drawn(&mut window, 60, 8);
+        assert_eq!(&rows[3..5], ["❯ 1. Yes", "  2. No"]);
+        assert_eq!(clicked(&mut window, 4, 4), Some(Typed::Chosen(vec![1])));
+        assert_eq!(clicked(&mut window, 4, 2), None, "the question");
+        assert_eq!(clicked(&mut window, 4, 5), None, "the keys");
+        assert_eq!(clicked(&mut window, 30, 0), None, "what was printed");
+        window.take_key(&key(KeyCode::Char('x')), 5);
+        assert_eq!(clicked(&mut window, 40, 3), Some(Typed::Chosen(vec![0])), "beside its words");
+
+        let left = MouseButton::Left;
+        window.take_event(mouse(MouseEventKind::Down(left), 2, 3), 5);
+        window.take_event(mouse(MouseEventKind::Drag(left), 5, 4), 5);
+        assert_eq!(window.take_event(mouse(MouseEventKind::Up(left), 5, 4), 5), None);
+        let mut terminal = Terminal::new(TestBackend::new(60, 8)).expect("a test terminal");
+        let marking = drawn_marking(&mut terminal, &mut window);
+        assert_eq!(marking, (true, Some("1. Yes\n  2. N".to_string())), "marked, not chosen");
+    }
+
+    /// Where several choices may be taken, a click checks the choice it is on, the cursor moved
+    /// to it, or takes its check away - also on the second row of a choice wrapped.
+    #[test]
+    fn a_click_checks_where_several_may_be_chosen() {
+        let mut window = Window::default();
+        window.ask(Some(&Asked::Shown(several(&["a", "a long choice that wraps"]))));
+        let (rows, _) = drawn(&mut window, 30, 20);
+        let long = rows.iter().position(|row| row.contains("2. a long")).expect("shown");
+        let long = u16::try_from(long).expect("a row");
+        assert_eq!(clicked(&mut window, 2, long + 1), None);
+        let (rows, _) = drawn(&mut window, 30, 20);
+        assert!(rows[usize::from(long)].starts_with("❯ [x] 2. a long"), "{rows:?}");
+        assert_eq!(clicked(&mut window, 2, long - 1), None);
+        assert_eq!(clicked(&mut window, 2, long), None);
+        let (rows, _) = drawn(&mut window, 30, 20);
+        assert!(rows[usize::from(long)].starts_with("❯ [ ] 2. a long"), "{rows:?}");
+        assert_eq!(window.take_key(&key(KeyCode::Enter), 5), Some(Typed::Chosen(vec![0])));
     }
 }
