@@ -1,11 +1,12 @@
 //! The user commands in a running channel - `/help`, `/agent wakeup`, `/participant nudge`,
-//! `/participant add`, `/agent create`, `/agent usage` - and the nudges they ask for. The commands
-//! an agent carries out itself are the agents' (`agent_commands`).
+//! `/participant add`, `/agent create`, `/agent usage`, `/channel notes` - and the nudges they ask
+//! for. The commands an agent carries out itself are the agents' (`agent_commands`).
 
 use super::*;
 use crate::command::CommandContext;
 use crate::error::is_forbidden;
-use crate::testing::{attributes, shown, World};
+use crate::session::ChannelSpec;
+use crate::testing::{attributes, quiet, shown, World};
 use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_domain::actor::Rejection;
 use caelumora_domain::agent::{AgentId, Personality};
@@ -407,9 +408,9 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
 }
 
 /// The commands of the groups refuse what they cannot use (issue 560) before they change anything:
-/// the lists take nothing, `/participant remove`, `/agent delete`, `/agent usage` and
-/// `/channel describe` refuse what names nobody - `/agent usage` a user, too -, `/channel rename`,
-/// `summary` and `briefing` a text that does not fit.
+/// the lists take nothing, `/participant remove`, `/agent delete`, `/agent usage`,
+/// `/channel describe` and `/channel notes` refuse what names nobody - `/agent usage` a user,
+/// too -, `/channel rename`, `summary` and `briefing` a text that does not fit.
 #[tokio::test]
 async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
     let world = World::new().await;
@@ -430,6 +431,7 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
         "agent usage alice",
         "channel list everyone",
         "channel describe nowhere",
+        "channel notes nowhere",
         "channel create",
         &create_too_long,
         "channel delete",
@@ -563,5 +565,47 @@ async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_tot
     let alice = without.channels()[0].user_actor(world.alice).unwrap();
     let none = alice.execute_command("agent usage").await.unwrap().output.unwrap();
     assert_eq!(none, "No agent takes part in this channel.", "nothing to add up");
+    world.manager.stop(&World::as_user(world.alice), without.id()).await.unwrap();
+}
+
+/// `/channel notes` shows what the agents noted in the channel, by their authors - one that noted
+/// nothing left out -, or in the channel of the session named (issue 574), where nothing may be
+/// noted; in a channel where nothing is noted, that nothing is.
+#[tokio::test]
+async fn channel_notes_shows_what_the_agents_noted_by_their_authors() {
+    // Agents that run, so that they take part.
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let plain = world.personality("plain", Some(world.alice), &[]).await;
+    let helper = world.agent("helper", world.alice, &plain).await;
+    let scout = world.agent("scout", world.alice, &plain).await;
+    let runner = world.agent("runner", world.alice, &plain).await;
+    let session = world.shared_session(&[helper, scout, runner], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.note(helper, main.id(), &["The build needs Rust 1.80.", "Tests run with nextest."]).await;
+    world.note(runner, main.id(), &["Deploys on Fridays are off."]).await;
+    let alice = main.user_actor(world.alice).unwrap();
+
+    let reply = alice.execute_command("channel notes").await.expect("hers to read");
+    assert_eq!(reply.visibility, CommandVisibility::Private, "answered to her alone");
+    let board = "Noted in main:\n\n\
+                 helper:\n\
+                 - #1 The build needs Rust 1.80.\n\
+                 - #2 Tests run with nextest.\n\n\
+                 runner:\n\
+                 - #1 Deploys on Fridays are off.";
+    assert_eq!(reply.output.as_deref(), Some(board), "scout, who noted nothing, left out");
+    let named = alice.execute_command("channel notes main").await.unwrap().output.unwrap();
+    assert_eq!(named, board, "the channel named, the same");
+    let side = ChannelSpec { components: quiet(), ..ChannelSpec::new("side") };
+    session.create_channel(&World::as_user(world.alice), side).await.expect("hers to make");
+    let other = alice.execute_command("channel notes side").await.unwrap().output.unwrap();
+    assert_eq!(other, "Nothing is noted in side.", "another channel named, not this one");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+
+    let without = world.shared_session(&[], &[]).await;
+    let alice = without.channels()[0].user_actor(world.alice).unwrap();
+    let none = alice.execute_command("channel notes").await.unwrap().output.unwrap();
+    assert_eq!(none, "Nothing is noted in main.");
     world.manager.stop(&World::as_user(world.alice), without.id()).await.unwrap();
 }

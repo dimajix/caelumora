@@ -297,6 +297,15 @@ callers, and a `match` over it is checked by the compiler. The same holds for pa
 that switches a function between two behaviours becomes two functions, or an `enum` that names the
 behaviours.
 
+### A name is a `Name` where it is looked up
+
+`Name` (`value::name`) is a name that something is found by - compared regardless of case and of
+how whitespace runs, checked when it is made. A name is a `Name` where it is looked up as a key:
+an entity's (`ScopedName`), and a participant's, which commands name someone by
+(`ParticipantView::name`, `command::named_one`). A name only shown - a label in a list, a prompt or
+an answer, such as the author of notes (`PublishedNotes::name`) - stays a `String`: a `Name` there
+would promise a lookup nobody makes.
+
 ### Conditions are made by `Filter`
 
 A condition that a kind offers its callers for their lists is a constructor of `Filter`, in an

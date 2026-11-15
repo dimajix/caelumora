@@ -115,9 +115,10 @@ the right are refused on running them. `/participant list` asks what reading the
 its view does, and `/agent list` what reading the session's agents asks (`SessionView::agents`): an
 agent the issuer may not read is neither listed nor deleted by name. `/agent usage` asks what
 reading the channel asks, as `/participant list` does - nothing of the agents themselves
-(`ParticipantView::usage`). `/channel list` and
-`/channel describe` ask what reading the session's channels asks, and `/channel rename`, `summary`
-and `briefing` what changing the channel they are issued in asks (`UpdateChannel`).
+(`ParticipantView::usage`). `/channel list`, `/channel describe` and `/channel notes` ask what
+reading the session's channels asks - the notes nothing of the agents that wrote them
+(`ChannelView::notes`) -, and `/channel rename`, `summary` and `briefing` what changing the channel
+they are issued in asks (`UpdateChannel`).
 `/channel create` asks what making a channel asks (`SessionLoop::create_channel`: `CreateChannel`,
 `UpdateSession`), with the issuer alone in it, `/channel delete` what reading the channel named and
 deleting it ask (`SessionLoop::delete_channel`: `DeleteChannel`, `UpdateSession`), and
@@ -152,10 +153,10 @@ be named by; `/channel leave` among the agents of the issuer's own among them, `
 among every agent of them; `/agent delete` seeks among the agents `/agent list` lists, taking part
 or not. A
 channel is named by its whole name, which is the only one of its session (`/channel describe`,
-`SessionView::channel_named`); one the issuer may not read is answered like one that does not
-exist. `/channel delete` deletes the channel it is issued in as well, and `/channel leave` takes
-the issuer out of it: a command runs in the issuer's call, not in the channel, so its answer still
-reaches them. `/channel join` alone does not
+`/channel notes`, `SessionView::channel_named`); one the issuer may not read is answered like one
+that does not exist. `/channel delete` deletes the channel it is issued in as well, and
+`/channel leave` takes the issuer out of it: a command runs in the issuer's call, not in the
+channel, so its answer still reaches them. `/channel join` alone does not
 seek among the channels the issuer reads, since who may join a channel reads nothing of it before
 they did ([SECURITY.md](SECURITY.md#access-lists)): it takes the running channel of that name, and
 answers one the issuer may not join - by its access list, or not cleared for it -, or that does not
@@ -245,6 +246,7 @@ external agent alike.
 | `/agent usage` | - | the channel | `agent` | `[agent]` | private | Tells how full the context of each agent taking part in the channel is, or of the one named - its tokens against its size, where known - and the input and output tokens of all its calls; without an agent, adds up the calls of them all. |
 | `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
 | `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |
+| `/channel notes` | - | the channel | `channel` | `[channel]` | private | Shows what the agents noted in this channel, or in the one of the session named, by their authors - read as the channel's, as a notice board is ([MEMORY.md](MEMORY.md#notes)). |
 | `/channel create` | - | the channel | `channel` | `<name>` | private | Makes a channel of the session, with the user alone in it. |
 | `/channel delete` | - | the channel | `channel` | `<channel>` | private | Deletes the channel of the session named, also this one; it can be restored. |
 | `/channel join` | - | the channel | `channel` | `<channel>` | private | Joins the channel of the session named, if the user may join it. |

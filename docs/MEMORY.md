@@ -63,8 +63,12 @@ published in the channel.
 *   **Prompt part.** A part before the turn's input unless its `position` says otherwise, empty
     when nothing is noted: the agent's own notes first, then those of the other agents of the
     channel.
-*   **Clients** get the notes per agent with the channel's snapshot and read them again when the
-    global stream announces a change (see [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)).
+*   **Read as the channel's.** Though each note is its author's, what is noted in a channel is read
+    as the channel's, as a notice board is: whoever reads the channel reads the notes of its agents
+    (`ChannelView::notes`), nothing asked of the agents themselves. Clients get them per agent with
+    the channel's snapshot and read them again when the global stream announces a change (see
+    [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)); `/channel notes` shows them (see
+    [COMMANDS.md](COMMANDS.md)).
 
 ## Private notes
 

@@ -1,6 +1,6 @@
 # 574 — An agent's notes and memory cannot be read by a command
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -35,6 +35,27 @@ cannot be looked up at all.
 *   **Recorded as read?** What an agent reads is recorded as knowledge; what a person reads by a
     command is not part of any turn.
 
+Decided (2026-11-15), with the maintainer, in three steps. Notes stay the agent's that wrote them
+([19](19-memory-tiers.md), principle 2), but what is noted in a channel is read as the channel's,
+as a notice board is: every reader of the channel sees it, only who pinned a note takes it down.
+What an agent keeps for itself - its private notes and its memory - is read by commands of the
+agent, as its owner's.
+
+1.  **`/channel notes [channel]`**, a command of the channel in the group `channel`, answered to
+    the issuer alone: the notes the agents published in the channel, or in the one of the session
+    named, by their authors, read through `ChannelView::notes`.
+2.  **The private notes**, by a command of the agent that the component `private_notes` carries
+    out, for the agent's owners alone (`owners_only`), read as its turn reads them.
+3.  **The memory**, by `/memory @agent`, a command of the agent that the component `agent_memory`
+    carries out, for the agent's owners alone: what of it may be recalled in the channel, as its
+    `MemoryReader` gives it. A command of the channel that the memory's plugin contributes was
+    weighed and set aside: the commands of a session are configured as components of the kernel's
+    kinds, and the plugin would need a way of its own into them, and the kernel's helpers of the
+    commands made public.
+
+What a person reads by such a command is not recorded as knowledge: it is part of no turn's
+context.
+
 ## Done when
 
 - A command shows the notes an agent published in the channel, and to its owner its private notes.
@@ -43,3 +64,12 @@ cannot be looked up at all.
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-15** - Decided with the maintainer before the work began, in three steps: `/channel notes`
+for what is noted in a channel, read as the channel's; commands of the agent for its private notes
+and for its memory.
+
+**2026-11-15** - Step 1 done: `/channel notes [channel]` (`command/channel/notes.rs`) reads
+`ChannelView::notes`, of the channel issued in or the one named, which it finds as
+`/channel describe` does (`command::channel::this_or_named`). A user reads a channel whole or not
+at all, so the command meets no channel read entry by entry.

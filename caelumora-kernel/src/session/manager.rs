@@ -1397,6 +1397,7 @@ mod tests {
                 "channel join",
                 "channel leave",
                 "channel list",
+                "channel notes",
                 "channel rename",
                 "channel summary",
                 "help",
