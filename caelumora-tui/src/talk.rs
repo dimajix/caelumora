@@ -1,6 +1,7 @@
-//! The talk of the user in the terminal (issues 28, 570, 571): the channels it follows, what a line
-//! typed does in them - a command of the terminal carried out, what is asked of the user answered,
-//! or what is left sent to the channel talked in -, what they show, and what is asked.
+//! The talk of the user in the terminal (issues 28, 570, 571, 579): the channels it follows, what a
+//! line typed does in them - a command of the terminal carried out, what is asked of the user
+//! answered, or what is left sent to the channel talked in -, what they show, what is asked, and
+//! what the user can type there.
 
 use crate::asking::{Asked, Asking, Offered};
 use crate::channels::{Channels, Happened};
@@ -9,9 +10,11 @@ use crate::followed::Followed;
 use crate::id_prefix::beginning_with;
 use crate::printed::{ErrorKind, Printed};
 use crate::sessions::{listing, Opening, Sessions, SessionsError};
+use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_api::command::{check_arguments, CommandError, CommandSet};
+use caelumora_domain::actor::ActorEvent;
 use caelumora_domain::approval::{ApprovalRequest, ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::question::{Question, QuestionRequest, Response};
@@ -19,6 +22,7 @@ use caelumora_domain::question::{Question, QuestionRequest, Response};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_kernel::actor::user::UserActor;
+use caelumora_kernel::actor::Shown;
 use caelumora_kernel::command::help::HELP_COMMAND_NAME;
 use caelumora_kernel::controller::UserController;
 use caelumora_kernel::error::user_message;
@@ -68,8 +72,8 @@ pub(crate) enum Handled {
 }
 
 /// The talk of the user in the terminal (issue 571): the channels of the session it talks in that
-/// it follows, what is asked of the user, and the sessions of the directory - what a line typed
-/// and what a channel shows change.
+/// it follows, what is asked of the user, the sessions of the directory, and what the user can type
+/// (issue 579) - what a line typed and what a channel shows change.
 pub(crate) struct Talk {
     /// The channels followed.
     channels: Channels,
@@ -87,6 +91,8 @@ pub(crate) struct Talk {
     user: Arc<UserController>,
     /// The commands the terminal carries out itself (`commands`).
     commands: CommandSet<dyn TerminalCommand>,
+    /// What the user can type, as last read (issue 579): what the screen completes from.
+    typeable: Arc<Typeable>,
 }
 
 impl Talk {
@@ -106,14 +112,17 @@ impl Talk {
         user: Arc<UserController>,
     ) -> Result<(Talk, Vec<Printed>)> {
         let session_id = session_loop.id();
-        let mut channels = Channels::new(session_loop, views, bus).await.ok_or_else(|| {
-            anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
-        })?;
+        let mut channels =
+            Channels::new(session_loop, views.clone(), bus).await.ok_or_else(|| {
+                anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
+            })?;
         let opening = channels.opening().await;
         let answered = HashSet::new();
         let commands = commands()?;
-        let mut talk = Talk { channels, asked: None, answered, sessions, user, commands };
+        let typeable = Arc::new(Typeable::default());
+        let mut talk = Talk { channels, asked: None, answered, sessions, user, commands, typeable };
         talk.ask_next().await;
+        talk.read_typeable().await;
         Ok((talk, opening))
     }
 
@@ -126,7 +135,11 @@ impl Talk {
     /// it (`Channels::take_in`) - with that the questions asked closed, where their channel tells
     /// so or is followed no more; then asks what waits next (`ask_next`).
     pub(crate) async fn take_in(&mut self, happened: Happened) -> Vec<Printed> {
+        let changes_typeable = self.changes_typeable(&happened);
         let mut printed = self.channels.take_in(happened).await;
+        if changes_typeable {
+            self.read_typeable().await;
+        }
         if let Some(Asking::Question { request, .. }) = self.asking() {
             if !self.is_open(request) {
                 printed.push(closed_before_answered(request));
@@ -286,7 +299,46 @@ impl Talk {
             None => self.send_line(&parsed).await?,
         };
         self.ask_next().await;
+        // What it did may have changed what can be typed: an agent made, a channel switched to.
+        self.read_typeable().await;
         Ok(Handled::Printed(printed))
+    }
+
+    /// What the user can type now, as last read (`read_typeable`): what the screen completes from.
+    pub(crate) fn typeable(&self) -> Arc<Typeable> {
+        Arc::clone(&self.typeable)
+    }
+
+    /// Whether `happened` may change what the user can type: the channels they take part in, or
+    /// who takes part in the channel talked in - a participant joined or left, a run of its user's
+    /// actor began or ended, or what it showed was lost. Not everything it shows: the commands they
+    /// may see are asked of the policy one by one.
+    fn changes_typeable(&self, happened: &Happened) -> bool {
+        let (channel_id, shown) = match happened {
+            Happened::TakingPart => return true,
+            Happened::Shown(channel_id, shown) => (*channel_id, shown),
+        };
+        if self.channels.talked_in().map(Followed::channel_id) != Some(channel_id) {
+            return false;
+        }
+        match shown {
+            Ok(Shown::Envelope(envelope)) => matches!(
+                envelope.event,
+                ActorEvent::ParticipantJoined { .. } | ActorEvent::ParticipantLeft { .. }
+            ),
+            Ok(Shown::Started | Shown::Ended) | Err(_) => true,
+        }
+    }
+
+    /// Reads anew what the user can type (issue 579): the terminal's commands, and what its owners
+    /// add of the session and the channel talked in (`Channels::add_typeable`) and of the
+    /// directory (`Sessions::add_typeable`).
+    async fn read_typeable(&mut self) {
+        let mut typeable = Typeable::default();
+        typeable.add_commands(self.commands.descriptions());
+        self.channels.add_typeable(&mut typeable).await;
+        self.sessions.add_typeable(&mut typeable).await;
+        self.typeable = Arc::new(typeable);
     }
 
     /// The choice of what is asked - an approval - that `input` names by its number; `None` where
@@ -679,6 +731,7 @@ mod tests {
     use super::*;
     use crate::followed::testing::{an_agent_in, approval, from};
     use crate::screen::testing::lines;
+    use crate::sessions::shown_id;
     use crate::sessions::testing::{in_directory, InDirectory};
     use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentId;
@@ -817,6 +870,59 @@ mod tests {
         let both = told(Some("theirs".to_string()), Some("mine".to_string()));
         assert_eq!(lines(&both), ["theirs\n\nmine"]);
         assert_eq!(lines(&told(None, Some("mine".to_string()))), ["mine"]);
+    }
+
+    /// Issue 579: what can be typed is read as the talk begins - the terminal's commands and the
+    /// channel's, its participants, the channels and sessions -, and read anew after a line.
+    #[tokio::test]
+    async fn what_can_be_typed_is_read_as_the_talk_begins_and_after_a_line() {
+        let (mut talk, session_loop, _running) = talking().await;
+        let candidates =
+            |talk: &Talk, line: &str| talk.typeable().complete(line, line.len()).candidates;
+        assert_eq!(candidates(&talk, "/session res"), ["session resume"], "the terminal's");
+        assert!(
+            candidates(&talk, "/participant l").contains(&"participant list".to_string()),
+            "the channel's"
+        );
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+        assert_eq!(candidates(&talk, "/channel switch "), [channel.name().to_string()]);
+        let resumed = candidates(&talk, "/session resume ");
+        assert_eq!(
+            resumed,
+            [shown_id(session_loop.id())],
+            "the session of the directory, as listed"
+        );
+        let handles = channel.participants().into_iter().filter_map(|p| p.handle);
+        let mut expected: Vec<String> = handles.map(|handle| format!("@{handle}")).collect();
+        expected.extend(["@all".to_string(), "@channel".to_string()]);
+        expected.sort();
+        assert_eq!(candidates(&talk, "hi @"), expected, "its participants, and the group handles");
+
+        typed(&mut talk, "/channel create side").await;
+        assert!(
+            candidates(&talk, "/channel join s").contains(&"side".to_string()),
+            "a channel made since: {:?}",
+            candidates(&talk, "/channel join ")
+        );
+    }
+
+    /// Issue 579: who joins the channel talked in is offered once the channel shows it, without a
+    /// line typed - an agent by its handle, with what it is offered as.
+    #[tokio::test]
+    async fn who_joins_the_channel_talked_in_is_offered_as_the_channel_shows_it() {
+        let (mut talk, session_loop, running) = talking().await;
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+        let offered = |talk: &Talk| talk.typeable().complete("/agent usage ", 13).candidates;
+        assert!(offered(&talk).is_empty(), "no agent yet");
+        an_agent_in(&running.kernel, &session_loop, &running.owner, channel.id()).await;
+        let until = async {
+            while offered(&talk).is_empty() {
+                let happened = talk.next().await;
+                talk.take_in(happened).await;
+            }
+        };
+        time::timeout(Duration::from_secs(5), until).await.expect("offered once it joined");
+        assert_eq!(offered(&talk), ["@helper"]);
     }
 
     /// `/exit` and `/quit` end the program, not given arguments, which they take none of; the bare

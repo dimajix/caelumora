@@ -5,12 +5,15 @@
 use crate::here::HERE;
 use crate::id_prefix::{beginning_with, NotNamed};
 use crate::printed::Printed;
+use crate::typeable::Typeable;
+use caelumora_domain::command::ParameterKind;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::Message;
 use caelumora_domain::project::ProjectId;
 use caelumora_domain::query::{Filter, Query};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::StoreResultExt;
+use caelumora_domain::template::SessionTemplate;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::language::Language;
 use caelumora_domain::workspace::{WorkspaceChoice, WorkspaceId};
@@ -188,6 +191,37 @@ impl Sessions {
         read.await.map_err(unreadable)
     }
 
+    /// Adds to `typeable` what the user can type of the directory (issue 579): its sessions, by
+    /// their ids as listed (`shown_id`), and the templates they may start one from. What cannot be
+    /// read - also where the program works in no directory - adds nothing.
+    pub(crate) async fn add_typeable(&self, typeable: &mut Typeable) {
+        let ids = self.ids().await.unwrap_or_default();
+        typeable.add_named(ParameterKind::Session, ids.into_iter().map(shown_id));
+        let templates = self.templates().await.unwrap_or_default();
+        typeable
+            .add_named(ParameterKind::Template, templates.iter().map(|t| t.name.name.to_string()));
+    }
+
+    /// The ids of the sessions of the directory, as the user may read them: what a session is named
+    /// by.
+    ///
+    /// # Errors
+    /// As `of_directory`.
+    async fn ids(&self) -> SessionsResult<Vec<SessionId>> {
+        Ok(self.of_directory().await?.iter().map(SessionView::id).collect())
+    }
+
+    /// The session templates the user may start a session from.
+    ///
+    /// # Errors
+    /// If they cannot be read.
+    async fn templates(&self) -> SessionsResult<Vec<SessionTemplate>> {
+        let stores = self.kernel.entity_stores();
+        let templates = stores.session_templates.list(self.views.context(), &Query::all()).await;
+        let unreadable = |e| SessionsError::failed("The session templates cannot be read", e);
+        Ok(templates.map_err(unreadable)?.items)
+    }
+
     /// The session of the directory whose id begins with `prefix` (`beginning_with`), as
     /// `--resume`, `/session resume` and `/session delete` name a session.
     ///
@@ -195,8 +229,7 @@ impl Sessions {
     /// If the program works in no directory, its sessions cannot be read, or none of
     /// them or several begin so.
     async fn id_beginning_with(&self, prefix: &str) -> SessionsResult<SessionId> {
-        let ids = self.of_directory().await?.iter().map(|session| session.id()).collect::<Vec<_>>();
-        beginning_with(ids, SessionId::to_string, prefix).map_err(|not| match not {
+        beginning_with(self.ids().await?, SessionId::to_string, prefix).map_err(|not| match not {
             NotNamed::Blank => SessionsError::NoneNamed,
             NotNamed::None(prefix) => SessionsError::NoneBeginning(prefix),
             NotNamed::Several(prefix) => SessionsError::SeveralBeginning(prefix),
@@ -211,10 +244,7 @@ impl Sessions {
     async fn start(&self, template: &str) -> SessionsResult<Arc<SessionLoop>> {
         let stores = self.kernel.entity_stores();
         let security = self.views.context();
-        let templates = stores.session_templates.list(security, &Query::all()).await;
-        let unreadable = |e| SessionsError::failed("The session templates cannot be read", e);
-        let templates = templates.map_err(unreadable)?.items;
-        let named = templates.into_iter().find(|t| t.name.name == template);
+        let named = self.templates().await?.into_iter().find(|t| t.name.name == template);
         let template = named.ok_or_else(|| SessionsError::NoTemplate(template.to_string()))?;
         // Held in the language the user prefers where the template names none:
         // the frontend's to offer, not the server's (issues 331, 425).
@@ -307,11 +337,16 @@ impl Listed {
     /// The line `--sessions` and `/session list` print of it: the beginning of its id, enough to
     /// resume it by, when it was last spoken in, its name and what was said last.
     pub(crate) fn line(&self) -> String {
-        let id = self.id.to_string();
         let when = self.last.with_timezone(&Local).format("%Y-%m-%d %H:%M");
         let said = self.said.as_deref().map(|said| format!("  {said}")).unwrap_or_default();
-        format!("{}  {when}  {}{said}", &id[..8], self.name)
+        format!("{}  {when}  {}{said}", shown_id(self.id), self.name)
     }
+}
+
+/// How the session `id` is shown, and named most briefly: the first eight characters of its id, as
+/// a session is listed and completed (issue 579).
+pub(crate) fn shown_id(id: SessionId) -> String {
+    id.to_string().chars().take(8).collect()
 }
 
 /// What tells of the sessions `listed`, a line each (`Listed::line`), `talked_in` marked as the

@@ -10,8 +10,10 @@ pub(crate) use line::LineScreen;
 
 use crate::asking::Asked;
 use crate::printed::Printed;
+use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use async_trait::async_trait;
+use std::sync::Arc;
 
 /// A way of drawing the terminal: it shows what is printed and the answers under way, and reads
 /// what the user types.
@@ -26,6 +28,9 @@ pub(crate) trait Screen: Send {
     /// Shows what is asked of the user now, `asked` - as waiting only, where it is put aside
     /// (issue 571).
     fn ask(&mut self, asked: Option<&Asked>);
+
+    /// Takes what the user can type now, `typeable`, to complete what they type from (issue 579).
+    fn offer(&mut self, typeable: Arc<Typeable>);
 
     /// What the user typed next. Nothing is lost if it is dropped before it completes.
     async fn next_input(&mut self) -> Typed;

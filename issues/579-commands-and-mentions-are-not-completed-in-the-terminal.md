@@ -63,3 +63,19 @@ as `/agent list` lists them, so that what is offered, listed and deleted is one 
 what its commands search among, without a scope of its own: no second kind is searched in several
 reaches yet.
 
+**2026-11-15** - Step 2 done: `Typeable` in `caelumora-tui` is what the user can type, as the talk
+last read it - at its beginning, after every line, and where the channel talked in shows that its
+participants changed or the channels taken part in may have -, each owner adding its own
+(`Followed`, `Channels` and `Sessions::add_typeable`), and `Typeable::complete` what completes a
+line from it. The domain holds the rules it reads: when a name is begun by what is typed
+(`CommandName::is_begun_by`), where a handle is being typed (`mention::handle_typed_at`), whom an
+agent's command names (`command::addressed`, which the agents' actors read too) and the agents'
+commands gathered by name (`command::agents_commands`, which `/help` gathers by too). Each way of
+drawing is offered the snapshot (`Screen::offer`); `line` completes from it at Tab and lists the
+candidates at a second, with no hint.
+
+**2026-11-15** - Decided with the maintainer after step 2's review: a channel the user takes part
+in (`JoinedChannel`) is a kind of its own, which the terminal's `/channel switch` takes, beside a
+channel of the session (`Channel`), which `/channel join` and the others take - each kind naming
+what its commands search among.
+

@@ -11,6 +11,7 @@ use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::value::command_name::CommandName;
 use crate::value::ValueError;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::iter;
 
 // Unlike every other kind constant, these live in the domain, not next to their component in the
@@ -124,6 +125,33 @@ pub fn help_topic(args: &str) -> Result<Option<CommandName>, ValueError> {
     }
 }
 
+/// Whom the arguments `args` of an agent's command name (issue 269) - their first word, a handle
+/// or a group handle - and what follows it, the command's own, from its first word on; `None` where
+/// nothing follows the first word, not even whitespace - it may still be typed (issue 579).
+pub fn addressed(args: &str) -> (&str, Option<&str>) {
+    match args.split_once(char::is_whitespace) {
+        Some((whom, rest)) => (whom, Some(rest.trim_start())),
+        None => (args, None),
+    }
+}
+
+/// The commands the agents `agents` carry out - each agent by its handle as it is typed (`@bob`),
+/// with its commands -, each once and sorted by name, with the handles of the agents that carry it
+/// out: how `/help` lists them and a frontend completes them (issues 269, 579).
+pub fn agents_commands(
+    agents: impl IntoIterator<Item = (String, Vec<CommandDescription>)>,
+) -> Vec<(CommandDescription, Vec<String>)> {
+    let mut by_name: BTreeMap<CommandName, (CommandDescription, Vec<String>)> = BTreeMap::new();
+    for (handle, commands) in agents {
+        for command in commands {
+            let (_, handles) =
+                by_name.entry(command.name.clone()).or_insert_with(|| (command, Vec::new()));
+            handles.push(handle.clone());
+        }
+    }
+    by_name.into_values().collect()
+}
+
 /// A parameter of a command (issue 583): what it is called, whether it must be given, and the word
 /// that introduces it, if one does - `as` of `/agent create <personality> [as <name>]`. The last a
 /// command takes is the rest of the line, since what it names may hold spaces. What it takes is its
@@ -145,7 +173,7 @@ pub struct CommandParameter {
 /// What a parameter of a command takes (issue 579): what a frontend may complete it from. How the
 /// command reads it is its own - one that takes someone takes a handle or a name alike
 /// (`named_one`).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ParameterKind {
     /// Anything written: nothing to complete it from.
@@ -160,6 +188,9 @@ pub enum ParameterKind {
     SessionAgent,
     /// A channel of the session, by its name.
     Channel,
+    /// A channel of the session the user takes part in, by its name: what a command acts on where
+    /// the user is.
+    JoinedChannel,
     /// A personality, by its name.
     Personality,
     /// A command or a group of commands, by its name.
@@ -391,6 +422,34 @@ mod tests {
             "and read where it is missing"
         );
         assert_eq!(channel.written(), "[channel]", "it is not written in a list of commands");
+    }
+
+    /// Issue 579: an agent's command names its agent by its first word; the rest is its own, from
+    /// its first word on - nothing yet while the first word is typed.
+    #[test]
+    fn an_agent_s_command_names_its_agent_by_its_first_word() {
+        assert_eq!(addressed("@bob 2 steps "), ("@bob", Some("2 steps ")));
+        assert_eq!(addressed("@bob "), ("@bob", Some("")));
+        assert_eq!(addressed("@bo"), ("@bo", None));
+    }
+
+    /// Issue 579: the agents' commands are gathered by name, each with the handles of the agents
+    /// that carry it out, sorted by name.
+    #[test]
+    fn the_agents_commands_are_gathered_by_name_with_their_agents() {
+        let gathered = agents_commands([
+            ("@bob".to_string(), vec![named("compact", &[]), named("skill", &[])]),
+            ("@rex".to_string(), vec![named("compact", &[])]),
+        ]);
+        let gathered: Vec<(String, Vec<String>)> =
+            gathered.into_iter().map(|(c, handles)| (c.name.to_string(), handles)).collect();
+        assert_eq!(
+            gathered,
+            [
+                ("compact".to_string(), vec!["@bob".to_string(), "@rex".to_string()]),
+                ("skill".to_string(), vec!["@bob".to_string()]),
+            ]
+        );
     }
 
     #[test]

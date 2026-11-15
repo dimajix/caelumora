@@ -14,6 +14,7 @@ mod printed;
 mod screen;
 mod sessions;
 mod talk;
+mod typeable;
 mod under_way;
 
 use anyhow::Context;
@@ -339,6 +340,7 @@ async fn talk(
     // What is under way and asked as the channels were followed, before anything happens in them.
     screen.show_under_way(talk.under_way());
     screen.ask(talk.asked());
+    screen.offer(talk.typeable());
     loop {
         let printed = tokio::select! {
             // A signal ends the talk as `/exit` does, so that the session is shut down in order
@@ -374,9 +376,10 @@ async fn talk(
             },
         };
         screen.print(printed);
-        // Another channel may be talked in now, and something else asked.
+        // Another channel may be talked in now, something else asked, and other things typed.
         screen.show_under_way(talk.under_way());
         screen.ask(talk.asked());
+        screen.offer(talk.typeable());
     }
     Ok(())
 }

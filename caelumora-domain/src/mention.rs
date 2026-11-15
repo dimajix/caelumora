@@ -32,6 +32,12 @@ fn is_handle_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_' || c == '-'
 }
 
+/// Returns whether an `@` after `prev` - the character before it, if any - may begin a mention: not
+/// after a character of a handle or a `.`, which keeps email addresses from counting.
+fn may_begin_mention(prev: Option<char>) -> bool {
+    !prev.is_some_and(|p| is_handle_char(p) || p == '.')
+}
+
 /// Derives the handle under which a participant called `name` can be
 /// mentioned: its ASCII form (`any_ascii`, as `Name` compares names; the web
 /// UI uses the npm package of the same name), lowercase, every run of other
@@ -74,7 +80,7 @@ pub fn mention_spans(text: &str) -> Vec<MentionSpan> {
     while let Some((start, c)) = chars.next() {
         if c == '`' {
             in_code = !in_code;
-        } else if c == '@' && !in_code && !prev.is_some_and(|p| is_handle_char(p) || p == '.') {
+        } else if c == '@' && !in_code && may_begin_mention(prev) {
             let mut end = start + c.len_utf8();
             let mut last = c;
             while let Some(&(i, n)) = chars.peek() {
@@ -100,6 +106,21 @@ pub fn mention_spans(text: &str) -> Vec<MentionSpan> {
     }
 
     spans
+}
+
+/// Where the handle being typed in `text` up to `cursor` (a byte offset) begins (issue 579): the
+/// offset of its `@`, if what stands before `cursor` is an `@` and characters of a handle, where a
+/// mention may begin - as `mention_spans` finds them, outside code. `None` elsewhere.
+pub fn handle_typed_at(text: &str, cursor: usize) -> Option<usize> {
+    let before = text.get(..cursor)?;
+    let at = before.rfind('@')?;
+    let typed = &before[at + 1..];
+    if !typed.chars().all(is_handle_char) {
+        return None;
+    }
+    // Inside code where an odd number of backticks stands before it, as `mention_spans` toggles.
+    let in_code = before[..at].matches('`').count() % 2 == 1;
+    (!in_code && may_begin_mention(before[..at].chars().next_back())).then_some(at)
 }
 
 /// Extracts the handles mentioned in `text`, normalised as `handle_of` does,
@@ -192,6 +213,21 @@ mod tests {
     use crate::agent::AgentId;
     use crate::user::UserId;
     use std::collections::HashSet;
+
+    /// Issue 579: a handle is being typed where an `@` and characters of a handle stand before the
+    /// cursor, and a mention could begin there - not in an address, nor in code.
+    #[test]
+    fn a_handle_is_typed_where_a_mention_could_begin() {
+        let typed = |text: &str| handle_typed_at(text, text.len());
+        assert_eq!(typed("@"), Some(0));
+        assert_eq!(typed("hi @sas"), Some(3));
+        assert_eq!(typed("(@dr-w"), Some(1));
+        assert_eq!(typed("hi @sassy "), None, "the word is done");
+        assert_eq!(typed("mail me at bob@exa"), None, "an address");
+        assert_eq!(typed("see `@co"), None, "in code");
+        assert_eq!(typed("no mention"), None);
+        assert_eq!(handle_typed_at("@bob and more", 4), Some(0), "up to the cursor");
+    }
 
     #[test]
     fn handle_of_lowercases_and_collapses_separators() {

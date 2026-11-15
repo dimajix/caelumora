@@ -19,7 +19,9 @@ impl SwitchCommand {
             name: CommandName::fixed("channel switch"),
             aliases: vec![CommandName::fixed("switch")],
             description: "Talks in another channel of the session you take part in.".to_string(),
-            parameters: vec![CommandParameter::optional("channel").of_kind(ParameterKind::Channel)],
+            parameters: vec![
+                CommandParameter::optional("channel").of_kind(ParameterKind::JoinedChannel)
+            ],
             owners_only: false,
         })
     }

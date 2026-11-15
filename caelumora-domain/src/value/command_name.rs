@@ -54,6 +54,20 @@ impl CommandName {
         self.0.split(' ').all(|word| words.next() == Some(word))
     }
 
+    /// Whether `typed` - what of a command a user typed so far, as they may type it, in any case
+    /// and with any whitespace between its words - is the beginning of this name (issue 579): its
+    /// words are the name's, the last perhaps in part, unless whitespace ended it. `chan`,
+    /// `Channel  sw`, `channel ` and `channel switch` begin `channel switch`; `switch` and `chan `
+    /// do not.
+    pub fn is_begun_by(&self, typed: &str) -> bool {
+        let words: Vec<String> = typed.split_whitespace().map(str::to_lowercase).collect();
+        let typed_words = words.join(" ");
+        match typed.ends_with(char::is_whitespace) && !words.is_empty() {
+            true => format!("{} ", self.0).starts_with(&format!("{typed_words} ")),
+            false => self.0.starts_with(&typed_words),
+        }
+    }
+
     /// The rest of `line` - the arguments of the command, trimmed - if `line` begins with this
     /// name word by word, its words separated by any whitespace there: `/channel   list all`
     /// begins with `channel list` and leaves `all`.
@@ -75,6 +89,19 @@ impl_value!([] CommandName, "command name");
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue 579: what is typed begins a name in any case and with any whitespace, a word typed in
+    /// part as well; nothing begins it that is not its beginning.
+    #[test]
+    fn a_name_is_begun_by_what_is_typed_of_it() {
+        let switch = CommandName::fixed("channel switch");
+        for typed in ["", "chan", "Channel", "channel  sw", " channel switch", "channel "] {
+            assert!(switch.is_begun_by(typed), "{typed:?}");
+        }
+        for typed in ["switch", "channel switches", "channelswitch", "channel x", "chan "] {
+            assert!(!switch.is_begun_by(typed), "{typed:?}");
+        }
+    }
 
     #[test]
     fn a_command_name_is_words_separated_by_single_spaces() {

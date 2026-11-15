@@ -11,6 +11,7 @@ mod styled;
 use super::{Screen, Typed};
 use crate::asking::Asked;
 use crate::printed::Printed;
+use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use async_trait::async_trait;
 use choosing::{Choosing, Taken};
@@ -33,6 +34,7 @@ use scrollback::Scrollback;
 use selection::Selection;
 use std::io;
 use std::panic;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use styled::{live_lines, status_line, styled, typed_line};
 use tokio::time::{self, Interval, MissedTickBehavior};
@@ -168,6 +170,9 @@ impl Screen for FullScreen {
         self.window.show_under_way(under_way);
         self.changed = true;
     }
+
+    /// Nothing: this way of drawing completes nothing yet.
+    fn offer(&mut self, _typeable: Arc<Typeable>) {}
 
     fn ask(&mut self, asked: Option<&Asked>) {
         self.changed |= self.window.ask(asked);

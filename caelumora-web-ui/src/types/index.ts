@@ -1019,6 +1019,7 @@ export type ParameterKind =
   | 'agent'
   | 'session_agent'
   | 'channel'
+  | 'joined_channel'
   | 'personality'
   | 'command'
   | 'session'
