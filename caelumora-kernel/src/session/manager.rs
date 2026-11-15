@@ -1388,6 +1388,7 @@ mod tests {
                 "agent create",
                 "agent delete",
                 "agent list",
+                "agent usage",
                 "agent wakeup",
                 "channel briefing",
                 "channel create",

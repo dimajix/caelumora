@@ -4571,9 +4571,10 @@ async fn a_command_of_the_session_is_seen_and_run_by_whoever_reads_the_channel()
         [
             "bob: ShowCommand(alice's) yes",
             "bob: ExecuteCommand(alice's) yes",
-            // What /help lists, one for each command: /agent create, delete, list, wakeup,
-            // /channel briefing, create, delete, describe, join, leave, list, rename, summary,
-            // /help, /participant add, list, nudge, remove.
+            // What /help lists, one for each command: /agent create, delete, list, usage,
+            // wakeup, /channel briefing, create, delete, describe, join, leave, list, rename,
+            // summary, /help, /participant add, list, nudge, remove.
+            "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
             "bob: ShowCommand(alice's) yes",
@@ -4973,6 +4974,42 @@ async fn listing_and_deleting_agents_by_command_ask_what_reading_and_deleting_as
     assert_eq!(reply.output.as_deref(), Some("Deleted scout; it can be restored."));
     let listed = alice.execute_command("agent list").await.unwrap().output.unwrap();
     assert_eq!(listed, "This session has no agents.");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/agent usage` (issue 573) asks nothing reading the channel does not ask: bob, who reads alice's
+/// channel, is told what her agent taking part in it used, as the web UI shows it him - nothing
+/// asked of the agent itself, as its snapshot would ask whether he may read its context, its tools
+/// or approve its calls.
+#[tokio::test]
+async fn agent_usage_asks_what_reading_the_channel_asks() {
+    // Agents that run, so that they take part.
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let hers = world.personality("hers", Some(world.alice), &[]).await;
+    let helper = world.agent("helper", world.alice, &hers).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let bob = main.user_actor(world.bob).unwrap();
+
+    for line in ["agent usage", "agent usage helper"] {
+        let (reply, asked) = world.asked(bob.execute_command(line)).await;
+        let told = reply.expect("his to read").output.expect("answered to him");
+        assert!(told.contains("helper (@helper): no calls counted"), "/{line}: {told}");
+        assert_eq!(
+            asked,
+            checks(&[
+                "bob: ShowCommand(alice's) yes",
+                "bob: ExecuteCommand(alice's) yes",
+                // Reading the channel, as its view does.
+                "bob: GetSession(alice's) yes",
+                "bob: GetChannel(alice's) yes",
+                "bob: Cleared(bob) yes",
+            ]),
+            "/{line}: {asked:#?}"
+        );
+    }
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

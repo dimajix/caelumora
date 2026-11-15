@@ -23,7 +23,7 @@ use crate::channel::ChannelLoop;
 use crate::component::ComponentRegistry;
 use crate::error::{refusal, user_message};
 use crate::session::SessionLoop;
-use crate::view::{ChannelView, SessionView, Viewer, Views};
+use crate::view::{ChannelView, ParticipantView, SessionView, Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{CommandError, CommandResult, CommandSet, ProvidesCommands};
@@ -245,8 +245,8 @@ impl CommandExecutor {
 /// who take part `in this channel`, the agents `of this session`, as `place` says. What they are
 /// sought among is the command's: `/agent wakeup` and `/participant nudge` act on an actor, and
 /// seek among those running; `/participant remove` among those the issuer reads taking part,
-/// `/channel leave` among the issuer's own agents of those; `/agent delete` among the session's
-/// agents the issuer may read.
+/// `/channel leave` among the issuer's own agents of those, `/agent usage` among the agents of
+/// those; `/agent delete` among the session's agents the issuer may read.
 ///
 /// # Errors
 /// `CommandError::InvalidArguments` naming the handles of `among`, if `wanted` names none, or
@@ -279,6 +279,27 @@ pub(crate) fn named_one<T>(
             Err(invalid(format!("'{wanted}' names several {place}: {}", names(&several))))
         }
     }
+}
+
+/// Who takes part in the channel the command `command` runs in, as the issuer reads it
+/// (`ChannelView::participants`): whom `/participant list` lists, and whom `/participant remove`,
+/// `/channel leave` and `/agent usage` seek among.
+///
+/// # Errors
+/// `CommandError::Failed` if the channel cannot be read.
+pub(crate) async fn taking_part(
+    command: &str,
+    context: &CommandContext<'_>,
+) -> CommandResult<Vec<ParticipantView>> {
+    Ok(context.channel_view(command).await?.participants().await)
+}
+
+/// Of `participants`, those a command can name, each with its name (`named_one`): one that no
+/// longer exists has no name to be named by.
+pub(crate) fn named_participants(
+    participants: Vec<ParticipantView>,
+) -> Vec<(Name, ParticipantView)> {
+    participants.into_iter().filter_map(|p| Some((Name::new(p.name()?).ok()?, p))).collect()
 }
 
 /// What `error` of an operation the command `command` ran means for its issuer: a refusal is the

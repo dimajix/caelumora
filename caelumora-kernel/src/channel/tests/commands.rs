@@ -1,6 +1,6 @@
 //! The user commands in a running channel - `/help`, `/agent wakeup`, `/participant nudge`,
-//! `/participant add`, `/agent create` - and the nudges they ask for. The commands an agent carries
-//! out itself are the agents' (`agent_commands`).
+//! `/participant add`, `/agent create`, `/agent usage` - and the nudges they ask for. The commands
+//! an agent carries out itself are the agents' (`agent_commands`).
 
 use super::*;
 use crate::command::CommandContext;
@@ -10,6 +10,7 @@ use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_domain::actor::Rejection;
 use caelumora_domain::agent::{AgentId, Personality};
 use caelumora_domain::command::{CommandOutput, CommandVisibility};
+use caelumora_domain::message::TokenUsage;
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::user::testing::make_user;
@@ -44,7 +45,7 @@ async fn help_answers_the_issuer_alone_and_lists_what_they_may_see() {
         actor.visible_commands().await.into_iter().map(|c| c.name.to_string()).collect();
     let participant =
         ["participant add", "participant list", "participant nudge", "participant remove"];
-    let agent = ["agent create", "agent delete", "agent list"];
+    let agent = ["agent create", "agent delete", "agent list", "agent usage"];
     assert_eq!(names, [&agent[..], &["help"], &participant].concat());
 
     for hidden in ["agent wakeup", "wakeup", "help agent wakeup", "help wakeup"] {
@@ -406,8 +407,9 @@ async fn participant_add_and_agent_create_refuse_what_they_cannot_use() {
 }
 
 /// The commands of the groups refuse what they cannot use (issue 560) before they change anything:
-/// the lists take nothing, `/participant remove`, `/agent delete` and `/channel describe` refuse
-/// what names nobody, `/channel rename`, `summary` and `briefing` a text that does not fit.
+/// the lists take nothing, `/participant remove`, `/agent delete`, `/agent usage` and
+/// `/channel describe` refuse what names nobody - `/agent usage` a user, too -, `/channel rename`,
+/// `summary` and `briefing` a text that does not fit.
 #[tokio::test]
 async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
     let world = World::new().await;
@@ -424,6 +426,8 @@ async fn the_commands_of_the_groups_refuse_what_they_cannot_use() {
         "agent list everyone",
         "agent delete",
         "agent delete zed",
+        "agent usage zed",
+        "agent usage alice",
         "channel list everyone",
         "channel describe nowhere",
         "channel create",
@@ -498,4 +502,66 @@ async fn agent_create_makes_the_agent_of_a_personality_of_the_channel_in_the_cha
     assert_eq!(scout.personality_id, own.id, "the channel's, nearer than the global one");
     assert_eq!(scout.name.scope, in_main, "in the channel's scope");
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/agent usage` tells each agent taking part how full its context is and what its calls used,
+/// input and output apart, and adds up the calls of them all; named, it tells one agent alone
+/// (issue 573) - its context's size where its model says it, and in a channel without agents, that
+/// there are none.
+#[tokio::test]
+async fn agent_usage_tells_the_context_and_the_calls_of_each_agent_and_their_totals() {
+    // Agents that run, so that they take part.
+    let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+    let world = World::with(&[], &[&answering], |_| {}).await;
+    let plain = world.personality("plain", Some(world.alice), &[]).await;
+    let helper = world.agent("helper", world.alice, &plain).await;
+    let scout = world.agent("scout", world.alice, &plain).await;
+    let runner = world.agent("runner", world.alice, &plain).await;
+    let session = world.shared_session(&[helper, scout, runner], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    let states = world.kernel.state_store();
+    let mut state = states.get_agent_channel_state(helper, main.id()).await.unwrap();
+    state.used = Some(TokenUsage {
+        calls: 3,
+        prompt_tokens: 9000,
+        completion_tokens: 600,
+        context_size: Some(8192),
+        context_tokens: 2048,
+    });
+    states.put_agent_channel_state(helper, main.id(), &mut state).await.unwrap();
+    // One whose model does not say how large its context is.
+    let mut state = states.get_agent_channel_state(runner, main.id()).await.unwrap();
+    state.used = Some(TokenUsage {
+        calls: 1,
+        prompt_tokens: 500,
+        completion_tokens: 20,
+        context_size: None,
+        context_tokens: 520,
+    });
+    states.put_agent_channel_state(runner, main.id(), &mut state).await.unwrap();
+    let alice = main.user_actor(world.alice).unwrap();
+
+    let reply = alice.execute_command("agent usage").await.expect("hers to read");
+    assert_eq!(reply.visibility, CommandVisibility::Private, "answered to her alone");
+    assert_eq!(
+        reply.output.as_deref(),
+        Some(
+            "What the agents of this channel used:\n\n\
+             - helper (@helper): 2048 of 8192 tokens in its context (25 %); 3 calls used 9000 \
+             input and 600 output tokens\n\
+             - scout (@scout): no calls counted\n\
+             - runner (@runner): 520 tokens in its context, its size unknown; 1 call used 500 \
+             input and 20 output tokens\n\
+             \nIn all: 4 calls used 9500 input and 620 output tokens."
+        )
+    );
+    let one = alice.execute_command("agent usage @scout").await.unwrap().output.unwrap();
+    assert_eq!(one, "scout (@scout): no calls counted", "the one named alone, without a total");
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+
+    let without = world.shared_session(&[], &[]).await;
+    let alice = without.channels()[0].user_actor(world.alice).unwrap();
+    let none = alice.execute_command("agent usage").await.unwrap().output.unwrap();
+    assert_eq!(none, "No agent takes part in this channel.", "nothing to add up");
+    world.manager.stop(&World::as_user(world.alice), without.id()).await.unwrap();
 }

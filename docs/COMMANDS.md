@@ -113,7 +113,9 @@ asks nothing of the policy either. `/participant add` asks what taking someone i
 (`AgentManager::delete`: `DeleteAgent`), so whoever reads the channel sees them, and those without
 the right are refused on running them. `/participant list` asks what reading the channel asks, as
 its view does, and `/agent list` what reading the session's agents asks (`SessionView::agents`): an
-agent the issuer may not read is neither listed nor deleted by name. `/channel list` and
+agent the issuer may not read is neither listed nor deleted by name. `/agent usage` asks what
+reading the channel asks, as `/participant list` does - nothing of the agents themselves
+(`ParticipantView::usage`). `/channel list` and
 `/channel describe` ask what reading the session's channels asks, and `/channel rename`, `summary`
 and `briefing` what changing the channel they are issued in asks (`UpdateChannel`).
 `/channel create` asks what making a channel asks (`SessionLoop::create_channel`: `CreateChannel`,
@@ -126,9 +128,10 @@ channel asks besides.
 ### Private or channel-wide answers
 
 A command answers the issuer alone (`/help`, `/participant list`, `/participant nudge`,
-`/participant add`, `/participant remove`, `/agent list`, `/agent create`, `/agent delete`, the
-group `channel`) or the whole channel (`/agent wakeup`): that `/participant add` brought someone in
-or `/participant remove` took someone out, the channel tells everyone anyway. A channel-wide answer
+`/participant add`, `/participant remove`, `/agent list`, `/agent create`, `/agent delete`,
+`/agent usage`, the group `channel`) or the whole channel (`/agent wakeup`): that
+`/participant add` brought someone in or `/participant remove` took someone out, the channel tells
+everyone anyway. A channel-wide answer
 is announced by the issuer's actor as `CommandExecuted`, forwarded to the users only, shown but
 never stored. The issuer gets the answer back from `execute_command` either way, since the channel
 never routes an envelope back to its sender; the REST response carries it only when it is private,
@@ -145,8 +148,9 @@ then refuses with their names rather than picking one. What it is sought among i
 `/agent wakeup` and `/participant nudge` act on an actor, and seek among those running;
 `/participant remove` seeks among those `/participant list` lists, as the issuer reads the channel,
 so that it also removes one that cannot run - but one that no longer exists, which has no name to
-be named by; `/channel leave` among the agents of the issuer's own among them; `/agent delete`
-seeks among the agents `/agent list` lists, taking part or not. A
+be named by; `/channel leave` among the agents of the issuer's own among them, `/agent usage`
+among every agent of them; `/agent delete` seeks among the agents `/agent list` lists, taking part
+or not. A
 channel is named by its whole name, which is the only one of its session (`/channel describe`,
 `SessionView::channel_named`); one the issuer may not read is answered like one that does not
 exist. `/channel delete` deletes the channel it is issued in as well, and `/channel leave` takes
@@ -238,6 +242,7 @@ external agent alike.
 | `/agent create` | - | the channel | `agent` | `<personality> [as <name>]` | private | Makes an agent of the personality named, in the session's scope - in the channel's for a personality of the channel's scope -, named after the personality unless named; `/participant add` brings it in. |
 | `/agent delete` | - | the channel | `agent` | `<agent>` | private | Deletes the agent of the session named, among those `/agent list` lists; one taking part rests in its channels until it is restored. |
 | `/agent wakeup` | `/wakeup` | the channel | `agent` | `[agent]` | channel-wide | Wakes the sleeping agents of the channel, or the one named. |
+| `/agent usage` | - | the channel | `agent` | `[agent]` | private | Tells how full the context of each agent taking part in the channel is, or of the one named - its tokens against its size, where known - and the input and output tokens of all its calls; without an agent, adds up the calls of them all. |
 | `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
 | `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |
 | `/channel create` | - | the channel | `channel` | `<name>` | private | Makes a channel of the session, with the user alone in it. |

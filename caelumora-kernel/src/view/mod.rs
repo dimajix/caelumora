@@ -2267,6 +2267,12 @@ mod tests {
             .snapshot(Detail::USAGE)
             .await;
         assert_eq!(details(&alone), (Some(expected), 0, 0), "only what was asked for");
+        let usage = |actor| {
+            let main = main.clone();
+            async move { main.participant(actor).await.unwrap().usage().await }
+        };
+        assert_eq!(usage(ActorId::Agent(helper.id)).await.unwrap(), Some(expected), "as carried");
+        assert_eq!(usage(ActorId::User(alice.id)).await.unwrap(), None, "a user's is none");
         let plain = main.snapshot(Detail::PARTICIPANTS).await;
         assert!(plain.participants.iter().all(|m| details(m) == (None, 0, 0)), "none asked for");
         assert!(

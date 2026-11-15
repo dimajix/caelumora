@@ -23,7 +23,7 @@ use caelumora_domain::confidentiality::{Place, Reading};
 use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::digest::Digest;
 use caelumora_domain::history::{HistoryEntry, HistoryField, HistoryPage, Reader};
-use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::message::{Message, MessageId, TokenUsage};
 use caelumora_domain::note::Note;
 use caelumora_domain::query::Filter;
 use caelumora_domain::removal::Removal;
@@ -1003,6 +1003,18 @@ impl ParticipantView {
             notes,
             digest: state.notes.digest(),
         }))
+    }
+
+    /// What the agent participant's model calls in the channel used (issue 573), as its state
+    /// holds it - what its snapshot carries with `Detail::USAGE`, without the questions behind the
+    /// snapshot's other fields. `None` for a participant that is no agent, for one whose calls
+    /// report no tokens (an external agent), and before its first call.
+    ///
+    /// # Errors
+    /// `Failed` if the agent's state cannot be read.
+    pub async fn usage(&self) -> ViewResult<Option<TokenUsage>> {
+        let Some(agent) = self.state.agent() else { return Ok(None) };
+        Ok(agent.stored().await?.used)
     }
 
     /// Of the notes the agent published, as its `state` holds them, those

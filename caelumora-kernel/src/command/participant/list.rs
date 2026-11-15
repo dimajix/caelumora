@@ -1,7 +1,6 @@
 //! The built-in `/participant list` command (issue 560).
 
-use super::taking_part;
-use crate::command::{command_error, CommandContext};
+use crate::command::{command_error, taking_part, CommandContext};
 use anyhow::Error;
 use caelumora_api::command::{CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;

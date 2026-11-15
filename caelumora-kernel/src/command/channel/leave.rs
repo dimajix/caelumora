@@ -1,12 +1,10 @@
 //! The built-in `/channel leave` command (issue 562).
 
-use crate::command::{command_error, named_one, CommandContext};
+use crate::command::{command_error, named_one, named_participants, taking_part, CommandContext};
 use caelumora_api::actor::Actor;
 use caelumora_api::command::CommandResult;
-use caelumora_domain::actor::ActorId;
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
-use caelumora_domain::value::name::Name;
 
 pub(super) const LEAVE_COMMAND_NAME: &str = "channel leave";
 
@@ -38,24 +36,16 @@ pub(super) async fn execute(
     let (leaving, done) = if wanted.is_empty() {
         (context.issuer.id(), format!("You left {name}."))
     } else {
-        // One that no longer exists has no name to be named by.
-        let agents: Vec<(Name, ActorId)> = context
-            .channel_view(LEAVE_COMMAND_NAME)
-            .await?
-            .participants()
-            .await
-            .into_iter()
-            .filter(|p| p.id().as_agent_id().is_some() && p.may_leave())
-            .filter_map(|p| Some((Name::new(p.name()?).ok()?, p.id())))
-            .collect();
-        let (agent, id) = named_one(
+        let mut participants = taking_part(LEAVE_COMMAND_NAME, context).await?;
+        participants.retain(|p| p.id().as_agent_id().is_some() && p.may_leave());
+        let (agent, participant) = named_one(
             LEAVE_COMMAND_NAME,
             wanted,
-            agents,
+            named_participants(participants),
             |(name, _)| name,
             "of yours in this channel",
         )?;
-        (id, format!("{agent} left {name}."))
+        (participant.id(), format!("{agent} left {name}."))
     };
     context
         .channel

@@ -443,6 +443,14 @@ impl TokenUsage {
             context_tokens: prompt + completion,
         })
     }
+
+    /// The share of its context the agent holds (issue 573), between 0 and 1: `context_tokens`
+    /// against `context_size`, at most all of it, since a compaction's estimate, or a prompt with
+    /// its answer, can come to more. `None` if the size is not known.
+    pub fn filled(&self) -> Option<f64> {
+        let size = self.context_size.filter(|size| *size > 0)?;
+        Some((self.context_tokens as f64 / size as f64).min(1.0))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -536,6 +544,21 @@ pub(crate) mod tests {
     use crate::session::SessionId;
     use crate::tool::ToolVisibility;
     use chrono::Duration;
+
+    #[test]
+    fn the_share_of_the_context_held_is_known_only_with_its_size_and_at_most_all_of_it() {
+        let usage = |context_tokens, context_size| TokenUsage {
+            calls: 1,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            context_size,
+            context_tokens,
+        };
+        assert_eq!(usage(2048, Some(8192)).filled(), Some(0.25), "a share of the size");
+        assert_eq!(usage(9000, Some(8192)).filled(), Some(1.0), "at most all of it");
+        assert_eq!(usage(2048, None).filled(), None, "no size known");
+        assert_eq!(usage(2048, Some(0)).filled(), None, "no size reported");
+    }
 
     #[test]
     fn a_role_meets_exactly_its_serialized_form() {

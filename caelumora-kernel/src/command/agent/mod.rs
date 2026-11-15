@@ -1,10 +1,11 @@
 //! The built-in command group `agent` (issue 560): the commands on the agents of a session -
-//! `agent list`, `create`, `delete` and `wakeup` -, contributed by one component, one file per
-//! command. The commands an agent carries out itself are its own (`caelumora_agents::command`).
+//! `agent list`, `create`, `delete`, `wakeup` and `usage` -, contributed by one component, one file
+//! per command. The commands an agent carries out itself are its own (`caelumora_agents::command`).
 
 mod create;
 mod delete;
 mod list;
+mod usage;
 mod wakeup;
 
 use crate::agent::AgentManager;
@@ -18,9 +19,9 @@ use caelumora_domain::command::{Command, CommandOutput, AGENT_GROUP_KIND};
 use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
-/// The component of the command group `agent`: `/agent list`, `/agent create`, `/agent delete` and
-/// `/agent wakeup` (`/wakeup`). It holds the `AgentManager`, which `/agent create` makes agents
-/// with and `/agent delete` deletes them with.
+/// The component of the command group `agent`: `/agent list`, `/agent create`, `/agent delete`,
+/// `/agent wakeup` (`/wakeup`) and `/agent usage`. It holds the `AgentManager`, which
+/// `/agent create` makes agents with and `/agent delete` deletes them with.
 #[derive(Debug)]
 pub(crate) struct AgentGroupComponent {
     agents: Arc<AgentManager>,
@@ -35,7 +36,13 @@ impl AgentGroupComponent {
 
 impl ProvidesCommands for AgentGroupComponent {
     fn commands(&self) -> Vec<Command> {
-        vec![list::command(), create::command(), delete::command(), wakeup::command()]
+        vec![
+            list::command(),
+            create::command(),
+            delete::command(),
+            wakeup::command(),
+            usage::command(),
+        ]
     }
 }
 
@@ -52,6 +59,7 @@ impl ChannelCommandProvider for AgentGroupComponent {
             create::CREATE_COMMAND_NAME => create::execute(&self.agents, args, context).await,
             delete::DELETE_COMMAND_NAME => delete::execute(&self.agents, args, context).await,
             wakeup::WAKEUP_COMMAND_NAME => wakeup::execute(args, context).await,
+            usage::USAGE_COMMAND_NAME => usage::execute(args, context).await,
             _ => Err(CommandError::Unknown(name.to_string())),
         }
     }
