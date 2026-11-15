@@ -124,7 +124,7 @@ mod tests {
         let api = api(Arc::clone(&state), &[]);
         let cookie = login(&api, "alice").await;
         let alice = user_id(&api, &cookie).await;
-        let (session, channel) = session_of(&state, alice).await;
+        let (session, channel) = session_of(&state, alice, &[]).await;
         let channel_uri = format!("/sessions/{}/channels/{}", session.0, channel.0);
 
         let upload = |name: &str, content: &'static [u8], length: bool| {

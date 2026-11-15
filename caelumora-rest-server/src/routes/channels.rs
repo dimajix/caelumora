@@ -20,7 +20,7 @@ use caelumora_domain::channel::{moderation_components, ChannelId};
 use caelumora_domain::command::{Command, CommandVisibility};
 use caelumora_domain::confidentiality::{Classification, LabelCauses};
 use caelumora_domain::context::{ContextItem, KnowledgeRef, KnowledgeSource};
-use caelumora_domain::message::{Message, MessageId};
+use caelumora_domain::message::{Message, MessageId, TokenUsage};
 use caelumora_domain::question::QuestionId;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::Detail;
@@ -375,24 +375,36 @@ pub(super) async fn add_participant(
     Ok(Json(channel_response(&state, &user, SessionId(id), ChannelId(cid)).await?))
 }
 
-/// Removes a participant from the channel (issue 46); `aid` is the id of the
-/// user or agent. Only who may change the channel may do it.
-/// One participant of the channel, with what its model calls used (issue
-/// 209) - what a client fetches again when an agent's turn ends, instead
-/// of the whole channel.
+/// One participant of the channel, with who it is (issue 244) - not with what its model calls
+/// used, which would read its whole state for it: that is `get_participant_usage`.
 pub(super) async fn get_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
     user: AuthenticatedUser,
 ) -> Result<Json<ChannelParticipantResponse>, ApiError> {
     let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
-    let participant =
-        participant_of(&channel, aid).await?.snapshot(Detail::USAGE | Detail::PROFILE).await;
+    let participant = participant_of(&channel, aid).await?.snapshot(Detail::PROFILE).await;
     ChannelParticipantResponse::of(participant).map(Json).ok_or_else(|| {
         ApiError::not_found("actor_not_found", format!("Actor {} is not in channel {}", aid, cid))
     })
 }
 
+/// What one participant's model calls in the channel used (issues 209, 573), as its state holds
+/// it - what a client reads again when an agent's turn ends, it carried out a command or compacted
+/// its context, instead of the whole participant, whose other fields ask more. `null` for a
+/// participant that is no agent, for one whose calls report no tokens, and before its first call;
+/// a state that cannot be read is an error.
+pub(super) async fn get_participant_usage(
+    State(state): State<Arc<AppState>>,
+    Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
+    user: AuthenticatedUser,
+) -> Result<Json<Option<TokenUsage>>, ApiError> {
+    let channel = channel_view(&state, &user, SessionId(id), ChannelId(cid)).await?;
+    Ok(Json(participant_of(&channel, aid).await?.usage().await?))
+}
+
+/// Removes a participant from the channel (issue 46); `aid` is the id of the
+/// user or agent. Only who may change the channel may do it.
 pub(super) async fn remove_participant(
     State(state): State<Arc<AppState>>,
     Path((id, cid, aid)): Path<(Uuid, Uuid, Uuid)>,
@@ -928,11 +940,13 @@ mod tests {
     use axum::Router;
     use caelumora_api::command::CommandError;
     use caelumora_api::reader::ViewError;
-    use caelumora_domain::message::MessageId;
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::channel::Participant;
     use caelumora_domain::security::Refused;
     use caelumora_kernel::channel::ChannelError;
     use caelumora_kernel::view::{AgentContextError, Viewer};
     use caelumora_security::SecurityContext;
+    use caelumora_store::testing::stored_agent;
     use serde_json::{json, Value};
     use std::time::Duration;
     use tokio::time;
@@ -976,7 +990,7 @@ mod tests {
         let api = api(Arc::clone(state), &[]);
         let cookie = login(&api, "alice").await;
         let alice = user_id(&api, &cookie).await;
-        let (session_id, channel_id) = session_of(state, alice).await;
+        let (session_id, channel_id) = session_of(state, alice, &[]).await;
         state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
         (api, cookie, session_id, channel_id)
     }
@@ -1158,6 +1172,47 @@ mod tests {
             "words alone carry nothing: {carrying}"
         );
         state.session_manager.stop(&SecurityContext::system(), session).await.unwrap();
+    }
+
+    /// Issue 573: what an agent's calls used is read alone, as its state holds it; a user has
+    /// none, and one who takes no part in the channel is not found.
+    #[tokio::test]
+    async fn what_a_participants_calls_used_is_read_alone() {
+        let state = state();
+        let api = api(Arc::clone(&state), &[]);
+        let cookie = login(&api, "alice").await;
+        let alice = user_id(&api, &cookie).await;
+        let stores = state.kernel.entity_stores();
+        let helper =
+            stored_agent(stores, "helper", make_personality("plain"), ActorId::User(alice)).await;
+        let (session_id, channel_id) =
+            session_of(&state, alice, &[Participant::Agent(helper.id)]).await;
+        let used = TokenUsage {
+            calls: 2,
+            prompt_tokens: 3000,
+            completion_tokens: 100,
+            context_size: Some(8192),
+            context_tokens: 1600,
+        };
+        let states = state.kernel.state_store();
+        let mut agent_state = states.get_agent_channel_state(helper.id, channel_id).await.unwrap();
+        agent_state.used = Some(used);
+        states.put_agent_channel_state(helper.id, channel_id, &mut agent_state).await.unwrap();
+        let participants =
+            format!("/sessions/{}/channels/{}/participants", session_id.0, channel_id.0);
+        let usage_of = |id: Uuid| format!("{participants}/{id}/usage");
+
+        let (status, usage) = send(&api, &cookie, Method::GET, &usage_of(helper.id.0), None).await;
+        assert_eq!((status, usage), (StatusCode::OK, serde_json::to_value(used).unwrap()));
+        let (status, usage) = send(&api, &cookie, Method::GET, &usage_of(alice.0), None).await;
+        assert_eq!((status, usage), (StatusCode::OK, Value::Null), "a user's calls are none");
+        let (status, missing) =
+            send(&api, &cookie, Method::GET, &usage_of(Uuid::new_v4()), None).await;
+        assert_eq!(
+            (status, missing["code"].clone()),
+            (StatusCode::NOT_FOUND, json!("actor_not_found"))
+        );
+        state.session_manager.stop(&SecurityContext::system(), session_id).await.unwrap();
     }
 
     /// Who takes no part in a channel cannot follow it, whether it runs or

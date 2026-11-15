@@ -296,8 +296,9 @@ pub struct ChannelParticipantResponse {
     /// an agent taking part.
     pub can_cancel: bool,
     /// What the participant's model calls in the channel used (issue 209):
-    /// given by the snapshot of the channel's stream and for a participant
-    /// asked for alone, not where channels are listed.
+    /// given by the snapshot of the channel's stream, not where channels are
+    /// listed nor where a participant is asked for alone - `…/usage` answers
+    /// it there (issue 573).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
     /// For a former participant (issue 164): who removed it and when.

@@ -155,8 +155,8 @@ export interface ChannelParticipant {
   turn_under_way?: string;
   /**
    * What its model calls used (issue 209): sent with the channel stream's
-   * snapshot and by `getParticipant`, not where channels are listed; absent
-   * for a participant whose calls report no tokens.
+   * snapshot alone - `getParticipantUsage` reads it for one participant -;
+   * absent for a participant whose calls report no tokens.
    */
   usage?: TokenUsage;
   /** For a former participant (issue 164): who removed it and when. */

@@ -362,6 +362,10 @@ fn session_routes() -> Router<Arc<AppState>> {
             get(channels::get_participant).delete(channels::remove_participant),
         )
         .route(
+            "/sessions/{id}/channels/{cid}/participants/{aid}/usage",
+            get(channels::get_participant_usage),
+        )
+        .route(
             "/sessions/{id}/channels/{cid}/participants/{aid}/cancel",
             post(channels::cancel_participant),
         )

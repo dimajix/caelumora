@@ -16,6 +16,7 @@ import type {
   PersonalityResponse,
   ApprovalRule,
   ChannelParticipant,
+  TokenUsage,
   ChannelResponse,
   Command,
   HistoryPage,
@@ -295,10 +296,20 @@ export const api = {
   },
 
   /** `actorUuid` is the id of the user or agent, without its kind. */
-  /** One participant, with what its model calls used (issue 209) and who it is (issue 244). */
+  /** One participant, with who it is (issue 244). */
   async getParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<ChannelParticipant> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`);
     await ensureOk(res, 'Failed to fetch the participant');
+    return res.json();
+  },
+
+  /**
+   * What one participant's model calls used (issue 573), without the rest of it; `null` for one
+   * that is no agent, or whose calls counted none yet.
+   */
+  async getParticipantUsage(sessionId: string, channelId: string, actorUuid: string): Promise<TokenUsage | null> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/usage`);
+    await ensureOk(res, 'Failed to fetch what the participant used');
     return res.json();
   },
 

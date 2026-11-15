@@ -22,6 +22,7 @@ use caelumora_kernel::user_provider::UserManager;
 use caelumora_security::SecurityContext;
 use futures::StreamExt;
 use serde_json::Value;
+use std::iter;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -105,11 +106,16 @@ pub(super) async fn user_id(api: &Router, cookie: &str) -> UserId {
     UserId(id.parse().unwrap())
 }
 
-/// A session of `user` in `state`, made and started as the system with them in its main channel:
-/// its id and the main channel's.
-pub(super) async fn session_of(state: &AppState, user: UserId) -> (SessionId, ChannelId) {
+/// A session of `user` in `state`, made and started as the system with them and `others` in its
+/// main channel: its id and the main channel's.
+pub(super) async fn session_of(
+    state: &AppState,
+    user: UserId,
+    others: &[Participant],
+) -> (SessionId, ChannelId) {
     let mut session = make_session("talk", user);
-    session.participants = vec![Participant::User(user)];
+    session.participants =
+        iter::once(Participant::User(user)).chain(others.iter().cloned()).collect();
     let ids = (session.id, session.channels[0]);
     create(&state.session_manager, &SecurityContext::system(), session).await.unwrap();
     ids

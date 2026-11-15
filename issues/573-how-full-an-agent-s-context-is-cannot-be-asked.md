@@ -78,3 +78,9 @@ for an agent's usage, which the web UI reads after a turn instead of the whole p
 that seek among those taking part read them by one function, `command::taking_part`, and find
 those that can be named by another, `command::named_participants`, which `/participant remove`
 and `/channel leave` share with it.
+
+**2026-11-15** - Step 2 done: `GET …/participants/{aid}/usage` (`get_participant_usage`) answers
+`ParticipantView::usage()` - `null` where it is `None`, an error where the state cannot be read -,
+and the web UI's `readUsage` reads it there (`api.getParticipantUsage`). Decided with the
+maintainer after its review: `GET …/participants/{aid}` no longer answers the usage - it read the
+agent's whole state, its transcript loaded with it, for what the profile panel does not show.

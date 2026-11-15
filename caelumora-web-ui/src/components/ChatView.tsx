@@ -829,8 +829,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
         const readUsage = () => {
           const uuid = agentIdOf(envelope.context.sender_id);
           if (!uuid) return;
-          api.getParticipant(sessionId, channelId, uuid)
-            .then(participant => { if (participant.usage) setUsage(prev => ({...prev, [answerer]: participant.usage!})); })
+          api.getParticipantUsage(sessionId, channelId, uuid)
+            .then(usage => { if (usage) setUsage(prev => ({...prev, [answerer]: usage})); })
             .catch(error => reportError('Failed to read what the agent used', error));
         };
         // A notice the history records, shown once: live, and from the

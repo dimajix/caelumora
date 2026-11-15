@@ -119,7 +119,8 @@ its handler's doc comment.
 | `GET`, `PUT`, `DELETE …/messages/{mid}`; `PUT …/messages/{mid}/classification`; `POST …/messages/{mid}/retry` | Read a message as it stands (`404 message_not_found` where the user's view of the history does not reach it); modify or take back one's own message - a modification names its `attachments` as they are to stand, so that one naming none removes them all -; reclassify a message; ask the agent that said it to answer again |
 | `POST …/approvals`, `POST …/questions/{qid}` | Approve or deny a tool call; answer or decline the questions of an agent's call |
 | `POST …/cancel` | End the current turn of every agent in the channel |
-| `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with what its model calls used and who it is |
+| `POST`, `DELETE …/participants`, `…/participants/{aid}`; `GET …/participants/{aid}` | Add or remove a participant - one not in the session yet is taken into it, too; one participant, with who it is |
+| `GET …/participants/{aid}/usage` | What one participant's model calls used alone, as its state holds it - `null` for one that is no agent or counted no call yet -, failing if its state cannot be read: what a client reads again after an agent's turn |
 | `POST …/participants/{aid}/retry`, `…/cancel`, `…/tool-calls/{call_id}/cancel` | Ask one agent to answer again; end its turn alone; interrupt one tool call of its turn |
 | `POST …/participants/{aid}/leave` | Take oneself, or one's own agent, out of the channel by one's own act, without the right to change it; they stay in the session |
 | `GET …/notes` | The notes the channel's agents published |
