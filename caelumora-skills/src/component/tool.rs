@@ -166,6 +166,23 @@ struct Update {
     body: Option<String>,
 }
 
+impl Update {
+    /// The change `params` ask for.
+    ///
+    /// # Errors
+    /// `InvalidParameter` for arguments that do not fit, or that change nothing - neither the
+    /// description nor the steps.
+    fn of(params: &Value) -> ToolResult<Self> {
+        let update: Self = arguments(params)?;
+        if update.description.is_none() && update.body.is_none() {
+            return Err(ToolError::InvalidParameter(
+                "give a new description, new steps, or both".to_string(),
+            ));
+        }
+        Ok(update)
+    }
+}
+
 /// Where an agent may write a skill (issue 22, decision 6): never the
 /// global scope.
 enum SkillScope {
@@ -367,12 +384,7 @@ impl Tool for UpdateSkillTool {
         _answers: Option<&Answers>,
         turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        let Update { name, description, body } = arguments(params)?;
-        if description.is_none() && body.is_none() {
-            return Err(ToolError::InvalidParameter(
-                "give a new description, new steps, or both".to_string(),
-            ));
-        }
+        let Update { name, description, body } = Update::of(params)?;
         let skill = tool_reader(turn).await?.usable_skill_named(name.trim()).await?;
         let skills = tool_writer(turn).await?;
         // What the turn saw goes into the skill: raised to it first,
@@ -396,12 +408,7 @@ impl Tool for UpdateSkillTool {
     }
 
     fn describe(&self, params: &Value) -> ToolResult<String> {
-        let Update { name, description, body } = arguments(params)?;
-        if description.is_none() && body.is_none() {
-            return Err(ToolError::InvalidParameter(
-                "give a new description, new steps, or both".to_string(),
-            ));
-        }
+        let Update { name, description, body } = Update::of(params)?;
         let mut text = format!("Change the skill \"{name}\"");
         if let Some(description) = description {
             text.push_str(&format!(" - what it is for, from now on: {description}"));

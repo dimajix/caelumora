@@ -383,17 +383,19 @@ The module `component` keeps what a kind is apart from what it does (issue 534),
 `caelumora-tool-attachment`. Its `mod.rs` holds what the kind is configured with and built of: its
 constant, its `…Params`, its `…Component` with its `new`, where it has one, `register`, and what
 several of its facets share, with the tests of these. Each facet the component serves is a child
-module of it, named after the facet - `tool.rs` for its tools, `prompt.rs` for the
-`PromptProvider`, `command.rs` for its commands -, which holds the facet's `impl` for the
-`…Component` - or, for tools and commands, their types, and the `ToolProvider` of a component
-that decides what it offers -, what only that facet uses - the tools' and commands' names and
-arguments, the helpers of its `impl` - and its tests; it may have children of
-its own, as the `tool` of `caelumora-tool-workspace` has `files` and `shell`. A child, not a module
-beside it, so that it reaches the private fields of the `…Component` without their being opened to
-the crate. The module `component` is public only where the kind's name is used outside the crate -
-by a program, or by the crate's tests in `tests/` - and then with nothing public but that name and
-the names and presentations of its tools and commands that those tests use (`caelumora-tool-mcp`,
-`caelumora-skills`).
+module of it, named after the facet - `tool.rs` for its tools, `prompt.rs` for the `PromptProvider`,
+`command.rs` for its commands -, which holds the facet's `impl` for the `…Component` - or, for tools
+and commands, their types, and the `ToolProvider` of a component that decides what it offers -, what
+only that facet uses - the tools' and commands' names and arguments, the helpers of its `impl` - and
+its tests; it may have children of its own, as the `tool` of `caelumora-tool-workspace` has `files`
+and `shell`. A group of tools too large to read in one file is a directory instead, a file per tool
+named after it (`files/read_file.rs`), each tool made by its `new`, and its `mod.rs` holds what
+several of them share, their names and the `tools` that makes them all (issue 584). A child, not a
+module beside it, so that it reaches the private fields of the `…Component` without their being
+opened to the crate. The module `component` is public only where the kind's name is used outside the
+crate - by a program, or by the crate's tests in `tests/` - and then with nothing public but that
+name and the names and presentations of its tools and commands that those tests use
+(`caelumora-tool-mcp`, `caelumora-skills`).
 
 Components follow one convention:
 

@@ -1,6 +1,6 @@
 # 584 — A tool has no object of its own
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Tools and approvals
@@ -83,4 +83,12 @@ struct literals in the one function that makes them, a `new` only where that lie
 (COMPONENTS.md); the `Use` a workspace tool is held with decides what it is offered by, not how it
 reaches the workspace, which the kernel checks anyway - documented, not bound; a call of a tool gone
 since its turn began is logged as naming a tool that is gone.
+
+**2026-11-15** - Step 3 done: what the review of step 2 came across. `UpdateSkillTool` checks once
+that a change changes something (`Update::of`), for its description to an approver and for its run
+alike; the workspace's file tools lie in `files/`, a file per tool, each made by its `new`, as
+COMPONENTS.md now says of a group of tools too large for one file.
+
+**2026-11-15** - Done: each tool is carried out, asked for its questions and its matcher by an
+object of its own, no provider matches a tool's name, and TOOLS.md and COMPONENTS.md describe it.
 
