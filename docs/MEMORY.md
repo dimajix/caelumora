@@ -89,7 +89,11 @@ public notes.
 *   **Hidden calls.** The tools are hidden, so their calls never reach the channel. "Private" means
     private from other agents and other users, not from the agent's owner, who sees them in the
     context panel and - from every channel of the session they may read - in the private notes
-    panel (see [WEB-UI.md](WEB-UI.md)).
+    panel (see [WEB-UI.md](WEB-UI.md)); `/private-notes @agent`, a command of the agent for its
+    owners alone, shows them what the prompt part shows the model (see
+    [COMMANDS.md](COMMANDS.md#commands-of-an-agent)) - read through the agent, as the agent reads
+    them, so also of a channel it left that the owner may not read, which the panel, reading
+    through the channels, leaves out.
 
 ## Agent memory
 

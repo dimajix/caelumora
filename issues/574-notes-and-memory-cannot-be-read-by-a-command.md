@@ -53,6 +53,12 @@ agent, as its owner's.
     kinds, and the plugin would need a way of its own into them, and the kernel's helpers of the
     commands made public.
 
+4.  **Tidying what the steps came across**, added at the maintainer's word after step 2: the
+    prompt part of `private_notes` leaves out channels without notes, which
+    `SessionReader::own_private_notes` gives none of (`render`); two `matches!` of the agents'
+    security suite are laid out past 100 characters; CONFIDENTIALITY.md names the context panel
+    alone as where an agent's owner sees its private notes.
+
 What a person reads by such a command is not recorded as knowledge: it is part of no turn's
 context.
 
@@ -73,3 +79,8 @@ and for its memory.
 `ChannelView::notes`, of the channel issued in or the one named, which it finds as
 `/channel describe` does (`command::channel::this_or_named`). A user reads a channel whole or not
 at all, so the command meets no channel read entry by entry.
+
+**2026-11-15** - Step 2 done: `/private-notes @agent`, a command of the agent that `private_notes`
+carries out for its owners alone, shows what its prompt part gives the model - the private notes of
+the channel, numbered, and of the session's other channels as far as they may be copied there - as
+one function gives both (`recalled`).

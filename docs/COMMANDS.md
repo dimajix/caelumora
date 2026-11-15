@@ -220,8 +220,9 @@ external agent alike.
     for `/compact`, the issuer sees it begin and everybody sees it done.
 *   **Answered.** Carried out, the agent answers `CommandExecuted` - to the issuer alone if the
     answer is private, to every user otherwise; not carried out, `CommandFailed` to the issuer
-    alone, with why. A command answers what it did, not what it read: nothing withholds its answer
-    as a tool's result is withheld.
+    alone, with why. Nothing withholds its answer as a tool's result is withheld: a command that
+    answers what it read - `/skills`, `/private-notes` - reads through the readers of the agent's
+    work, which give only what may be told in the channel.
 *   **Recorded.** What was carried out - by an agent, with its arguments and on whose word, or by
     the session (`/agent wakeup`) - goes into the channel's history with what it answered, to whom
     it was answered: the issuer alone for a private answer, every user otherwise (issue 417). A
@@ -256,6 +257,7 @@ external agent alike.
 | `/channel briefing` | - | the channel | `channel` | `[text]` | private | Says what an agent should know before it works in this channel, its summary kept; without a text, removes it. |
 | `/skill` | - | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | - | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
+| `/private-notes` | - | the agent | `private_notes` | `@agent` | private | For the agent's owners: shows the private notes it recalls here - of this channel, and of the session's other channels as far as they may be told here ([MEMORY.md](MEMORY.md#private-notes)). |
 | `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
 | `/exit` | `/quit` | the terminal | - | - | - | Ends the program, the session shut down in order. |
 | `/channel switch` | `/switch` | the terminal | - | `<channel>` | - | Talks in another channel of the session the user takes part in. |

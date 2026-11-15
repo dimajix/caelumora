@@ -16,7 +16,11 @@
 //! its tools are `ToolVisibility::HIDDEN`, so their calls never reach the
 //! channel, but the agent's owner sees them, and the prompt part, in the
 //! context panel - the audit view of the one responsible for the agent.
+//!
+//! Its command `/private-notes @agent` (issue 574), for the agent's owners alone (`owners_only`),
+//! shows them what the prompt part shows the model: the private notes the agent recalls here.
 
+use crate::command::AgentCommandProvider;
 use crate::components::notes::NOTE_PRESENTATION;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::NAMESPACE;
@@ -31,16 +35,20 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
+use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_api::reader::PrivateNotesElsewhere;
+use caelumora_api::reader::{PrivateNotesElsewhere, ViewResult};
+use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::note::{Note, NoteId};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::value::command_name::CommandName;
 use serde_json::Value;
 use std::sync::Arc;
+use tracing::warn;
 
 pub const PRIVATE_NOTES_KIND: &str = "private_notes";
 
@@ -48,6 +56,9 @@ pub const WRITE_PRIVATE_NOTE_TOOL_NAME: &str = "write_private_note";
 pub const UPDATE_PRIVATE_NOTE_TOOL_NAME: &str = "update_private_note";
 pub const REVOKE_PRIVATE_NOTE_TOOL_NAME: &str = "revoke_private_note";
 pub const RECLASSIFY_PRIVATE_NOTE_TOOL_NAME: &str = "reclassify_private_note";
+
+/// The command that shows the agent's owners its private notes.
+const PRIVATE_NOTES_COMMAND_NAME: &str = "private-notes";
 
 /// The text of its prompt part in the prompt catalogue.
 const TEXT: &str = "agents.private_notes";
@@ -240,13 +251,7 @@ impl PromptProvider for PrivateNotesComponent {
     }
 
     async fn get_prompt(&self, situation: &Situation<'_>) -> Result<Prompt, ContextError> {
-        let own = AgentNotes::current(situation, NoteKind::Private);
-        // This channel's come from the turn, with its own changes; the
-        // others' through the agent itself.
-        let elsewhere = match situation.session().await? {
-            Some(session) => session.own_private_notes().await,
-            None => Vec::new(),
-        };
+        let (own, elsewhere) = recalled(situation).await?;
 
         let private = |channel, digest, notes: &[Note]| KnowledgeRef {
             channel,
@@ -267,6 +272,90 @@ impl PromptProvider for PrivateNotesComponent {
         }
         Ok(Prompt::of_knowledge(render(&self.prompts, &own, &elsewhere)?, knowledge))
     }
+}
+
+impl ProvidesCommands for PrivateNotesComponent {
+    fn commands(&self) -> Vec<Command> {
+        vec![Command {
+            name: CommandName::fixed(PRIVATE_NOTES_COMMAND_NAME),
+            aliases: Vec::new(),
+            description: "Shows what the agent noted for itself and recalls here: its private notes of this channel, and of the session's other channels as far as they may be told here.".to_string(),
+            usage: None,
+            // As what it saw (issue 54): its owners'.
+            owners_only: true,
+        }]
+    }
+}
+
+#[async_trait]
+impl AgentCommandProvider for PrivateNotesComponent {
+    /// Carries out `/private-notes`: the private notes the agent recalls in the channel, as its
+    /// prompt part gives them (`recalled`), answered to the issuer alone.
+    async fn execute(
+        &self,
+        name: &CommandName,
+        args: &str,
+        turn: &mut Turn<'_>,
+    ) -> CommandResult<CommandOutput> {
+        if name.as_str() != PRIVATE_NOTES_COMMAND_NAME {
+            return Err(CommandError::Unknown(name.to_string()));
+        }
+        if !args.trim().is_empty() {
+            return Err(CommandError::InvalidArguments {
+                command: name.to_string(),
+                reason: "it takes no arguments".to_string(),
+            });
+        }
+        let (own, elsewhere) = recalled(&turn.situation()).await.map_err(|e| {
+            warn!("/{} could not read the private notes: {}", name, e);
+            CommandError::Failed {
+                command: name.to_string(),
+                reason: "the private notes could not be read".to_string(),
+            }
+        })?;
+        Ok(CommandOutput::private(listed(turn.agent_name(), &own, &elsewhere)))
+    }
+}
+
+/// What the agent of the work in `situation` recalls of its private notes: those of this
+/// channel, from the turn with its own changes, and those of the session's other channels it took
+/// part in, through the agent itself, as far as they may be copied here
+/// (`SessionReader::own_private_notes`).
+///
+/// # Errors
+/// What reaching the session reports.
+async fn recalled(
+    situation: &Situation<'_>,
+) -> ViewResult<(Vec<Note>, Vec<PrivateNotesElsewhere>)> {
+    let own = AgentNotes::current(situation, NoteKind::Private);
+    let elsewhere = match situation.session().await? {
+        Some(session) => session.own_private_notes().await,
+        None => Vec::new(),
+    };
+    Ok((own, elsewhere))
+}
+
+/// What `/private-notes` answers of the agent `agent`, which recalls its private notes `own` of
+/// this channel - numbered, as it changes them here - and those of other channels (`elsewhere`),
+/// which come without channels holding none (`SessionReader::own_private_notes`).
+fn listed(agent: &str, own: &[Note], elsewhere: &[PrivateNotesElsewhere]) -> String {
+    let mut text = String::new();
+    if !own.is_empty() {
+        text.push_str("\nIn this channel:\n");
+        for note in own {
+            text.push_str(&format!("- #{} {}\n", note.id, note.text));
+        }
+    }
+    for channel in elsewhere {
+        text.push_str(&format!("\nFrom channel {}:\n", channel.name));
+        for note in &channel.notes {
+            text.push_str(&format!("- {}\n", note.text));
+        }
+    }
+    if text.is_empty() {
+        return format!("{agent} recalls no private notes here.");
+    }
+    format!("The private notes {agent} recalls here:\n{}", text.trim_end())
 }
 
 /// The prompt part of `prompts` for the private notes of this channel
@@ -296,7 +385,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             ComponentKind::new(PRIVATE_NOTES_KIND)
                 .params::<PositionParams>()
                 .provides::<dyn ToolProvider>()
-                .provides::<dyn PromptProvider>(),
+                .provides::<dyn PromptProvider>()
+                .provides::<dyn AgentCommandProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
@@ -305,7 +395,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             let component = Arc::new(PrivateNotesComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
-            facets.insert::<dyn PromptProvider>(component);
+            facets.insert::<dyn PromptProvider>(Arc::<PrivateNotesComponent>::clone(&component));
+            facets.insert::<dyn AgentCommandProvider>(component);
             Ok(facets)
         },
     );
@@ -317,7 +408,10 @@ mod tests {
     use crate::testing;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::command::CommandVisibility;
+    use caelumora_domain::ledger::Change;
     use caelumora_domain::message::MessageId;
+    use caelumora_domain::note::NoteOrigin;
     use caelumora_kernel::testing::Discard;
     use chrono::Utc;
 
@@ -359,11 +453,65 @@ mod tests {
         );
     }
 
+    /// `/private-notes` lists what the prompt part shows: this channel's notes numbered, the
+    /// others' by their channel, unnumbered; or that there are none.
+    #[test]
+    fn private_notes_are_listed_this_channels_numbered_then_the_others_by_channel() {
+        let elsewhere = [PrivateNotesElsewhere {
+            channel: ChannelId::default(),
+            name: "research".to_string(),
+            notes: vec![note(1, "Kaya prefers short answers.")],
+            digest: None,
+        }];
+        assert_eq!(
+            listed("helper", &[note(2, "Remind Kaya of the deadline.")], &elsewhere),
+            "The private notes helper recalls here:\n\n\
+             In this channel:\n\
+             - #2 Remind Kaya of the deadline.\n\n\
+             From channel research:\n\
+             - Kaya prefers short answers.",
+            "this channel's numbered, as they are changed here"
+        );
+        assert_eq!(
+            listed("helper", &[], &[]),
+            "helper recalls no private notes here.",
+            "that there are none"
+        );
+    }
+
+    /// The agent carries out `/private-notes` from its state as stored, without arguments, and
+    /// answers the issuer alone.
+    #[tokio::test]
+    async fn private_notes_are_shown_from_the_agents_state_to_the_issuer_alone() {
+        let mut state = AgentChannelState::default();
+        state.private_notes.push(
+            Change::Add {
+                id: NoteId(1),
+                text: "secret".to_string(),
+                classification: Classification::CHANNEL_DEFAULT,
+            },
+            NoteOrigin::default(),
+            MessageId::default(),
+        );
+        let component: &dyn AgentCommandProvider =
+            &PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
+                .unwrap();
+        let name = CommandName::fixed(PRIVATE_NOTES_COMMAND_NAME);
+        let mut turn = Turn::begun(AgentId::new(), &mut state);
+
+        let answer = component.execute(&name, "", &mut turn).await.expect("carried out");
+        assert_eq!(answer.visibility, CommandVisibility::Private, "to the issuer alone");
+        assert!(answer.text.ends_with("In this channel:\n- #1 secret"), "{}", answer.text);
+        let refused = component.execute(&name, "everything", &mut turn).await;
+        assert!(matches!(refused, Err(CommandError::InvalidArguments { .. })), "{refused:?}");
+    }
+
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
-            .unwrap();
+        let tools: &dyn ToolProvider =
+            &PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
+                .unwrap();
         let mut turn = Turn::begun(AgentId::new(), &mut state);
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools
