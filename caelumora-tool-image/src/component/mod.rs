@@ -13,7 +13,7 @@ use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents
 use caelumora_api::image::ImageModelClient;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -46,7 +46,7 @@ struct ImageGenerationComponent {
     models: Vec<Arc<dyn ImageModelClient>>,
     destination: Classification,
     description: String,
-    tool: Tool,
+    tool: ToolDescription,
 }
 
 impl ImageGenerationComponent {

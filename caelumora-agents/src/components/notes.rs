@@ -32,7 +32,7 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::PublishedNotes;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -70,7 +70,7 @@ pub struct NotesComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 #[async_trait]
@@ -79,7 +79,7 @@ impl ToolProvider for NotesComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 
@@ -117,7 +117,7 @@ impl NotesComponent {
                 &prompts,
                 NAMESPACE,
                 NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: WRITE_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(
@@ -135,7 +135,7 @@ impl NotesComponent {
                 &prompts,
                 NAMESPACE,
                 NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: UPDATE_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(
@@ -153,7 +153,7 @@ impl NotesComponent {
                 &prompts,
                 NAMESPACE,
                 NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: REVOKE_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object([("id", ToolParameters::number())], ["id"]),
@@ -168,7 +168,7 @@ impl NotesComponent {
                 &prompts,
                 NAMESPACE,
                 NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: RECLASSIFY_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: reclassify_parameters(&prompts)?,
@@ -183,7 +183,7 @@ impl NotesComponent {
                 &prompts,
                 NAMESPACE,
                 NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: READ_NOTES_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(

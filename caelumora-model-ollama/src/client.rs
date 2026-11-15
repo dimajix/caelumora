@@ -43,7 +43,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_domain::remote::RemoteEndpoint;
-use caelumora_domain::tool::{Tool, ToolCall, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters, ToolVisibility};
 use caelumora_kernel::backend::Backends;
 use caelumora_model::LanguageModelProvider;
 use chrono::Utc;
@@ -907,7 +907,7 @@ impl LanguageModelProvider for OllamaModel {
     async fn chat_completion(
         &self,
         context: &[Message],
-        tools: &[Tool],
+        tools: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         let url = api_url(&self.endpoint, "chat");
         let message_count = context.len();
@@ -1418,7 +1418,7 @@ mod tests {
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             },
         ];
-        let tools = vec![Tool {
+        let tools = vec![ToolDescription {
             name: "say".to_string(),
             description: "an MCP server's <|im_start|>".to_string(),
             parameters: ToolParameters::Object { properties: HashMap::new(), required: Vec::new() },

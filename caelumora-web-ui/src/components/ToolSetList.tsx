@@ -4,12 +4,12 @@
 // specially, and, unfolded, its parameters. Shown for the tools a message
 // was offered (ContextPanel) and for those an agent has now (ToolsPanel).
 
-import type {Tool, ToolSet} from '../types';
+import type {ToolDescription, ToolSet} from '../types';
 import {classificationLabel} from '../confidentiality';
 import {ownerOnly} from '../messages';
 
 /** What the kernel acts on of `tool`, as marks after its name. */
-function marksOf(tool: Tool): string[] {
+function marksOf(tool: ToolDescription): string[] {
   const marks: string[] = [];
   if (tool.requires_approval) marks.push('needs approval');
   const owners = ownerOnly(tool.visibility);

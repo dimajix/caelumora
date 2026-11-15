@@ -9,7 +9,7 @@ use caelumora_api::model::{LanguageModelClient, ModelError, ModelProfileProvider
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::message::{Message, MessageEvent};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use futures::stream::{self, BoxStream, StreamExt};
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ impl LanguageModelClient for UnaskedLanguageModel {
         &self,
         _: ActorId,
         _: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         let refused = ModelError::Connection {
             endpoint: UNASKED_LANGUAGE_MODEL_KIND.to_string(),

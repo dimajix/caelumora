@@ -37,7 +37,7 @@ use caelumora_agents::turn::Turn;
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Serialize;
 use serde_json::Value;
 use tracing::error;
@@ -50,7 +50,7 @@ use tracing::error;
 pub(super) fn tools(
     params: &WorkspaceParams,
     prompts: &PromptTexts,
-) -> Result<Vec<Tool>, PromptError> {
+) -> Result<Vec<ToolDescription>, PromptError> {
     let mut tools = shell::tools(params, prompts)?;
     tools.extend(files::tools(params, prompts)?);
     Ok(tools)
@@ -68,8 +68,8 @@ fn tool(
     requires_approval: bool,
     presentation: ToolPresentation,
     values: impl Serialize,
-) -> Result<Tool, PromptError> {
-    let tool = Tool {
+) -> Result<ToolDescription, PromptError> {
+    let tool = ToolDescription {
         name: name.to_string(),
         description: String::new(),
         parameters,
@@ -122,7 +122,7 @@ impl ToolProvider for WorkspaceComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 
@@ -130,7 +130,7 @@ impl ToolProvider for WorkspaceComponent {
     /// its channel (issue 290): none where there is none, none that change
     /// where its list grants reading alone, no shell where its storage gives
     /// none.
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
         let workspace = workspace_reader(situation).await.map_err(|e| e.to_string())?;
         let (writable, has_shell) = (workspace.may_write().await, workspace.has_shell());
         Ok(self

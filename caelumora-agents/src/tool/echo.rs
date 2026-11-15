@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -20,7 +20,7 @@ pub struct EchoComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 impl EchoComponent {
@@ -33,7 +33,7 @@ impl EchoComponent {
             prompts,
             NAMESPACE,
             ECHO_KIND,
-            Tool {
+            ToolDescription {
                 name: ECHO_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -60,7 +60,7 @@ impl ToolProvider for EchoComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 

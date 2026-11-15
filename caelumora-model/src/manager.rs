@@ -10,7 +10,7 @@ use caelumora_api::model::{LanguageModelClient, ModelError, ModelResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::message::{Message, MessageEvent};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use caelumora_kernel::backend::NamedBackends;
 use caelumora_kernel::kernel::Acting;
 use caelumora_security::confidentiality::ConfidentialityPolicy;
@@ -146,7 +146,7 @@ impl LanguageModelClient for LanguageModelClientFor {
         &self,
         initiator: ActorId,
         context: &[Message],
-        tools: &[Tool],
+        tools: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         asking("model", &self.name, &self.acting, initiator);
         self.model.chat_completion(context, tools).await

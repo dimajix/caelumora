@@ -14,7 +14,7 @@ use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents, Params};
 use caelumora_api::workspace::WorkspaceReader;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ struct ArtifactsComponent {
     /// What its tool set is for and its tool, as the configuration or the
     /// prompt catalogue words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 impl ArtifactsComponent {

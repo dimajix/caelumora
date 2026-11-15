@@ -44,7 +44,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [226](226-concurrent-tool-calls.md) | open | medium | feature | The tool calls of one step run one after the other, because every tool holds the turn while it runs, so a step of several slow calls takes the sum of their durations. |
 | [545](545-web-fetch-through-the-proxy-reaches-anything.md) | open | medium | feature | `web_fetch` refuses addresses inside the network only where it connects itself; a fetch through the proxy the environment names reaches whatever the proxy reaches, internal hosts and the cloud's metadata service among them. |
-| [584](584-a-tool-has-no-object-of-its-own.md) | open | medium | refactoring | A `ToolProvider` answers for all of its tools by their names - it carries a call out, asks its questions, proposes its matcher and describes it, each by a `match` of the name or a search of its list -, so what belongs to one tool is spread over the methods of its provider, as a command's was before issue 583. |
+| [584](584-a-tool-has-no-object-of-its-own.md) | in progress | medium | refactoring | A `ToolProvider` answers for all of its tools by their names - it carries a call out, asks its questions, proposes its matcher and describes it, each by a `match` of the name or a search of its list -, so what belongs to one tool is spread over the methods of its provider, as a command's was before issue 583. |
 
 ## User interaction
 

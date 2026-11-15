@@ -39,7 +39,7 @@ use caelumora_domain::context::ModelProfile;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageEvent, MessageId};
 use caelumora_domain::question::{Answers, Questions};
-use caelumora_domain::tool::{Tool, ToolParameters};
+use caelumora_domain::tool::{ToolDescription, ToolParameters};
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::work::TurnId;
@@ -135,7 +135,7 @@ impl LanguageModelClient for NeverAnswers {
         &self,
         _: ActorId,
         _: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         Box::pin(stream::pending())
     }
@@ -387,8 +387,8 @@ impl ToolProvider for Asking {
     fn description(&self) -> String {
         "asks first".to_string()
     }
-    fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
+    fn tools(&self) -> Vec<ToolDescription> {
+        vec![ToolDescription {
             name: "asking".to_string(),
             description: "asks first".to_string(),
             parameters: ToolParameters::object(

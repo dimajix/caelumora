@@ -25,7 +25,7 @@ use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::store::StoreError;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use caelumora_domain::value::name::ScopedName;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -56,9 +56,9 @@ struct Publish {
 pub(super) fn publish_artifact(
     prompts: &PromptTexts,
     requires_approval: bool,
-) -> Result<Tool, PromptError> {
+) -> Result<ToolDescription, PromptError> {
     let string = ToolParameters::string;
-    let tool = Tool {
+    let tool = ToolDescription {
         name: PUBLISH_ARTIFACT.to_string(),
         description: String::new(),
         parameters: ToolParameters::object(
@@ -96,14 +96,14 @@ impl ToolProvider for ArtifactsComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 
     /// Its tool where a file can be published: where the work may use a
     /// workspace in its channel, and a storage of content is configured
     /// (issues 290, 282).
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
         // A work that reaches no workspace is told so first; one that does is given no publisher
         // only where no storage of content is configured.
         workspace_reader(situation).await.map_err(|e| e.to_string())?;

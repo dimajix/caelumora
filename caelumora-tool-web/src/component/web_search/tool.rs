@@ -14,7 +14,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::secret::Secrets;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -47,8 +47,8 @@ struct Search {
 pub(super) fn search_web(
     prompts: &PromptTexts,
     requires_approval: bool,
-) -> Result<Tool, PromptError> {
-    let tool = Tool {
+) -> Result<ToolDescription, PromptError> {
+    let tool = ToolDescription {
         name: SEARCH_WEB.to_string(),
         description: String::new(),
         parameters: ToolParameters::object(
@@ -109,7 +109,7 @@ impl ToolProvider for WebSearchComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         vec![self.tool.clone()]
     }
 

@@ -32,7 +32,7 @@ use caelumora_api::image::{Image, ImageRequest};
 use caelumora_api::model::ModelResult;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::message::{Message, MessageEvent};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use caelumora_security::SecurityContext;
 use futures::stream::BoxStream;
 use std::collections::{BTreeMap, HashMap};
@@ -53,7 +53,7 @@ pub trait LanguageModelProvider: Send + Sync + Debug {
     async fn chat_completion(
         &self,
         context: &[Message],
-        tools: &[Tool],
+        tools: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>>;
 }
 

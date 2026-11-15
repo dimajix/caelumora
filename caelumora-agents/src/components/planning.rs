@@ -17,7 +17,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::plan::{Plan, PlanId, PlanProgress, PlanState, PlanStep};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -49,7 +49,7 @@ pub struct PlanningComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
     /// The texts of its prompt part.
     prompts: PromptTexts,
     /// Where its prompt part goes: in the system prompt unless configured otherwise.
@@ -69,7 +69,7 @@ impl PlanningComponent {
             &prompts,
             NAMESPACE,
             PLANNING_KIND,
-            Tool {
+            ToolDescription {
                 name: CREATE_PLAN_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -141,7 +141,7 @@ impl ToolProvider for PlanningComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 

@@ -38,8 +38,8 @@ use caelumora_domain::context::KnowledgeRef;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::{Answers, Questions};
 use caelumora_domain::tool::{
-    Tool, ToolCall, ToolCallResult, ToolCallState, ToolContent, ToolParameters, ToolResultStatus,
-    ToolSet, ToolVisibility,
+    ToolCall, ToolCallResult, ToolCallState, ToolContent, ToolDescription, ToolParameters,
+    ToolResultStatus, ToolSet, ToolVisibility,
 };
 use caelumora_domain::turn::GivenUpReason;
 use chrono::Utc;
@@ -293,9 +293,9 @@ pub fn described(
     prompts: &PromptTexts,
     namespace: &str,
     kind: &str,
-    mut tool: Tool,
+    mut tool: ToolDescription,
     values: impl Serialize,
-) -> Result<Tool, PromptError> {
+) -> Result<ToolDescription, PromptError> {
     tool.description = tool_text(prompts, namespace, kind, &tool.name, &values)?;
     tool.parameters
         .describe(&tool.name, &mut |path| tool_text(prompts, namespace, kind, path, &values))?;
@@ -570,7 +570,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn description(&self) -> String;
     /// Every tool it has: those it may offer, by which a call finds its
     /// provider, and whose names no other provider of the agent may have.
-    fn tools(&self) -> Vec<Tool>;
+    fn tools(&self) -> Vec<ToolDescription>;
     /// The tools of `tools` it offers the model in `work` (issue 290), asked
     /// as a turn begins: those that may be called there. `Err` with why it
     /// offers none, in general terms - never the error, which may name hosts
@@ -579,7 +579,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     /// turn just begun, and - for what an agent would be offered (the
     /// agent's `tool_sets`) - of work that is no turn: what it decides by
     /// is the place and who acts, not the turn's state.
-    async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
         Ok(self.tools())
     }
     /// Where the arguments of its calls go (issue 180): the classification
@@ -650,7 +650,7 @@ pub async fn workspace_writer(turn: &Turn<'_>) -> WorkspaceResult<Arc<dyn Worksp
 /// offered with, as the parameters of the tool of that name among `tools`
 /// tell (`ToolMatcher::proposed`, issue 247); the calls exactly like it if
 /// none has that name.
-pub fn proposed_matcher(tools: &[Tool], name: &str, params: &Value) -> ToolMatcher {
+pub fn proposed_matcher(tools: &[ToolDescription], name: &str, params: &Value) -> ToolMatcher {
     let call = ToolCall {
         id: None,
         function_name: name.to_string(),
@@ -1228,8 +1228,12 @@ mod tests {
         Classification::new(Confidentiality::Internal, [Compartment::new("hr")]).unwrap()
     }
 
-    fn tool(name: &str, requires_approval: bool, classification: Option<Classification>) -> Tool {
-        Tool {
+    fn tool(
+        name: &str,
+        requires_approval: bool,
+        classification: Option<Classification>,
+    ) -> ToolDescription {
+        ToolDescription {
             name: name.to_string(),
             description: "desc".to_string(),
             parameters: ToolParameters::object(
@@ -1248,7 +1252,7 @@ mod tests {
         fn description(&self) -> String {
             "mock tools".to_string()
         }
-        fn tools(&self) -> Vec<Tool> {
+        fn tools(&self) -> Vec<ToolDescription> {
             vec![
                 tool("test_tool", self.requires_approval, None),
                 tool("hr_tool", self.requires_approval, None),
@@ -1661,7 +1665,7 @@ mod tests {
         fn description(&self) -> String {
             "sends out".to_string()
         }
-        fn tools(&self) -> Vec<Tool> {
+        fn tools(&self) -> Vec<ToolDescription> {
             vec![tool("send_out", false, None)]
         }
         fn destination(&self) -> Option<Classification> {
@@ -1991,7 +1995,7 @@ mod tests {
         fn description(&self) -> String {
             "draws".to_string()
         }
-        fn tools(&self) -> Vec<Tool> {
+        fn tools(&self) -> Vec<ToolDescription> {
             ["draw", "draw_secret", "write"].map(|name| tool(name, false, None)).into()
         }
         async fn execute(

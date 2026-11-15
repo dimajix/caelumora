@@ -29,7 +29,7 @@ use caelumora_domain::scope::Scope;
 use caelumora_domain::security::Grant;
 use caelumora_domain::session::testing::bare_session;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::tool::{Tool, ToolCall, ToolVisibility};
+use caelumora_domain::tool::{ToolCall, ToolDescription, ToolVisibility};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::work::Work;
@@ -84,7 +84,7 @@ pub fn turn<'a>(
 
 /// What `provider` offers in a turn that reaches no channel (issue 290) -
 /// for a provider whose offer does not depend on the place.
-pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<Tool>, String> {
+pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<ToolDescription>, String> {
     let mut state = AgentChannelState::default();
     state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
     let Some(turn) = Turn::of(&mut state, detached_actor_runtime(AgentId::new())) else {
@@ -254,7 +254,7 @@ impl LanguageModelClient for Scripted {
         &self,
         _: ActorId,
         _: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         match self.0.lock().unwrap().pop_front() {
             Some(answer) => stream::iter([Ok(MessageEvent::Complete(answer))]).boxed(),

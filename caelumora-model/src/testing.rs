@@ -15,7 +15,7 @@ use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::AppConfig;
 use caelumora_domain::message::{Message, MessageEvent};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use caelumora_kernel::backend::Backends;
 use caelumora_kernel::kernel::{Kernel, KernelBuilder};
 use caelumora_kernel::plugin::Plugin;
@@ -58,7 +58,7 @@ impl LanguageModelProvider for Answering {
     async fn chat_completion(
         &self,
         _: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         let answer = Message { content: Some(self.0.answer.clone()), ..unlabelled_message() };
         stream::iter([Ok(MessageEvent::Complete(answer))]).boxed()

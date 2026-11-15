@@ -908,7 +908,7 @@ mod tests {
     use crate::note::NoteId;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::store::testing::{replayed, stored};
-    use crate::tool::{Tool, ToolCall, ToolCallState, ToolParameters, ToolVisibility};
+    use crate::tool::{ToolCall, ToolCallState, ToolDescription, ToolParameters, ToolVisibility};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
 
@@ -1121,7 +1121,7 @@ mod tests {
     }
 
     /// Begins a turn offering `tools` as one set, or none.
-    fn begin(state: &mut AgentChannelState, tools: Vec<Tool>) {
+    fn begin(state: &mut AgentChannelState, tools: Vec<ToolDescription>) {
         let sets = if tools.is_empty() {
             Vec::new()
         } else {
@@ -1181,7 +1181,7 @@ mod tests {
     fn a_turn_begun_has_seen_the_transcript_and_offers_its_tools_kept_once() {
         let internal = Classification::general(Confidentiality::Internal);
         let mut state = a_state_that_heard("hello", internal.clone());
-        let tool = Tool {
+        let tool = ToolDescription {
             name: "calc".to_string(),
             description: "calculates".to_string(),
             parameters: ToolParameters::object(

@@ -89,7 +89,7 @@ mod tests {
     use crate::testing;
     use crate::testing::detached_actor_runtime;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
-    use caelumora_domain::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
+    use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolSet, ToolVisibility};
     use caelumora_domain::work::Work;
 
     /// What the provider tells in work asked for as `asked`, offered the
@@ -104,7 +104,7 @@ mod tests {
         ));
         let tools = tools
             .iter()
-            .map(|name| Tool {
+            .map(|name| ToolDescription {
                 name: name.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(

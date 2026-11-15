@@ -54,7 +54,7 @@ use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::note::NoteChange;
 use caelumora_domain::prompt_catalogue::PromptError;
-use caelumora_domain::tool::{Tool, ToolContent};
+use caelumora_domain::tool::{ToolContent, ToolDescription};
 use caelumora_domain::turn::{StagedChange, TurnState};
 use caelumora_domain::work::TurnId;
 #[cfg(test)]
@@ -200,7 +200,7 @@ impl<'a> Turn<'a> {
     /// by (issue 137) - the tools of the sets it was offered
     /// (`Situation::tool_sets`), one offer for the whole turn, a resumed one
     /// included.
-    pub(crate) fn tools(&self) -> impl Iterator<Item = &Tool> {
+    pub(crate) fn tools(&self) -> impl Iterator<Item = &ToolDescription> {
         self.situation().tool_sets().iter().flat_map(|set| &set.tools)
     }
 

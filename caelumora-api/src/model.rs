@@ -10,7 +10,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::message::{Message, MessageEvent};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use futures::stream::BoxStream;
 use std::fmt::Debug;
 
@@ -63,7 +63,7 @@ pub trait LanguageModelClient: Send + Sync + Debug {
         &self,
         initiator: ActorId,
         context: &[Message],
-        tools: &[Tool],
+        tools: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>>;
 }
 

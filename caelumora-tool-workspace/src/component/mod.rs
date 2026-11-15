@@ -22,7 +22,7 @@ use caelumora_api::terminal::WorkspacePath;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -107,7 +107,7 @@ struct WorkspaceComponent {
     /// What its tool set is for and its tools, as the configuration or the
     /// prompt catalogue words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
     /// The files that say how to work on a workspace, each a file at its root, in the order they
     /// are named.
     instruction_files: Vec<WorkspacePath>,

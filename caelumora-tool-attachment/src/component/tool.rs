@@ -23,7 +23,7 @@ use caelumora_domain::content::{ContentId, ContentRef};
 use caelumora_domain::message::MessageId;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -74,14 +74,14 @@ struct CopyTo {
 ///
 /// # Errors
 /// `PromptError` if one of their texts cannot be had.
-pub(super) fn tools(prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
+pub(super) fn tools(prompts: &PromptTexts) -> Result<Vec<ToolDescription>, PromptError> {
     let reference = || ("ref", ToolParameters::string());
     let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
         described(
             prompts,
             NAMESPACE,
             ATTACHMENTS_KIND,
-            Tool {
+            ToolDescription {
                 name: name.to_string(),
                 description: String::new(),
                 parameters,
@@ -108,7 +108,7 @@ pub(super) fn tools(prompts: &PromptTexts) -> Result<Vec<Tool>, PromptError> {
         )?,
         // What it attaches is shown by the answer that carries it; the call would only say so
         // again.
-        Tool {
+        ToolDescription {
             presentation: ToolPresentation::QUIET,
             ..tool(ATTACH, ToolParameters::object([reference()], ["ref"]), false)?
         },
@@ -187,7 +187,7 @@ impl ToolProvider for AttachmentsComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 
@@ -195,13 +195,13 @@ impl ToolProvider for AttachmentsComponent {
     /// whose tools are fixed as it begins -, but `view_attachment` only to a model that sees
     /// images, `copy_attachment` only where a workspace may be written to, as the workspace's tools
     /// offer their writes.
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
         let sees = situation.profile().sees_images();
         let writable = match workspace_reader(situation).await {
             Ok(workspace) => workspace.may_write().await,
             Err(_) => false,
         };
-        let offered = |tool: &&Tool| match tool.name.as_str() {
+        let offered = |tool: &&ToolDescription| match tool.name.as_str() {
             VIEW_ATTACHMENT => sees,
             COPY_ATTACHMENT => writable,
             _ => true,

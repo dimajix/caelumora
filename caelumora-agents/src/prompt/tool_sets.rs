@@ -90,11 +90,11 @@ mod tests {
     use crate::testing;
     use crate::turn::Turn;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
-    use caelumora_domain::tool::{Tool, ToolParameters};
+    use caelumora_domain::tool::{ToolDescription, ToolParameters};
     use caelumora_domain::work::Work;
 
-    fn tool(name: &str) -> Tool {
-        Tool {
+    fn tool(name: &str) -> ToolDescription {
+        ToolDescription {
             name: name.to_string(),
             description: "does something".to_string(),
             parameters: ToolParameters::object(

@@ -22,7 +22,7 @@ use caelumora_domain::scope::Scope;
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::session::testing::bare_session;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use caelumora_domain::type_map::TypeKey;
 use caelumora_domain::value::name::{Name, ScopedName};
 use caelumora_domain::work::Work;
@@ -123,7 +123,7 @@ fn serve(listener: TcpListener, replaced: Arc<AtomicBool>) -> JoinHandle<()> {
 }
 
 /// The names of `tools`, sorted.
-fn names(tools: &[Tool]) -> Vec<String> {
+fn names(tools: &[ToolDescription]) -> Vec<String> {
     let mut names: Vec<String> = tools.iter().map(|t| t.name.clone()).collect();
     names.sort();
     names

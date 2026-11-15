@@ -1488,7 +1488,7 @@ export interface ToolSet {
   /** The component the tools come from; empty in a record made before tool sets. */
   name: string;
   description: string;
-  tools: Tool[];
+  tools: ToolDescription[];
   /** Why the source gives no tools now; absent if it does. */
   unavailable?: string;
   /** Where the arguments of its calls go (issue 180); absent if they stay in the system. */
@@ -1499,7 +1499,7 @@ export interface ToolSet {
  * A tool of an agent (issues 137, 194): what its model is told of it - name, description,
  * parameters - and what only the kernel acts on.
  */
-export interface Tool {
+export interface ToolDescription {
   name: string;
   description: string;
   /** Its parameters, as the model is told of them (`ToolParameters`). */

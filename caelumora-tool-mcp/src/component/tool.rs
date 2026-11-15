@@ -21,7 +21,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::secret::{SecretError, Secrets};
-use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolContent, ToolDescription, ToolParameters, ToolVisibility};
 use rmcp::model::{CallToolRequestParams, CallToolResult, ErrorCode, ToolAnnotations};
 use rmcp::service::{RunningService, ServiceError};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
@@ -84,7 +84,10 @@ impl McpServerComponent {
 
     /// The server's tools and what it says of itself, discovered in
     /// the name `secrets` are bound to, within the endpoint's timeout.
-    async fn discover(&self, secrets: &dyn Secrets) -> McpResult<(Vec<Tool>, Option<String>)> {
+    async fn discover(
+        &self,
+        secrets: &dyn Secrets,
+    ) -> McpResult<(Vec<ToolDescription>, Option<String>)> {
         let discover = async {
             let auth_header = self.params.endpoint.bearer_token(secrets).await?;
             discover_tools(&self.descriptor_id, &self.params, auth_header).await
@@ -125,7 +128,7 @@ async fn discover_tools(
     descriptor_id: &str,
     params: &McpServerParams,
     auth_header: Option<String>,
-) -> McpResult<(Vec<Tool>, Option<String>)> {
+) -> McpResult<(Vec<ToolDescription>, Option<String>)> {
     let endpoint = &params.endpoint;
     let service = connect(endpoint, auth_header).await?;
     let instructions = service
@@ -145,7 +148,7 @@ async fn discover_tools(
         .map(|t| {
             let description = t.description.map(|d| d.to_string()).unwrap_or_default();
             let schema = Value::Object((*t.input_schema).clone());
-            Tool {
+            ToolDescription {
                 name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
                 parameters: schema_to_tool_parameters(&schema),
@@ -273,7 +276,7 @@ impl ToolProvider for McpServerComponent {
     }
 
     /// Its tools as last discovered; none before they were.
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.discovered.current().map(|discovered| discovered.0.clone()).unwrap_or_default()
     }
 
@@ -282,7 +285,7 @@ impl ToolProvider for McpServerComponent {
     /// cannot be asked leaves the tools discovered before (issue 126), or,
     /// without any, its tool set unavailable (issue 32) - and is asked again
     /// the next time.
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
         let secrets = situation.secrets();
         match self.discovered.get(|| self.discover(&*secrets)).await {
             Ok(discovered) => Ok(discovered.0.clone()),

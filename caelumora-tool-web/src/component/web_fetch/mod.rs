@@ -14,7 +14,7 @@ use caelumora_api::component::{ComponentError, ComponentFacets, ComponentKind};
 use caelumora_api::component::{LibraryComponents, Params};
 use caelumora_api::error::describe_request_error;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use client::Client;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -48,7 +48,7 @@ impl Params for WebFetchParams {}
 struct WebFetchComponent {
     client: Client,
     description: String,
-    tool: Tool,
+    tool: ToolDescription,
     /// The texts its results give.
     prompts: PromptTexts,
     /// From how many bytes of its text on a page is kept whole, if any is.

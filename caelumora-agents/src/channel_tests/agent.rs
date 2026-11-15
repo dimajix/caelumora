@@ -21,7 +21,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{MessageEvent, MessageRole};
-use caelumora_domain::tool::{Tool, ToolResultStatus};
+use caelumora_domain::tool::{ToolDescription, ToolResultStatus};
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::work::TurnId;
@@ -481,7 +481,7 @@ impl LanguageModelClient for Gated {
         &self,
         _: ActorId,
         messages: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         self.seen.lock().unwrap().push(messages.iter().filter_map(|m| m.content.clone()).collect());
         let Some(answer) = self.answers.lock().unwrap().pop_front() else {
@@ -1664,7 +1664,7 @@ impl LanguageModelClient for FailsWhere {
         &self,
         _: ActorId,
         _: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         match self.0.lock().unwrap().pop_front() {
             Some(Some(answer)) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),
@@ -1840,7 +1840,7 @@ impl LanguageModelClient for FailsAfter {
         &self,
         _: ActorId,
         _: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         match self.0.lock().unwrap().pop_front() {
             Some(answer) => Box::pin(stream::iter([Ok(MessageEvent::Complete(answer))])),

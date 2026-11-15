@@ -18,7 +18,7 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::{
     Addressee, Answers, Question, Questions, MAX_CHOICES, MAX_HEADER_CHARS, MAX_QUESTIONS,
 };
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -37,7 +37,7 @@ pub struct AskUserComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 impl AskUserComponent {
@@ -68,7 +68,7 @@ impl AskUserComponent {
             prompts,
             NAMESPACE,
             ASK_USER_KIND,
-            Tool {
+            ToolDescription {
                 name: ASK_USER_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -106,7 +106,7 @@ impl ToolProvider for AskUserComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 

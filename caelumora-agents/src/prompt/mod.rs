@@ -313,7 +313,7 @@ mod tests {
     use caelumora_domain::prompt_catalogue::PromptVariant;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::SessionId;
-    use caelumora_domain::tool::Tool;
+    use caelumora_domain::tool::ToolDescription;
     use caelumora_domain::type_map::TypeKey;
     use caelumora_domain::work::Work;
     use caelumora_kernel::component::BuildContext;
@@ -340,7 +340,7 @@ mod tests {
             &self,
             _: ActorId,
             _: &[Message],
-            _: &[Tool],
+            _: &[ToolDescription],
         ) -> BoxStream<'static, ModelResult<MessageEvent>> {
             stream::empty().boxed()
         }

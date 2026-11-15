@@ -16,7 +16,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::secret::SecretError;
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -88,7 +88,7 @@ struct WebSearchComponent {
     endpoint: RemoteEndpoint,
     destination: Classification,
     description: String,
-    tool: Tool,
+    tool: ToolDescription,
 }
 
 impl WebSearchComponent {

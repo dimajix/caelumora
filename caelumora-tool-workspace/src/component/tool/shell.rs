@@ -16,7 +16,7 @@ use crate::component::{WorkspaceComponent, WorkspaceParams};
 use caelumora_agents::tool::{arguments, ToolError, ToolResult};
 use caelumora_api::terminal::{CommandState, Shell};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation};
 use caelumora_domain::workspace::CommandStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -129,7 +129,7 @@ struct Follow {
 pub(super) fn tools(
     params: &WorkspaceParams,
     prompts: &PromptTexts,
-) -> Result<Vec<Tool>, PromptError> {
+) -> Result<Vec<ToolDescription>, PromptError> {
     let most = params.max_wait_secs.min(MAX_WAIT_SECS);
     let values = context! { most, run_command => RUN_COMMAND, command_output => COMMAND_OUTPUT, kill_command => KILL_COMMAND };
     Ok(vec![

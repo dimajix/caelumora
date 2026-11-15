@@ -245,7 +245,8 @@ plugin or a library depends on:
     of its remote side kept for a time (`caelumora_api::cache::ExpiringCache`), and the `Secrets`
     its credential is read of (`RemoteEndpoint::bearer_token`): the work's, from its
     `Situation` (`secrets`), or handed to an `ExternalAgent` with every call (issue 516).
-*   **The domain's types** of what it handles: `Tool`, `RemoteEndpoint`, `Classification`, ...
+*   **The domain's types** of what it handles: `ToolDescription`, `RemoteEndpoint`,
+    `Classification`, ...
 
 What a plugin needs beyond that is made visible when a plugin needs it, as part of the kernel's API,
 rather than reached around (issue 325).

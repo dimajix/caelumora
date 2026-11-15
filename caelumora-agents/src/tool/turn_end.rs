@@ -9,7 +9,7 @@ use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents
 use caelumora_domain::actor::ActorState;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolVisibility};
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::info;
@@ -25,7 +25,7 @@ pub struct TurnEndComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 impl TurnEndComponent {
@@ -39,7 +39,7 @@ impl TurnEndComponent {
                 prompts,
                 NAMESPACE,
                 TURN_END_KIND,
-                Tool {
+                ToolDescription {
                     name: name.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(
@@ -68,7 +68,7 @@ impl ToolProvider for TurnEndComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 

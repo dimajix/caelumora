@@ -1,6 +1,6 @@
 # 584 — A tool has no object of its own
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Tools and approvals
@@ -52,3 +52,16 @@ the other place the rule is written from, and were left to an issue of their own
 **2026-11-15** - Opened with the maintainer while deciding
 [583](583-a-command-has-no-object-of-its-own.md): tools follow commands in becoming objects of
 their own, in an issue of their own for their size.
+
+**2026-11-15** - Decided with the maintainer before the work began, following 583 rather than the
+names above: the record of a tool is `ToolDescription` (was `Tool`), and `Tool` is the trait of a
+tool in `caelumora_agents::tool` - `description`, `execute`, `questions`, `matcher`, `describe`,
+each of one call -, as `Command` and `CommandDescription` are; a `ToolProvider` gives its tools as
+objects, `offered` too, and selects them by what it holds each with, not by their names;
+`ToolProviders` gives the tool it found, which the `ToolExecutor` asks. A provider that decides
+nothing is `FixedTools` - its description, its tools and where their arguments go -, in place of
+the components that only held tools. In three steps: the rename; every tool an object, in one step,
+since the facet changing breaks every provider at once; what the review of the second comes across.
+
+**2026-11-15** - Step 1 done: `ToolDescription` in `caelumora-domain`, the web UI's type of the
+same name, in place of `Tool`; no behaviour changed.

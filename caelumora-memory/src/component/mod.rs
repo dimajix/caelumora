@@ -39,7 +39,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolVisibility};
 use command::MemoryCommand;
 use serde_json::Value;
 use std::fmt;
@@ -67,7 +67,7 @@ pub struct AgentMemoryComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 impl Debug for AgentMemoryComponent {
@@ -82,7 +82,7 @@ impl ToolProvider for AgentMemoryComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 
@@ -117,7 +117,7 @@ impl AgentMemoryComponent {
                 &prompts,
                 NAMESPACE,
                 AGENT_MEMORY_KIND,
-                Tool {
+                ToolDescription {
                     name: REMEMBER_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(
@@ -135,7 +135,7 @@ impl AgentMemoryComponent {
                 &prompts,
                 NAMESPACE,
                 AGENT_MEMORY_KIND,
-                Tool {
+                ToolDescription {
                     name: UPDATE_MEMORY_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(
@@ -153,7 +153,7 @@ impl AgentMemoryComponent {
                 &prompts,
                 NAMESPACE,
                 AGENT_MEMORY_KIND,
-                Tool {
+                ToolDescription {
                     name: FORGET_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object([("id", ToolParameters::number())], ["id"]),
@@ -168,7 +168,7 @@ impl AgentMemoryComponent {
                 &prompts,
                 NAMESPACE,
                 AGENT_MEMORY_KIND,
-                Tool {
+                ToolDescription {
                     name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: reclassify_parameters(&prompts)?,

@@ -528,7 +528,7 @@ mod tests {
     use crate::message::TokenUsage;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
-    use crate::tool::{Tool, ToolCall, ToolCallResult};
+    use crate::tool::{ToolCall, ToolCallResult, ToolDescription};
     use crate::turn::TurnState;
     use crate::user::UserId;
     use crate::work::Work;
@@ -1324,7 +1324,7 @@ mod tests {
     fn the_tools_offered_are_resolved_from_their_set() {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
-        let echo = Tool {
+        let echo = ToolDescription {
             name: "echo".to_string(),
             description: "echoes".to_string(),
             parameters: ToolParameters::object(

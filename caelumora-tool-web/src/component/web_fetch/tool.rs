@@ -19,7 +19,9 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::remote::redact_endpoint;
-use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{
+    ToolContent, ToolDescription, ToolParameters, ToolPresentation, ToolVisibility,
+};
 use reqwest::Url;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -57,8 +59,8 @@ struct Fetch {
 pub(super) fn fetch_page(
     prompts: &PromptTexts,
     requires_approval: bool,
-) -> Result<Tool, PromptError> {
-    let tool = Tool {
+) -> Result<ToolDescription, PromptError> {
+    let tool = ToolDescription {
         name: FETCH_PAGE.to_string(),
         description: String::new(),
         parameters: ToolParameters::object(
@@ -110,7 +112,7 @@ impl ToolProvider for WebFetchComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         vec![self.tool.clone()]
     }
 

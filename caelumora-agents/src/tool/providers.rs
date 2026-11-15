@@ -128,7 +128,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::question::{Addressee, Question};
-    use caelumora_domain::tool::{Tool, ToolParameters};
+    use caelumora_domain::tool::{ToolDescription, ToolParameters};
     use caelumora_domain::turn::TurnState;
     use caelumora_domain::work::Work;
     use serde_json::{json, Value};
@@ -142,8 +142,8 @@ mod tests {
         fn description(&self) -> String {
             "mock tools".to_string()
         }
-        fn tools(&self) -> Vec<Tool> {
-            vec![Tool {
+        fn tools(&self) -> Vec<ToolDescription> {
+            vec![ToolDescription {
                 name: "test_tool".to_string(),
                 description: "desc".to_string(),
                 parameters: ToolParameters::object(
@@ -213,8 +213,11 @@ mod tests {
         fn description(&self) -> String {
             "asking tools".to_string()
         }
-        fn tools(&self) -> Vec<Tool> {
-            vec![Tool { name: "asking_tool".to_string(), ..MockToolProvider.tools().remove(0) }]
+        fn tools(&self) -> Vec<ToolDescription> {
+            vec![ToolDescription {
+                name: "asking_tool".to_string(),
+                ..MockToolProvider.tools().remove(0)
+            }]
         }
         async fn execute(
             &self,
@@ -279,10 +282,16 @@ mod tests {
         fn description(&self) -> String {
             "remote tools".to_string()
         }
-        fn tools(&self) -> Vec<Tool> {
-            vec![Tool { name: "remote_tool".to_string(), ..MockToolProvider.tools().remove(0) }]
+        fn tools(&self) -> Vec<ToolDescription> {
+            vec![ToolDescription {
+                name: "remote_tool".to_string(),
+                ..MockToolProvider.tools().remove(0)
+            }]
         }
-        async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Tool>, String> {
+        async fn offered(
+            &self,
+            _situation: &Situation<'_>,
+        ) -> Result<Vec<ToolDescription>, String> {
             Err("its server cannot be reached".to_string())
         }
         async fn execute(
@@ -327,14 +336,14 @@ mod tests {
 
     /// A provider whose tools are as it is told, and may change.
     #[derive(Debug)]
-    struct Changing(Mutex<Vec<Tool>>);
+    struct Changing(Mutex<Vec<ToolDescription>>);
 
     #[async_trait]
     impl ToolProvider for Changing {
         fn description(&self) -> String {
             "changing tools".to_string()
         }
-        fn tools(&self) -> Vec<Tool> {
+        fn tools(&self) -> Vec<ToolDescription> {
             self.0.lock().unwrap().clone()
         }
         async fn execute(
@@ -350,8 +359,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_tool_whose_name_another_provider_took_since_is_not_offered() {
-        let tool =
-            |name: &str| Tool { name: name.to_string(), ..MockToolProvider.tools().remove(0) };
+        let tool = |name: &str| ToolDescription {
+            name: name.to_string(),
+            ..MockToolProvider.tools().remove(0)
+        };
         let changing = Arc::new(Changing(Mutex::new(vec![tool("other_tool")])));
         let providers = ToolProviders::new(vec![
             component("local"),

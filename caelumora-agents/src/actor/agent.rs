@@ -1277,10 +1277,10 @@ mod tests {
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
     use caelumora_domain::message::MessageId;
-    use caelumora_domain::tool::{Tool, ToolParameters, ToolSet, ToolVisibility};
+    use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolSet, ToolVisibility};
 
-    fn tool(name: &str, visibility: ToolVisibility) -> Tool {
-        Tool {
+    fn tool(name: &str, visibility: ToolVisibility) -> ToolDescription {
+        ToolDescription {
             name: name.to_string(),
             description: format!("does {name}"),
             parameters: ToolParameters::object(
@@ -1384,7 +1384,7 @@ mod tests {
                 tool("without_result", ToolVisibility::WITHOUT_RESULT),
             ]
         };
-        let reasoning = |tools: Vec<Tool>,
+        let reasoning = |tools: Vec<ToolDescription>,
                          personality: Visibility,
                          private_knowledge: bool,
                          calls: &[&str],

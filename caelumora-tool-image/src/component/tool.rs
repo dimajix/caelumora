@@ -14,7 +14,9 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolContent, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{
+    ToolContent, ToolDescription, ToolParameters, ToolPresentation, ToolVisibility,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -58,7 +60,7 @@ pub(super) fn generate_image(
     prompts: &PromptTexts,
     requires_approval: bool,
     models: &[Arc<dyn ImageModelClient>],
-) -> Result<Tool, PromptError> {
+) -> Result<ToolDescription, PromptError> {
     let values = json!({
         "models": models
             .iter()
@@ -66,7 +68,7 @@ pub(super) fn generate_image(
             .collect::<Vec<_>>(),
         "default": models.first().map(|model| model.name()),
     });
-    let tool = Tool {
+    let tool = ToolDescription {
         name: GENERATE_IMAGE.to_string(),
         description: String::new(),
         parameters: ToolParameters::object(
@@ -115,7 +117,7 @@ impl ToolProvider for ImageGenerationComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         vec![self.tool.clone()]
     }
 

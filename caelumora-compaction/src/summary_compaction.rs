@@ -211,7 +211,7 @@ mod tests {
     use caelumora_agents::testing::workspace_turn;
     use caelumora_api::model::{unlabelled_message, ModelError, ModelResult};
     use caelumora_domain::agent::AgentChannelState;
-    use caelumora_domain::tool::Tool;
+    use caelumora_domain::tool::ToolDescription;
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use futures::stream;
     use futures::stream::BoxStream;
@@ -248,7 +248,7 @@ mod tests {
             &self,
             _: ActorId,
             context: &[Message],
-            _: &[Tool],
+            _: &[ToolDescription],
         ) -> BoxStream<'static, ModelResult<MessageEvent>> {
             self.asked.lock().unwrap().push(context.to_vec());
             let answer = self.answers.lock().unwrap().pop_front().expect("an answer left");

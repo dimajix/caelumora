@@ -1,7 +1,7 @@
-//! Tools as a model is offered them and their calls as they are recorded: a `Tool` with its
-//! parameters, who sees its calls and how they are shown, the `ToolSet` of a provider, a `ToolCall`
-//! and how it ended (`ToolCallResult`) - with what its tool gave its model (`ToolContent`) -, and
-//! where a call stands while its turn runs (`ToolCallState`).
+//! Tools as a model is offered them and their calls as they are recorded: a `ToolDescription` with
+//! its parameters, who sees its calls and how they are shown, the `ToolSet` of a provider, a
+//! `ToolCall` and how it ended (`ToolCallResult`) - with what its tool gave its model
+//! (`ToolContent`) -, and where a call stands while its turn runs (`ToolCallState`).
 //!
 //! A call as it is recorded, and where it stands, is `call`'s; here a tool as it is offered.
 
@@ -283,7 +283,7 @@ impl<'de> Deserialize<'de> for ToolPresentation {
 /// are classified. A backend sends the model the first three alone; the record of what a model was
 /// offered keeps all of it, as it was then (issues 137, 194).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Tool {
+pub struct ToolDescription {
     pub name: String,
     pub description: String,
     pub parameters: ToolParameters,
@@ -314,7 +314,7 @@ pub struct ToolSet {
     pub name: String,
     /// What the tools are for, written for a model.
     pub description: String,
-    pub tools: Vec<Tool>,
+    pub tools: Vec<ToolDescription>,
     /// Why the source gives no tools now, in general terms - never the
     /// error, which may name hosts (issue 32). `None`: available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -328,7 +328,11 @@ pub struct ToolSet {
 
 impl ToolSet {
     /// The available set `name` of `tools`, for `description`.
-    pub fn new(name: impl Into<String>, description: impl Into<String>, tools: Vec<Tool>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        description: impl Into<String>,
+        tools: Vec<ToolDescription>,
+    ) -> Self {
         Self {
             name: name.into(),
             description: description.into(),

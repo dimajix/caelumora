@@ -36,7 +36,7 @@ use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -63,7 +63,7 @@ struct SkillsComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
     /// The texts of its catalogue and of a skill given.
     prompts: PromptTexts,
 }

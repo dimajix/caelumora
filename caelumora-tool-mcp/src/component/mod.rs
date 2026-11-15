@@ -11,7 +11,7 @@ use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::PromptTexts;
 use caelumora_domain::remote::RemoteEndpoint;
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -82,7 +82,7 @@ struct McpServerComponent {
     params: McpServerParams,
     /// The server's tools, and what it says of itself (`instructions`) if
     /// it does, as last discovered.
-    discovered: ExpiringCache<(Vec<Tool>, Option<String>)>,
+    discovered: ExpiringCache<(Vec<ToolDescription>, Option<String>)>,
     /// The texts its results give.
     prompts: PromptTexts,
 }

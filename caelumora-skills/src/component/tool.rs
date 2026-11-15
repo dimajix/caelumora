@@ -30,7 +30,7 @@ use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::store::StoreError;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;
@@ -62,9 +62,9 @@ pub const UPDATE_SKILL_TOOL_NAME: &str = "update_skill";
 pub(super) fn tools(
     prompts: &PromptTexts,
     requires_approval: ApprovalMode,
-) -> Result<Vec<Tool>, PromptError> {
+) -> Result<Vec<ToolDescription>, PromptError> {
     let tool = |name: &str, parameters, requires_approval, presentation| {
-        let tool = Tool {
+        let tool = ToolDescription {
             name: name.to_string(),
             description: String::new(),
             parameters,
@@ -221,7 +221,7 @@ impl ToolProvider for SkillsComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 

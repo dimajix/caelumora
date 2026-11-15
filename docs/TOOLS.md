@@ -8,7 +8,7 @@ person, is in [APPROVALS.md](APPROVALS.md); how components are built in
 [COMPONENTS.md](COMPONENTS.md); how far a tool call may travel in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
-A component offers tools by implementing `ToolProvider`; one component may expose several `Tool`s.
+A component offers tools by implementing `ToolProvider`; one component may expose several tools.
 Besides running a call, a provider says what its tools are for, which of them it offers in a turn
 and why it offers none (`offered`, in general terms, never with the error), what approvers are shown
 for a call (`describe`), which calls are like a given one (`matcher`, for a rule derived from it),
@@ -18,11 +18,11 @@ bash command line, `ToolParameters::shell` - says so; the model is not told of i
 ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two calls
 alike says better than the default.
 
-A `Tool` declares its name, description and parameters, whether it requires approval, its
-visibility, optionally the classification of its results, and its presentation: how frontends show
-its calls, so that they need not recognise a tool by its name. The presentation is display only -
-what a call does, and whether it waits for anyone, does not depend on it. Approval and
-classification are decided per tool by its provider, not by the personality.
+A `ToolDescription` declares a tool's name, description and parameters, whether it requires
+approval, its visibility, optionally the classification of its results, and its presentation: how
+frontends show its calls, so that they need not recognise a tool by its name. The presentation is
+display only - what a call does, and whether it waits for anyone, does not depend on it. Approval
+and classification are decided per tool by its provider, not by the personality.
 
 What a tool, its parameters and its tool set say to the model are texts of the prompt catalogue
 (issue 57, see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), kept apart from the tool's

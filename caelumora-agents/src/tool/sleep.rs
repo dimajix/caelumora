@@ -15,7 +15,7 @@ use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolVisibility};
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -65,7 +65,7 @@ pub struct SleepComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them (issue 57).
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 impl SleepComponent {
@@ -86,7 +86,7 @@ impl SleepComponent {
             prompts,
             NAMESPACE,
             SLEEP_KIND,
-            Tool {
+            ToolDescription {
                 name: SLEEP_TOOL_NAME.to_string(),
                 description: String::new(),
                 parameters: ToolParameters::object(
@@ -121,7 +121,7 @@ impl ToolProvider for SleepComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 

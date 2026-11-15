@@ -13,7 +13,7 @@ use caelumora_domain::context::{
 };
 use caelumora_domain::digest::Digest;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
-use caelumora_domain::tool::{Tool, ToolSet};
+use caelumora_domain::tool::{ToolDescription, ToolSet};
 
 impl Turn<'_> {
     /// What the model is given for the next step - its messages and the
@@ -29,7 +29,7 @@ impl Turn<'_> {
     /// # Errors
     /// If the context names what the agent's state does not hold, or an
     /// attachment given along cannot be read.
-    pub(crate) async fn full_context(&mut self) -> Result<(Vec<Message>, Vec<Tool>)> {
+    pub(crate) async fn full_context(&mut self) -> Result<(Vec<Message>, Vec<ToolDescription>)> {
         let resolved = ContextResolver::of(self.agent_channel_state, self.runtime.prompts())
             .resolve(&self.current().work.context, self.turn_id(), ActorId::Agent(self.agent_id))?
             .context("the context of the turn names what the agent's state does not hold")?;
@@ -492,7 +492,7 @@ mod tests {
     async fn the_tools_a_turn_began_with_are_offered_and_recorded_for_each_message() {
         use caelumora_domain::tool::ToolParameters;
         let agent = AgentId::new();
-        let tool = |name: &str, requires_approval| Tool {
+        let tool = |name: &str, requires_approval| ToolDescription {
             name: name.to_string(),
             description: format!("does {name}"),
             parameters: ToolParameters::object(
@@ -515,27 +515,28 @@ mod tests {
         let second = answer("second");
         let third = answer("third");
         let fourth = answer("fourth");
-        let take_turn = |state: &mut AgentChannelState, tools: Vec<Tool>, messages: &[&Message]| {
-            let sets = if tools.is_empty() {
-                Vec::new()
-            } else {
-                vec![ToolSet::new("tools", "some tools", tools.clone())]
+        let take_turn =
+            |state: &mut AgentChannelState, tools: Vec<ToolDescription>, messages: &[&Message]| {
+                let sets = if tools.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![ToolSet::new("tools", "some tools", tools.clone())]
+                };
+                state.begin_turn(Work::new(
+                    Default::default(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                ));
+                state.offer_tools(sets);
+                let mut turn = Turn::under_way(agent, state);
+                let (_, offered) = executor::block_on(turn.full_context()).unwrap();
+                assert_eq!(offered, tools, "the model is offered what the turn began with");
+                let sent: Vec<Message> =
+                    messages.iter().map(|message| turn.push_message((*message).clone())).collect();
+                executor::block_on(turn.commit(false, &Discard));
+                sent
             };
-            state.begin_turn(Work::new(
-                Default::default(),
-                None,
-                Default::default(),
-                Default::default(),
-            ));
-            state.offer_tools(sets);
-            let mut turn = Turn::under_way(agent, state);
-            let (_, offered) = executor::block_on(turn.full_context()).unwrap();
-            assert_eq!(offered, tools, "the model is offered what the turn began with");
-            let sent: Vec<Message> =
-                messages.iter().map(|message| turn.push_message((*message).clone())).collect();
-            executor::block_on(turn.commit(false, &Discard));
-            sent
-        };
         let firsts = take_turn(
             &mut state,
             vec![tool("echo", false), tool("notes", true)],

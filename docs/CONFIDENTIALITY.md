@@ -324,9 +324,10 @@ owner in the context panel. The channel records it, and gives it to nobody else 
 
 ### Tool calls
 
-A `Tool` declares its `ToolVisibility`: three flags for its calls - `call`, whether that the tool
-was called is published, `arguments`, whether what it was called with is, and `result`, whether what
-it returned is. Neither the arguments nor the result are seen by more than the call.
+A `ToolDescription` declares its tool's `ToolVisibility`: three flags for its calls - `call`,
+whether that the tool was called is published, `arguments`, whether what it was called with is, and
+`result`, whether what it returned is. Neither the arguments nor the result are seen by more than
+the call.
 
 | Constant | `call` | `arguments` | `result` | Meaning |
 |---|---|---|---|---|

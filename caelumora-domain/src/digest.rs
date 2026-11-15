@@ -880,8 +880,8 @@ mod tests {
 
     #[test]
     fn the_tools_offered_are_told_apart_by_what_the_model_is_told() {
-        use crate::tool::{Tool, ToolParameters, ToolSet};
-        let tool = |name: &str, description: &str| Tool {
+        use crate::tool::{ToolDescription, ToolParameters, ToolSet};
+        let tool = |name: &str, description: &str| ToolDescription {
             name: name.to_string(),
             description: description.to_string(),
             parameters: ToolParameters::object(
@@ -896,10 +896,11 @@ mod tests {
             classification: None,
             presentation: Default::default(),
         };
-        let set =
-            |name: &str, tools: Vec<Tool>| ToolSet::new(name, format!("the {name} tools"), tools);
+        let set = |name: &str, tools: Vec<ToolDescription>| {
+            ToolSet::new(name, format!("the {name} tools"), tools)
+        };
         let (a, b) = (tool("a", "does a"), tool("b", "does b"));
-        let sets = |tools: Vec<Tool>| tool_sets(&[set("s", tools)]);
+        let sets = |tools: Vec<ToolDescription>| tool_sets(&[set("s", tools)]);
         assert_eq!(
             sets(vec![a.clone(), b.clone()]),
             sets(vec![a.clone(), b.clone()]),
@@ -917,7 +918,7 @@ mod tests {
         );
         assert_ne!(
             sets(vec![a.clone()]),
-            sets(vec![Tool { requires_approval: true, ..a.clone() }]),
+            sets(vec![ToolDescription { requires_approval: true, ..a.clone() }]),
             "and how its calls are treated"
         );
         assert_ne!(

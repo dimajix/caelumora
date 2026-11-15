@@ -36,7 +36,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::digest::{self, ContentDigest, Digest};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_domain::tool::{Tool, ToolParameters, ToolPresentation};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation};
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use futures::stream;
 use futures::StreamExt;
@@ -205,7 +205,7 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
 pub(super) fn tools(
     params: &WorkspaceParams,
     prompts: &PromptTexts,
-) -> Result<Vec<Tool>, PromptError> {
+) -> Result<Vec<ToolDescription>, PromptError> {
     let asks = |name: &str| params.requires_approval.required(read_only(name));
     let values = context! { max_matches => MAX_MATCHES, default_matches => DEFAULT_MATCHES };
     let tool = |name: &str, parameters, requires_approval, presentation| {

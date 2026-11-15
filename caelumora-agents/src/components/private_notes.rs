@@ -44,7 +44,7 @@ use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::note::{Note, NoteId};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolVisibility};
 use caelumora_domain::value::command_name::CommandName;
 use serde_json::Value;
 use std::sync::Arc;
@@ -72,7 +72,7 @@ pub struct PrivateNotesComponent {
     /// What its tool set is for and its tools, as the prompt catalogue
     /// words them.
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
 }
 
 #[async_trait]
@@ -81,7 +81,7 @@ impl ToolProvider for PrivateNotesComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<Tool> {
+    fn tools(&self) -> Vec<ToolDescription> {
         self.tools.clone()
     }
 
@@ -120,7 +120,7 @@ impl PrivateNotesComponent {
                 &prompts,
                 NAMESPACE,
                 PRIVATE_NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(
@@ -138,7 +138,7 @@ impl PrivateNotesComponent {
                 &prompts,
                 NAMESPACE,
                 PRIVATE_NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object(
@@ -156,7 +156,7 @@ impl PrivateNotesComponent {
                 &prompts,
                 NAMESPACE,
                 PRIVATE_NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: ToolParameters::object([("id", ToolParameters::number())], ["id"]),
@@ -171,7 +171,7 @@ impl PrivateNotesComponent {
                 &prompts,
                 NAMESPACE,
                 PRIVATE_NOTES_KIND,
-                Tool {
+                ToolDescription {
                     name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
                     description: String::new(),
                     parameters: reclassify_parameters(&prompts)?,

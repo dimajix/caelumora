@@ -10,7 +10,7 @@ use caelumora_agents::tool::{tool_text, ToolProvider};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::Tool;
+use caelumora_domain::tool::ToolDescription;
 use std::sync::Arc;
 
 /// The kind of the component, and the path of its texts in the catalogue.
@@ -22,7 +22,7 @@ const ATTACHMENTS_KIND: &str = "attachments";
 struct AttachmentsComponent {
     /// What its tool set is for and its tools, as the prompt catalogue words them.
     description: String,
-    tools: Vec<Tool>,
+    tools: Vec<ToolDescription>,
     /// The texts its results give.
     prompts: PromptTexts,
 }

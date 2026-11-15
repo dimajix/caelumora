@@ -67,7 +67,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::PersonalitySnapshot;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
-use caelumora_domain::tool::{Tool, ToolParameters};
+use caelumora_domain::tool::{ToolDescription, ToolParameters};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::command_name::CommandName;
@@ -1223,8 +1223,8 @@ impl ToolProvider for Asking {
     fn description(&self) -> String {
         "asks before it runs".to_string()
     }
-    fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
+    fn tools(&self) -> Vec<ToolDescription> {
+        vec![ToolDescription {
             name: "asking".to_string(),
             description: "asks before it runs".to_string(),
             parameters: ToolParameters::object(
@@ -1546,8 +1546,8 @@ impl ToolProvider for Commands {
     fn description(&self) -> String {
         "runs commands".to_string()
     }
-    fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
+    fn tools(&self) -> Vec<ToolDescription> {
+        vec![ToolDescription {
             name: "run".to_string(),
             description: "runs a command".to_string(),
             parameters: ToolParameters::object(
@@ -1958,8 +1958,8 @@ impl ToolProvider for Outward {
     fn description(&self) -> String {
         "sends out".to_string()
     }
-    fn tools(&self) -> Vec<Tool> {
-        vec![Tool {
+    fn tools(&self) -> Vec<ToolDescription> {
+        vec![ToolDescription {
             name: "send_out".to_string(),
             description: "sends out".to_string(),
             parameters: ToolParameters::object(
@@ -2604,7 +2604,7 @@ impl LanguageModelClient for Held {
         &self,
         _: ActorId,
         messages: &[Message],
-        _: &[Tool],
+        _: &[ToolDescription],
     ) -> BoxStream<'static, ModelResult<MessageEvent>> {
         self.given
             .lock()
