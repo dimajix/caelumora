@@ -486,10 +486,10 @@ mod tests {
         assert_eq!(window.take_key(&key(KeyCode::Esc), 5), Some(Typed::TakenUp));
     }
 
-    /// Where several choices may be taken, digits and Space mark them, and Enter takes those
-    /// marked.
+    /// Where several choices may be taken, digits and Space check them, and Enter takes those
+    /// checked.
     #[test]
-    fn several_choices_are_marked_and_taken_together() {
+    fn several_choices_are_checked_and_taken_together() {
         let me = ActorId::User(UserId::new());
         let request = make_question_request(SessionId::new(), ChannelId::new(), AgentId::new(), me);
         let choice = |label: &str| Choice {

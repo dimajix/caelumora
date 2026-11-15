@@ -48,8 +48,14 @@ its own:
 
 1.  Dragging marks what it passes over in the window, and releasing copies it to the clipboard and
     the primary selection.
-2.  A middle click pastes the primary selection into the line typed.
-3.  A click on a choice chooses it; where several may be taken, it marks or unmarks it.
+2.  The words of choosing are freed for the mouse: a choice taken among several is checked, no
+    longer marked - "mark" is what dragging does -, and the choice the cursor stands on is the
+    cursor, no longer the one selected. No behaviour changes but the keys told: "Space checks".
+3.  A click on a choice chooses it; where several may be taken, it checks or unchecks it.
+
+A middle click is left to the terminal (decided 2026-11-15, after step 1): RustRover's terminal
+pastes the primary selection on it even while the mouse is captured, so the view pasting it too
+would paste it twice; Kitty pastes nothing on it then.
 
 How it feels is judged after the steps: scrolling while dragging past the edge, a double click for
 a word, soft-wrapped lines copied as one, and a notice that something was copied are left out until
@@ -57,8 +63,8 @@ then.
 
 ## Done when
 
-- Text of the full-screen view is selected, copied and pasted with the mouse as the terminal does
-  it elsewhere, and the view can still be scrolled.
+- Text of the full-screen view is selected and copied with the mouse as the terminal does it
+  elsewhere, and the view can still be scrolled; pasting with the middle button is the terminal's.
 
 ## History
 
@@ -70,3 +76,11 @@ way does, through `arboard` and OSC 52; a click chooses among what is asked. Thr
 **2026-11-15** - Step 1 done: dragging with the left button marks cells of the window, shown
 reversed, and releasing copies their text as drawn to the clipboard and the primary selection
 (`Selection`, `Clipboard`); a key, a paste, a new press, the wheel or a resize drops the marking.
+
+**2026-11-15** - The middle click is the terminal's: RustRover's pastes the primary selection on it
+despite the capture, and the view pasting it as well would paste it twice. The step that would have
+pasted it is dropped. Before a click chooses, a step of its own frees the words of choosing: a
+choice taken among several is checked, the one the cursor stands on is the cursor.
+
+**2026-11-15** - Step 2 done: `Choosing` checks the choices taken among several (`checked`,
+`check`) and keeps its `cursor`; the keys tell "Space checks".

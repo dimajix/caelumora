@@ -1,5 +1,6 @@
 //! What is asked of the user in the full-screen terminal, as a choice above the line typed: the
-//! choice the cursor stands on, those marked, and the keys that move, mark and choose (issue 571).
+//! choice the cursor stands on, those checked, and the keys that move, check and choose (issue
+//! 571).
 
 use super::Typed;
 use crate::asking::{Asked, Asking};
@@ -10,15 +11,15 @@ use ratatui::text::Line;
 use std::collections::BTreeSet;
 
 /// What is asked, as it is chosen among: arrows move between its choices, a digit or Enter
-/// chooses, Space marks where several may be chosen; Esc puts it aside, and takes it up again.
+/// chooses, Space checks where several may be chosen; Esc puts it aside, and takes it up again.
 #[derive(Debug)]
 pub(super) struct Choosing {
     /// What is asked, shown or put aside.
     asked: Asked,
     /// The index of the choice the cursor stands on.
-    selected: usize,
-    /// The indices of the choices marked, where several may be chosen.
-    marked: BTreeSet<usize>,
+    cursor: usize,
+    /// The indices of the choices checked, where several may be chosen.
+    checked: BTreeSet<usize>,
 }
 
 /// What a key came to as it was chosen with (`Choosing::take_key`).
@@ -26,7 +27,7 @@ pub(super) struct Choosing {
 pub(super) enum Taken {
     /// The key is none of the choice's: the line typed takes it.
     Passed,
-    /// The key moved or marked.
+    /// The key moved or checked.
     Kept,
     /// The key chose, or put what is asked aside, or took it up again.
     Typed(Typed),
@@ -37,7 +38,7 @@ impl Choosing {
     pub(super) fn new(asked: Asked) -> Self {
         let question = asked.asking().question();
         let recommended = question.and_then(|(_, q)| q.choices.iter().position(|c| c.recommended));
-        Self { asked, selected: recommended.unwrap_or(0), marked: BTreeSet::new() }
+        Self { asked, cursor: recommended.unwrap_or(0), checked: BTreeSet::new() }
     }
 
     /// What is asked, shown or put aside.
@@ -45,15 +46,15 @@ impl Choosing {
         &self.asked
     }
 
-    /// Shows what is asked as `asked` tells - shown or put aside -, the cursor and the marks where
+    /// Shows what is asked as `asked` tells - shown or put aside -, the cursor and the checks where
     /// they stand.
     pub(super) fn show_as(&mut self, asked: Asked) {
         self.asked = asked;
     }
 
     /// Takes in `key`, pressed while nothing is typed: Up and Down move between the choices, the
-    /// digit of one chooses it - or marks it, where several may be chosen, as Space does -, Enter
-    /// chooses the one the cursor stands on - or those marked -, and Esc puts what is asked aside;
+    /// digit of one chooses it - or checks it, where several may be chosen, as Space does -, Enter
+    /// chooses the one the cursor stands on - or those checked -, and Esc puts what is asked aside;
     /// put aside, Esc takes it up again, and the line typed takes every other key.
     pub(super) fn take_key(&mut self, key: &KeyEvent) -> Taken {
         let asking = match &self.asked {
@@ -67,21 +68,21 @@ impl Choosing {
             KeyCode::Esc => Taken::Typed(Typed::PutAside),
             _ if count == 0 => Taken::Passed,
             KeyCode::Up => {
-                self.selected = self.selected.checked_sub(1).unwrap_or(count - 1);
+                self.cursor = self.cursor.checked_sub(1).unwrap_or(count - 1);
                 Taken::Kept
             }
             KeyCode::Down => {
-                self.selected = (self.selected + 1) % count;
+                self.cursor = (self.cursor + 1) % count;
                 Taken::Kept
             }
             KeyCode::Char(' ') if several => {
-                self.mark(self.selected);
+                self.check(self.cursor);
                 Taken::Kept
             }
             KeyCode::Char(digit) => match digit.to_digit(10).map(|d| d as usize) {
                 Some(number) if (1..=count).contains(&number) && several => {
-                    self.selected = number - 1;
-                    self.mark(number - 1);
+                    self.cursor = number - 1;
+                    self.check(number - 1);
                     Taken::Kept
                 }
                 Some(number) if (1..=count).contains(&number) => {
@@ -89,30 +90,30 @@ impl Choosing {
                 }
                 _ => Taken::Passed,
             },
-            KeyCode::Enter => match self.marked.is_empty() {
-                true => Taken::Typed(Typed::Chosen(vec![self.selected])),
-                false => Taken::Typed(Typed::Chosen(self.marked.iter().copied().collect())),
+            KeyCode::Enter => match self.checked.is_empty() {
+                true => Taken::Typed(Typed::Chosen(vec![self.cursor])),
+                false => Taken::Typed(Typed::Chosen(self.checked.iter().copied().collect())),
             },
             _ => Taken::Passed,
         }
     }
 
     /// The rows that show what is asked, where it is shown: the question, its choices - the one
-    /// the cursor stands on marked by an arrow, those marked checked -, and the keys that answer;
+    /// the cursor stands on led by an arrow, those checked with an x -, and the keys that answer;
     /// none where it is put aside.
     pub(super) fn rows(&self) -> Vec<Line<'static>> {
         let Asked::Shown(asking) = &self.asked else { return Vec::new() };
         let several = asking.multi_select();
         let mut rows = vec![Line::styled(what_is_asked(asking), Style::new().bold())];
         for (index, offered) in asking.choices().iter().enumerate() {
-            let cursor = if index == self.selected { "❯ " } else { "  " };
-            let check = match (several, self.marked.contains(&index)) {
+            let arrow = if index == self.cursor { "❯ " } else { "  " };
+            let check = match (several, self.checked.contains(&index)) {
                 (false, _) => "",
                 (true, true) => "[x] ",
                 (true, false) => "[ ] ",
             };
-            let row = format!("{cursor}{check}{}. {}", index + 1, offered_words(offered));
-            rows.push(match index == self.selected {
+            let row = format!("{arrow}{check}{}. {}", index + 1, offered_words(offered));
+            rows.push(match index == self.cursor {
                 true => Line::styled(row, Style::new().cyan()),
                 false => Line::from(row),
             });
@@ -136,10 +137,10 @@ impl Choosing {
         }
     }
 
-    /// Marks the choice `index`, or takes its mark away.
-    fn mark(&mut self, index: usize) {
-        if !self.marked.remove(&index) {
-            self.marked.insert(index);
+    /// Checks the choice `index`, or takes its check away.
+    fn check(&mut self, index: usize) {
+        if !self.checked.remove(&index) {
+            self.checked.insert(index);
         }
     }
 }
@@ -149,7 +150,7 @@ fn keys(asking: &Asking) -> String {
     let has_choices = !asking.choices().is_empty();
     let keys = [
         (has_choices, "↑↓ choose"),
-        (has_choices && asking.multi_select(), "Space marks"),
+        (has_choices && asking.multi_select(), "Space checks"),
         (has_choices, "Enter answers"),
         (asking.takes_words(), "or type an answer"),
         (true, "Esc puts it aside"),
