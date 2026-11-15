@@ -1423,4 +1423,37 @@ mod tests {
         given_nothing_before_its_join(&main, ActorId::Agent(second), "after a turn ended").await;
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
+
+    /// Issue 568: a grant counts messages alone - joins and other events are none -, so that one
+    /// granted more messages than there are sees them all, from the oldest on, but not the joins
+    /// recorded before it.
+    #[tokio::test]
+    async fn a_grant_begins_at_the_oldest_message_it_grants() {
+        let kernel = test_kernel();
+        let manager = SessionManager::new(Arc::clone(&kernel));
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
+        let writer = channel.user_actor(owner).expect("the creator takes part");
+        writer.send_message(Some("one".to_string()), None, Vec::new()).await.unwrap();
+        history_of(&channel, 1).await;
+
+        let more = HistoryAccess::LastMessages { count: 9 };
+        channel.add_participant(&ctx, other, more).await.expect("a user of the session joins");
+
+        assert_eq!(joins_recorded(&channel, other).await, 1, "joined");
+        let visible = channel.visible_entries(other).await;
+        assert!(
+            visible
+                .first()
+                .and_then(HistoryEntry::said)
+                .is_some_and(|m| m.content.as_deref() == Some("one")),
+            "from the message on, not the founder's join before it: {visible:?}"
+        );
+        assert!(
+            visible.iter().any(|e| matches!(e, HistoryEntry::HistoryShared { .. })),
+            "what it was given is recorded, since it lies before its join: {visible:?}"
+        );
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
 }

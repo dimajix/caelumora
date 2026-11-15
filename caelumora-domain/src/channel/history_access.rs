@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 
 /// How much of a channel's history a new participant may see, as asked for when adding them (issue
 /// 46). The `ChannelLoop` fixes it as a position when they join (`start_in`, `HistoryStart`) and
-/// applies that.
+/// applies that. A grant counts and dates messages alone - joins and other events are none: the
+/// view begins at the oldest message granted, with the joins and other events that follow it, and
+/// at the join if none is (issue 568); only `All` reaches back to the beginning.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HistoryAccess {
@@ -28,10 +30,8 @@ impl HistoryAccess {
     /// back as the grant reaches (issue 379), not at all for all of it or nothing.
     pub fn read_enough(&self, newest: &[Message], now: DateTime<Utc>) -> bool {
         match *self {
-            HistoryAccess::All | HistoryAccess::None | HistoryAccess::LastMessages { count: 0 } => {
-                true
-            }
-            HistoryAccess::LastMessages { count } => newest.len() > count as usize,
+            HistoryAccess::All | HistoryAccess::None => true,
+            HistoryAccess::LastMessages { count } => newest.len() >= count as usize,
             HistoryAccess::LastDays { count } => {
                 let since = now - Duration::days(i64::from(count));
                 newest.last().is_some_and(|m| m.timestamp < since)
@@ -43,20 +43,19 @@ impl HistoryAccess {
     /// so that "the last three days" does not move day by day. `newest` are its messages, newest
     /// first, as many as `read_enough` asks for, or all there are.
     pub fn start_in(&self, newest: &[Message], now: DateTime<Utc>) -> HistoryStart {
-        // From the `n`-th newest, if an older one is there; all of it if not.
-        let from = |n: usize| {
-            newest.get(n).map_or(HistoryStart::Beginning, |_| HistoryStart::From(newest[n - 1].id))
+        // From the oldest of the `granted` newest, as far as there are; at the join if none is.
+        let from = |granted: usize| {
+            newest[..granted.min(newest.len())]
+                .last()
+                .map_or(HistoryStart::Join, |m| HistoryStart::From(m.id))
         };
         match *self {
             HistoryAccess::All => HistoryStart::Beginning,
-            HistoryAccess::None | HistoryAccess::LastMessages { count: 0 } => HistoryStart::Join,
+            HistoryAccess::None => HistoryStart::Join,
             HistoryAccess::LastMessages { count } => from(count as usize),
             HistoryAccess::LastDays { count } => {
                 let since = now - Duration::days(i64::from(count));
-                match newest.iter().take_while(|m| m.timestamp >= since).count() {
-                    0 => HistoryStart::Join,
-                    recent => from(recent),
-                }
+                from(newest.iter().take_while(|m| m.timestamp >= since).count())
             }
         }
     }
@@ -67,12 +66,12 @@ impl HistoryAccess {
 /// which the `HistoryShared` they are given records (issue 417).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryStart {
-    /// From the beginning: all of it is visible.
+    /// From the beginning: all of it is visible, granted whole.
     Beginning,
-    /// From this message on.
+    /// From this message on, the oldest granted: nothing recorded before it is visible.
     From(MessageId),
-    /// At the join, where nothing is granted: nothing recorded before it is visible - no message,
-    /// nor who joined before or how turns ended (issue 568).
+    /// At the join, where no message is granted: nothing recorded before it is visible - no
+    /// message, nor who joined before or how turns ended (issue 568).
     Join,
 }
 
@@ -149,6 +148,11 @@ mod tests {
         {
             assert!(read_none.read_enough(&[], now), "{read_none:?}: granted without reading any");
         }
+        assert_eq!(
+            HistoryAccess::All.start_in(&[], now),
+            HistoryStart::Beginning,
+            "All alone reaches back to the beginning, before every message"
+        );
     }
 
     #[test]
@@ -162,7 +166,20 @@ mod tests {
         assert_eq!(
             granted(HistoryAccess::LastMessages { count: 9 }, &history, now),
             ids(&history),
-            "more than there is grants all of it"
+            "more than there is grants every message"
+        );
+        // A grant counts messages alone (issue 568): it reaches back to the oldest message it
+        // grants, not past it to the joins and other events before.
+        let newest: Vec<Message> = history.iter().rev().cloned().collect();
+        let oldest = HistoryStart::From(history[0].id);
+        for more in [HistoryAccess::LastMessages { count: 9 }, HistoryAccess::LastDays { count: 9 }]
+        {
+            assert_eq!(more.start_in(&newest, now), oldest, "{more:?}: from the oldest message");
+            assert_eq!(more.start_in(&[], now), HistoryStart::Join, "{more:?}: none to grant");
+        }
+        assert!(
+            HistoryAccess::LastMessages { count: 2 }.read_enough(&newest[..2], now),
+            "as many read as are granted"
         );
         assert!(granted(HistoryAccess::LastMessages { count: 0 }, &history, now).is_empty());
         // Messages 1, 2 and 3 days ago plus today's - within the last three days.

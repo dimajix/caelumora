@@ -98,3 +98,12 @@ may not -, and so how far what is shown reaches in practice.
   `HistoryStart::message` and `from`, which only it used, went. Shares already recorded so stay
   in the histories, and the ranges they began in the stores, until the stored histories are
   deleted.
+- **2026-11-15** — Made consistent, as the maintainer decided: a grant counts and dates messages
+  alone, and joins and similar events are none. Granted as many messages as there were or more, or
+  a time span all of whose messages were recent, a newcomer was given all of the history - the
+  joins and other events before its oldest message too -, while one granted fewer was given them
+  only from a message on. The view now begins at the oldest message granted, at the join where
+  none is; only `HistoryAccess::All` begins at the history's start (`HistoryStart::Beginning`).
+  `LastMessages { count: 0 }` is no case of its own any more: no message granted. Shares recorded
+  so from the history's start stay in the histories, and the ranges they began in the stores,
+  until the stored histories are deleted.
