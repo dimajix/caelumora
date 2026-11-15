@@ -681,7 +681,11 @@ channel's document (issues 379, 417): what went to every participant is given to
 then - from the position shared with them, or else from their join, up to where delivery stopped
 (see [STORAGE.md](STORAGE.md#histories)) - over REST, in the snapshot, for `read_history` (see
 [MEMORY.md](MEMORY.md)) and for what a joining actor is given. A former participant reads what went
-to it while it took part, and nothing after.
+to it while it took part, and nothing after. A join recorded while a participant's range is still
+open - an agent left out as its channel started, without a leave, whose actor starts again as it is
+added, followed or restored - is kept in the history, since the actor comes only then, but opens no
+second range: the open one goes on, from where the join's share begins if that lies before, and
+the next leave ends it.
 
 *   A **joining actor** reads what it was given through its inbox (issue 223, see
     [Actors and envelopes](#actors-and-envelopes)): the inbox opens behind, at where its view

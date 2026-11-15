@@ -282,13 +282,14 @@ impl ChannelLoop {
     /// an actor that did not rest and for which no leave was announced: left out as the channel
     /// started, since what it runs with - its personality, its components - was withdrawn, or one
     /// whose start failed as it was added and whose rollback failed too. For it this join is one
-    /// too many, on the bus and in the history. Rare - it needs what it runs with given back while
-    /// the session runs, then one of the occasions that have the agents followed; telling it apart
-    /// would need the channel to keep why it left out whom (issue 564). One that cannot be read or
-    /// run is logged and left as it is. Of a running one only whether it exists is asked, not again
-    /// whether it may run. One change of a participant at a time (`changing`, issue 564), as
-    /// `take_in` makes it: an agent being taken in or let go meanwhile is looked at once that is
-    /// done, and not at all once it is no longer listed.
+    /// too many on the bus; the history records it, since its actor starts only now, and keeps the
+    /// range of attendance it has open (`Attendance`, issue 568). Rare - it needs what it runs with
+    /// given back while the session runs, then one of the occasions that have the agents followed;
+    /// telling it apart would need the channel to keep why it left out whom (issue 564). One that
+    /// cannot be read or run is logged and left as it is. Of a running one only whether it exists
+    /// is asked, not again whether it may run. One change of a participant at a time (`changing`,
+    /// issue 564), as `take_in` makes it: an agent being taken in or let go meanwhile is looked at
+    /// once that is done, and not at all once it is no longer listed.
     pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
         let agents: Vec<Participant> = self
             .channel()
@@ -577,7 +578,7 @@ mod tests {
     use crate::error::is_forbidden;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError, SessionManager};
-    use crate::testing::{Script, World};
+    use crate::testing::{attributes, Script, ScriptedAgents, World};
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_api::actor::Actor;
@@ -1255,5 +1256,115 @@ mod tests {
         assert!(!after.lists(scout), "taken back out");
         assert!(after.former.is_empty(), "made no former participant");
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    }
+
+    /// How an agent is taken into a channel again while its range of attendance is still open
+    /// (issue 568): listed, but left out as its channel started, and no leave recorded.
+    #[derive(Debug, Clone, Copy)]
+    enum Again {
+        /// Left out since its personality was withdrawn, added by its owner once it is given back
+        /// (`take_in`).
+        Added,
+        /// Left out so, followed by the channel once it is given back (`follow_agents`).
+        Followed,
+        /// Deleted while its session was stopped, and restored.
+        Restored,
+    }
+
+    /// Where `channel` stopped delivering to `participant` by the leave its history records, at
+    /// most five seconds after it was let go: its actor ends first.
+    async fn left_until(channel: &ChannelLoop, participant: ActorId) -> Position {
+        let until = |entries: Vec<HistoryEntry>| {
+            entries.iter().find_map(|e| match e {
+                HistoryEntry::ParticipantLeft { participant: p, until, .. }
+                    if *p == participant =>
+                {
+                    Some(*until)
+                }
+                _ => None,
+            })
+        };
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(until) = until(channel.history_entries().await) {
+                    break until;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the leave is recorded")
+    }
+
+    /// Issue 568: an agent taken into a channel again while its range of attendance is still
+    /// open, in each way `Again` names, joins again in the history, since its actor starts only
+    /// now, but keeps the one range it has, which ends where it leaves.
+    #[tokio::test]
+    async fn one_taken_in_again_while_it_attends_attends_until_it_leaves() {
+        for again in [Again::Added, Again::Followed, Again::Restored] {
+            let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+            let world = World::with(&[], &[&answering], |_| {}).await;
+            let alice = World::as_user(world.alice);
+            let bob = World::as_user(world.bob);
+            let mut personality =
+                world.personality("shared", Some(world.bob), &[world.alice]).await;
+            let helper = world.agent("helper", world.alice, &personality).await;
+            let actor = ActorId::Agent(helper);
+            let session = world.shared_session(&[helper], &[]).await;
+            let founded = &session.channels()[0];
+            assert_eq!(joins_recorded(founded, actor).await, 1, "a founder");
+            let founding = founded.attendance(actor).await[0].start;
+            world.manager.stop(&alice, session.id()).await.unwrap();
+            let personalities = &world.kernel.entity_stores().personalities;
+            match again {
+                Again::Added | Again::Followed => {
+                    personality.security_attributes = attributes(Some(world.bob), &[]);
+                    personalities.update(&bob, &mut personality).await.unwrap();
+                }
+                Again::Restored => {
+                    assert!(world.kernel.agent_manager().delete(&alice, helper).await.unwrap());
+                }
+            }
+
+            let session = world.manager.open(&alice, session.id()).await.unwrap();
+            let main = Arc::clone(&session.channels()[0]);
+            assert!(!main.participant_ids().contains(&actor), "{again:?}: left out as it starts");
+            assert!(main.channel().lists(actor), "{again:?}: listed still");
+            match again {
+                Again::Added | Again::Followed => {
+                    personality.security_attributes = attributes(Some(world.bob), &[world.alice]);
+                    personalities.update(&bob, &mut personality).await.unwrap();
+                }
+                Again::Restored => {
+                    world.kernel.agent_manager().restore(&alice, helper).await.unwrap();
+                }
+            }
+            match again {
+                Again::Added => {
+                    main.add_participant(&alice, actor, HistoryAccess::None).await.unwrap();
+                }
+                Again::Followed => main.follow_agents(Some(helper)).await,
+                // The session follows the agent as it learns of the restore.
+                Again::Restored => {}
+            }
+            time::timeout(Duration::from_secs(5), async {
+                while !main.participant_ids().contains(&actor) {
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("{again:?}: it runs again"));
+            assert_eq!(joins_recorded(&main, actor).await, 2, "{again:?}: its actor joined again");
+
+            main.remove_participant(&alice, actor).await.unwrap();
+            let until = left_until(&main, actor).await;
+            let ranges = main.attendance(actor).await;
+            assert!(
+                matches!(ranges.as_slice(), [range]
+                    if range.start <= founding && range.end == until),
+                "{again:?}: one range, from its founding or before to where it left: {ranges:?}"
+            );
+            world.manager.stop(&alice, session.id()).await.unwrap();
+        }
     }
 }

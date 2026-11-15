@@ -8,7 +8,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
-| [568](568-a-second-join-leaves-attendance-open.md) | open | medium | bug | A channel records a join for a participant whose range of attendance is still open in three cases, which opens a second range; a later leave closes only the last, the first stays open, and what the participant is shown of the history then reaches past their leave. |
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
 
 ## Sessions and channels

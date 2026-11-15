@@ -1,6 +1,6 @@
 # 568 — A join recorded while a participant's attendance is open leaves it open past their leave
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** Sessions and channels
@@ -60,3 +60,25 @@ may not -, and so how far what is shown reaches in practice.
 
 - **2026-11-14** — Opened from a finding of the review of issue
   [564](564-taking-someone-in-is-rolled-back-in-part.md), step 3b, as the maintainer asked.
+- **2026-11-15** — Done by the first consideration: `Attendance::take` keeps at most one open range
+  per participant. A join recorded while one is open continues it, its start moved back only where
+  the join's share reaches further, and the next leave ends it. The history still records the join,
+  since the actor starts only then, as step 2 of issue 564 decided; CHANNELS.md and STORAGE.md say
+  so. Not the second consideration: it needed the same special case in `take_in` and
+  `follow_agents`, and for the third case a knowledge of leaves not recorded that the channel does
+  not have. A test of the store holds the rule, one of the kernel the three cases.
+
+  What the issue left unchecked: a former participant is read as one by `ChannelView::reading_as`,
+  for whoever is listed or former and reads the channel as a whole; by `AgentContextView`, which
+  reads as its agent; and, for what a user has not read yet, by `ChannelView::unread` and
+  `UserController::mark_read`. All are reached only by who may read the channel (`GetChannel`: its
+  owner and the group of its participants). A removed user loses the group and reads on as a former
+  participant only as the channel's owner. A removed agent reads what its owner may read, so while
+  its owner takes part it reads the channel as the former participant it is - in `read_history`
+  too -, and whoever may read its context reads it as the agent. The range left open thus showed the
+  agent what was said after it left, and a reader of its context what went to every participant
+  after the agent's leave - past what that reader was given as a participant themselves, if they
+  joined later with less of the history; an owner who left was counted as unread what was said
+  after. Ranges already left open in a store stay open until it is derived anew
+  (`HistoryStore::rebuild`, which nothing calls outside the store's tests) or the stored histories
+  are deleted.

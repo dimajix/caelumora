@@ -558,7 +558,8 @@ participant (issue 417), and is kept apart from the channel state's document (is
     each at the position of the entry that added it (`StandingItems`). So is who took part
     when (`Attendance`): each participant's ranges of positions, from the `from` of the
     `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the `until` of its
-    `ParticipantLeft` - where the channel stopped delivering to it. Both are derived entry by entry
+    `ParticipantLeft` - where the channel stopped delivering to it; a join while its range is open
+    continues it, so that at most one is open. Both are derived entry by entry
     as the chain grows and rebuilt from it at any time (`HistoryStore::rebuild`); the store suite
     checks that the items equal the chain folded, and what each reader is given.
 *   **The read side is the `HistoryStore`**, handed out by the `Persistence` beside the
