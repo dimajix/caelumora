@@ -56,6 +56,14 @@ Tools have the same two halves in another state: a `ToolProvider` carries out it
   change it"). A tool's parameters are typed already, and the cost of the first half is the same.
 - In which order: the object first, since the parameters belong to it; or both at once, since
   every provider is touched by either.
+- **A rule for CODING-GUIDELINES.md**, at the maintainer's word: a `match` that serves as a
+  multiplexer - dispatching by a name or a kind to functions that are different in themselves,
+  each case calling one of them - is a smell; whoever writes or meets one weighs giving each case
+  a type of its own, or a trait the cases implement, so that what belongs to one case lies
+  together and the cases are found without matching again. A `match` over the variants of a state
+  that every case handles in the same respect ("States are types") is no such multiplexer. The
+  `execute` of the providers of commands and of tools are the examples the rule is written
+  from.
 
 ## Done when
 
@@ -65,6 +73,7 @@ Tools have the same two halves in another state: a `ToolProvider` carries out it
   completed from that description.
 - Whether tools follow is decided, and done or the difference documented in TOOLS.md and
   COMMANDS.md.
+- CODING-GUIDELINES.md holds the rule on a `match` as a multiplexer.
 
 ## History
 
@@ -72,3 +81,7 @@ Tools have the same two halves in another state: a `ToolProvider` carries out it
 [574](574-notes-and-memory-cannot-be-read-by-a-command.md), whose fourth step made whoever runs a
 command refuse arguments to one that names no parameters: the per-command `match` and the textual
 `usage` came up as what stands in the way of more than that.
+
+**2026-11-15** - The maintainer added a rule for CODING-GUIDELINES.md to it: a `match` as a
+multiplexer of functions different in themselves is a smell, to be weighed against a type or a
+trait per case.
