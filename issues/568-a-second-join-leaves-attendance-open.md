@@ -82,3 +82,19 @@ may not -, and so how far what is shown reaches in practice.
   after. Ranges already left open in a store stay open until it is derived anew
   (`HistoryStore::rebuild`, which nothing calls outside the store's tests) or the stored histories
   are deleted.
+- **2026-11-15** — A finding of the work, fixed on the same branch as the maintainer asked: a
+  newcomer granted nothing was given more. In a channel without messages,
+  `HistoryAccess::start_in` answered "all of it", as issue [46](46-channel-participants.md) had
+  built it in its first step, when a history held messages alone; with messages, it answered
+  "after the last message", which shared what was recorded after it - how an agent's turn ended,
+  who joined since. A `HistoryShared` was recorded for either, and with the attendance rule above,
+  a join while attending moved the start of the open range back to where the share began. Nothing
+  granted now begins at the join (`HistoryStart::Join`, which takes the place of
+  `HistoryStart::After`); `HistoryAccess::None` and `LastMessages { count: 0 }` read no page to
+  find that out. `ChannelLoop::history_start` hands it to the actor's start as `None` - what is
+  said from its start on, as for a founder -, so that what `run` records between taking someone
+  in and their join is not shared either, as it would be from a position fixed before. All of it
+  became a variant too (`HistoryStart::Beginning`), so that `history_start` is one `match`;
+  `HistoryStart::message` and `from`, which only it used, went. Shares already recorded so stay
+  in the histories, and the ranges they began in the stores, until the stored histories are
+  deleted.

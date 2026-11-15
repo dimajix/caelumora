@@ -671,7 +671,8 @@ Before the newcomer's actor starts, the channel records what it was given - `His
 the position and who granted it - right before its `ParticipantJoined`, in the system's name and to
 the newcomer alone: what it reads of the history is a delivery too, and the history says what every
 participant received (issue 417). It is recorded only if it shares something, if the position lies
-before the join; a newcomer granted nothing is given what is said from its join on.
+before the join; a newcomer granted nothing is given what is said from its join on, and nothing
+recorded before it, such as who joined or how a turn ended.
 When a participant leaves, its `ParticipantLeft` says from which position on the channel delivered
 nothing to it any more (`until`) - where it stopped, which may lie before the entry, since what the
 leaving actor still sends comes first (issue 262).

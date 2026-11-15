@@ -166,7 +166,7 @@ impl ChannelLoop {
 
         let from = match entry {
             Entry::Founding => None,
-            Entry::Added | Entry::Joining => Some(self.history_start(history).await?),
+            Entry::Added | Entry::Joining => self.history_start(history).await?,
         };
         let before = self.channel.add_participant(&storing, found.clone()).await?;
 
@@ -1314,6 +1314,7 @@ mod tests {
             let founded = &session.channels()[0];
             assert_eq!(joins_recorded(founded, actor).await, 1, "a founder");
             let founding = founded.attendance(actor).await[0].start;
+            assert!(founding > Position::START, "after the users' joins, so that a move shows");
             world.manager.stop(&alice, session.id()).await.unwrap();
             let personalities = &world.kernel.entity_stores().personalities;
             match again {
@@ -1361,10 +1362,65 @@ mod tests {
             let ranges = main.attendance(actor).await;
             assert!(
                 matches!(ranges.as_slice(), [range]
-                    if range.start <= founding && range.end == until),
-                "{again:?}: one range, from its founding or before to where it left: {ranges:?}"
+                    if range.start == founding && range.end == until),
+                "{again:?}: one range, from its founding to where it left: {ranges:?}"
             );
             world.manager.stop(&alice, session.id()).await.unwrap();
         }
+    }
+
+    /// That `newcomer`, added to `channel` granted nothing, is shared nothing and sees nothing
+    /// recorded before its join, once that is recorded: `case` says where.
+    async fn given_nothing_before_its_join(channel: &ChannelLoop, newcomer: ActorId, case: &str) {
+        assert_eq!(joins_recorded(channel, newcomer).await, 1, "{case}: joined");
+        let shared = channel.history_entries().await.into_iter().any(|e| {
+            matches!(e, HistoryEntry::HistoryShared { participant, .. } if participant == newcomer)
+        });
+        assert!(!shared, "{case}: nothing shared is recorded");
+        let visible = channel.visible_entries(newcomer).await;
+        assert!(
+            matches!(visible.first(), Some(HistoryEntry::ParticipantJoined { participant, .. })
+                if *participant == newcomer),
+            "{case}: its own join first: {visible:?}"
+        );
+    }
+
+    /// Issue 568: a newcomer granted nothing is given nothing recorded before its join - in a
+    /// channel where nothing was said yet, the joins of its founders; after an agent answered,
+    /// how its turn ended, which follows the last message.
+    #[tokio::test]
+    async fn one_granted_nothing_sees_nothing_recorded_before_its_join() {
+        let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let alice = World::as_user(world.alice);
+        let plain = world.personality("plain", Some(world.alice), &[]).await;
+        let helper = world.agent("helper", world.alice, &plain).await;
+        let first = world.agent("first", world.alice, &plain).await;
+        let second = world.agent("second", world.alice, &plain).await;
+        let session = world.shared_session(&[helper], &[first, second]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        assert_eq!(joins_recorded(&main, ActorId::Agent(helper)).await, 1, "a founder");
+
+        main.add_participant(&alice, ActorId::Agent(first), HistoryAccess::None).await.unwrap();
+        given_nothing_before_its_join(&main, ActorId::Agent(first), "nothing said yet").await;
+
+        let writer = main.user_actor(world.alice).expect("a founder");
+        writer.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+        let turn_ended_last = |entries: Vec<HistoryEntry>| {
+            let said = entries.iter().rposition(|e| e.said().is_some());
+            let ended =
+                entries.iter().rposition(|e| matches!(e, HistoryEntry::TurnFinished { .. }));
+            said.is_some() && ended > said
+        };
+        time::timeout(Duration::from_secs(5), async {
+            while !turn_ended_last(main.history_entries().await) {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("an answer, and its turn's end after it");
+        main.add_participant(&alice, ActorId::Agent(second), HistoryAccess::None).await.unwrap();
+        given_nothing_before_its_join(&main, ActorId::Agent(second), "after a turn ended").await;
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
 }
