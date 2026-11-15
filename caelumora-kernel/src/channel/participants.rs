@@ -12,7 +12,7 @@ use caelumora_domain::chain::Position;
 use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::HistoryAccess;
 use caelumora_domain::channel::Participant;
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::question::{QuestionError, Questions};
 use caelumora_domain::security::SecurityAttributes;
@@ -478,7 +478,7 @@ impl ChannelLoop {
     pub(crate) async fn agent_commands(
         &self,
         issuer: &SecurityContext,
-    ) -> Vec<(ChannelParticipant, Vec<Command>)> {
+    ) -> Vec<(ChannelParticipant, Vec<CommandDescription>)> {
         let mut found = Vec::new();
         for participant in self.participants().into_iter().filter(|m| m.id.as_agent_id().is_some())
         {
@@ -499,7 +499,7 @@ impl ChannelLoop {
         &self,
         agent: ActorId,
         issuer: &SecurityContext,
-    ) -> Vec<Command> {
+    ) -> Vec<CommandDescription> {
         let Some((commands, attributes)) = self.commands_held(agent).await else {
             return Vec::new();
         };
@@ -524,7 +524,7 @@ impl ChannelLoop {
     pub(super) async fn commands_held(
         &self,
         agent: ActorId,
-    ) -> Option<(Vec<Command>, SecurityAttributes)> {
+    ) -> Option<(Vec<CommandDescription>, SecurityAttributes)> {
         let actor = self.agent_actor(agent)?;
         let attributes = self.controllers.agent_attributes(agent.as_agent_id()?).await.ok()?;
         Some((actor.commands(), attributes))

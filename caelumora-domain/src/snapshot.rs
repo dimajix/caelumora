@@ -20,7 +20,7 @@ use crate::actor::{ActorId, ActorState};
 use crate::agent::{AgentId, PersonalityId, PersonalityKind};
 use crate::approval::{ApprovalRequest, ApprovalRule};
 use crate::channel::ChannelId;
-use crate::command::Command;
+use crate::command::CommandDescription;
 use crate::confidentiality::Classification;
 use crate::digest::Digest;
 use crate::group::GroupId;
@@ -245,7 +245,7 @@ pub struct ChannelParticipantSnapshot {
     /// see (issue 269), read from the running channel - for completion and
     /// `/help`. Empty for any other participant, and in a channel that does not
     /// run, where nothing could carry them out.
-    pub commands: Vec<Command>,
+    pub commands: Vec<CommandDescription>,
     /// What an agent participant's model calls in the channel used (issue 209),
     /// with `Detail::USAGE`; `None` also for a participant whose calls report
     /// no tokens (an external agent, a user), before its first call, and if

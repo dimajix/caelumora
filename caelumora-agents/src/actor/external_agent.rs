@@ -26,7 +26,7 @@
 //! when the channel was lowered since.
 
 use super::body::AgentBody;
-use crate::command::AgentCommandProvider;
+use crate::command::AgentCommand;
 use crate::error::failure_message;
 use crate::external::{ExternalAgent, ExternalAgentResult, ExternalEvent, OutboundMessage, Said};
 use crate::message::PerceiveInProcessor;
@@ -35,6 +35,7 @@ use crate::prompt::ContextProvider;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::logging::envelope_span;
 use caelumora_api::model::ModelProfileProvider;
@@ -43,7 +44,7 @@ use caelumora_api::transport::{EventReceiver, EventSender};
 use caelumora_domain::actor::{ActorDescription, ActorEvent, ActorId, ActorState, Envelope};
 use caelumora_domain::agent::AgentChannelState;
 use caelumora_domain::agent::RetryRefused;
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{ContextResolver, Placement, PromptAt, PromptPart};
@@ -128,7 +129,7 @@ impl ExternalAgentActor {
         TypeKey::of::<dyn ModelProfileProvider>(),
         TypeKey::of::<dyn PerceiveInProcessor>(),
         TypeKey::of::<dyn ContextProvider>(),
-        TypeKey::of::<dyn AgentCommandProvider>(),
+        TypeKey::of::<dyn CommandProvider<dyn AgentCommand>>(),
     ];
 
     /// The actor of the external agent of `actor_runtime` (issue 516), built from its
@@ -1049,7 +1050,7 @@ impl Actor for ExternalAgentActor {
         self.body.components()
     }
 
-    fn commands(&self) -> Vec<Command> {
+    fn commands(&self) -> Vec<CommandDescription> {
         self.body.commands()
     }
 

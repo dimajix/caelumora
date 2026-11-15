@@ -2,7 +2,7 @@
 //! commands of a channel, what `/help` tells of them, and how they name what they act on by the
 //! beginning of its id (issue 571).
 
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::value::command_name::CommandName;
 
 /// A command the terminal carries out itself, named by the rules of the commands of a channel
@@ -53,80 +53,80 @@ impl TerminalCommand {
 
     /// The command as the commands of a channel are told: its name, short forms, parameters and
     /// what it does.
-    pub(crate) fn command(self) -> Command {
+    pub(crate) fn command(self) -> CommandDescription {
         match self {
             // Of no group, as `/help`: ending the program acts on no entity of a channel.
-            TerminalCommand::Exit => Command {
+            TerminalCommand::Exit => CommandDescription {
                 name: CommandName::fixed("exit"),
                 aliases: vec![CommandName::fixed("quit")],
                 description: "Ends the program, the session shut down in order.".to_string(),
                 usage: None,
                 owners_only: false,
             },
-            TerminalCommand::ChannelSwitch => Command {
+            TerminalCommand::ChannelSwitch => CommandDescription {
                 name: CommandName::fixed("channel switch"),
                 aliases: vec![CommandName::fixed("switch")],
                 description: "Talks in another channel of the session you take part in.".to_string(),
                 usage: Some("<channel>".to_string()),
                 owners_only: false,
             },
-            TerminalCommand::SessionList => Command {
+            TerminalCommand::SessionList => CommandDescription {
                 name: CommandName::fixed("session list"),
                 aliases: Vec::new(),
                 description: "Lists the sessions of this directory, the one spoken in last first.".to_string(),
                 usage: None,
                 owners_only: false,
             },
-            TerminalCommand::SessionNew => Command {
+            TerminalCommand::SessionNew => CommandDescription {
                 name: CommandName::fixed("session new"),
                 aliases: vec![CommandName::fixed("new")],
                 description: "Starts a session from the template named, or the program's, and talks in it.".to_string(),
                 usage: Some("[template]".to_string()),
                 owners_only: false,
             },
-            TerminalCommand::SessionResume => Command {
+            TerminalCommand::SessionResume => CommandDescription {
                 name: CommandName::fixed("session resume"),
                 aliases: vec![CommandName::fixed("resume")],
                 description: "Continues the session of this directory whose id begins so, and talks in it.".to_string(),
                 usage: Some("<id>".to_string()),
                 owners_only: false,
             },
-            TerminalCommand::SessionDelete => Command {
+            TerminalCommand::SessionDelete => CommandDescription {
                 name: CommandName::fixed("session delete"),
                 aliases: Vec::new(),
                 description: "Deletes the session of this directory whose id begins so, not the one talked in; it can be restored.".to_string(),
                 usage: Some("<id>".to_string()),
                 owners_only: false,
             },
-            TerminalCommand::AgentRetry => Command {
+            TerminalCommand::AgentRetry => CommandDescription {
                 name: CommandName::fixed("agent retry"),
                 aliases: vec![CommandName::fixed("retry")],
                 description: "Asks for the answer under way, the turn given up, or the last answer of an agent again.".to_string(),
                 usage: None,
                 owners_only: false,
             },
-            TerminalCommand::ApprovalApprove => Command {
+            TerminalCommand::ApprovalApprove => CommandDescription {
                 name: CommandName::fixed("approval approve"),
                 aliases: vec![CommandName::fixed("approve")],
                 description: "Approves the call asked of you, or the one waiting for approval whose id begins so.".to_string(),
                 usage: Some("[id]".to_string()),
                 owners_only: false,
             },
-            TerminalCommand::ApprovalDeny => Command {
+            TerminalCommand::ApprovalDeny => CommandDescription {
                 name: CommandName::fixed("approval deny"),
                 aliases: vec![CommandName::fixed("deny")],
                 description: "Denies the call asked of you, or the one waiting for approval whose id begins so.".to_string(),
                 usage: Some("[id]".to_string()),
                 owners_only: false,
             },
-            TerminalCommand::QuestionAnswer => Command {
+            TerminalCommand::QuestionAnswer => CommandDescription {
                 name: CommandName::fixed("question answer"),
                 aliases: vec![CommandName::fixed("answer")],
                 description: "Asks the questions put to you whose id begins so, or those put aside, one by one.".to_string(),
                 usage: Some("[id]".to_string()),
                 owners_only: false,
             },
-            TerminalCommand::QuestionDecline => Command {
+            TerminalCommand::QuestionDecline => CommandDescription {
                 name: CommandName::fixed("question decline"),
                 aliases: vec![CommandName::fixed("decline")],
                 description: "Declines the questions asked of you, or those put to you whose id begins so.".to_string(),
@@ -157,7 +157,8 @@ pub(crate) fn terminal_help(args: &str) -> Option<String> {
         "" => None,
         _ => Some(CommandName::new(wanted.split_whitespace().collect::<Vec<_>>().join(" ")).ok()?),
     };
-    let in_group = |command: &&Command| group.as_ref().is_none_or(|g| g.begins(&command.name));
+    let in_group =
+        |command: &&CommandDescription| group.as_ref().is_none_or(|g| g.begins(&command.name));
     let listed: Vec<String> = commands
         .iter()
         .filter(in_group)

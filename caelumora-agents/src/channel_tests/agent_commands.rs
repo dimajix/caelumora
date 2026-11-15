@@ -6,7 +6,6 @@ use crate::tool::turn_end::TURN_END_KIND;
 use caelumora_api::command::CommandError;
 use caelumora_domain::chain::Node;
 use caelumora_domain::transcript::TranscriptEntry;
-use caelumora_domain::value::command_name::CommandName;
 use caelumora_kernel::command::{CommandContext, CommandReply};
 use std::sync::Mutex;
 
@@ -268,7 +267,7 @@ async fn a_sleeping_agent_carries_out_a_command_and_sleeps_on() {
 
 #[tokio::test]
 async fn help_lists_the_commands_of_the_agents_with_their_handles() {
-    use caelumora_kernel::command::ChannelCommandProvider;
+    use caelumora_kernel::command::ChannelCommand;
     let Stuck { channel, context, running, .. } = with_a_marking_agent(false).await;
     // This channel's session has no commands of its own: `/help` is run
     // as it would be among them.
@@ -276,23 +275,11 @@ async fn help_lists_the_commands_of_the_agents_with_their_handles() {
     let issuer = channel.user_actor(alice_of(&context)).expect("alice takes part");
     let help = CommandContext { issuer: &issuer, channel: &channel, executor: &executor };
 
-    let all = HelpComponent
-        .execute(&CommandName::fixed("help"), "", &help)
-        .await
-        .expect("/help runs")
-        .text;
+    let all = HelpCommand::new().execute("", &help).await.expect("/help runs").text;
     assert!(all.contains("`/mark @agent [text]` (also `/mk`) — Marks. (@helper)"), "{all}");
-    let one = HelpComponent
-        .execute(&CommandName::fixed("help"), "mark", &help)
-        .await
-        .expect("/help runs")
-        .text;
+    let one = HelpCommand::new().execute("mark", &help).await.expect("/help runs").text;
     assert!(one.contains("Carried out by @helper"), "{one}");
-    let short = HelpComponent
-        .execute(&CommandName::fixed("help"), "mk", &help)
-        .await
-        .expect("/help runs")
-        .text;
+    let short = HelpCommand::new().execute("mk", &help).await.expect("/help runs").text;
     assert_eq!(short, one, "described by its short form as by its name");
     running.abort();
 }

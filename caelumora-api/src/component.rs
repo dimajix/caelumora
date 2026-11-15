@@ -32,7 +32,7 @@ pub enum ComponentError {
     /// which `other` provides - and `other` is still being built, waiting
     /// for `component` or for something that waits for it.
     #[error("component '{component}' needs the {facet} of component '{other}', which is being built and needs it in turn")]
-    Cycle { component: String, facet: &'static str, other: String },
+    Cycle { component: String, facet: String, other: String },
     #[error("invalid configuration: {0}")]
     InvalidConfig(String),
     /// A text the component gives its model cannot be had from the prompt
@@ -42,12 +42,12 @@ pub enum ComponentError {
     /// A component asked for a service of the kernel its kind does not declare it uses, or one the
     /// kernel does not have (issue 296).
     #[error("the {0} is not a service offered to the component")]
-    NoService(&'static str),
+    NoService(String),
     /// A facet was asked for that was not declared: by a component, one its
     /// kind does not declare it needs (`ComponentKind::needs`); by the owner
     /// of a container, one it was not built for (issue 337).
     #[error("{0} is not among the facets declared to be asked for")]
-    Undeclared(&'static str),
+    Undeclared(String),
     /// The component bundle a `ref` names cannot be read (issues 270, 455, 457): gone, not the
     /// reader's to read - a share withdrawn -, or its store failed, as `cause` says. Gone or not
     /// the reader's, it keeps an agent from being run, as its personality's would

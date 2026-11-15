@@ -77,7 +77,7 @@ mod tests {
     use std::sync::Arc;
 
     /// The names of `facets`, to compare them by.
-    fn names(facets: Option<&[TypeKey]>) -> Option<Vec<&'static str>> {
+    fn names(facets: Option<&[TypeKey]>) -> Option<Vec<String>> {
         facets.map(|facets| facets.iter().map(TypeKey::name).collect())
     }
 

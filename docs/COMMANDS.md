@@ -40,9 +40,9 @@ argument, else the one whose id begins so (`beginning_with`, issue
 [571](../issues/571-approvals-and-questions-in-the-terminal.md)) -, ask an agent to answer again
 (`TerminalCommand`, issue
 [570](../issues/570-the-terminal-s-commands-and-its-sessions.md)). They are named by the rules below
-as the channel's are, with the domain's `Command`, and a line is tried against them before it goes
-to the channel: so no name or short form of them may begin, or be the beginning of, one of the
-channel's - which a test holds for the commands a session has by default, not for those a
+as the channel's are, with the domain's `CommandDescription`, and a line is tried against them
+before it goes to the channel: so no name or short form of them may begin, or be the beginning of,
+one of the channel's - which a test holds for the commands a session has by default, not for those a
 configuration, a template or an agent adds. One that takes no arguments refuses them, by the rule
 of every command ([below](#commands-are-components)). `/help` lists them after the channel's, and
 tells of one of them, or of a group of them, where the channel knows nothing of what is asked or no
@@ -54,9 +54,9 @@ channel is talked in. `/exit` (`/quit`) belongs to no group, as
 A command's name is a `CommandName`: its words, from its group to itself (`channel list`), of lower
 case letters, digits and `-`, separated by single spaces (issue
 [560](../issues/560-commands-are-not-grouped-by-what-they-act-on.md)). A command may have other
-names, its short forms (`Command::aliases`). A line begins with a name if the name's words begin
-it, whatever whitespace runs between them there; what follows is the command's arguments, handed to
-it unparsed.
+names, its short forms (`CommandDescription::aliases`). A line begins with a name if the name's
+words begin it, whatever whitespace runs between them there; what follows is the command's
+arguments, handed to it unparsed.
 
 No name or short form of a set of commands is the beginning of another - `channel` beside
 `channel list`, two equal names, a short form equal to another's name -, so that a line begins at
@@ -73,8 +73,14 @@ to no group. The commands of an agent are not grouped.
 
 ### Commands are components
 
-A `ChannelCommandProvider` contributes commands run on the channel, as a `ToolProvider` contributes
-tools; the issuer is given as their actor. Commands come from two places:
+A command is an object of its own (issue 583): it holds its `CommandDescription` - its names, what
+it does, what it takes, whether it is for an agent's owners alone - and gives it as a `Command`, the
+trait every command implements; how it is carried out is the trait of its kind, derived from
+`Command`: `ChannelCommand` for one run on the channel, given the issuer's actor and the channel,
+`AgentCommand` for one an agent carries out in its `Turn`. A component contributes commands of a
+kind through the one facet `CommandProvider<C>`, as a list of them - mostly made as it is built,
+`Vec<Arc<C>>` being one. No provider dispatches by a command's name: whoever runs a command finds
+the command itself. The channel's commands come from two places:
 
 *   `AppConfig::commands`, the global set - by default `/help` and the groups `participant`,
     `agent` and `channel`, a component each; an empty list switches them off (see
@@ -86,13 +92,14 @@ Both are built once per session, in the name of its owner
 ([COMPONENTS.md](COMPONENTS.md#what-a-component-may-reach)), into a `CommandExecutor` shared by the
 session's channels - the counterpart of an agent's `ToolExecutor`, which likewise receives ready
 providers and is no component. Two commands a line could not tell apart keep the session from
-starting. What the executor finds its commands in is a `CommandSet`, generic over the facet: finding
-the command a line begins and refusing two that collide are the same whoever runs the commands, and
-an agent's actor keeps its commands in one too. What a command is given to run with - the session,
-or an agent's turn - and who asks whether it may be seen and run are the facet's: the channel's
-commands the executor itself (`ShowCommand`, `ExecuteCommand`), an agent's the channel's door as it
-admits the request (`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). A command that names no
-parameters (`Command::usage`) takes no arguments: whoever runs it - the executor once it may be
+starting. What the executor finds its commands in is a `CommandSet`, generic over the kind of
+command and holding the commands themselves: finding the command a line begins and refusing two that
+collide are the same whoever runs the commands, and an agent's actor keeps its commands in one too.
+What a command is given to run with - the session, or an agent's turn - and who asks whether it may
+be seen and run are its kind's: the channel's commands the executor itself (`ShowCommand`,
+`ExecuteCommand`), an agent's the channel's door as it admits the request (`ShowAgentCommand`,
+`ExecuteAgentCommand`, issue 516). A command that names no parameters
+(`CommandDescription::usage`) takes no arguments: whoever runs it - the executor once it may be
 run, an agent's actor before it begins, the terminal - refuses them (`check_arguments`), so that
 no command checks it itself. How a command runs is the command's business, and there is nothing
 about running commands to try out.
@@ -186,10 +193,11 @@ Some commands act on an agent rather than on the channel: `/skill` puts a skill 
 command is not run by the session but carried out by the agent itself - an agent run here and an
 external agent alike.
 
-*   **Contributed by components.** A component of the personality offers them through
-    `AgentCommandProvider`, as a tool is offered, carried out in the agent's `Turn`. Which commands
-    an agent carries out follows from its personality alone. Two that a line could not tell apart,
-    or one that a line could not tell from a command of the session, keep the agent from starting.
+*   **Contributed by components.** A component of the personality offers them as `AgentCommand`s
+    (`CommandProvider<dyn AgentCommand>`), as a tool is offered, carried out in the agent's `Turn`.
+    Which commands an agent carries out follows from its personality alone. Two that a line could
+    not tell apart, or one that a line could not tell from a command of the session, keep the
+    agent from starting.
 *   **Always addressed.** A command of an agent names its agent - `/compact @bob`; `@all`, or
     `@channel`, as for a mention, names every agent of the channel that carries it out. Without a
     handle, or with one that names no such agent, it is refused with the handles to choose from.

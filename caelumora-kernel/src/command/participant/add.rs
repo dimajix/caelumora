@@ -1,85 +1,102 @@
 //! The built-in `/participant add` command (issues 555, 560), `/add` for short.
 
-use crate::command::{command_error, names, CommandContext};
+use crate::command::{command_error, names, ChannelCommand, CommandContext};
 use anyhow::Error;
-use caelumora_api::command::{CommandError, CommandResult};
+use async_trait::async_trait;
+use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::HistoryAccess;
-use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{Name, NameMatch};
 
-pub(super) const ADD_COMMAND_NAME: &str = "participant add";
+const ADD_COMMAND_NAME: &str = "participant add";
 
 /// `/participant add <name>`: brings the user or the agent named into the channel, and into its
 /// session first if not in it yet (`SessionLoop::add_participant`), sharing the whole history.
 /// `/add` for short.
-pub(super) fn command() -> Command {
-    Command {
-        name: CommandName::fixed(ADD_COMMAND_NAME),
-        aliases: vec![CommandName::fixed("add")],
-        description: "Brings the user or agent named into this channel, and into the session if not in it yet; they see the whole history.".to_string(),
-        usage: Some("<name>".to_string()),
-        owners_only: false,
+#[derive(Debug)]
+pub(super) struct AddCommand(CommandDescription);
+
+impl AddCommand {
+    /// The command, as `/help` tells it.
+    pub(super) fn new() -> Self {
+        Self(CommandDescription {
+            name: CommandName::fixed(ADD_COMMAND_NAME),
+            aliases: vec![CommandName::fixed("add")],
+            description: "Brings the user or agent named into this channel, and into the session if not in it yet; they see the whole history.".to_string(),
+            usage: Some("<name>".to_string()),
+            owners_only: false,
+        })
     }
 }
 
-/// Runs `/participant add` with `args`. The name is found from the channel
-/// (`SessionView::candidates` by the whole name): of several of one name the nearest; several
-/// equally near are refused with their names. Only the issuer is answered: the channel tells
-/// everyone that someone joined.
-pub(super) async fn execute(
-    args: &str,
-    context: &CommandContext<'_>,
-) -> CommandResult<CommandOutput> {
-    let invalid = |reason: String| CommandError::InvalidArguments {
-        command: ADD_COMMAND_NAME.to_string(),
-        reason,
-    };
-    let wanted = args.trim();
-    if wanted.is_empty() {
-        return Err(invalid("name whom to add".to_string()));
+impl Command for AddCommand {
+    fn description(&self) -> &CommandDescription {
+        &self.0
     }
-    let nobody = || invalid(format!("nobody '{wanted}' to add"));
-    let name = Name::new(wanted).map_err(|_| nobody())?;
-    let failed = |e: Error| command_error(ADD_COMMAND_NAME, &e);
-    let channel_id = context.channel.id();
-    let found = context
-        .session_view(ADD_COMMAND_NAME)
-        .await?
-        .candidates(&NameMatch::Exact(name), Some(channel_id))
-        .await
-        .map_err(|e| failed(e.into()))?;
-    match found.as_slice() {
-        [] => Err(nobody()),
-        [one] if one.in_channel => {
-            Ok(CommandOutput::private(format!("{} takes part already.", one.name)))
+}
+
+#[async_trait]
+impl ChannelCommand for AddCommand {
+    /// Runs `/participant add` with `args`. The name is found from the channel
+    /// (`SessionView::candidates` by the whole name): of several of one name the nearest; several
+    /// equally near are refused with their names. Only the issuer is answered: the channel tells
+    /// everyone that someone joined.
+    async fn execute(
+        &self,
+        args: &str,
+        context: &CommandContext<'_>,
+    ) -> CommandResult<CommandOutput> {
+        let invalid = |reason: String| CommandError::InvalidArguments {
+            command: ADD_COMMAND_NAME.to_string(),
+            reason,
+        };
+        let wanted = args.trim();
+        if wanted.is_empty() {
+            return Err(invalid("name whom to add".to_string()));
         }
-        [one] => {
-            context
-                .session_loop(ADD_COMMAND_NAME)?
-                .add_participant(
-                    &context.issuer.security_context(),
-                    one.id,
-                    Some((channel_id, HistoryAccess::All)),
-                )
-                .await
-                .map_err(failed)?;
-            Ok(CommandOutput::private(format!("Added {}.", one.name)))
-        }
-        several => {
-            let several: Vec<String> = several
-                .iter()
-                .map(|candidate| match candidate.id {
-                    ActorId::User(_) => format!("the user {}", candidate.name),
-                    _ => format!("the agent {}", candidate.name),
-                })
-                .collect();
-            Err(invalid(format!(
-                "'{}' names {}, who are equally near; add them in the web UI",
-                wanted,
-                names(&several)
-            )))
+        let nobody = || invalid(format!("nobody '{wanted}' to add"));
+        let name = Name::new(wanted).map_err(|_| nobody())?;
+        let failed = |e: Error| command_error(ADD_COMMAND_NAME, &e);
+        let channel_id = context.channel.id();
+        let found = context
+            .session_view(ADD_COMMAND_NAME)
+            .await?
+            .candidates(&NameMatch::Exact(name), Some(channel_id))
+            .await
+            .map_err(|e| failed(e.into()))?;
+        match found.as_slice() {
+            [] => Err(nobody()),
+            [one] if one.in_channel => {
+                Ok(CommandOutput::private(format!("{} takes part already.", one.name)))
+            }
+            [one] => {
+                context
+                    .session_loop(ADD_COMMAND_NAME)?
+                    .add_participant(
+                        &context.issuer.security_context(),
+                        one.id,
+                        Some((channel_id, HistoryAccess::All)),
+                    )
+                    .await
+                    .map_err(failed)?;
+                Ok(CommandOutput::private(format!("Added {}.", one.name)))
+            }
+            several => {
+                let several: Vec<String> = several
+                    .iter()
+                    .map(|candidate| match candidate.id {
+                        ActorId::User(_) => format!("the user {}", candidate.name),
+                        _ => format!("the agent {}", candidate.name),
+                    })
+                    .collect();
+                Err(invalid(format!(
+                    "'{}' names {}, who are equally near; add them in the web UI",
+                    wanted,
+                    names(&several)
+                )))
+            }
         }
     }
 }

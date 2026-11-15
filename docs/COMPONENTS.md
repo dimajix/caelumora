@@ -108,8 +108,8 @@ facet trait lives next to the code that uses it, not among the implementations -
 | Facet | What it contributes | Where the trait lives |
 |---|---|---|
 | `ToolProvider` | tools the model may call | `crate::tool` |
-| `ChannelCommandProvider` | user commands run on the channel | `crate::command` |
-| `AgentCommandProvider` | user commands an agent carries out itself, of agents and external agents alike | `caelumora_agents::command` |
+| `CommandProvider<dyn ChannelCommand>` | user commands run on the channel (`ChannelCommand`: `crate::command`) | `caelumora_api::command` |
+| `CommandProvider<dyn AgentCommand>` | user commands an agent carries out itself, of agents and external agents alike (`AgentCommand`: `caelumora_agents::command`) | `caelumora_api::command` |
 | `ActivityProvider` | what an agent does of its own accord before a model call - compacting its context | `crate::activity` |
 | `PromptProvider` | prompt parts, of agents and external agents alike | `crate::prompt` |
 | `ContextProvider` | what the model is given | `crate::prompt` |
@@ -198,10 +198,10 @@ it (issue 337):
 
 | Owner | Asks for | Declared as |
 |---|---|---|
-| agent | `ContextProvider`, `LanguageModelClient`, `ModelProfileProvider`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `AgentCommandProvider`, `ActivityProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
-| external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `AgentCommandProvider` | `ExternalAgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
+| agent | `ContextProvider`, `LanguageModelClient`, `ModelProfileProvider`, `PerceiveInProcessor`, `EmitOutProcessor`, `ToolProvider`, `CommandProvider<dyn AgentCommand>`, `ActivityProvider` | `AgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
+| external agent | `ExternalAgent`, `PerceiveInProcessor`, `ContextProvider`, `CommandProvider<dyn AgentCommand>` | `ExternalAgentActor::COMPONENT_FACETS`, registered for its kind (`AgentKinds::facets`) |
 | channel | `Moderator` | `ChannelLoop::COMPONENT_FACETS` |
-| a session's commands | `ChannelCommandProvider` | `Kernel::new_command_executor` |
+| a session's commands | `CommandProvider<dyn ChannelCommand>` | `Kernel::new_command_executor` |
 
 An agent's closure thus holds the `PromptProvider`s its default `turn_context` needs, and,
 if it lists `compaction`, the `CompactionStrategy` and the `KnowledgeRestorer`s that component
@@ -384,8 +384,10 @@ The module `component` keeps what a kind is apart from what it does (issue 534),
 constant, its `…Params`, its `…Component` with its `new`, where it has one, `register`, and what
 several of its facets share, with the tests of these. Each facet the component serves is a child
 module of it, named after the facet - `tool.rs` for the `ToolProvider`, `prompt.rs` for the
-`PromptProvider` -, which holds the facet's `impl` for the `…Component`, what only that facet uses -
-the tools' names and arguments, the helpers of its `impl` - and its tests; it may have children of
+`PromptProvider`, `command.rs` for its commands -, which holds the facet's `impl` for the
+`…Component` - or, for commands, their types and the list the component contributes -, what only
+that facet uses - the tools' and commands' names and arguments, the helpers of its `impl` - and
+its tests; it may have children of
 its own, as the `tool` of `caelumora-tool-workspace` has `files` and `shell`. A child, not a module
 beside it, so that it reaches the private fields of the `…Component` without their being opened to
 the crate. The module `component` is public only where the kind's name is used outside the crate -
@@ -411,7 +413,14 @@ Components follow one convention:
     what a facet asks for - the moderator, a responder policy, the compaction strategy, a model's
     client, the external agent, the context provider - is named after that role, never with
     `Component` (`PolicyModerator`, `RoundRobinPolicy`, `SummaryCompaction`, `A2aAgent`,
-    `TurnContextProvider`), even where it contributes beside it.
+    `TurnContextProvider`), even where it contributes beside it. A kind that gives nothing but
+    commands has no struct: it contributes the list of them (`help`, `participant`, `agent`,
+    `channel`).
+*   **Commands:** each command is a type of its own (issue 583), named after it with `Command`
+    (`CompactCommand`, `NotesCommand`), which holds its `CommandDescription`, made in its `new`,
+    and what it needs to be carried out - the `…Component` it belongs to, a service
+    (`Arc<AgentManager>`); its component contributes them as a list, made as it is built
+    (`CommandProvider` for `Vec<Arc<C>>`).
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
 *   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
     (`TEXT`), rendered from the texts the component takes when it is made, in the variant of its
@@ -490,9 +499,9 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `web_fetch` | `ToolProvider` | `requires_approval` (`false`), `description` (the catalogue's), `keep_whole_above_bytes` (none: no text is kept whole) | Of the library `caelumora-tool-web` (issue 544). The tool `fetch_page`, which fetches a page of the web by its URL and gives it as Markdown or text, a page at a time - through the proxy of the environment, never from an address inside the network where it connects itself; offered in public channels alone. What lies above `keep_whole_above_bytes` is kept whole beside a preview, and of HTML its body as it came beside every result of a page asked for whole, where it can be kept ([TOOLS.md](TOOLS.md#pages-of-the-web)). |
 | `web_search` | `ToolProvider` | `provider` (required, `tavily`), `endpoint` (required, with its key in `auth`; timeout 15 s), `requires_approval` (`false`), `destination` (`public`), `description` (the catalogue's) | Of the library `caelumora-tool-web` (issue 544). The tool `search_web`, which searches the web with the provider and gives the title, the URL and a snippet of each page found ([TOOLS.md](TOOLS.md#searching-the-web)). Not built where the endpoint names no key. |
 | `notes` | `ToolProvider`, `PromptProvider` | `position` (`before_turn_input`) | Public notes of the agents in a channel: `write_note`, `update_note`, `revoke_note`, `read_notes`, `reclassify_note` (asks for approval) and a prompt part ([MEMORY.md](MEMORY.md)). |
-| `private_notes` | `ToolProvider`, `PromptProvider`, `AgentCommandProvider` | `position` (`before_turn_input`) | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, a prompt part, and the command `/private-notes` for the agent's owners ([MEMORY.md](MEMORY.md)). |
-| `agent_memory` | `ToolProvider`, `PromptProvider`, `AgentCommandProvider` | `position` (`before_turn_input`) | Of the library of `caelumora-memory` (`MemoryLibrary`), registered where it is joined (issue 518). What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, a prompt part, and the command `/memory` for the agent's owners ([MEMORY.md](MEMORY.md)). |
-| `skills` | `PromptProvider`, `ToolProvider`, `AgentCommandProvider`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Of the library of `caelumora-skills` (`SkillsLibrary`), registered where it is joined. Skills: the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
+| `private_notes` | `ToolProvider`, `PromptProvider`, `CommandProvider<dyn AgentCommand>` | `position` (`before_turn_input`) | The agent's private notes: `write_private_note`, `update_private_note`, `revoke_private_note`, `reclassify_private_note` (asks for approval), all `HIDDEN`, a prompt part, and the command `/private-notes` for the agent's owners ([MEMORY.md](MEMORY.md)). |
+| `agent_memory` | `ToolProvider`, `PromptProvider`, `CommandProvider<dyn AgentCommand>` | `position` (`before_turn_input`) | Of the library of `caelumora-memory` (`MemoryLibrary`), registered where it is joined (issue 518). What the agent remembers across channels and sessions: `remember`, `update_memory`, `forget`, `reclassify_memory` (asks for approval), all `HIDDEN`, a prompt part, and the command `/memory` for the agent's owners ([MEMORY.md](MEMORY.md)). |
+| `skills` | `PromptProvider`, `ToolProvider`, `CommandProvider<dyn AgentCommand>`, `KnowledgeRestorer` | `position` (`start`), `requires_approval` (`true`, for writing) | Of the library of `caelumora-skills` (`SkillsLibrary`), registered where it is joined. Skills: the catalogue of those the agent may load, `list_skills`, `load_skill`, `create_skill`, `update_skill`, and the commands `/skill` and `/skills` ([SKILLS.md](SKILLS.md)). |
 | `channel_history` | `ToolProvider` | - | The tool `read_history` for other channels of the session ([MEMORY.md](MEMORY.md)). |
 | `workspace` | `ToolProvider`, `PromptProvider`, `KnowledgeRestorer` | `max_wait_secs` (60, at most 300), `max_output_bytes` (64 KiB, of a command's output or a file), `requires_approval` (`true`; `false`, or `"unless_read_only"` for all but `list_files`, `read_file` and `grep_files`; `command_output`, `kill_command` and `publish_file` never ask), `description` (built in), `position` (`start`), `instruction_files` (`["AGENTS.md", "CLAUDE.md"]`) | Of the library `caelumora-tool-workspace`, registered where it is joined. The session's workspace, where the agent's channel may use it: its files - `list_files`, `read_file`, `grep_files`, `write_file`, `replace_in_file`, `move_file`, `delete_file`, `publish_file` - and a shell in it - `run_command`, `command_output`, `kill_command` ([TOOLS.md](TOOLS.md#the-workspace)). What it can do is what the workspace's terminal can; a turn is offered what its access list lets the agent call there. A prompt part tells the agent the workspace it may use in its channel, and which instruction files lie at its root, to be read first - or that there is none ([AGENT-TURN.md](AGENT-TURN.md#its-workspace)). After a compaction, it gives again the files the agent read or wrote whole in the part replaced, as they are now. |
 | `artifacts` | `ToolProvider` | `requires_approval` (`true`; `false` - `"unless_read_only"` asks too, since publishing changes what is kept), `description` (built in) | Of the library of `caelumora-artifacts` (`ArtifactsLibrary`), registered where it is joined. `publish_artifact`: a file of the session's workspace published as a version of an artifact, kept beyond the workspace ([TOOLS.md](TOOLS.md#artifacts)). Offered where the turn may use a workspace in its channel and a storage of content is configured. |
@@ -517,12 +526,12 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `mentions_only_policy` | `ResponderPolicy` | - | Asks nobody: agents answer only when mentioned. |
 | `user_driven_policy` | `ResponderPolicy` | - | Asks every agent if a user wrote, nobody if an agent did. |
 | `decision_policy` | `ResponderPolicy` | `name` (the one model of `plugins.model.decision`; needed among several), `threshold` (`0.3`), `max_responders` (`1`) | Of the plugin `caelumora-decision`, registered where it is joined. Asks a decision model whom to ask ([CHANNELS.md](CHANNELS.md#choosing-by-what-was-said)). |
-| `compaction` | `ActivityProvider`, `AgentCommandProvider` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the library `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it knew there, within half of the room between `keep` and `threshold`; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
+| `compaction` | `ActivityProvider`, `CommandProvider<dyn AgentCommand>` | `threshold` (0.8, how full the context may be, as a share of the model's context size), `keep` (0.25, how much of the context is kept as it stands, as a share of the model's context size, less than `threshold`) | Of the library `caelumora-compaction`, registered where it is joined. Compaction of the agent's context: on its own before a call once the context is that full, as measured, and by the command `/compact`, for the agent's owners. Cuts the transcript, has its `CompactionStrategy` replace the older part, and the agent's `KnowledgeRestorer`s give again what it knew there, within half of the room between `keep` and `threshold`; tells the channel what it did ([AGENT-TURN.md](AGENT-TURN.md#compaction)). An agent whose personality does not list it does not compact. |
 | `summary_compaction` | `CompactionStrategy` | - | Of the library `caelumora-compaction`, registered where it is joined. The default strategy: the agent's own model summarises the older part of its context, and answers after the summary which of what can be given again it still needs ([AGENT-TURN.md](AGENT-TURN.md#compaction)). For agents run here only: it takes the agent's `LanguageModelClient`. |
-| `help` | `ChannelCommandProvider` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
-| `participant` | `ChannelCommandProvider` | - | The command group `participant`: `/participant list`, `add`, `remove` and `nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
-| `agent` | `ChannelCommandProvider` | - | The command group `agent`: `/agent list`, `create`, `delete` and `wakeup`. Uses the `AgentManager`. |
-| `channel` | `ChannelCommandProvider` | - | The command group `channel`: `/channel list`, `describe`, `create`, `delete`, `join`, `rename`, `summary` and `briefing`. |
+| `help` | `CommandProvider<dyn ChannelCommand>` | - | The user command `/help` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
+| `participant` | `CommandProvider<dyn ChannelCommand>` | - | The command group `participant`: `/participant list`, `add`, `remove` and `nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
+| `agent` | `CommandProvider<dyn ChannelCommand>` | - | The command group `agent`: `/agent list`, `create`, `delete` and `wakeup`. Uses the `AgentManager`. |
+| `channel` | `CommandProvider<dyn ChannelCommand>` | - | The command group `channel`: `/channel list`, `describe`, `create`, `delete`, `join`, `rename`, `summary` and `briefing`. |
 
 `position` is `start`, `before_turn_input`, `end` or `given`
 ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.

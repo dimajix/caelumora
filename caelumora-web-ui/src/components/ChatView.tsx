@@ -43,7 +43,7 @@ import type {
   ChannelParticipant,
   ChannelResponse,
   ChannelSnapshot,
-  Command,
+  CommandDescription,
   Compartment,
   Envelope,
   HistoryPage,
@@ -206,7 +206,7 @@ function stateDot(participant: ChannelParticipant, activity?: string): {classNam
 type Suggestion =
   | {kind: 'mention'; participant: MentionableParticipant}
   | {kind: 'group'; handle: string}
-  | {kind: 'command'; command: Command; handle?: string};
+  | {kind: 'command'; command: CommandDescription; handle?: string};
 
 /**
  * An agent's answer under way (issue 203): what of it has streamed in since
@@ -435,7 +435,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // Whether the former participants of the channel are unfolded (issue 164).
   const [showFormer, setShowFormer] = useState(false);
   // The commands this user may run here, for `/` completion (issue 28).
-  const [commands, setCommands] = useState<Command[]>([]);
+  const [commands, setCommands] = useState<CommandDescription[]>([]);
   // Whether the dialog to add a participant is open (issue 46).
   const [isAddingParticipant, setIsAddingParticipant] = useState(false);
   // What is being reclassified (issue 133): the channel, or one message.
@@ -461,7 +461,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
   // The commands the agents here carry out (issue 269), by name, with the
   // handles of the agents that do: one is suggested for each of them, and
   // for `@all` where several do.
-  const agentCommands = new Map<string, {command: Command; handles: string[]}>();
+  const agentCommands = new Map<string, {command: CommandDescription; handles: string[]}>();
   for (const participant of participants) {
     if (!participant.handle || participant.left) continue;
     for (const command of participant.commands ?? []) {
@@ -1227,7 +1227,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
     setSuggestionIndex(0);
   };
 
-  const selectCommand = (command: Command, handle?: string) => {
+  const selectCommand = (command: CommandDescription, handle?: string) => {
     // The rest of the name typed, and the blanks after it - not a line break: the rest of the word
     // at the caret, and the words after it as long as the name goes on with them (issue 560).
     let typed = inputText.slice(0, caret);

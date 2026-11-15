@@ -18,7 +18,7 @@ import type {
   ChannelParticipant,
   TokenUsage,
   ChannelResponse,
-  Command,
+  CommandDescription,
   HistoryPage,
   HistoryMessage,
   CommandReply,
@@ -546,7 +546,7 @@ export const api = {
     return res.json();
   },
 
-  async getCommands(sessionId: string, channelId: string): Promise<Command[]> {
+  async getCommands(sessionId: string, channelId: string): Promise<CommandDescription[]> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/commands`);
     await ensureOk(res, 'Failed to fetch commands');
     return res.json();

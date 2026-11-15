@@ -20,7 +20,7 @@
 //! Its command `/private-notes @agent` (issue 574), for the agent's owners alone (`owners_only`),
 //! shows them what the prompt part shows the model: the private notes the agent recalls here.
 
-use crate::command::AgentCommandProvider;
+use crate::command::AgentCommand;
 use crate::components::notes::NOTE_PRESENTATION;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::NAMESPACE;
@@ -35,10 +35,10 @@ use crate::tool::{
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
-use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::reader::{PrivateNotesElsewhere, ViewResult};
-use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::note::{Note, NoteId};
@@ -274,36 +274,40 @@ impl PromptProvider for PrivateNotesComponent {
     }
 }
 
-impl ProvidesCommands for PrivateNotesComponent {
-    fn commands(&self) -> Vec<Command> {
-        vec![Command {
+/// `/private-notes @agent` (issue 574): shows the agent's owners the private notes it recalls in
+/// the channel.
+#[derive(Debug)]
+struct PrivateNotesCommand(CommandDescription);
+
+impl PrivateNotesCommand {
+    /// The command, as `/help` tells it.
+    fn new() -> Self {
+        Self(CommandDescription {
             name: CommandName::fixed(PRIVATE_NOTES_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Shows what the agent noted for itself and recalls here: its private notes of this channel, and of the session's other channels as far as they may be told here.".to_string(),
             usage: None,
             // As what it saw (issue 54): its owners'.
             owners_only: true,
-        }]
+        })
+    }
+}
+
+impl Command for PrivateNotesCommand {
+    fn description(&self) -> &CommandDescription {
+        &self.0
     }
 }
 
 #[async_trait]
-impl AgentCommandProvider for PrivateNotesComponent {
+impl AgentCommand for PrivateNotesCommand {
     /// Carries out `/private-notes`: the private notes the agent recalls in the channel, as its
     /// prompt part gives them (`recalled`), answered to the issuer alone.
-    async fn execute(
-        &self,
-        name: &CommandName,
-        _args: &str,
-        turn: &mut Turn<'_>,
-    ) -> CommandResult<CommandOutput> {
-        if name.as_str() != PRIVATE_NOTES_COMMAND_NAME {
-            return Err(CommandError::Unknown(name.to_string()));
-        }
+    async fn execute(&self, _args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
         let (own, elsewhere) = recalled(&turn.situation()).await.map_err(|e| {
-            warn!("/{} could not read the private notes: {}", name, e);
+            warn!("/{} could not read the private notes: {}", PRIVATE_NOTES_COMMAND_NAME, e);
             CommandError::Failed {
-                command: name.to_string(),
+                command: PRIVATE_NOTES_COMMAND_NAME.to_string(),
                 reason: "the private notes could not be read".to_string(),
             }
         })?;
@@ -378,7 +382,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
                 .params::<PositionParams>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>()
-                .provides::<dyn AgentCommandProvider>(),
+                .provides::<dyn CommandProvider<dyn AgentCommand>>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
@@ -387,8 +391,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             let component = Arc::new(PrivateNotesComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
-            facets.insert::<dyn PromptProvider>(Arc::<PrivateNotesComponent>::clone(&component));
-            facets.insert::<dyn AgentCommandProvider>(component);
+            facets.insert::<dyn PromptProvider>(component);
+            let private_notes: Vec<Arc<dyn AgentCommand>> =
+                vec![Arc::new(PrivateNotesCommand::new())];
+            facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(private_notes));
             Ok(facets)
         },
     );
@@ -485,13 +491,9 @@ mod tests {
             NoteOrigin::default(),
             MessageId::default(),
         );
-        let component: &dyn AgentCommandProvider =
-            &PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
-                .unwrap();
-        let name = CommandName::fixed(PRIVATE_NOTES_COMMAND_NAME);
         let mut turn = Turn::begun(AgentId::new(), &mut state);
 
-        let answer = component.execute(&name, "", &mut turn).await.expect("carried out");
+        let answer = PrivateNotesCommand::new().execute("", &mut turn).await.expect("carried out");
         assert_eq!(answer.visibility, CommandVisibility::Private, "to the issuer alone");
         assert!(answer.text.ends_with("In this channel:\n- #1 secret"), "{}", answer.text);
     }
@@ -499,9 +501,8 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools: &dyn ToolProvider =
-            &PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
-                .unwrap();
+        let tools = PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
+            .unwrap();
         let mut turn = Turn::begun(AgentId::new(), &mut state);
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
         let noted = tools

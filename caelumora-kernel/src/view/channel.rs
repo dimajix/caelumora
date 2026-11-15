@@ -16,7 +16,7 @@ use caelumora_domain::agent::{AgentChannelState, PersonalityKind};
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{Channel, ChannelId, Participant};
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::confidentiality::{Place, Reading};
@@ -892,7 +892,7 @@ impl ParticipantView {
     /// (`ChannelLoop::commands_of`, issue 516): none if it carries out none
     /// here - it is no agent, has left - and none while the channel does not
     /// run, when nothing could carry them out.
-    pub async fn commands(&self) -> Vec<Command> {
+    pub async fn commands(&self) -> Vec<CommandDescription> {
         if self.former {
             return Vec::new();
         }

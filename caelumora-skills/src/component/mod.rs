@@ -27,10 +27,11 @@ pub use tool::{
 use crate::extension::{SkillReader, SkillWriter};
 use crate::skill::Skill;
 use crate::NAMESPACE;
-use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::command::AgentCommand;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model, PromptPosition, PromptProvider};
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents, Params};
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::confidentiality::Classification;
@@ -114,7 +115,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
                 .params::<SkillsParams>()
                 .provides::<dyn PromptProvider>()
                 .provides::<dyn ToolProvider>()
-                .provides::<dyn AgentCommandProvider>()
+                .provides::<dyn CommandProvider<dyn AgentCommand>>()
                 .provides::<dyn KnowledgeRestorer>()
                 .reads::<dyn SkillReader>()
                 .writes::<dyn SkillWriter>(),
@@ -126,7 +127,9 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));
             facets.insert::<dyn ToolProvider>(Arc::<SkillsComponent>::clone(&component));
-            facets.insert::<dyn AgentCommandProvider>(Arc::<SkillsComponent>::clone(&component));
+            facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(command::commands(
+                &component,
+            )));
             facets.insert::<dyn KnowledgeRestorer>(component);
             Ok(facets)
         },

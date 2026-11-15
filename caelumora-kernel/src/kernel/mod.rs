@@ -35,7 +35,7 @@ use crate::actor::AgentKinds;
 use crate::agent::AgentManager;
 use crate::attachment::AttachmentManager;
 use crate::channel::Participation;
-use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::command::{ChannelCommand, CommandExecutor};
 use crate::component::BuildContext;
 use crate::component::ComponentRegistry;
 use crate::controller::ControllerManager;
@@ -47,6 +47,7 @@ use crate::user_provider::UserManager;
 use crate::workspace::reaper::CommandReaper;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::Services;
 use caelumora_domain::approval::ApprovalRule;
 use caelumora_domain::channel::ChannelId;
@@ -157,7 +158,7 @@ impl Kernel {
                 .component_registry
                 .build(config, CommandExecutor::COMPONENT_FACETS, &context)
                 .await?;
-            providers.extend(container.get_all::<dyn ChannelCommandProvider>(None)?);
+            providers.extend(container.get_all::<dyn CommandProvider<dyn ChannelCommand>>(None)?);
         }
         Ok(CommandExecutor::new(Arc::clone(self.access_policy()), providers)?)
     }

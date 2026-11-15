@@ -20,25 +20,41 @@ pub struct TypeKey {
 
 impl TypeKey {
     pub const fn of<T: ?Sized + 'static>() -> Self {
-        Self { id: TypeId::of::<T>(), name: short_name::<T> }
+        Self { id: TypeId::of::<T>(), name: type_name::<T> }
     }
 
-    /// The type's name without its path: `dyn crate::prompt::PromptProvider`
-    /// is `PromptProvider`.
-    pub fn name(&self) -> &'static str {
-        (self.name)()
+    /// The type's name without its paths, nor `dyn`: `dyn crate::prompt::PromptProvider` is
+    /// `PromptProvider`, `dyn api::CommandProvider<dyn kernel::ChannelCommand>` is
+    /// `CommandProvider<ChannelCommand>`.
+    pub fn name(&self) -> String {
+        short_name((self.name)())
     }
 }
 
 impl Debug for TypeKey {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+        f.write_str(&self.name())
     }
 }
 
-fn short_name<T: ?Sized + 'static>() -> &'static str {
-    let full = type_name::<T>();
-    full.rfind("::").map_or(full, |at| &full[at + 2..])
+/// `full`, a type's name as `type_name` writes it, without the path of any type in it, nor `dyn`.
+fn short_name(full: &str) -> String {
+    let mut short = String::with_capacity(full.len());
+    // Where the name being written began: what a `::` after it drops, being its path.
+    let mut began = 0;
+    let mut chars = full.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == ':' && chars.peek() == Some(&':') {
+            chars.next();
+            short.truncate(began);
+        } else if c.is_alphanumeric() || c == '_' {
+            short.push(c);
+        } else {
+            short.push(c);
+            began = short.len();
+        }
+    }
+    short.replace("dyn ", "")
 }
 
 /// An `Arc<T>` of a trait object or a type, with `T` forgotten until it is asked for again
@@ -118,7 +134,7 @@ impl TypeMap {
     }
 
     /// The names of the values' types, sorted - for messages.
-    pub fn names(&self) -> Vec<&'static str> {
+    pub fn names(&self) -> Vec<String> {
         let mut names: Vec<_> = self.map.values().map(|value| value.key().name()).collect();
         names.sort_unstable();
         names
@@ -158,5 +174,12 @@ mod tests {
         const KEYS: &[TypeKey] = &[TypeKey::of::<dyn Facet>(), TypeKey::of::<String>()];
         assert_eq!(KEYS[1].id, TypeId::of::<String>());
         assert_eq!(KEYS.iter().map(TypeKey::name).collect::<Vec<_>>(), ["Facet", "String"]);
+        assert_eq!(
+            short_name(
+                "dyn caelumora_api::command::CommandProvider<dyn caelumora_kernel::Command>"
+            ),
+            "CommandProvider<Command>",
+            "nor those of the types it is made of"
+        );
     }
 }

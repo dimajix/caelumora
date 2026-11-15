@@ -20,7 +20,7 @@ use caelumora_domain::approval::{
     ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalRule, ApprovalRuleId, RuleDecision,
 };
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::command::{Command, CommandVisibility};
+use caelumora_domain::command::{CommandDescription, CommandVisibility};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
 use caelumora_domain::mention::{handle_of, is_group_handle};
@@ -747,7 +747,7 @@ impl UserActor {
     }
 
     /// The commands this user may see, e.g. for completion.
-    pub async fn visible_commands(&self) -> Vec<Command> {
+    pub async fn visible_commands(&self) -> Vec<CommandDescription> {
         let channel = self.channel.load().security_attributes.clone();
         self.participant_runtime
             .command_executor()

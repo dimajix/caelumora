@@ -1,63 +1,80 @@
 //! The built-in `/agent wakeup` command (issues 28, 560), `/wakeup` for short.
 
-use crate::command::{command_error, named_one, names, CommandContext};
-use caelumora_api::command::CommandResult;
-use caelumora_domain::command::{Command, CommandOutput};
+use crate::command::{command_error, named_one, names, ChannelCommand, CommandContext};
+use async_trait::async_trait;
+use caelumora_api::command::{Command, CommandResult};
+use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
 
-pub(super) const WAKEUP_COMMAND_NAME: &str = "agent wakeup";
+const WAKEUP_COMMAND_NAME: &str = "agent wakeup";
 
 /// `/agent wakeup [agent]`: wakes the sleeping agents of the channel, or one of them. `/wakeup`
 /// for short.
-pub(super) fn command() -> Command {
-    Command {
-        name: CommandName::fixed(WAKEUP_COMMAND_NAME),
-        aliases: vec![CommandName::fixed("wakeup")],
-        description: "Wakes the sleeping agents of this channel, or the one named.".to_string(),
-        usage: Some("[agent]".to_string()),
-        owners_only: false,
+#[derive(Debug)]
+pub(super) struct WakeupCommand(CommandDescription);
+
+impl WakeupCommand {
+    /// The command, as `/help` tells it.
+    pub(super) fn new() -> Self {
+        Self(CommandDescription {
+            name: CommandName::fixed(WAKEUP_COMMAND_NAME),
+            aliases: vec![CommandName::fixed("wakeup")],
+            description: "Wakes the sleeping agents of this channel, or the one named.".to_string(),
+            usage: Some("[agent]".to_string()),
+            owners_only: false,
+        })
     }
 }
 
-/// Runs `/agent wakeup` with `args`. Everybody in the channel is told, since it changes who
-/// answers.
-pub(super) async fn execute(
-    args: &str,
-    context: &CommandContext<'_>,
-) -> CommandResult<CommandOutput> {
-    let wanted = args.trim();
-    if wanted.is_empty() {
-        let mut woken = context
+impl Command for WakeupCommand {
+    fn description(&self) -> &CommandDescription {
+        &self.0
+    }
+}
+
+#[async_trait]
+impl ChannelCommand for WakeupCommand {
+    /// Runs `/agent wakeup` with `args`. Everybody in the channel is told, since it changes who
+    /// answers.
+    async fn execute(
+        &self,
+        args: &str,
+        context: &CommandContext<'_>,
+    ) -> CommandResult<CommandOutput> {
+        let wanted = args.trim();
+        if wanted.is_empty() {
+            let mut woken = context
+                .channel
+                .wakeup(&context.issuer.security_context())
+                .await
+                .map_err(|e| command_error(WAKEUP_COMMAND_NAME, &e))?;
+            woken.sort();
+            let text = if woken.is_empty() {
+                "No agent was asleep.".to_string()
+            } else {
+                format!("Woke {}.", names(&woken))
+            };
+            return Ok(CommandOutput::channel(text));
+        }
+
+        // Anyone taking part, as `/participant nudge` takes them; only an agent sleeps.
+        let participant = named_one(
+            WAKEUP_COMMAND_NAME,
+            wanted,
+            context.channel.participants(),
+            |m| &m.name,
+            "in this channel",
+        )?;
+        let was_asleep = context
             .channel
-            .wakeup(&context.issuer.security_context())
+            .wakeup_actor(&context.issuer.security_context(), participant.id)
             .await
             .map_err(|e| command_error(WAKEUP_COMMAND_NAME, &e))?;
-        woken.sort();
-        let text = if woken.is_empty() {
-            "No agent was asleep.".to_string()
+        let text = if was_asleep {
+            format!("Woke {}.", participant.name)
         } else {
-            format!("Woke {}.", names(&woken))
+            format!("{} was not asleep.", participant.name)
         };
-        return Ok(CommandOutput::channel(text));
+        Ok(CommandOutput::channel(text))
     }
-
-    // Anyone taking part, as `/participant nudge` takes them; only an agent sleeps.
-    let participant = named_one(
-        WAKEUP_COMMAND_NAME,
-        wanted,
-        context.channel.participants(),
-        |m| &m.name,
-        "in this channel",
-    )?;
-    let was_asleep = context
-        .channel
-        .wakeup_actor(&context.issuer.security_context(), participant.id)
-        .await
-        .map_err(|e| command_error(WAKEUP_COMMAND_NAME, &e))?;
-    let text = if was_asleep {
-        format!("Woke {}.", participant.name)
-    } else {
-        format!("{} was not asleep.", participant.name)
-    };
-    Ok(CommandOutput::channel(text))
 }

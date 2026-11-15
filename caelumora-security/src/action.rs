@@ -2,7 +2,7 @@
 //! them the verbs on stored entities.
 
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::security::{Grant, Refused, SecurityAttributes};
 use caelumora_domain::store::EntityKind;
 use caelumora_domain::tool::ToolCall;
@@ -121,27 +121,27 @@ pub enum ActionType<'a> {
     /// Shaped as a command of an agent is, so that both are decided alike
     /// (issue 304).
     ShowCommand {
-        command: &'a Command,
+        command: &'a CommandDescription,
         channel: &'a SecurityAttributes,
     },
     /// Running the session's command `command` in the channel, alike. Whom
-    /// the command is for is the command's own word (`Command::owners_only`).
+    /// the command is for is the command's own word (`CommandDescription::owners_only`).
     ExecuteCommand {
-        command: &'a Command,
+        command: &'a CommandDescription,
         channel: &'a SecurityAttributes,
     },
     /// Seeing that an agent carries out `command` (issue 269) - in `/help`,
     /// in completion, in the participant's snapshot. Carries the agent's
     /// attributes and those of the channel it is asked in.
     ShowAgentCommand {
-        command: &'a Command,
+        command: &'a CommandDescription,
         agent: &'a SecurityAttributes,
         channel: &'a SecurityAttributes,
     },
     /// Asking the agent to carry out `command` (issue 269), alike. Whom the
-    /// command is for is the command's own word (`Command::owners_only`).
+    /// command is for is the command's own word (`CommandDescription::owners_only`).
     ExecuteAgentCommand {
-        command: &'a Command,
+        command: &'a CommandDescription,
         agent: &'a SecurityAttributes,
         channel: &'a SecurityAttributes,
     },

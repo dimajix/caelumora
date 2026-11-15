@@ -8,7 +8,7 @@
     reason = "test code: what fails here fails the test that runs it"
 )]
 
-use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::command::AgentCommand;
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::prompt::PromptProvider;
 use caelumora_agents::testing::{
@@ -16,6 +16,7 @@ use caelumora_agents::testing::{
 };
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
+use caelumora_api::command::CommandProvider;
 use caelumora_compaction::component::COMPACTION_KIND;
 use caelumora_compaction::library::CompactionLibrary;
 use caelumora_compaction::KnowledgeRestorer;
@@ -36,7 +37,6 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{StoreError, Stored};
 use caelumora_domain::tool::{ToolCall, ToolVisibility};
 use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
-use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::Description;
 use caelumora_kernel::actor::user::ChannelWatch;
@@ -82,6 +82,16 @@ fn store(world: &World) -> Arc<dyn EntityStore<Skill>> {
 /// built.
 async fn skills<T: ?Sized + Send + Sync + 'static>(world: &World, params: Value) -> Arc<T> {
     built(&world.kernel, descriptor("skills", SKILLS_KIND, params)).await.unwrap()
+}
+
+/// The command `/skill` of a component `skills` built in `world`.
+async fn skill_command(world: &World) -> Arc<dyn AgentCommand> {
+    let commands = skills::<dyn CommandProvider<dyn AgentCommand>>(world, json!({})).await;
+    commands
+        .commands()
+        .into_iter()
+        .find(|c| c.description().name.as_str() == SKILL_COMMAND_NAME)
+        .expect("a command of skills")
 }
 
 /// A session of alice and bob with alice's agent `helper`, in a channel
@@ -373,14 +383,7 @@ async fn the_skills_given_are_given_again_where_they_may_still_be_loaded() {
         .unwrap();
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    AgentCommandProvider::execute(
-        skills::<dyn AgentCommandProvider>(&world, json!({})).await.as_ref(),
-        &CommandName::fixed(SKILL_COMMAND_NAME),
-        "release-notes",
-        &mut turn,
-    )
-    .await
-    .expect("given");
+    skill_command(&world).await.execute("release-notes", &mut turn).await.expect("given");
     manager.rewrite(&SecurityContext::system(), kept.id, "1. Collect.\n2. Group.").await.unwrap();
     manager.delete(&SecurityContext::system(), gone.id).await.unwrap();
 
@@ -427,18 +430,11 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
         .await
         .unwrap();
     let tools = skills::<dyn ToolProvider>(&world, json!({})).await;
-    let commands = skills::<dyn AgentCommandProvider>(&world, json!({})).await;
+    let skill = skill_command(&world).await;
     let load = json!({ "name": "release-notes" });
     let mut state = AgentChannelState::default();
     let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
-    let given = AgentCommandProvider::execute(
-        commands.as_ref(),
-        &CommandName::fixed(SKILL_COMMAND_NAME),
-        "release-notes",
-        &mut turn,
-    )
-    .await
-    .expect("given");
+    let given = skill.execute("release-notes", &mut turn).await.expect("given");
     assert!(given.text.ends_with(" now."), "{}", given.text);
 
     let loaded = call(tools.as_ref(), &mut turn, LOAD_SKILL_TOOL_NAME, load.clone()).await.unwrap();
@@ -447,14 +443,7 @@ async fn a_skill_that_stands_given_as_it_is_is_not_given_again() {
         json!({ "status": "given above", "name": "release-notes", "skill_id": made.id }),
         "the skill alice gave stands above"
     );
-    let again = AgentCommandProvider::execute(
-        commands.as_ref(),
-        &CommandName::fixed(SKILL_COMMAND_NAME),
-        "release-notes",
-        &mut turn,
-    )
-    .await
-    .expect("answered");
+    let again = skill.execute("release-notes", &mut turn).await.expect("answered");
     assert!(again.text.ends_with(" already."), "{}", again.text);
 
     manager.rewrite(&SecurityContext::system(), made.id, "1. Collect.\n2. Group.").await.unwrap();

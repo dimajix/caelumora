@@ -18,10 +18,12 @@ mod testing;
 use crate::compactor::Compactor;
 use crate::{CompactionError, CompactionStrategy, KnowledgeRestorer};
 use caelumora_agents::activity::ActivityProvider;
-use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::command::AgentCommand;
 use caelumora_agents::turn::Turn;
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
+use command::CompactCommand;
 use serde::Deserialize;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -117,7 +119,7 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
     registry.register_async(
         ComponentKind::new(COMPACTION_KIND)
             .params::<CompactionParams>()
-            .provides::<dyn AgentCommandProvider>()
+            .provides::<dyn CommandProvider<dyn AgentCommand>>()
             .provides::<dyn ActivityProvider>()
             .needs::<dyn CompactionStrategy>()
             .needs::<dyn KnowledgeRestorer>(),
@@ -135,8 +137,9 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
             let compactor = Compactor::new(strategy, restorers, keep, room);
             let component = Arc::new(CompactionComponent::new(compactor, threshold));
             let mut facets = ComponentFacets::empty();
-            facets
-                .insert::<dyn AgentCommandProvider>(Arc::<CompactionComponent>::clone(&component));
+            let compact: Vec<Arc<dyn AgentCommand>> =
+                vec![Arc::new(CompactCommand::new(Arc::clone(&component)))];
+            facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(compact));
             facets.insert::<dyn ActivityProvider>(component);
             Ok(facets)
         },

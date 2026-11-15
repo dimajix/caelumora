@@ -107,7 +107,7 @@ impl Graph {
             .await
             .map_err(failed)?;
 
-        let mut declared: Vec<&'static str> = provides.iter().map(|f| f.name()).collect();
+        let mut declared: Vec<String> = provides.iter().map(TypeKey::name).collect();
         declared.sort_unstable();
         if facets.names() != declared {
             return Err(failed(ComponentError::InvalidConfig(format!(
@@ -381,7 +381,7 @@ mod tests {
 
         let innermost = causes(&error).last().copied().unwrap();
         assert!(
-            matches!(innermost, ComponentError::Cycle { component, facet: "Named", other } if component == "egg" && other == "hen"),
+            matches!(innermost, ComponentError::Cycle { component, facet, other } if component == "egg" && facet == "Named" && other == "hen"),
             "{error}"
         );
     }

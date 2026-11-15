@@ -17,7 +17,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRule};
 use caelumora_domain::channel::{moderation_components, ChannelId};
-use caelumora_domain::command::{Command, CommandVisibility};
+use caelumora_domain::command::{CommandDescription, CommandVisibility};
 use caelumora_domain::confidentiality::{Classification, LabelCauses};
 use caelumora_domain::context::{ContextItem, KnowledgeRef, KnowledgeSource};
 use caelumora_domain::message::{Message, MessageId, TokenUsage};
@@ -708,7 +708,7 @@ pub(super) async fn list_commands(
     State(state): State<Arc<AppState>>,
     Path((id, cid)): Path<(Uuid, Uuid)>,
     user: AuthenticatedUser,
-) -> Result<Json<Vec<Command>>, ApiError> {
+) -> Result<Json<Vec<CommandDescription>>, ApiError> {
     let (_, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let user_actor = user_actor_of(&channel, &user)?;
     Ok(Json(user_actor.visible_commands().await))

@@ -8,7 +8,7 @@ use caelumora_domain::agent::PersonalityKind;
 use caelumora_domain::approval::{ApprovalRequest, ApprovalRule};
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{ChannelId, HistoryAccess};
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::content::ContentId;
 use caelumora_domain::message::{Message, MessageId, TokenUsage};
@@ -329,7 +329,7 @@ pub struct ChannelParticipantResponse {
     /// completion; written `/name @handle …`. Absent if there are none, and
     /// in a channel that does not run.
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub commands: Vec<Command>,
+    pub commands: Vec<CommandDescription>,
     /// How the participant is introduced (issues 176, 244): an agent by its
     /// personality, a user by themselves. Given for a participant asked for
     /// alone, not where channels are listed; absent if there is none.
@@ -803,7 +803,7 @@ mod tests {
             "named as `StateChanged` names it (issue 243)"
         );
         assert!(json.get("commands").is_none(), "absent without commands");
-        let mark = Command {
+        let mark = CommandDescription {
             name: CommandName::fixed("mark"),
             aliases: Vec::new(),
             description: "Marks.".to_string(),

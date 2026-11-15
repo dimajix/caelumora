@@ -2,7 +2,7 @@ use super::body::retry_target;
 use super::body::AgentBody;
 use super::run_control::Interrupt;
 use crate::activity::ActivityProvider;
-use crate::command::AgentCommandProvider;
+use crate::command::AgentCommand;
 use crate::error::failure_message;
 use crate::message::apply_stage_processors;
 use crate::message::{EmitOutProcessor, PerceiveInProcessor};
@@ -12,6 +12,7 @@ use crate::turn::{CommittedTurn, Turn, MAX_MODEL_CALLS};
 use anyhow::{anyhow, Context, Error, Result};
 use async_trait::async_trait;
 use caelumora_api::actor::{Actor, Answering};
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::ComponentImpl;
 use caelumora_api::logging::{agent_span, envelope_span};
 use caelumora_api::model::{LanguageModelClient, ModelProfileProvider};
@@ -22,7 +23,7 @@ use caelumora_domain::actor::{
 };
 use caelumora_domain::agent::{AgentChannelState, RetryRefused};
 use caelumora_domain::approval::{ApprovalStatus, ApprovalVerdict};
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::confidentiality::{Classification, Visibility};
 use caelumora_domain::history::Heard;
@@ -68,7 +69,7 @@ impl AgentActor {
         TypeKey::of::<dyn PerceiveInProcessor>(),
         TypeKey::of::<dyn EmitOutProcessor>(),
         TypeKey::of::<dyn ToolProvider>(),
-        TypeKey::of::<dyn AgentCommandProvider>(),
+        TypeKey::of::<dyn CommandProvider<dyn AgentCommand>>(),
     ];
 
     /// The actor of the agent of `actor_runtime` (issue 516), built from its personality, in
@@ -985,7 +986,7 @@ impl Actor for AgentActor {
         self.body.components()
     }
 
-    fn commands(&self) -> Vec<Command> {
+    fn commands(&self) -> Vec<CommandDescription> {
         self.body.commands()
     }
 

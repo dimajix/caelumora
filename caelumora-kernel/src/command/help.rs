@@ -1,11 +1,11 @@
 //! The built-in `/help` command (issues 28, 560).
 
-use crate::command::{ChannelCommandProvider, CommandContext};
+use crate::command::{ChannelCommand, CommandContext};
 use crate::component::ComponentRegistry;
 use async_trait::async_trait;
-use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_domain::command::{Command, CommandOutput, HELP_KIND};
+use caelumora_domain::command::{CommandDescription, CommandOutput, HELP_KIND};
 use caelumora_domain::value::command_name::CommandName;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -16,18 +16,31 @@ pub const HELP_COMMAND_NAME: &str = "help";
 /// (issue 560) -, or describes one, found by its name or a short form. The answer is for the user
 /// alone.
 #[derive(Debug)]
-pub struct HelpComponent;
+pub struct HelpCommand(CommandDescription);
 
-impl ProvidesCommands for HelpComponent {
-    fn commands(&self) -> Vec<Command> {
-        vec![Command {
+impl HelpCommand {
+    /// The command, as `/help` tells it.
+    pub fn new() -> Self {
+        Self(CommandDescription {
             name: CommandName::fixed(HELP_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Lists the commands you can use, those of a group, or describes one."
                 .to_string(),
             usage: Some("[group or command]".to_string()),
             owners_only: false,
-        }]
+        })
+    }
+}
+
+impl Default for HelpCommand {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Command for HelpCommand {
+    fn description(&self) -> &CommandDescription {
+        &self.0
     }
 }
 
@@ -35,8 +48,8 @@ impl ProvidesCommands for HelpComponent {
 /// see (issue 269), by name, each with the handles of the agents that do.
 async fn agents_commands(
     context: &CommandContext<'_>,
-) -> BTreeMap<CommandName, (Command, Vec<String>)> {
-    let mut by_name: BTreeMap<CommandName, (Command, Vec<String>)> = BTreeMap::new();
+) -> BTreeMap<CommandName, (CommandDescription, Vec<String>)> {
+    let mut by_name: BTreeMap<CommandName, (CommandDescription, Vec<String>)> = BTreeMap::new();
     for (agent, commands) in
         context.channel.agent_commands(&context.issuer.security_context()).await
     {
@@ -53,10 +66,9 @@ async fn agents_commands(
 }
 
 #[async_trait]
-impl ChannelCommandProvider for HelpComponent {
+impl ChannelCommand for HelpCommand {
     async fn execute(
         &self,
-        _name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
@@ -70,7 +82,7 @@ impl ChannelCommandProvider for HelpComponent {
         let unknown = || CommandError::Unknown(wanted.to_string());
         if !wanted.is_empty() {
             // By its name or a short form.
-            let named = |command: &Command| command.strip_from(wanted) == Some("");
+            let named = |command: &CommandDescription| command.strip_from(wanted) == Some("");
             if let Some(command) = visible.iter().find(|c| named(c)) {
                 return Ok(CommandOutput::private(command.help_line()));
             }
@@ -91,8 +103,9 @@ impl ChannelCommandProvider for HelpComponent {
                 Some(CommandName::new(words.join(" ")).map_err(|_| unknown())?)
             }
         };
-        let in_group = |command: &Command| group.as_ref().is_none_or(|g| g.begins(&command.name));
-        let listed: Vec<&Command> = visible.iter().filter(|c| in_group(c)).collect();
+        let in_group =
+            |command: &CommandDescription| group.as_ref().is_none_or(|g| g.begins(&command.name));
+        let listed: Vec<&CommandDescription> = visible.iter().filter(|c| in_group(c)).collect();
         let of_agents: Vec<_> = of_agents.values().filter(|(c, _)| in_group(c)).collect();
         if listed.is_empty() && of_agents.is_empty() {
             return Err(unknown());
@@ -122,10 +135,11 @@ impl ChannelCommandProvider for HelpComponent {
 /// Registers the kind `help` with `registry`.
 pub fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(HELP_KIND).provides::<dyn ChannelCommandProvider>(),
+        ComponentKind::new(HELP_KIND).provides::<dyn CommandProvider<dyn ChannelCommand>>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ChannelCommandProvider>(Arc::new(HelpComponent));
+            let help: Vec<Arc<dyn ChannelCommand>> = vec![Arc::new(HelpCommand::new())];
+            facets.insert::<dyn CommandProvider<dyn ChannelCommand>>(Arc::new(help));
             Ok(facets)
         },
     );

@@ -1,6 +1,6 @@
 # 583 — A command has no object of its own, and its parameters are a text
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -65,14 +65,42 @@ Tools have the same two halves in another state: a `ToolProvider` carries out it
   `execute` of the providers of commands and of tools are the examples the rule is written
   from.
 
+Decided (2026-11-15), with the maintainer, from what a command is rather than from the code as it
+stands:
+
+| Concept | What it is | Where |
+|---|---|---|
+| `CommandDescription` | The record of one command: its name and short forms, what it does, its parameters, whether it is for an agent's owners alone; what the policy, the snapshots and the REST API carry. The record called `Command` until now, renamed everywhere. | `caelumora-domain` |
+| `Command` | The trait every executable command implements: it gives its description (`description() -> &CommandDescription`), which it holds. No `execute`: what a command runs with differs by its kind. | `caelumora-api` |
+| `ChannelCommand`, `AgentCommand`, `TerminalCommand` | The trait of each kind, derived from `Command`, with its `execute(args, …)` - given the channel's `CommandContext`, the agent's `Turn`, the terminal's own context. | the kernel, `caelumora-agents`, `caelumora-tui` |
+| `CommandProvider<C>` | The facet of a component: the commands of the kind `C` it contributes, as objects. One generic facet for every kind. | `caelumora-api` |
+| `CommandSet<C>` | The commands of whoever runs them - a session's, an agent's, the terminal's -, holding the commands themselves: finds the one a line begins, refuses two a line cannot tell apart. | `caelumora-api` |
+
+In four steps:
+
+1.  **The rule, and commands as objects.** The rule on a `match` as a multiplexer goes into
+    CODING-GUIDELINES.md; `Command` is renamed `CommandDescription`; the traits above replace
+    `ProvidesCommands`, `ChannelCommandProvider` and `AgentCommandProvider`, and every command of
+    the channel and of an agent becomes a type of its own. No behaviour changes.
+2.  **The command found is the one run.** `CommandExecutor::find` gives the command it found,
+    not its name, and `execute` runs that command, instead of looking it up by its name again.
+3.  **The terminal's commands follow.** `TerminalCommand`, an enum dispatched by a `match` in
+    `talk.rs` today, becomes the trait of the terminal's commands, found in a `CommandSet` of
+    them.
+4.  **Typed parameters** in `CommandDescription`, replacing `usage`. Whether the kind of a
+    parameter comes now or with 579, which is the first to need it, and how the keyword of
+    `/agent create <personality> [as <name>]` is described, is decided before the step.
+
+Tools follow in an issue of their own, [584](584-a-tool-has-no-object-of-its-own.md), for their
+size: 25 providers in nine crates, each matching names in several methods.
+
 ## Done when
 
 - Each command is carried out by an object of its own, found in its set without a match of its
   name, and no provider answers a name it does not have.
 - A command's parameters are described with types, checked by whoever runs it, and shown and
   completed from that description.
-- Whether tools follow is decided, and done or the difference documented in TOOLS.md and
-  COMMANDS.md.
+- The terminal's commands are carried out by objects of their own too.
 - CODING-GUIDELINES.md holds the rule on a `match` as a multiplexer.
 
 ## History
@@ -85,3 +113,21 @@ command refuse arguments to one that names no parameters: the per-command `match
 **2026-11-15** - The maintainer added a rule for CODING-GUIDELINES.md to it: a `match` as a
 multiplexer of functions different in themselves is a smell, to be weighed against a type or a
 trait per case.
+
+**2026-11-15** - Decided with the maintainer before the work began: the concepts in the table
+above, in three steps; tools follow in [584](584-a-tool-has-no-object-of-its-own.md).
+
+**2026-11-15** - Step 1 done: `CommandDescription` (was `Command`),
+`caelumora_api::command::Command` and `CommandProvider<C>`, `ChannelCommand` in the kernel,
+`AgentCommand` in `caelumora-agents`;
+every command of the channel and of an agent is a type of its own, and `CommandSet<C>` holds the
+commands themselves. Beside the plan: a component contributes its commands as the list it made
+(`CommandProvider` for `Vec<Arc<C>>`), so the components that only held commands - `/help`'s and
+those of the three groups - are gone; and a type's name in a message is written without the paths
+of the types it is made of (`TypeKey::name`), so that `CommandProvider<ChannelCommand>` is named
+so.
+
+**2026-11-15** - Decided with the maintainer after step 1: `CommandProvider<C>` stays a trait,
+though every provider is the list of `Vec<Arc<C>>`, as the pattern of a facet; and a step of its
+own, now step 2, makes `CommandExecutor::find` give the command it found, which `execute` runs,
+instead of the name it is looked up by again.

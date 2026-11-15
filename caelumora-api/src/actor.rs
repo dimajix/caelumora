@@ -9,7 +9,7 @@ use caelumora_domain::actor::{
     ActorDescription, ActorEvent, ActorId, ActorState, Envelope, EventContext,
 };
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::command::Command;
+use caelumora_domain::command::CommandDescription;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::history::Heard;
 use caelumora_domain::session::SessionId;
@@ -91,7 +91,7 @@ pub trait Actor: Any + Debug + Send + Sync {
     /// by name: who may see which is the channel's to decide
     /// (`ShowAgentCommand`, issue 516). None for an actor that carries out
     /// none - a user, an approver, an agent whose personality provides none.
-    fn commands(&self) -> Vec<Command> {
+    fn commands(&self) -> Vec<CommandDescription> {
         Vec::new()
     }
 

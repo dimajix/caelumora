@@ -2,7 +2,7 @@
 // the client decides whether a line is a command or a message, and sends it
 // to the matching endpoint.
 
-import type {Command} from './types';
+import type {CommandDescription} from './types';
 
 /**
  * A line of user input, classified. A command is the line after the slash: which command it is,
@@ -35,6 +35,6 @@ export function commandQueryAt(text: string, caret: number): string | null {
 }
 
 /** Whether `command` is completed from `query`: its name or an alias begins with it. */
-export function completes(command: Command, query: string): boolean {
+export function completes(command: CommandDescription, query: string): boolean {
   return [command.name, ...(command.aliases ?? [])].some(name => name.startsWith(query));
 }

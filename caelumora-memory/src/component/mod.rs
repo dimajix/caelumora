@@ -21,7 +21,7 @@ use crate::extension::{MemoryReader, MemoryWriter};
 use crate::memory::{AgentMemory, AgentMemoryId, Memory, MemoryId};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::command::AgentCommand;
 use caelumora_agents::components::notes::NOTE_PRESENTATION;
 use caelumora_agents::prompt::{
     texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
@@ -33,12 +33,14 @@ use caelumora_agents::tool::{
     tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{Tool, ToolParameters, ToolVisibility};
+use command::MemoryCommand;
 use serde_json::Value;
 use std::fmt;
 use std::fmt::Debug;
@@ -277,7 +279,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
                 .writes::<dyn MemoryWriter>()
                 .provides::<dyn ToolProvider>()
                 .provides::<dyn PromptProvider>()
-                .provides::<dyn AgentCommandProvider>(),
+                .provides::<dyn CommandProvider<dyn AgentCommand>>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
@@ -286,8 +288,9 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             let component = Arc::new(AgentMemoryComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
-            facets.insert::<dyn PromptProvider>(Arc::<AgentMemoryComponent>::clone(&component));
-            facets.insert::<dyn AgentCommandProvider>(component);
+            facets.insert::<dyn PromptProvider>(component);
+            let memory: Vec<Arc<dyn AgentCommand>> = vec![Arc::new(MemoryCommand::new())];
+            facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(memory));
             Ok(facets)
         },
     );
@@ -323,7 +326,6 @@ mod tests {
     use caelumora_domain::turn::{StagedChange, StagedChanges};
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
-    use caelumora_domain::value::command_name::CommandName;
     use caelumora_domain::work::Work;
     use caelumora_kernel::kernel::{AgentRuntime, Kernel, ParticipantRuntime};
     use caelumora_kernel::session::testing::{
@@ -375,20 +377,6 @@ mod tests {
                 self.owner,
             );
             sessions.runtime_in(at, agent).acting_as(context)
-        }
-    }
-
-    impl Remembering {
-        /// Calls its tool `name` with `params` in `turn` - by its own method, since the component
-        /// carries out a command by a method of the same name.
-        async fn execute(
-            &self,
-            name: &str,
-            params: &Value,
-            answers: Option<&Answers>,
-            turn: &mut Turn<'_>,
-        ) -> ToolResult<ToolOutput> {
-            ToolProvider::execute(&self.component, name, params, answers, turn).await
         }
     }
 
@@ -684,8 +672,7 @@ mod tests {
             Arc::new(AgentRuntime::in_test(memory.runtime_in(sessions, &at, agent))),
         )
         .expect("a turn was begun");
-        let command: &dyn AgentCommandProvider = &memory.component;
-        command.execute(&CommandName::fixed(command::MEMORY_COMMAND_NAME), "", &mut turn).await
+        MemoryCommand::new().execute("", &mut turn).await
     }
 
     /// `/memory` (issue 574) shows what the prompt part shows the model: what may be recalled
@@ -869,9 +856,7 @@ mod tests {
             memory.get_prompt(&turn.situation()).await.unwrap().text.is_empty(),
             "nor to recall from"
         );
-        let command: &dyn AgentCommandProvider = &memory.component;
-        let unread =
-            command.execute(&CommandName::fixed(command::MEMORY_COMMAND_NAME), "", &mut turn).await;
+        let unread = MemoryCommand::new().execute("", &mut turn).await;
         assert!(matches!(unread, Err(CommandError::Failed { .. })), "nor to show: {unread:?}");
     }
 

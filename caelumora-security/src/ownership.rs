@@ -319,7 +319,7 @@ mod tests {
     use crate::{AllowAllPolicy, CustomVerb, JOIN, WRITE};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::channel::{Channel, ChannelId};
-    use caelumora_domain::command::Command;
+    use caelumora_domain::command::CommandDescription;
     use caelumora_domain::group::{Group, GroupId};
     use caelumora_domain::role::RoleId;
     use caelumora_domain::scope::Scope;
@@ -461,7 +461,7 @@ mod tests {
         assert!(allows(alice, approve(&hers)).await, "the agent's owner approves its calls");
         assert!(allows(bob, approve(&hers)).await, "and so do its readers");
         assert!(!allows(carol, approve(&hers)).await, "nobody else");
-        let command = |owners_only| Command {
+        let command = |owners_only| CommandDescription {
             name: CommandName::fixed("x"),
             aliases: Vec::new(),
             description: String::new(),

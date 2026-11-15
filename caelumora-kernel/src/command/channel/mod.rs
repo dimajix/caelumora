@@ -14,62 +14,31 @@ mod notes;
 mod rename;
 mod summary;
 
-use crate::command::{command_error, ChannelCommandProvider, CommandContext};
+use crate::command::{command_error, ChannelCommand, CommandContext};
 use crate::component::ComponentRegistry;
 use crate::view::ChannelView;
-use async_trait::async_trait;
-use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_api::command::{CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::reader::ViewError;
-use caelumora_domain::command::{Command, CommandOutput, CHANNEL_GROUP_KIND};
-use caelumora_domain::value::command_name::CommandName;
+use caelumora_domain::command::CHANNEL_GROUP_KIND;
 use std::sync::Arc;
 
-/// The component of the command group `channel`: `/channel list`, `/channel describe`,
-/// `/channel notes`, `/channel create`, `/channel delete`, `/channel join`, `/channel leave`,
-/// `/channel rename`, `/channel summary` and `/channel briefing`.
-#[derive(Debug)]
-pub(crate) struct ChannelGroupComponent;
-
-impl ProvidesCommands for ChannelGroupComponent {
-    fn commands(&self) -> Vec<Command> {
-        vec![
-            list::command(),
-            describe::command(),
-            notes::command(),
-            create::command(),
-            delete::command(),
-            join::command(),
-            leave::command(),
-            rename::command(),
-            summary::command(),
-            briefing::command(),
-        ]
-    }
-}
-
-#[async_trait]
-impl ChannelCommandProvider for ChannelGroupComponent {
-    async fn execute(
-        &self,
-        name: &CommandName,
-        args: &str,
-        context: &CommandContext<'_>,
-    ) -> CommandResult<CommandOutput> {
-        match name.as_str() {
-            list::LIST_COMMAND_NAME => list::execute(context).await,
-            describe::DESCRIBE_COMMAND_NAME => describe::execute(args, context).await,
-            notes::NOTES_COMMAND_NAME => notes::execute(args, context).await,
-            create::CREATE_COMMAND_NAME => create::execute(args, context).await,
-            delete::DELETE_COMMAND_NAME => delete::execute(args, context).await,
-            join::JOIN_COMMAND_NAME => join::execute(args, context).await,
-            leave::LEAVE_COMMAND_NAME => leave::execute(args, context).await,
-            rename::RENAME_COMMAND_NAME => rename::execute(args, context).await,
-            summary::SUMMARY_COMMAND_NAME => summary::execute(args, context).await,
-            briefing::BRIEFING_COMMAND_NAME => briefing::execute(args, context).await,
-            _ => Err(CommandError::Unknown(name.to_string())),
-        }
-    }
+/// The commands of the group `channel`: `/channel list`, `/channel describe`, `/channel notes`,
+/// `/channel create`, `/channel delete`, `/channel join`, `/channel leave`, `/channel rename`,
+/// `/channel summary` and `/channel briefing`.
+fn commands() -> Vec<Arc<dyn ChannelCommand>> {
+    vec![
+        Arc::new(list::ListCommand::new()),
+        Arc::new(describe::DescribeCommand::new()),
+        Arc::new(notes::NotesCommand::new()),
+        Arc::new(create::CreateCommand::new()),
+        Arc::new(delete::DeleteCommand::new()),
+        Arc::new(join::JoinCommand::new()),
+        Arc::new(leave::LeaveCommand::new()),
+        Arc::new(rename::RenameCommand::new()),
+        Arc::new(summary::SummaryCommand::new()),
+        Arc::new(briefing::BriefingCommand::new()),
+    ]
 }
 
 /// The channel the command `command` is issued in, or the one of the session `args` names
@@ -114,10 +83,11 @@ async fn channel_named(
 /// Registers the kind `channel` with `registry`.
 pub(super) fn register(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new(CHANNEL_GROUP_KIND).provides::<dyn ChannelCommandProvider>(),
+        ComponentKind::new(CHANNEL_GROUP_KIND)
+            .provides::<dyn CommandProvider<dyn ChannelCommand>>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ChannelCommandProvider>(Arc::new(ChannelGroupComponent));
+            facets.insert::<dyn CommandProvider<dyn ChannelCommand>>(Arc::new(commands()));
             Ok(facets)
         },
     );

@@ -1,17 +1,16 @@
-//! User commands (issue 28): `ChannelCommandProvider` components contribute
-//! commands, and a session's `CommandExecutor` finds and runs them on behalf
-//! of a user. `AgentCommandProvider` components of a personality contribute
-//! the commands an agent carries out itself (issue 269), a `CommandSet` its
-//! actor finds them in once the channel admitted the request, and the agent
-//! runs in a turn of its own.
+//! User commands (issue 28): components contribute the commands run on the channel
+//! (`ChannelCommand`, issue 583), and a session's `CommandExecutor` finds and runs them on behalf
+//! of a user. Components of a personality contribute the commands an agent carries out itself
+//! (`caelumora_agents::command::AgentCommand`, issue 269), which its actor finds in a `CommandSet`
+//! once the channel admitted the request, and the agent runs in a turn of its own.
 //!
 //! Commands are for people - agents act through tools. They are issued
 //! through `UserActor::execute_command`, on behalf of the user the actor
 //! stands for, and never enter the conversation.
 //!
-//! The built-in command components live here too, one file per command. What an agent's commands
-//! are made of - `ProvidesCommands`, the `CommandSet`, the `CommandError` - is the API's
-//! (`caelumora_api::command`, issue 516).
+//! The built-in command components live here too, one file per command, each its type. What every
+//! command is made of - `Command`, `CommandProvider`, the `CommandSet`, the `CommandError` - is the
+//! API's (`caelumora_api::command`, issues 516, 583).
 
 pub(crate) mod agent;
 pub(crate) mod channel;
@@ -27,10 +26,10 @@ use crate::view::{ChannelView, ParticipantView, SessionView, Viewer, Views};
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{
-    check_arguments, CommandError, CommandResult, CommandSet, ProvidesCommands,
+    check_arguments, Command, CommandError, CommandProvider, CommandResult, CommandSet,
 };
 use caelumora_api::component::{ComponentImpl, ComponentResult};
-use caelumora_domain::command::{Command, CommandOutput, CommandVisibility};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandVisibility};
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::type_map::TypeKey;
@@ -124,14 +123,13 @@ impl CommandContext<'_> {
     }
 }
 
-/// A component facet contributing user commands run on the channel -
-/// `/help`, `/wakeup` -, as `ToolProvider` contributes tools: given the
-/// channel, not an agent's turn.
+/// A user command run on the channel (issue 583) - `/help`, `/agent wakeup` -: given the channel,
+/// not an agent's turn. Its components contribute it through `CommandProvider<dyn
+/// ChannelCommand>`, and a session's `CommandExecutor` runs it.
 #[async_trait]
-pub trait ChannelCommandProvider: ProvidesCommands {
-    /// Runs the command `name` - by its name, whichever it was issued by - with `args`, the rest of
-    /// the input line after it, which the command parses itself; a command that names no
-    /// parameters is never given any (`check_arguments`).
+pub trait ChannelCommand: Command {
+    /// Runs the command with `args`, the rest of the input line after its name, which it parses
+    /// itself; a command that names no parameters is never given any (`check_arguments`).
     ///
     /// # Errors
     /// `CommandError::InvalidArguments` for arguments it cannot use,
@@ -139,7 +137,6 @@ pub trait ChannelCommandProvider: ProvidesCommands {
     /// `CommandError::Failed` otherwise.
     async fn execute(
         &self,
-        name: &CommandName,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput>;
@@ -156,13 +153,14 @@ pub trait ChannelCommandProvider: ProvidesCommands {
 #[derive(Debug)]
 pub struct CommandExecutor {
     access_policy: Arc<dyn AccessPolicy>,
-    commands: CommandSet<dyn ChannelCommandProvider>,
+    commands: CommandSet<dyn ChannelCommand>,
 }
 
 impl CommandExecutor {
     /// The facets the commands of a session are built for (`Kernel::new_command_executor`):
     /// in the name of its owner, so that none is a library's (issue 516).
-    pub const COMPONENT_FACETS: &[TypeKey] = &[TypeKey::of::<dyn ChannelCommandProvider>()];
+    pub const COMPONENT_FACETS: &[TypeKey] =
+        &[TypeKey::of::<dyn CommandProvider<dyn ChannelCommand>>()];
 
     /// An executor for the commands `providers` contribute. Building them is
     /// up to whoever owns their configuration - for a session's commands,
@@ -172,7 +170,7 @@ impl CommandExecutor {
     /// As `CommandSet::new`.
     pub fn new(
         access_policy: Arc<dyn AccessPolicy>,
-        providers: Vec<ComponentImpl<dyn ChannelCommandProvider>>,
+        providers: Vec<ComponentImpl<dyn CommandProvider<dyn ChannelCommand>>>,
     ) -> ComponentResult<Self> {
         Ok(Self { access_policy, commands: CommandSet::new(providers)? })
     }
@@ -184,7 +182,7 @@ impl CommandExecutor {
 
     /// The command of the session's that `command` collides with, whoever may see it
     /// (`CommandSet::colliding`): an agent's command must not be hidden by one of the session.
-    pub fn colliding(&self, command: &Command) -> Option<&Command> {
+    pub fn colliding(&self, command: &CommandDescription) -> Option<&CommandDescription> {
         self.commands.colliding(command)
     }
 
@@ -194,9 +192,9 @@ impl CommandExecutor {
         &self,
         issuer: &SecurityContext,
         channel: &SecurityAttributes,
-    ) -> Vec<Command> {
+    ) -> Vec<CommandDescription> {
         let mut visible = Vec::new();
-        for command in self.commands.commands() {
+        for command in self.commands.descriptions() {
             let show = ActionType::ShowCommand { command: &command, channel };
             if self.access_policy.check(issuer, show).await {
                 visible.push(command);
@@ -208,7 +206,7 @@ impl CommandExecutor {
     /// The name of the command `line` begins with - by its name or an alias - and the rest of
     /// the line, its arguments (`CommandSet::find`), whoever may see it: running it asks that.
     pub fn find<'a>(&self, line: &'a str) -> Option<(&CommandName, &'a str)> {
-        self.commands.find(line).map(|(entry, args)| (&entry.command().name, args))
+        self.commands.find(line).map(|(command, args)| (&command.description().name, args))
     }
 
     /// Runs the command `name` with `args` for `context.issuer`: `Unknown` if there is no such
@@ -225,10 +223,10 @@ impl CommandExecutor {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         let unknown = || CommandError::Unknown(name.to_string());
-        let entry = self.commands.entry(name.as_str()).ok_or_else(unknown)?;
+        let found = self.commands.named(name.as_str()).ok_or_else(unknown)?;
         let issuer = context.issuer.security_context();
         let channel = context.channel.security_attributes();
-        let command = entry.command();
+        let command = found.description();
         self.access_policy
             .require(&issuer, ActionType::ShowCommand { command, channel: &channel }, |_| unknown())
             .await?;
@@ -240,7 +238,7 @@ impl CommandExecutor {
             )
             .await?;
         check_arguments(command, args)?;
-        entry.provider().execute(name, args, context).await
+        found.execute(args, context).await
     }
 }
 
@@ -350,26 +348,20 @@ mod tests {
     use caelumora_domain::component::ComponentFailPolicy;
     use caelumora_security::AllowAllPolicy;
 
+    /// A command of the tests, named as it is told, which answers nothing.
     #[derive(Debug)]
-    struct Named(&'static str);
+    struct Named(CommandDescription);
 
-    impl ProvidesCommands for Named {
-        fn commands(&self) -> Vec<Command> {
-            vec![Command {
-                name: CommandName::fixed(self.0),
-                aliases: Vec::new(),
-                description: String::new(),
-                usage: None,
-                owners_only: false,
-            }]
+    impl Command for Named {
+        fn description(&self) -> &CommandDescription {
+            &self.0
         }
     }
 
     #[async_trait]
-    impl ChannelCommandProvider for Named {
+    impl ChannelCommand for Named {
         async fn execute(
             &self,
-            _name: &CommandName,
             _args: &str,
             _context: &CommandContext<'_>,
         ) -> CommandResult<CommandOutput> {
@@ -377,11 +369,21 @@ mod tests {
         }
     }
 
-    fn provider(id: &str, command: &'static str) -> ComponentImpl<dyn ChannelCommandProvider> {
+    fn provider(
+        id: &str,
+        command: &'static str,
+    ) -> ComponentImpl<dyn CommandProvider<dyn ChannelCommand>> {
+        let named: Vec<Arc<dyn ChannelCommand>> = vec![Arc::new(Named(CommandDescription {
+            name: CommandName::fixed(command),
+            aliases: Vec::new(),
+            description: String::new(),
+            usage: None,
+            owners_only: false,
+        }))];
         ComponentImpl {
             id: id.to_string(),
             fail_policy: ComponentFailPolicy::FailOpen,
-            facet: Arc::new(Named(command)),
+            facet: Arc::new(named),
         }
     }
 

@@ -147,7 +147,7 @@ export interface ChannelParticipant {
    * written `/name @handle …`; absent if none, and in a channel that does
    * not run.
    */
-  commands?: Command[];
+  commands?: CommandDescription[];
   /**
    * The turn of the answer it is giving now (issue 240), as `ResponseStarted`
    * named it; absent if none - also for an external agent.
@@ -1002,7 +1002,7 @@ export type RetryTarget = { message: string } | { turn: string };
 export type RetryRefused = 'not_its_answer' | 'not_last' | 'calls_ran' | 'asked_again' | 'elsewhere' | 'ended';
 
 /** A user command, as `/help` and completion show it (issue 28). */
-export interface Command {
+export interface CommandDescription {
   /** Its words, from its group to itself (issue 560). */
   name: string;
   /** The other names it is found by, its short forms (issue 560). */

@@ -9,7 +9,7 @@ mod external_agent;
 mod questions;
 
 use crate::activity::{ActivityError, ActivityProvider};
-use crate::command::AgentCommandProvider;
+use crate::command::AgentCommand;
 use crate::library::AgentsLibrary;
 use crate::message::{MessageProcessor, PerceiveInProcessor, ProcessingError};
 use crate::notes::{AgentNotes, NoteKind};
@@ -20,7 +20,7 @@ use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use anyhow::Result;
 use caelumora_api::command::CommandError;
-use caelumora_api::command::{CommandResult, ProvidesCommands};
+use caelumora_api::command::{Command, CommandProvider, CommandResult};
 use caelumora_api::component::ComponentFacets;
 use caelumora_api::component::ComponentKind;
 use caelumora_api::component::Params;
@@ -31,7 +31,7 @@ use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::{AgentId, HearsDuringTurn, Personality};
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{Channel, Participant};
-use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::AppConfig;
@@ -46,7 +46,7 @@ use caelumora_domain::work::TurnId;
 use caelumora_kernel::actor::user::ChannelWatch;
 use caelumora_kernel::channel::testing::*;
 use caelumora_kernel::channel::*;
-use caelumora_kernel::command::help::HelpComponent;
+use caelumora_kernel::command::help::HelpCommand;
 use caelumora_kernel::command::CommandExecutor;
 use caelumora_kernel::component::ComponentRegistry;
 use caelumora_kernel::testing::{shown, TestKernel};
@@ -434,28 +434,29 @@ impl ToolProvider for Asking {
 /// (issue 560): it notes "marked <text>" and answers the issuer alone - with `fail`, it notes and
 /// then fails, so that nothing of it may stay.
 #[derive(Debug)]
-struct Marking;
+struct Marking(CommandDescription);
 
-impl ProvidesCommands for Marking {
-    fn commands(&self) -> Vec<Command> {
-        vec![Command {
+impl Marking {
+    fn new() -> Self {
+        Self(CommandDescription {
             name: CommandName::fixed("mark"),
             aliases: vec![CommandName::fixed("mk")],
             description: "Marks.".to_string(),
             usage: Some("[text]".to_string()),
             owners_only: false,
-        }]
+        })
+    }
+}
+
+impl Command for Marking {
+    fn description(&self) -> &CommandDescription {
+        &self.0
     }
 }
 
 #[async_trait::async_trait]
-impl AgentCommandProvider for Marking {
-    async fn execute(
-        &self,
-        _name: &CommandName,
-        args: &str,
-        turn: &mut Turn<'_>,
-    ) -> CommandResult<CommandOutput> {
+impl AgentCommand for Marking {
+    async fn execute(&self, args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
         AgentNotes::note(turn, NoteKind::Public, format!("marked {args}"));
         if args == "fail" {
             return Err(CommandError::Failed {
@@ -469,10 +470,11 @@ impl AgentCommandProvider for Marking {
 
 fn register_marking_command(registry: &mut ComponentRegistry) {
     registry.register(
-        ComponentKind::new("test_marking").provides::<dyn AgentCommandProvider>(),
+        ComponentKind::new("test_marking").provides::<dyn CommandProvider<dyn AgentCommand>>(),
         |_descriptor, _context| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn AgentCommandProvider>(Arc::new(Marking));
+            let marking: Vec<Arc<dyn AgentCommand>> = vec![Arc::new(Marking::new())];
+            facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(marking));
             Ok(facets)
         },
     );

@@ -4,7 +4,8 @@
 //! Commands are recognised by the frontends, which send them to the channel as commands instead of
 //! as messages; [`parse_input`] is the rule they follow. Which command a line is, and where its
 //! arguments begin, is decided by the commands it is run among (issue 560). What a command does is
-//! up to the `ChannelCommandProvider` component that contributes it (see `caelumora-kernel`).
+//! up to the command itself (`caelumora_api::command::Command`, issue 583), which a component
+//! contributes; this is what it says of itself (`CommandDescription`).
 
 use crate::component::{ComponentConfig, ComponentDescriptor};
 use crate::value::command_name::CommandName;
@@ -26,7 +27,7 @@ pub const CHANNEL_GROUP_KIND: &str = "channel";
 
 /// A command as users see it: in `/help` and in the frontends' completion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Command {
+pub struct CommandDescription {
     /// The name, without the leading slash: its words, from its group to itself.
     pub name: CommandName,
     /// The other names it is found by, its short forms (issue 560); none unless named. What is
@@ -45,7 +46,7 @@ pub struct Command {
     pub owners_only: bool,
 }
 
-impl Command {
+impl CommandDescription {
     /// The rest of `line` - its arguments, trimmed - if `line` begins with its name or one of its
     /// aliases (`CommandName::strip_from`).
     pub fn strip_from<'a>(&self, line: &'a str) -> Option<&'a str> {
@@ -83,7 +84,7 @@ impl Command {
     /// Whether a name of one - its name or an alias - begins a name of the other
     /// (`CommandName::begins`): a line beginning with the longer could not be told from one
     /// beginning with the shorter.
-    pub fn collides_with(&self, other: &Command) -> bool {
+    pub fn collides_with(&self, other: &CommandDescription) -> bool {
         self.names().any(|mine| other.names().any(|its| mine.begins(its) || its.begins(mine)))
     }
 
@@ -169,7 +170,7 @@ mod tests {
     /// agent carries out with the agent named.
     #[test]
     fn a_command_is_told_by_its_signature_short_forms_and_description() {
-        let described = |usage: Option<&str>, aliases: &[&str]| Command {
+        let described = |usage: Option<&str>, aliases: &[&str]| CommandDescription {
             description: "Brings someone in.".to_string(),
             usage: usage.map(str::to_string),
             ..named("participant add", aliases)
@@ -220,8 +221,8 @@ mod tests {
         assert_eq!(kinds, [&[HELP_KIND][..], &groups].concat());
     }
 
-    fn named(name: &str, aliases: &[&str]) -> Command {
-        Command {
+    fn named(name: &str, aliases: &[&str]) -> CommandDescription {
+        CommandDescription {
             name: CommandName::new(name).unwrap(),
             aliases: aliases.iter().map(|a| CommandName::new(a).unwrap()).collect(),
             description: String::new(),

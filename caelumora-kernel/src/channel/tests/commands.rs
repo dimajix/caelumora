@@ -15,7 +15,6 @@ use caelumora_domain::message::TokenUsage;
 use caelumora_domain::query::Query;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::user::testing::make_user;
-use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::ScopedName;
 use caelumora_domain::value::text::{Briefing, Summary};
 use std::time::Duration;
@@ -214,13 +213,16 @@ async fn wakeup_wakes_the_agent_named_and_refuses_an_ambiguous_name() {
 
 /// Runs `/participant nudge` with `args` in `channel` as alice.
 async fn nudge(channel: &ChannelLoop, alice: UserId, args: &str) -> CommandResult<CommandOutput> {
-    use crate::command::participant::ParticipantGroupComponent;
-    use crate::command::ChannelCommandProvider;
+    use crate::command::participant;
     let executor = CommandExecutor::empty(Arc::new(AllowAllPolicy::new()));
     let issuer = channel.user_actor(alice).expect("alice takes part");
     let context = CommandContext { issuer: &issuer, channel, executor: &executor };
-    let nudge = CommandName::fixed("participant nudge");
-    ParticipantGroupComponent.execute(&nudge, args, &context).await
+    let commands = participant::commands();
+    let nudge = commands
+        .iter()
+        .find(|c| c.description().name.as_str() == "participant nudge")
+        .expect("a command of the group");
+    nudge.execute(args, &context).await
 }
 
 /// The next end of a turn of `agent` on `events`, with its envelope.

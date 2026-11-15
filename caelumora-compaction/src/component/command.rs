@@ -1,51 +1,61 @@
-//! The facet `AgentCommandProvider` of `compaction` (issue 269): `/compact @agent`, which compacts
-//! the agent's context when its owners ask, and tells the channel what it did.
+//! The command of `compaction` (issue 269): `/compact @agent`, which compacts the agent's context
+//! when its owners ask, and tells the channel what it did.
 
 use super::{nothing_to_compact, CompactionComponent};
 use async_trait::async_trait;
-use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::command::AgentCommand;
 use caelumora_agents::turn::Turn;
-use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
-use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_api::command::{Command, CommandError, CommandResult};
+use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
+use std::sync::Arc;
 
 /// The name of its command, `/compact`.
 const COMPACT_COMMAND_NAME: &str = "compact";
 
-impl ProvidesCommands for CompactionComponent {
-    fn commands(&self) -> Vec<Command> {
-        vec![Command {
+/// `/compact @agent`: compacts the agent's context now, as its component would once it is too
+/// full.
+#[derive(Debug)]
+pub(super) struct CompactCommand {
+    description: CommandDescription,
+    /// What compacts the context.
+    compaction: Arc<CompactionComponent>,
+}
+
+impl CompactCommand {
+    /// The command, compacting with `compaction`.
+    pub(super) fn new(compaction: Arc<CompactionComponent>) -> Self {
+        let description = CommandDescription {
             name: CommandName::fixed(COMPACT_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Compacts the agent's context: the older part of its conversation is replaced by a shorter one, the newest is kept. What it saw before stays recorded.".to_string(),
             usage: None,
             // Like approving its calls (issue 269): its owners'.
             owners_only: true,
-        }]
+        };
+        Self { description, compaction }
+    }
+}
+
+impl Command for CompactCommand {
+    fn description(&self) -> &CommandDescription {
+        &self.description
     }
 }
 
 #[async_trait]
-impl AgentCommandProvider for CompactionComponent {
-    async fn execute(
-        &self,
-        name: &CommandName,
-        _args: &str,
-        turn: &mut Turn<'_>,
-    ) -> CommandResult<CommandOutput> {
-        if name.as_str() != COMPACT_COMMAND_NAME {
-            return Err(CommandError::Unknown(name.to_string()));
-        }
-        let invalid = |reason: &str| CommandError::InvalidArguments {
-            command: name.to_string(),
-            reason: reason.to_string(),
-        };
+impl AgentCommand for CompactCommand {
+    async fn execute(&self, _args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
+        let name = COMPACT_COMMAND_NAME;
         let compacted = self
+            .compaction
             .compact(turn)
             .await
             .map_err(|e| CommandError::Failed { command: name.to_string(), reason: e.to_string() })?
-            .ok_or_else(|| invalid(&nothing_to_compact(turn.agent_name())))?;
-
+            .ok_or_else(|| CommandError::InvalidArguments {
+                command: name.to_string(),
+                reason: nothing_to_compact(turn.agent_name()),
+            })?;
         Ok(CommandOutput::channel(compacted))
     }
 }
@@ -60,7 +70,6 @@ mod tests {
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::command::CommandVisibility;
     use caelumora_kernel::workspace::testing::session_with_workspace;
-    use std::sync::Arc;
 
     /// What `/compact` answers, after `before`, with `strategy`, and how often the strategy was
     /// asked.
@@ -69,11 +78,10 @@ mod tests {
         let mut state = AgentChannelState::default();
         state.perceive(vec![heard("u1")]);
         let strategy = Arc::new(strategy);
-        let component = component(&strategy);
+        let command = CompactCommand::new(Arc::new(component(&strategy)));
         let mut turn = workspace_turn(&world, &mut state);
         before(&mut turn, world.agent);
-        let result =
-            component.execute(&CommandName::fixed(COMPACT_COMMAND_NAME), "", &mut turn).await;
+        let result = command.execute("", &mut turn).await;
         (result, strategy.times_asked())
     }
 

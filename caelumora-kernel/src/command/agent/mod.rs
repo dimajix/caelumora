@@ -9,60 +9,25 @@ mod usage;
 mod wakeup;
 
 use crate::agent::AgentManager;
-use crate::command::{command_error, ChannelCommandProvider, CommandContext};
+use crate::command::{command_error, ChannelCommand, CommandContext};
 use crate::component::ComponentRegistry;
 use crate::view::{AgentView, SessionView};
-use async_trait::async_trait;
-use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_api::command::{CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_domain::command::{Command, CommandOutput, AGENT_GROUP_KIND};
-use caelumora_domain::value::command_name::CommandName;
+use caelumora_domain::command::AGENT_GROUP_KIND;
 use std::sync::Arc;
 
-/// The component of the command group `agent`: `/agent list`, `/agent create`, `/agent delete`,
-/// `/agent wakeup` (`/wakeup`) and `/agent usage`. It holds the `AgentManager`, which
-/// `/agent create` makes agents with and `/agent delete` deletes them with.
-#[derive(Debug)]
-pub(crate) struct AgentGroupComponent {
-    agents: Arc<AgentManager>,
-}
-
-impl AgentGroupComponent {
-    /// The component, making agents with `agents`.
-    pub(crate) fn new(agents: Arc<AgentManager>) -> Self {
-        Self { agents }
-    }
-}
-
-impl ProvidesCommands for AgentGroupComponent {
-    fn commands(&self) -> Vec<Command> {
-        vec![
-            list::command(),
-            create::command(),
-            delete::command(),
-            wakeup::command(),
-            usage::command(),
-        ]
-    }
-}
-
-#[async_trait]
-impl ChannelCommandProvider for AgentGroupComponent {
-    async fn execute(
-        &self,
-        name: &CommandName,
-        args: &str,
-        context: &CommandContext<'_>,
-    ) -> CommandResult<CommandOutput> {
-        match name.as_str() {
-            list::LIST_COMMAND_NAME => list::execute(context).await,
-            create::CREATE_COMMAND_NAME => create::execute(&self.agents, args, context).await,
-            delete::DELETE_COMMAND_NAME => delete::execute(&self.agents, args, context).await,
-            wakeup::WAKEUP_COMMAND_NAME => wakeup::execute(args, context).await,
-            usage::USAGE_COMMAND_NAME => usage::execute(args, context).await,
-            _ => Err(CommandError::Unknown(name.to_string())),
-        }
-    }
+/// The commands of the group `agent`: `/agent list`, `/agent create`, `/agent delete`,
+/// `/agent wakeup` (`/wakeup`) and `/agent usage` - `/agent create` making agents with `agents`,
+/// `/agent delete` deleting them with it.
+pub(crate) fn commands(agents: &Arc<AgentManager>) -> Vec<Arc<dyn ChannelCommand>> {
+    vec![
+        Arc::new(list::ListCommand::new()),
+        Arc::new(create::CreateCommand::new(Arc::clone(agents))),
+        Arc::new(delete::DeleteCommand::new(Arc::clone(agents))),
+        Arc::new(wakeup::WakeupCommand::new()),
+        Arc::new(usage::UsageCommand::new()),
+    ]
 }
 
 /// The session the channel the command `command` runs in belongs to, as the issuer reads it, with
@@ -83,12 +48,12 @@ async fn session_agents(
 pub(super) fn register(registry: &mut ComponentRegistry) {
     registry.register(
         ComponentKind::new(AGENT_GROUP_KIND)
-            .provides::<dyn ChannelCommandProvider>()
+            .provides::<dyn CommandProvider<dyn ChannelCommand>>()
             .uses::<AgentManager>(),
         |_descriptor, context| {
             let agents = Arc::clone(context.service::<AgentManager>()?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ChannelCommandProvider>(Arc::new(AgentGroupComponent::new(agents)));
+            facets.insert::<dyn CommandProvider<dyn ChannelCommand>>(Arc::new(commands(&agents)));
             Ok(facets)
         },
     );

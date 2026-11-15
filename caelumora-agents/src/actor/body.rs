@@ -8,13 +8,14 @@
 
 use super::intake::TakenIn;
 use super::run_control::RunControl;
-use crate::command::AgentCommandProvider;
+use crate::command::AgentCommand;
 use crate::message::PerceiveInProcessor;
 use crate::prompt::ContextProvider;
 use crate::situation::Situation;
 use crate::turn::Turn;
 use anyhow::{Context, Result};
 use caelumora_api::actor::Answering;
+use caelumora_api::command::CommandProvider;
 use caelumora_api::command::CommandSet;
 use caelumora_api::component::ComponentContainer;
 use caelumora_api::component::ComponentImpl;
@@ -78,7 +79,7 @@ pub(super) struct AgentBody {
     /// The commands it carries out itself (issue 269), from its
     /// personality's components; who may see and ask for them is the
     /// channel's to decide (issue 516).
-    pub(super) commands: CommandSet<dyn AgentCommandProvider>,
+    pub(super) commands: CommandSet<dyn AgentCommand>,
     /// How its model is given its context, kept with every turn of it - its
     /// model's, or its remote agent's (`ModelProfileProvider`).
     pub(super) profile: ModelProfile,
@@ -117,7 +118,8 @@ impl AgentBody {
         let perceive_in_processors = components.get_all::<dyn PerceiveInProcessor>(None)?;
         let context_provider = components.one::<dyn ContextProvider>().await?;
         let profile = components.one::<dyn ModelProfileProvider>().await?.profile();
-        let commands = CommandSet::new(components.get_all::<dyn AgentCommandProvider>(None)?)?;
+        let commands =
+            CommandSet::new(components.get_all::<dyn CommandProvider<dyn AgentCommand>>(None)?)?;
         let mut state = runtime.load_channel_state().await?;
         resume(&mut state);
         let control =

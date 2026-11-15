@@ -129,7 +129,9 @@ mod tests {
             .await
             .expect_err("not what it does not declare");
         assert!(
-            causes(&error).iter().any(|e| matches!(e, ComponentError::NoService("AccessPolicy"))),
+            causes(&error)
+                .iter()
+                .any(|e| matches!(e, ComponentError::NoService(name) if name == "AccessPolicy")),
             "{error}"
         );
     }
@@ -163,7 +165,9 @@ mod tests {
             .await
             .expect_err("its kind does not need Named");
         assert!(
-            causes(&error).iter().any(|e| matches!(e, ComponentError::Undeclared("Named"))),
+            causes(&error)
+                .iter()
+                .any(|e| matches!(e, ComponentError::Undeclared(name) if name == "Named")),
             "{error}"
         );
 
@@ -174,14 +178,14 @@ mod tests {
         assert!(
             matches!(
                 container.get_all::<dyn Other>(None),
-                Err(ComponentError::Undeclared("Other"))
+                Err(ComponentError::Undeclared(name)) if name == "Other"
             ),
             "not built for Other"
         );
         assert!(
             matches!(
                 container.one::<dyn Choice>().await,
-                Err(ComponentError::Undeclared("Choice"))
+                Err(ComponentError::Undeclared(name)) if name == "Choice"
             ),
             "not built for Choice"
         );

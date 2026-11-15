@@ -111,19 +111,20 @@ impl AgentKinds {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::help::{HelpComponent, HELP_COMMAND_NAME};
-    use crate::command::{ChannelCommandProvider, CommandExecutor};
+    use crate::command::help::{HelpCommand, HELP_COMMAND_NAME};
+    use crate::command::{ChannelCommand, CommandExecutor};
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
     use async_trait::async_trait;
     use caelumora_api::actor::agent_factory;
+    use caelumora_api::command::CommandProvider;
     use caelumora_api::component::ComponentImpl;
     use caelumora_api::transport::{EventReceiver, EventSender};
     use caelumora_domain::actor::{ActorState, Envelope};
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::{Agent, Personality};
     use caelumora_domain::channel::testing::bare_channel;
-    use caelumora_domain::command::Command;
+    use caelumora_domain::command::CommandDescription;
     use caelumora_domain::scope::Scope;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::SessionId;
@@ -134,7 +135,7 @@ mod tests {
     use std::sync::Weak;
 
     /// The names of `facets`, to compare them by.
-    fn names(facets: Option<&[TypeKey]>) -> Option<Vec<&'static str>> {
+    fn names(facets: Option<&[TypeKey]>) -> Option<Vec<String>> {
         facets.map(|facets| facets.iter().map(TypeKey::name).collect())
     }
 
@@ -198,8 +199,8 @@ mod tests {
             ActorState::Idle
         }
 
-        fn commands(&self) -> Vec<Command> {
-            vec![Command {
+        fn commands(&self) -> Vec<CommandDescription> {
+            vec![CommandDescription {
                 name: CommandName::fixed(HELP_COMMAND_NAME),
                 aliases: Vec::new(),
                 description: String::new(),
@@ -278,7 +279,8 @@ mod tests {
             let help = ComponentImpl {
                 id: "help".to_string(),
                 fail_policy: Default::default(),
-                facet: Arc::new(HelpComponent) as Arc<dyn ChannelCommandProvider>,
+                facet: Arc::new(vec![Arc::new(HelpCommand::new()) as Arc<dyn ChannelCommand>])
+                    as Arc<dyn CommandProvider<dyn ChannelCommand>>,
             };
             CommandExecutor::new(policy, vec![help]).unwrap()
         };

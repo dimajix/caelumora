@@ -5,15 +5,14 @@ mod commands;
 pub(super) use crate::channel::testing::*;
 
 use super::*;
-use crate::command::agent::AgentGroupComponent;
-use crate::command::help::HelpComponent;
-use crate::command::participant::ParticipantGroupComponent;
-use crate::command::{ChannelCommandProvider, CommandExecutor};
+use crate::command::help::HelpCommand;
+use crate::command::{agent, participant, ChannelCommand, CommandExecutor};
 use crate::component::ComponentRegistry;
 use crate::kernel::ChannelRuntime;
 use crate::moderator::{Moderator, Routing};
 use crate::testing::{Script, ScriptedAgent, ScriptedAgents, StandIn, TestKernel};
 use caelumora_api::actor::Actor;
+use caelumora_api::command::CommandProvider;
 use caelumora_api::component::ComponentImpl;
 use caelumora_domain::actor::{ActorEvent, ActorId, ActorState, Envelope, RequestReason};
 use caelumora_domain::agent::testing::make_personality;
@@ -78,20 +77,17 @@ async fn channel_built(
         TestKernel { store, access_policy, components: Box::new(register), ..Default::default() }
             .build();
     let channel = Channel { components, participants, ..make_channel(SessionId::new(), "main") };
-    let builtin = |id: &str, facet: Arc<dyn ChannelCommandProvider>| ComponentImpl {
+    let builtin = |id: &str, commands: Vec<Arc<dyn ChannelCommand>>| ComponentImpl {
         id: id.to_string(),
         fail_policy: ComponentFailPolicy::FailOpen,
-        facet,
+        facet: Arc::new(commands) as Arc<dyn CommandProvider<dyn ChannelCommand>>,
     };
     let executor = CommandExecutor::new(
         Arc::clone(kernel.access_policy()),
         vec![
-            builtin("help", Arc::new(HelpComponent)),
-            builtin("participant", Arc::new(ParticipantGroupComponent)),
-            builtin(
-                "agent",
-                Arc::new(AgentGroupComponent::new(Arc::clone(kernel.agent_manager()))),
-            ),
+            builtin("help", vec![Arc::new(HelpCommand::new())]),
+            builtin("participant", participant::commands()),
+            builtin("agent", agent::commands(kernel.agent_manager())),
         ],
     )
     .unwrap();

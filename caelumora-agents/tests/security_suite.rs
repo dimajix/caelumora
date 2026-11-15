@@ -19,7 +19,7 @@
 
 use anyhow::Error;
 use async_trait::async_trait;
-use caelumora_agents::command::AgentCommandProvider;
+use caelumora_agents::command::AgentCommand;
 use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
 use caelumora_agents::components::private_notes::PRIVATE_NOTES_KIND;
 use caelumora_agents::external::{
@@ -34,7 +34,7 @@ use caelumora_agents::tool::echo::ECHO_KIND;
 use caelumora_agents::tool::sleep::SLEEP_KIND;
 use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_api::command::{CommandError, CommandResult, ProvidesCommands};
+use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_api::model::{LanguageModelClient, ModelProfileProvider, ModelResult};
 use caelumora_api::reader::ViewError;
@@ -48,7 +48,7 @@ use caelumora_domain::approval::{
     RuleDecision, ToolMatcher,
 };
 use caelumora_domain::channel::{ChannelId, HistoryAccess};
-use caelumora_domain::command::{Command, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality, Visibility};
 use caelumora_domain::context::ModelProfile;
@@ -3932,36 +3932,45 @@ async fn a_workspace_chosen_as_a_session_is_made_takes_the_place_of_its_template
 
 // --- Commands an agent carries out itself (issue 269) ------------------------
 
-/// A component whose agent carries out `/mark`, for whoever may write in the channel, and `/seal`,
-/// for its owners alone; it keeps the initiator of every turn it carries one out in, and reads its
-/// session there - so that the policy sees in whose name the kernel lets the turn act (issue 516).
+/// A command whose agent carries it out - `/mark`, for whoever may write in the channel, and
+/// `/seal`, for its owners alone -; it keeps the initiator of every turn it is carried out in, and
+/// reads its session there - so that the policy sees in whose name the kernel lets the turn act
+/// (issue 516).
 #[derive(Debug)]
-struct Commanded(Arc<Mutex<Vec<ActorId>>>);
+struct Commanded {
+    description: CommandDescription,
+    seen: Arc<Mutex<Vec<ActorId>>>,
+}
 
-impl ProvidesCommands for Commanded {
-    fn commands(&self) -> Vec<Command> {
-        let command = |name: &str, owners_only| Command {
-            name: CommandName::new(name).unwrap(),
-            aliases: Vec::new(),
-            description: String::new(),
-            usage: None,
-            owners_only,
+impl Commanded {
+    /// The commands `/mark` and `/seal`, keeping the initiators in `seen`.
+    fn both(seen: &Arc<Mutex<Vec<ActorId>>>) -> Vec<Arc<dyn AgentCommand>> {
+        let command = |name: &str, owners_only| {
+            let description = CommandDescription {
+                name: CommandName::new(name).unwrap(),
+                aliases: Vec::new(),
+                description: String::new(),
+                usage: None,
+                owners_only,
+            };
+            Arc::new(Commanded { description, seen: Arc::clone(seen) }) as Arc<dyn AgentCommand>
         };
         vec![command("mark", false), command("seal", true)]
     }
 }
 
+impl Command for Commanded {
+    fn description(&self) -> &CommandDescription {
+        &self.description
+    }
+}
+
 #[async_trait]
-impl AgentCommandProvider for Commanded {
-    async fn execute(
-        &self,
-        name: &CommandName,
-        _args: &str,
-        turn: &mut Turn<'_>,
-    ) -> CommandResult<CommandOutput> {
+impl AgentCommand for Commanded {
+    async fn execute(&self, _args: &str, turn: &mut Turn<'_>) -> CommandResult<CommandOutput> {
         let _ = turn.situation().session().await;
-        self.0.lock().unwrap().push(turn.situation().initiator());
-        Ok(CommandOutput::private(format!("{name}: done")))
+        self.seen.lock().unwrap().push(turn.situation().initiator());
+        Ok(CommandOutput::private(format!("{}: done", self.description.name)))
     }
 }
 
@@ -3975,10 +3984,12 @@ async fn with_a_commanded_agent(
         register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)]);
         let seen = Arc::clone(&seen);
         registry.register(
-            ComponentKind::new("commanded").provides::<dyn AgentCommandProvider>(),
+            ComponentKind::new("commanded").provides::<dyn CommandProvider<dyn AgentCommand>>(),
             move |_, _| {
                 let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn AgentCommandProvider>(Arc::new(Commanded(Arc::clone(&seen))));
+                facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(Commanded::both(
+                    &seen,
+                )));
                 Ok(facets)
             },
         );

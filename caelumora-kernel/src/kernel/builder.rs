@@ -739,10 +739,11 @@ impl KernelBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::ChannelCommandProvider;
+    use crate::command::ChannelCommand;
     use crate::moderator::{Moderator, ResponderPolicy};
     use crate::testing::{Script, ScriptedAgents, TestKernel};
     use crate::user_provider::Credential;
+    use caelumora_api::command::CommandProvider;
     use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
     use caelumora_api::library::LibraryBuilder;
     use caelumora_api::model::LanguageModelClient;
@@ -831,8 +832,10 @@ mod tests {
                 "provides ResponderPolicy",
             ),
             (
-                Brings(|c| brought(c, |kind| kind.provides::<dyn ChannelCommandProvider>())),
-                "provides ChannelCommandProvider",
+                Brings(|c| {
+                    brought(c, |kind| kind.provides::<dyn CommandProvider<dyn ChannelCommand>>())
+                }),
+                "provides CommandProvider<ChannelCommand>",
             ),
             (Brings(|c| brought(c, |kind| kind.uses::<dyn AccessPolicy>())), "uses AccessPolicy"),
             (
@@ -843,8 +846,8 @@ mod tests {
                 "uses SecretManager",
             ),
             (
-                Brings(|c| c.single::<dyn ChannelCommandProvider>(None)),
-                "the library brings declares ChannelCommandProvider a single",
+                Brings(|c| c.single::<dyn CommandProvider<dyn ChannelCommand>>(None)),
+                "the library brings declares CommandProvider<ChannelCommand> a single",
             ),
         ];
         for (brings, what) in refusing {

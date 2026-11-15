@@ -8,15 +8,15 @@ use caelumora_api::command::{check_arguments, CommandError};
 use caelumora_api::transport::EventSender;
 use caelumora_domain::actor::{ActorEvent, Envelope};
 use caelumora_domain::agent::AgentChannelState;
-use caelumora_domain::command::{Command, CommandVisibility};
+use caelumora_domain::command::{CommandDescription, CommandVisibility};
 use caelumora_domain::turn::CommandRequest;
 use tracing::{debug, info, warn};
 
 impl AgentBody {
     /// The commands the agent carries out in its channel, sorted by name;
     /// who may see which is the channel's to decide (issue 516).
-    pub(super) fn commands(&self) -> Vec<Command> {
-        self.commands.commands()
+    pub(super) fn commands(&self) -> Vec<CommandDescription> {
+        self.commands.descriptions()
     }
 
     /// Carries out the `CommandRequested` in `request` in a turn of its own,
@@ -54,13 +54,13 @@ impl AgentBody {
         };
         let mut started = false;
         // Its arguments are checked before it begins, as the session's commands are.
-        let entry = self
+        let found = self
             .commands
-            .entry(command)
+            .named(command)
             .ok_or_else(|| CommandError::Unknown(command.clone()))
-            .and_then(|entry| check_arguments(entry.command(), args).map(|()| entry));
-        let carried_out = match entry {
-            Ok(entry) => {
+            .and_then(|found| check_arguments(found.description(), args).map(|()| found));
+        let carried_out = match found {
+            Ok(found) => {
                 let start = ActorEvent::CommandStarted {
                     command: command.clone(),
                     args: args.clone(),
@@ -71,7 +71,7 @@ impl AgentBody {
                     warn!("{:#}", e);
                 }
                 started = true;
-                entry.provider().execute(&entry.command().name, args, &mut turn).await
+                found.execute(args, &mut turn).await
             }
             Err(e) => Err(e),
         };
