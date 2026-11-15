@@ -147,7 +147,7 @@ impl<C: ?Sized + Command> CommandSet<C> {
     }
 
     /// The command named `name` - by its name, not an alias -, if the set has it: for a command
-    /// found before, by `find`, and named since by its name alone.
+    /// named by its name alone, as a request from another actor names it (`CommandRequested`).
     pub fn named(&self, name: &str) -> Option<&Arc<C>> {
         self.commands.iter().find(|c| c.description().name.as_str() == name)
     }

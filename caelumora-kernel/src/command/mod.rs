@@ -33,7 +33,6 @@ use caelumora_domain::command::{CommandDescription, CommandOutput, CommandVisibi
 use caelumora_domain::security::SecurityAttributes;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::type_map::TypeKey;
-use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{named, Name};
 use caelumora_security::{AccessPolicy, ActionType, Enforcement, SecurityContext};
 use std::fmt::Debug;
@@ -182,13 +181,13 @@ impl CommandExecutor {
 
     /// The command of the session's that `command` collides with, whoever may see it
     /// (`CommandSet::colliding`): an agent's command must not be hidden by one of the session.
-    pub fn colliding(&self, command: &CommandDescription) -> Option<&CommandDescription> {
+    pub(crate) fn colliding(&self, command: &CommandDescription) -> Option<&CommandDescription> {
         self.commands.colliding(command)
     }
 
     /// The commands `issuer` may see in the channel with `channel`
     /// attributes (`ShowCommand`), sorted by name.
-    pub async fn visible(
+    pub(crate) async fn visible(
         &self,
         issuer: &SecurityContext,
         channel: &SecurityAttributes,
@@ -203,42 +202,40 @@ impl CommandExecutor {
         visible
     }
 
-    /// The name of the command `line` begins with - by its name or an alias - and the rest of
-    /// the line, its arguments (`CommandSet::find`), whoever may see it: running it asks that.
-    pub fn find<'a>(&self, line: &'a str) -> Option<(&CommandName, &'a str)> {
-        self.commands.find(line).map(|(command, args)| (&command.description().name, args))
+    /// The command `line` begins with - by its name or an alias - and the rest of the line, its
+    /// arguments (`CommandSet::find`), whoever may see it: running it asks that.
+    pub(crate) fn find<'a>(&self, line: &'a str) -> Option<(&dyn ChannelCommand, &'a str)> {
+        self.commands.find(line).map(|(command, args)| (command.as_ref(), args))
     }
 
-    /// Runs the command `name` with `args` for `context.issuer`: `Unknown` if there is no such
-    /// command or the issuer may not see it, since one they may not see is unknown to them, not
-    /// refused; `Forbidden` if they may see but not run it; `InvalidArguments` if it takes no
-    /// arguments and was given some (`check_arguments`).
+    /// Runs `command`, found by `find`, with `args` for `context.issuer`: `Unknown` if the issuer
+    /// may not see it, since one they may not see is unknown to them, not refused; `Forbidden` if
+    /// they may see but not run it; `InvalidArguments` if it takes no arguments and was given some
+    /// (`check_arguments`).
     ///
     /// # Errors
     /// As above; otherwise whatever the command reports.
-    pub async fn execute(
+    pub(crate) async fn execute(
         &self,
-        name: &CommandName,
+        command: &dyn ChannelCommand,
         args: &str,
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
-        let unknown = || CommandError::Unknown(name.to_string());
-        let found = self.commands.named(name.as_str()).ok_or_else(unknown)?;
+        let description = command.description();
+        let name = || description.name.to_string();
         let issuer = context.issuer.security_context();
         let channel = context.channel.security_attributes();
-        let command = found.description();
-        self.access_policy
-            .require(&issuer, ActionType::ShowCommand { command, channel: &channel }, |_| unknown())
-            .await?;
+        let show = ActionType::ShowCommand { command: description, channel: &channel };
+        self.access_policy.require(&issuer, show, |_| CommandError::Unknown(name())).await?;
         self.access_policy
             .require(
                 &issuer,
-                ActionType::ExecuteCommand { command, channel: &channel },
-                |refused| CommandError::Forbidden { name: name.to_string(), refused },
+                ActionType::ExecuteCommand { command: description, channel: &channel },
+                |refused| CommandError::Forbidden { name: name(), refused },
             )
             .await?;
-        check_arguments(command, args)?;
-        found.execute(args, context).await
+        check_arguments(description, args)?;
+        command.execute(args, context).await
     }
 }
 
@@ -346,6 +343,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
 mod tests {
     use super::*;
     use caelumora_domain::component::ComponentFailPolicy;
+    use caelumora_domain::value::command_name::CommandName;
     use caelumora_security::AllowAllPolicy;
 
     /// A command of the tests, named as it is told, which answers nothing.

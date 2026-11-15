@@ -634,11 +634,12 @@ impl UserActor {
         let channel = self.channel_loop()?;
         let executor = self.participant_runtime.command_executor();
         let context = CommandContext { issuer: self, channel: &channel, executor };
-        let Some((name, args)) = executor.find(line) else {
+        let Some((command, args)) = executor.find(line) else {
             return self.request_command(&channel, line).await;
         };
+        let name = &command.description().name;
         debug!("UserActor {} runs /{}", self.id, name);
-        let output = match executor.execute(name, args, &context).await {
+        let output = match executor.execute(command, args, &context).await {
             Err(CommandError::Unknown(_)) => return self.request_command(&channel, line).await,
             result => result?,
         };

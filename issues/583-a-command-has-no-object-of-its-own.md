@@ -131,3 +131,9 @@ so.
 though every provider is the list of `Vec<Arc<C>>`, as the pattern of a facet; and a step of its
 own, now step 2, makes `CommandExecutor::find` give the command it found, which `execute` runs,
 instead of the name it is looked up by again.
+
+**2026-11-15** - Step 2 done: `CommandExecutor::find` gives the command it found, and `execute`
+runs that command, asking `ShowCommand` and `ExecuteCommand` of it, instead of looking it up by its
+name again; `CommandSet::named` is left to an agent's actor, which a request reaches by the
+command's name. The executor's `find`, `execute`, `colliding` and `visible` are the kernel's alone
+(`pub(crate)`), so that no other crate hands `execute` a command `find` did not give.
