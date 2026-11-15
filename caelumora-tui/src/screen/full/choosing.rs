@@ -135,6 +135,12 @@ impl Choosing {
         rows
     }
 
+    /// How many rows its rows take, drawn `width` wide and broken at words; none where it is put
+    /// aside.
+    pub(super) fn height(&self, width: u16) -> usize {
+        self.rows().iter().map(|line| wrapped_rows(line, width)).sum()
+    }
+
     /// What tells, on the rule, that what is asked waits, where it is put aside, and how to take
     /// it up again - and of questions, that a message declines them
     /// (`UserActor::questions_to_answer`); `None` where it is shown.

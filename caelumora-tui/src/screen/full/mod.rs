@@ -335,9 +335,7 @@ impl Window {
         let (rows, cursor) = self.input.rows(PROMPT, area.width);
         let input_rows = u16::try_from(rows.len()).unwrap_or(u16::MAX).min(INPUT_ROWS);
         let status_rows = u16::from(!self.under_way.is_empty());
-        let asked = self.choosing.as_ref().map(Choosing::rows).filter(|rows| !rows.is_empty());
-        let asked = asked.map(|rows| Paragraph::new(rows).wrap(Wrap { trim: false }));
-        let asked_rows = asked.as_ref().map_or(0, |asked| asked.line_count(area.width));
+        let asked_rows = self.choosing.as_ref().map_or(0, |choosing| choosing.height(area.width));
         let asked_rows = u16::try_from(asked_rows).unwrap_or(u16::MAX).min(area.height / 2);
         let [printed, asking, status, rule, typed] = Layout::vertical([
             Constraint::Min(1),
@@ -352,8 +350,8 @@ impl Window {
         let (seen, above) = self.scrollback.visible(printed.width, printed.height);
         let seen = Paragraph::new(seen).wrap(Wrap { trim: false }).scroll((above, 0));
         frame.render_widget(seen, printed);
-        if let Some(asked) = asked {
-            frame.render_widget(asked, asking);
+        if let Some(choosing) = &self.choosing {
+            frame.render_widget(Paragraph::new(choosing.rows()).wrap(Wrap { trim: false }), asking);
         }
         frame.render_widget(status_line(&self.under_way, now), status);
         let waits = self.choosing.as_ref().and_then(Choosing::waiting);

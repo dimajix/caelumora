@@ -1,6 +1,6 @@
 # 576 — Text cannot be selected with the mouse in the full-screen terminal
 
-**Status:** in progress
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** User interaction
@@ -52,6 +52,8 @@ its own:
     longer marked - "mark" is what dragging does -, and the choice the cursor stands on is the
     cursor, no longer the one selected. No behaviour changes but the keys told: "Space checks".
 3.  A click on a choice chooses it; where several may be taken, it checks or unchecks it.
+4.  `Choosing` tells how many rows it is drawn in (`height`), which the window counted itself so
+    far, while `take_click` counted them by `wrapped_rows`. No behaviour changes.
 
 A middle click is left to the terminal (decided 2026-11-15, after step 1): RustRover's terminal
 pastes the primary selection on it even while the mouse is captured, so the view pasting it too
@@ -89,3 +91,9 @@ choice taken among several is checked, the one the cursor stands on is the curso
 where several may be chosen, it checks the choice or takes its check away, the cursor moved to it
 (`Choosing::take_click`); the window keeps where it drew what is asked. A click on a wrapped
 choice finds it on each of its rows. What is left is judging how it feels.
+
+**2026-11-15** - Step 4 added after the review of step 3, and done: `Choosing::height` counts the
+rows of what is asked as `take_click` does, and `Window::draw` lays it out by them.
+
+**2026-11-15** - Done: the maintainer tried marking, copying and clicking in Kitty and RustRover;
+pasting with the middle button is the terminal's.
