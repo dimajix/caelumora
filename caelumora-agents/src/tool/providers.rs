@@ -1,15 +1,13 @@
 //! `ToolProviders`: the tools of every `ToolProvider` of an agent, found by
-//! their names (issues 100, 280). It only finds a tool and hands a call to
-//! it: the `ToolExecutor` that holds it hands it only calls the policy
+//! their names (issues 100, 280, 584). It only finds a tool: the
+//! `ToolExecutor` that holds it asks the tool found only what the policy
 //! permits, and makes what the model is told of the result.
 
 use crate::situation::Situation;
-use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
-use crate::turn::Turn;
+use crate::tool::{Tool, ToolProvider};
 use caelumora_api::component::{ComponentError, ComponentImpl, ComponentResult};
-use caelumora_domain::approval::ToolMatcher;
-use caelumora_domain::question::{Answers, Questions};
-use caelumora_domain::tool::{ToolCall, ToolSet};
+use caelumora_domain::tool::{ToolDescription, ToolSet};
+use std::sync::Arc;
 use tracing::warn;
 
 /// The tool providers of an agent's components. It keeps the providers,
@@ -33,61 +31,25 @@ impl ToolProviders {
         let mut seen: Vec<(String, String)> = Vec::new();
         for provider in &providers {
             for tool in provider.tools() {
-                if let Some((_, component)) = seen.iter().find(|(name, _)| *name == tool.name) {
+                let name = &tool.description().name;
+                if let Some((_, component)) = seen.iter().find(|(seen, _)| seen == name) {
                     return Err(ComponentError::InvalidConfig(format!(
                         "tool '{}' is provided by both component '{}' and component '{}'",
-                        tool.name, component, provider.id
+                        name, component, provider.id
                     )));
                 }
-                seen.push((tool.name, provider.id.clone()));
+                seen.push((name.clone(), provider.id.clone()));
             }
         }
         Ok(Self { providers })
     }
 
-    /// The provider of the tool `name`, as the providers' tools are now.
-    fn provider_of(&self, name: &str) -> ToolResult<&ComponentImpl<dyn ToolProvider>> {
-        self.providers
-            .iter()
-            .find(|p| p.tools().iter().any(|t| t.name == name))
-            .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
-    }
-
-    /// Runs `call` with the tool that provides it: what the tool gave, or
-    /// what went wrong (`ToolError::UnknownTool` if no tool has the name),
-    /// with the `answers` to the questions the tool asked for the call.
-    pub(super) async fn execute(
-        &self,
-        call: &ToolCall,
-        answers: Option<&Answers>,
-        turn: &mut Turn<'_>,
-    ) -> ToolResult<ToolOutput> {
-        self.provider_of(&call.function_name)?
-            .execute(&call.function_name, &call.arguments, answers, turn)
-            .await
-    }
-
-    /// What `call` does, as its tool describes it to the person asked.
-    pub(super) fn describe(&self, call: &ToolCall) -> ToolResult<String> {
-        self.provider_of(&call.function_name)?.describe(&call.function_name, &call.arguments)
-    }
-
-    /// What `call` asks a person before it runs, as its tool says (issue
-    /// 165).
-    pub(super) fn questions(&self, call: &ToolCall) -> ToolResult<Option<Questions>> {
-        self.provider_of(&call.function_name)?.questions(&call.function_name, &call.arguments)
-    }
-
-    /// What other calls are like `call`, as its tool says (issue 13); the
-    /// calls exactly like it if no tool has its name. `None` where that is
-    /// no rule a person could keep (`ToolMatcher::check`, issue 400): a
-    /// rule is offered only where it can be added.
-    pub(super) fn matcher(&self, call: &ToolCall) -> Option<ToolMatcher> {
-        let matcher = match self.provider_of(&call.function_name) {
-            Ok(provider) => provider.matcher(&call.function_name, &call.arguments),
-            Err(_) => ToolMatcher::exact(call),
-        };
-        matcher.check().is_ok().then_some(matcher)
+    /// The tool named `name`, as the providers' tools are now: of the provider configured first
+    /// that has one (issue 126), `None` if none has.
+    pub(super) fn find(&self, name: &str) -> Option<Arc<dyn Tool>> {
+        self.providers.iter().find_map(|provider| {
+            provider.tools().into_iter().find(|t| t.description().name == name)
+        })
     }
 
     /// The tools offered in `situation`, in the sets of the providers they come
@@ -96,14 +58,15 @@ impl ToolProviders {
     /// unavailable without tools, saying why. A tool of the name of one
     /// offered before is withheld, with a warning: a provider's tools may
     /// change after `new` checked them (issue 126), and a call of that name
-    /// reaches the first (`provider_of`).
+    /// reaches the first (`find`).
     pub(super) async fn tool_sets(&self, situation: &Situation<'_>) -> Vec<ToolSet> {
         let mut sets: Vec<ToolSet> = Vec::with_capacity(self.providers.len());
         for provider in &self.providers {
-            let (mut tools, unavailable) = match provider.offered(situation).await {
-                Ok(tools) => (tools, None),
-                Err(why) => (Vec::new(), Some(why)),
-            };
+            let (mut tools, unavailable): (Vec<ToolDescription>, _) =
+                match provider.offered(situation).await {
+                    Ok(tools) => (tools.iter().map(|t| t.description().clone()).collect(), None),
+                    Err(why) => (Vec::new(), Some(why)),
+                };
             tools.retain(|tool| match sets.iter().find(|set| set.tools.iter().any(|t| t.name == tool.name)) {
                 Some(set) => {
                     warn!("Tool '{}' of component '{}' is not offered: component '{}' offers a tool of that name", tool.name, provider.id, set.name);
@@ -124,64 +87,67 @@ impl ToolProviders {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::{FixedTools, ToolOutput, ToolResult};
+    use crate::turn::Turn;
     use async_trait::async_trait;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
-    use caelumora_domain::question::{Addressee, Question};
-    use caelumora_domain::tool::{ToolDescription, ToolParameters};
+    use caelumora_domain::question::{Addressee, Answers, Question, Questions};
+    use caelumora_domain::tool::ToolParameters;
     use caelumora_domain::turn::TurnState;
     use caelumora_domain::work::Work;
     use serde_json::{json, Value};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
 
+    /// The description of a tool named `name`, without parameters.
+    fn described(name: &str) -> ToolDescription {
+        ToolDescription {
+            name: name.to_string(),
+            description: "desc".to_string(),
+            parameters: ToolParameters::object(
+                Vec::<(String, ToolParameters)>::new(),
+                Vec::<String>::new(),
+            ),
+            requires_approval: false,
+            visibility: Default::default(),
+            classification: None,
+            presentation: Default::default(),
+        }
+    }
+
+    /// A tool that answers "ok".
     #[derive(Debug)]
-    struct MockToolProvider;
+    struct Answering(ToolDescription);
 
     #[async_trait]
-    impl ToolProvider for MockToolProvider {
-        fn description(&self) -> String {
-            "mock tools".to_string()
-        }
-        fn tools(&self) -> Vec<ToolDescription> {
-            vec![ToolDescription {
-                name: "test_tool".to_string(),
-                description: "desc".to_string(),
-                parameters: ToolParameters::object(
-                    Vec::<(String, ToolParameters)>::new(),
-                    Vec::<String>::new(),
-                ),
-                requires_approval: false,
-                visibility: Default::default(),
-                classification: None,
-                presentation: Default::default(),
-            }]
+    impl Tool for Answering {
+        fn description(&self) -> &ToolDescription {
+            &self.0
         }
         async fn execute(
             &self,
-            _name: &str,
             _params: &Value,
             _answers: Option<&Answers>,
-            _turn: &mut Turn,
+            _turn: &mut Turn<'_>,
         ) -> ToolResult<ToolOutput> {
             Ok(json!({"result": "ok"}).into())
         }
     }
 
+    /// The tool `name`, which answers "ok".
+    fn answering(name: &str) -> Arc<dyn Tool> {
+        Arc::new(Answering(described(name)))
+    }
+
+    /// The component `id`, whose tool is `test_tool`.
     fn component(id: &str) -> ComponentImpl<dyn ToolProvider> {
         ComponentImpl {
             id: id.to_string(),
             fail_policy: Default::default(),
-            facet: Arc::new(MockToolProvider),
-        }
-    }
-
-    fn call(name: &str) -> ToolCall {
-        ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: name.to_string(),
-            arguments: json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
+            facet: Arc::new(FixedTools::new(
+                "mock tools".to_string(),
+                vec![answering("test_tool")],
+            )),
         }
     }
 
@@ -193,42 +159,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_call_runs_with_the_tool_that_provides_it_and_an_unknown_one_is_reported() {
+    async fn a_call_finds_the_tool_of_its_name_and_none_of_another() {
         let providers = ToolProviders::new(vec![component("tools")]).unwrap();
         let mut agent_channel_state = agent_state();
         let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
-        let output = providers.execute(&call("test_tool"), None, &mut context).await.unwrap();
+        let tool = providers.find("test_tool").expect("found");
+        let output = tool.execute(&json!({}), None, &mut context).await.unwrap();
         assert_eq!(output.value, json!({"result": "ok"}));
-        let unknown = providers.execute(&call("does_not_exist"), None, &mut context).await;
-        assert!(matches!(unknown, Err(ToolError::UnknownTool(name)) if name == "does_not_exist"));
+        assert!(providers.find("does_not_exist").is_none());
     }
 
-    /// A provider whose tool asks a question and says what it was answered.
+    /// A tool that asks a question and says what it was answered.
     #[derive(Debug)]
-    struct Asking;
+    struct Asking(ToolDescription);
 
     #[async_trait]
-    impl ToolProvider for Asking {
-        fn description(&self) -> String {
-            "asking tools".to_string()
-        }
-        fn tools(&self) -> Vec<ToolDescription> {
-            vec![ToolDescription {
-                name: "asking_tool".to_string(),
-                ..MockToolProvider.tools().remove(0)
-            }]
+    impl Tool for Asking {
+        fn description(&self) -> &ToolDescription {
+            &self.0
         }
         async fn execute(
             &self,
-            _name: &str,
             _params: &Value,
             answers: Option<&Answers>,
-            _turn: &mut Turn,
+            _turn: &mut Turn<'_>,
         ) -> ToolResult<ToolOutput> {
             Ok(json!({"answered_by": answers.map(|a| a.answered_by_name.clone())}).into())
         }
-        fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
+        fn questions(&self, _params: &Value) -> ToolResult<Option<Questions>> {
             Ok(Some(Questions {
                 questions: vec![Question {
                     header: "Name".to_string(),
@@ -247,28 +206,25 @@ mod tests {
         let asking = ComponentImpl {
             id: "asking".to_string(),
             fail_policy: Default::default(),
-            facet: Arc::new(Asking) as Arc<dyn ToolProvider>,
+            facet: Arc::new(FixedTools::new(
+                "asking tools".to_string(),
+                vec![Arc::new(Asking(described("asking_tool")))],
+            )) as Arc<dyn ToolProvider>,
         };
         let providers = ToolProviders::new(vec![component("tools"), asking]).unwrap();
+        let test_tool = providers.find("test_tool").unwrap();
         assert!(
-            providers.questions(&call("test_tool")).unwrap().is_none(),
+            test_tool.questions(&json!({})).unwrap().is_none(),
             "a tool asks nothing by default"
         );
-        assert_eq!(
-            providers.questions(&call("asking_tool")).unwrap().map(|q| q.questions.len()),
-            Some(1)
-        );
-        assert!(matches!(
-            providers.questions(&call("does_not_exist")),
-            Err(ToolError::UnknownTool(_))
-        ));
+        let asking_tool = providers.find("asking_tool").unwrap();
+        let questions = asking_tool.questions(&json!({})).unwrap().expect("it asks");
+        assert_eq!(questions.questions.len(), 1);
 
         let mut agent_channel_state = agent_state();
         let mut context = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        let questions = providers.questions(&call("asking_tool")).unwrap().expect("it asks");
         let answers = Answers::declined(questions, ActorId::None, "alice".to_string());
-        let output =
-            providers.execute(&call("asking_tool"), Some(&answers), &mut context).await.unwrap();
+        let output = asking_tool.execute(&json!({}), Some(&answers), &mut context).await.unwrap();
         assert_eq!(output.value, json!({"answered_by": "alice"}));
     }
 
@@ -282,26 +238,11 @@ mod tests {
         fn description(&self) -> String {
             "remote tools".to_string()
         }
-        fn tools(&self) -> Vec<ToolDescription> {
-            vec![ToolDescription {
-                name: "remote_tool".to_string(),
-                ..MockToolProvider.tools().remove(0)
-            }]
+        fn tools(&self) -> Vec<Arc<dyn Tool>> {
+            vec![answering("remote_tool")]
         }
-        async fn offered(
-            &self,
-            _situation: &Situation<'_>,
-        ) -> Result<Vec<ToolDescription>, String> {
+        async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Arc<dyn Tool>>, String> {
             Err("its server cannot be reached".to_string())
-        }
-        async fn execute(
-            &self,
-            name: &str,
-            _params: &Value,
-            _answers: Option<&Answers>,
-            _turn: &mut Turn,
-        ) -> ToolResult<ToolOutput> {
-            Err(ToolError::UnknownTool(name.to_string()))
         }
     }
 
@@ -334,36 +275,29 @@ mod tests {
         ], "in the order of the configuration, an unavailable one included, without the tools it has");
     }
 
-    /// A provider whose tools are as it is told, and may change.
+    /// A provider whose tools are named as it is told, and may change.
     #[derive(Debug)]
-    struct Changing(Mutex<Vec<ToolDescription>>);
+    struct Changing(Mutex<Vec<&'static str>>);
 
-    #[async_trait]
     impl ToolProvider for Changing {
         fn description(&self) -> String {
             "changing tools".to_string()
         }
-        fn tools(&self) -> Vec<ToolDescription> {
-            self.0.lock().unwrap().clone()
-        }
-        async fn execute(
-            &self,
-            name: &str,
-            _params: &Value,
-            _answers: Option<&Answers>,
-            _turn: &mut Turn,
-        ) -> ToolResult<ToolOutput> {
-            Err(ToolError::UnknownTool(name.to_string()))
+        fn tools(&self) -> Vec<Arc<dyn Tool>> {
+            let described =
+                |name| ToolDescription { description: "changing".to_string(), ..described(name) };
+            self.0
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|name| Arc::new(Answering(described(name))) as _)
+                .collect()
         }
     }
 
     #[tokio::test]
-    async fn a_tool_whose_name_another_provider_took_since_is_not_offered() {
-        let tool = |name: &str| ToolDescription {
-            name: name.to_string(),
-            ..MockToolProvider.tools().remove(0)
-        };
-        let changing = Arc::new(Changing(Mutex::new(vec![tool("other_tool")])));
+    async fn a_tool_whose_name_another_provider_took_since_is_not_offered_nor_found() {
+        let changing = Arc::new(Changing(Mutex::new(vec!["other_tool"])));
         let providers = ToolProviders::new(vec![
             component("local"),
             ComponentImpl {
@@ -373,7 +307,7 @@ mod tests {
             },
         ])
         .unwrap();
-        *changing.0.lock().unwrap() = vec![tool("test_tool"), tool("other_tool")];
+        *changing.0.lock().unwrap() = vec!["test_tool", "other_tool"];
 
         let mut agent_channel_state = agent_state();
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
@@ -391,6 +325,8 @@ mod tests {
             ],
             "the first keeps the name, as a call of it reaches the first"
         );
+        let found = providers.find("test_tool").unwrap();
+        assert_eq!(found.description().description, "desc", "the first's");
     }
 
     #[test]

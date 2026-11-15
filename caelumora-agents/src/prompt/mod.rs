@@ -457,7 +457,7 @@ mod tests {
             .unwrap();
         let calculator = built.get_all::<dyn ToolProvider>(None).unwrap().remove(0);
         assert_eq!(
-            calculator.tools()[0].description,
+            calculator.tools()[0].description().description,
             "Computes.",
             "the tool, in its model's variant"
         );

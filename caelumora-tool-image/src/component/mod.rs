@@ -1,21 +1,21 @@
 //! The component kind `image_generation` (issues 512, 525, 534): what it is configured with and
 //! built of - the image models its agent is given (`ImageModelClient`, of components of the kind
-//! `image_model`) -; its tool `generate_image`, which generates an image with one of them, is its
-//! facet `ToolProvider` (`tool`).
+//! `image_model`) -; its tool `generate_image`, which generates an image with one of them, is
+//! `tool`'s, given as the tools of a `FixedTools`.
 
 mod tool;
 
 use crate::NAMESPACE;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
-use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
+use caelumora_agents::tool::{tool_text, ApprovalMode, FixedTools, ToolProvider};
 use caelumora_api::component::{ComponentError, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_api::image::ImageModelClient;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
+use tool::GenerateImageTool;
 
 /// The kind of the component, and the path of its texts in the catalogue.
 const IMAGE_GENERATION_KIND: &str = "image_generation";
@@ -38,41 +38,27 @@ struct ImageGenerationParams {
 
 impl Params for ImageGenerationParams {}
 
-/// A component of the kind `image_generation`: the tool `generate_image` over the image models its
-/// agent is given.
-#[derive(Debug)]
-struct ImageGenerationComponent {
-    /// Every model offered, in the order of the agent's components; the first is the default.
+/// The tools of a component of the kind `image_generation` configured by `params`: the tool
+/// `generate_image` over `models`, which are not empty - `register` builds none without -, its
+/// texts from `prompts`, whose arguments go where `params` clears them for.
+///
+/// # Errors
+/// `PromptError` if one of its texts cannot be had.
+fn tools(
+    params: ImageGenerationParams,
     models: Vec<Arc<dyn ImageModelClient>>,
-    destination: Classification,
-    description: String,
-    tool: ToolDescription,
-}
-
-impl ImageGenerationComponent {
-    /// The component configured by `params` over `models`, which are not empty - `register` builds
-    /// none without -, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of its texts cannot be had.
-    fn new(
-        params: ImageGenerationParams,
-        models: Vec<Arc<dyn ImageModelClient>>,
-        prompts: &PromptTexts,
-    ) -> Result<Self, PromptError> {
-        let tool =
-            tool::generate_image(prompts, params.requires_approval.required(false), &models)?;
-        let description = match params.description {
-            Some(description) => description,
-            None => tool_text(prompts, NAMESPACE, IMAGE_GENERATION_KIND, "description", ())?,
-        };
-        Ok(Self {
-            models,
-            destination: params.destination.unwrap_or(Classification::PUBLIC),
-            description,
-            tool,
-        })
-    }
+    prompts: &PromptTexts,
+) -> Result<FixedTools, PromptError> {
+    let generate_image =
+        GenerateImageTool::new(prompts, params.requires_approval.required(false), models)?;
+    let description = match params.description {
+        Some(description) => description,
+        None => tool_text(prompts, NAMESPACE, IMAGE_GENERATION_KIND, "description", ())?,
+    };
+    Ok(FixedTools {
+        destination: Some(params.destination.unwrap_or(Classification::PUBLIC)),
+        ..FixedTools::new(description, vec![Arc::new(generate_image)])
+    })
 }
 
 /// Registers the component kind `image_generation`, which needs the agent's image models - at least
@@ -101,9 +87,8 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
                         .to_string(),
                 ));
             }
-            let component = ImageGenerationComponent::new(params, models, &prompts)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(component));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(params, models, &prompts)?));
             Ok(facets)
         },
     );

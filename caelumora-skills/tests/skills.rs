@@ -12,7 +12,8 @@ use caelumora_agents::command::AgentCommand;
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::prompt::PromptProvider;
 use caelumora_agents::testing::{
-    self as agent_testing, activities_until_the_turn_ends, register_scripted, saying,
+    self as agent_testing, activities_until_the_turn_ends, described_tools, register_scripted,
+    saying, tool_named,
 };
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
@@ -108,7 +109,7 @@ async fn call(
     name: &str,
     params: Value,
 ) -> ToolResult<ToolOutput> {
-    ToolProvider::execute(provider, name, &params, None, turn).await
+    tool_named(provider, name).execute(&params, None, turn).await
 }
 
 // --- The component --------------------------------------------------------
@@ -300,9 +301,9 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
 async fn an_approver_is_shown_the_skill_whole() {
     let world = world().await;
     let provider = skills::<dyn ToolProvider>(&world, json!({})).await;
-    let shown = provider.describe(CREATE_SKILL_TOOL_NAME, &serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap();
+    let shown = tool_named(provider.as_ref(), CREATE_SKILL_TOOL_NAME).describe(&serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap();
     assert_eq!(shown, "Write the skill \"deploy\" (for every session of the agent's owner): How we deploy\n\n1. Build.\n2. Ship.");
-    let tools = provider.tools();
+    let tools = described_tools(provider.as_ref());
     assert!(
         tools
             .iter()
@@ -310,8 +311,9 @@ async fn an_approver_is_shown_the_skill_whole() {
             .all(|t| t.requires_approval),
         "approved by default"
     );
-    let unapproved =
-        skills::<dyn ToolProvider>(&world, json!({ "requires_approval": false })).await.tools();
+    let unapproved = described_tools(
+        skills::<dyn ToolProvider>(&world, json!({ "requires_approval": false })).await.as_ref(),
+    );
     assert!(unapproved.iter().all(|t| !t.requires_approval), "unless configured otherwise");
 }
 
@@ -319,7 +321,7 @@ async fn an_approver_is_shown_the_skill_whole() {
 async fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
     let world = world().await;
     use caelumora_skills::component::{SKILL_LIST_PRESENTATION, SKILL_PRESENTATION};
-    let tools = skills::<dyn ToolProvider>(&world, json!({})).await.tools();
+    let tools = described_tools(skills::<dyn ToolProvider>(&world, json!({})).await.as_ref());
     let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
     assert_eq!(
         load.visibility,

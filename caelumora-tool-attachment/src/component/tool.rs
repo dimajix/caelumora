@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
     arguments, described, page_of, page_parameters, tool_text, workspace_reader, workspace_writer,
-    TextPosition, ToolError, ToolOutput, ToolProvider, ToolResult,
+    TextPosition, Tool, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_api::error::ContentError;
@@ -27,6 +27,7 @@ use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, 
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use tracing::error;
 
 const VIEW_ATTACHMENT: &str = "view_attachment";
@@ -70,61 +71,37 @@ struct CopyTo {
     path: Option<String>,
 }
 
-/// The tools, their texts from `prompts`.
+/// The description of the tool `name` taking `parameters`, which asks for approval if
+/// `requires_approval`, its texts from `prompts`.
 ///
 /// # Errors
-/// `PromptError` if one of their texts cannot be had.
-pub(super) fn tools(prompts: &PromptTexts) -> Result<Vec<ToolDescription>, PromptError> {
-    let reference = || ("ref", ToolParameters::string());
-    let tool = |name: &str, parameters: ToolParameters, requires_approval: bool| {
-        described(
-            prompts,
-            NAMESPACE,
-            ATTACHMENTS_KIND,
-            ToolDescription {
-                name: name.to_string(),
-                description: String::new(),
-                parameters,
-                requires_approval,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: ToolPresentation::default(),
-            },
-            context! { copied_to => COPIED_TO },
-        )
-    };
-    Ok(vec![
-        tool(VIEW_ATTACHMENT, ToolParameters::object([reference()], ["ref"]), false)?,
-        tool(
-            READ_ATTACHMENT,
-            ToolParameters::object([reference()].into_iter().chain(page_parameters()), ["ref"]),
-            false,
-        )?,
-        // It writes into the workspace: always asked, as a write there is.
-        tool(
-            COPY_ATTACHMENT,
-            ToolParameters::object([reference(), ("path", ToolParameters::string())], ["ref"]),
-            true,
-        )?,
-        // What it attaches is shown by the answer that carries it; the call would only say so
-        // again.
+/// `PromptError` if one of its texts cannot be had.
+fn described_as(
+    prompts: &PromptTexts,
+    name: &str,
+    parameters: ToolParameters,
+    requires_approval: bool,
+) -> Result<ToolDescription, PromptError> {
+    described(
+        prompts,
+        NAMESPACE,
+        ATTACHMENTS_KIND,
         ToolDescription {
-            presentation: ToolPresentation::QUIET,
-            ..tool(ATTACH, ToolParameters::object([reference()], ["ref"]), false)?
+            name: name.to_string(),
+            description: String::new(),
+            parameters,
+            requires_approval,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: ToolPresentation::default(),
         },
-    ])
+        context! { copied_to => COPIED_TO },
+    )
 }
 
-impl AttachmentsComponent {
-    /// The text `key` of its results, rendered with `values`; `None`, logged, if it cannot be had -
-    /// the result is given without it.
-    fn text(&self, key: &str, values: impl Serialize) -> Option<String> {
-        tool_text(&self.prompts, NAMESPACE, ATTACHMENTS_KIND, key, values)
-            .inspect_err(|e| {
-                error!("A result of the attachment tools is given without saying what it did: {e}")
-            })
-            .ok()
-    }
+/// The parameter every tool takes: the attachment's number.
+fn reference() -> (&'static str, ToolParameters) {
+    ("ref", ToolParameters::string())
 }
 
 /// The attachment the model of `turn` names `reference`: the message that carries it, and its id.
@@ -187,123 +164,241 @@ impl ToolProvider for AttachmentsComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        [&self.view, &self.read, &self.copy, &self.attach].map(Arc::clone).into()
     }
 
     /// All of them, also before anything is numbered - a tool may give one in the turn under way,
     /// whose tools are fixed as it begins -, but `view_attachment` only to a model that sees
     /// images, `copy_attachment` only where a workspace may be written to, as the workspace's tools
     /// offer their writes.
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Arc<dyn Tool>>, String> {
         let sees = situation.profile().sees_images();
         let writable = match workspace_reader(situation).await {
             Ok(workspace) => workspace.may_write().await,
             Err(_) => false,
         };
-        let offered = |tool: &&ToolDescription| match tool.name.as_str() {
-            VIEW_ATTACHMENT => sees,
-            COPY_ATTACHMENT => writable,
-            _ => true,
-        };
-        Ok(self.tools.iter().filter(offered).cloned().collect())
+        Ok([(&self.view, sees), (&self.read, true), (&self.copy, writable), (&self.attach, true)]
+            .into_iter()
+            .filter(|(_, offered)| *offered)
+            .map(|(tool, _)| Arc::clone(tool))
+            .collect())
+    }
+}
+
+/// The tool `view_attachment`: an image the agent heard, shown its model again.
+#[derive(Debug)]
+pub(super) struct ViewAttachmentTool {
+    description: ToolDescription,
+}
+
+impl ViewAttachmentTool {
+    /// The tool, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
+        let parameters = ToolParameters::object([reference()], ["ref"]);
+        Ok(Self { description: described_as(prompts, VIEW_ATTACHMENT, parameters, false)? })
+    }
+}
+
+#[async_trait]
+impl Tool for ViewAttachmentTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        match name {
-            VIEW_ATTACHMENT => {
-                let Named { reference } = arguments(params)?;
-                let attachment = attachment(turn, &reference).await?;
-                if !attachment.is_image() {
-                    return Err(ToolError::InvalidParameter(format!("'{reference}' is no image but {}; read it or copy it into the workspace instead", attachment.media_type)));
-                }
-                let value =
-                    json!({ "ref": reference, "name": attachment.name.as_str(), "shown": true });
-                let classification = attachment.classification.clone();
-                Ok(ToolOutput {
-                    shown: vec![attachment],
-                    ..ToolOutput::classified(value, classification)
-                })
-            }
-            READ_ATTACHMENT => {
-                let Read { reference, start_line, start_offset, line_count } = arguments(params)?;
-                let (attachment, content) = attachment_content(turn, &reference).await?;
-                let bytes: Vec<u8> = content
-                    .map_ok(|chunk| chunk.to_vec())
-                    .try_concat()
-                    .await
-                    .map_err(ContentError::unavailable)?;
-                // Its bytes decide, not its label, which goes by its first bytes alone (issue 552).
-                let text = String::from_utf8(bytes).map_err(|_| {
-                    ToolError::InvalidParameter(format!("'{reference}' cannot be read as text: it is {} and not UTF-8; copy it into the workspace to work on it there", attachment.media_type))
-                })?;
-                let mut value = page_of(
-                    &text,
-                    &format!("'{reference}'"),
-                    TextPosition::asked(start_line, start_offset),
-                    line_count,
-                    MAX_PAGE_BYTES,
-                )?
-                .value(&self.prompts);
-                value["ref"] = json!(reference);
-                value["name"] = json!(attachment.name.as_str());
-                Ok(ToolOutput::classified(value, attachment.classification))
-            }
-            COPY_ATTACHMENT => {
-                let CopyTo { reference, path } = arguments(params)?;
-                // A workspace used in the channel takes what the channel holds: the attachment's
-                // label flows into it as the channel's does.
-                let writer = workspace_writer(turn).await?;
-                let (workspace, terminal) = writer.terminal().await?;
-                let (attachment, content) = attachment_content(turn, &reference).await?;
-                let at = WorkspacePath::parse(
-                    &path.unwrap_or_else(|| format!("{COPIED_TO}/{}", attachment.name.as_str())),
-                )?;
-                let written = terminal.write(&at, content).await?;
-                Ok(ToolOutput::classified(
-                    json!({ "ref": reference, "path": at.to_string(), "bytes": written }),
-                    workspace.classification,
-                ))
-            }
-            ATTACH => {
-                let Named { reference } = arguments(params)?;
-                let (message, id) = attachment_named(turn, &reference)?;
-                let copy = turn.copy_attachment(message, id).await?;
-                let (classification, name) = (copy.classification.clone(), copy.name.clone());
-                turn.put_aside(copy);
-                let value = json!({ "ref": reference, "name": name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
-                Ok(ToolOutput::classified(value, classification))
-            }
-            _ => Err(ToolError::UnknownTool(name.to_string())),
+        let Named { reference } = arguments(params)?;
+        let attachment = attachment(turn, &reference).await?;
+        if !attachment.is_image() {
+            return Err(ToolError::InvalidParameter(format!(
+                "'{reference}' is no image but {}; read it or copy it into the workspace instead",
+                attachment.media_type
+            )));
         }
+        let value = json!({ "ref": reference, "name": attachment.name.as_str(), "shown": true });
+        let classification = attachment.classification.clone();
+        Ok(ToolOutput { shown: vec![attachment], ..ToolOutput::classified(value, classification) })
+    }
+}
+
+/// The tool `read_attachment`: a text the agent heard, a page at a time.
+#[derive(Debug)]
+pub(super) struct ReadAttachmentTool {
+    description: ToolDescription,
+    /// The texts its results give.
+    prompts: PromptTexts,
+}
+
+impl ReadAttachmentTool {
+    /// The tool, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
+        let parameters =
+            ToolParameters::object([reference()].into_iter().chain(page_parameters()), ["ref"]);
+        let description = described_as(prompts, READ_ATTACHMENT, parameters, false)?;
+        Ok(Self { description, prompts: prompts.clone() })
+    }
+}
+
+#[async_trait]
+impl Tool for ReadAttachmentTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
-    fn describe(&self, name: &str, params: &Value) -> ToolResult<String> {
-        match name {
-            COPY_ATTACHMENT => {
-                let CopyTo { reference, path } = arguments(params)?;
-                Ok(match path {
-                    Some(path) => {
-                        format!("Copy attachment '{reference}' into the workspace as '{path}'")
-                    }
-                    None => format!(
-                        "Copy attachment '{reference}' into the workspace under '{COPIED_TO}/'"
-                    ),
-                })
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let Read { reference, start_line, start_offset, line_count } = arguments(params)?;
+        let (attachment, content) = attachment_content(turn, &reference).await?;
+        let bytes: Vec<u8> = content
+            .map_ok(|chunk| chunk.to_vec())
+            .try_concat()
+            .await
+            .map_err(ContentError::unavailable)?;
+        // Its bytes decide, not its label, which goes by its first bytes alone (issue 552).
+        let text = String::from_utf8(bytes).map_err(|_| {
+            ToolError::InvalidParameter(format!("'{reference}' cannot be read as text: it is {} and not UTF-8; copy it into the workspace to work on it there", attachment.media_type))
+        })?;
+        let mut value = page_of(
+            &text,
+            &format!("'{reference}'"),
+            TextPosition::asked(start_line, start_offset),
+            line_count,
+            MAX_PAGE_BYTES,
+        )?
+        .value(&self.prompts);
+        value["ref"] = json!(reference);
+        value["name"] = json!(attachment.name.as_str());
+        Ok(ToolOutput::classified(value, attachment.classification))
+    }
+}
+
+/// The tool `copy_attachment`: an attachment the agent heard, written into the workspace the turn
+/// may use. It writes into the workspace: always asked, as a write there is.
+#[derive(Debug)]
+pub(super) struct CopyAttachmentTool {
+    description: ToolDescription,
+}
+
+impl CopyAttachmentTool {
+    /// The tool, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
+        let parameters =
+            ToolParameters::object([reference(), ("path", ToolParameters::string())], ["ref"]);
+        Ok(Self { description: described_as(prompts, COPY_ATTACHMENT, parameters, true)? })
+    }
+}
+
+#[async_trait]
+impl Tool for CopyAttachmentTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let CopyTo { reference, path } = arguments(params)?;
+        // A workspace used in the channel takes what the channel holds: the attachment's
+        // label flows into it as the channel's does.
+        let writer = workspace_writer(turn).await?;
+        let (workspace, terminal) = writer.terminal().await?;
+        let (attachment, content) = attachment_content(turn, &reference).await?;
+        let at = WorkspacePath::parse(
+            &path.unwrap_or_else(|| format!("{COPIED_TO}/{}", attachment.name.as_str())),
+        )?;
+        let written = terminal.write(&at, content).await?;
+        Ok(ToolOutput::classified(
+            json!({ "ref": reference, "path": at.to_string(), "bytes": written }),
+            workspace.classification,
+        ))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        let CopyTo { reference, path } = arguments(params)?;
+        Ok(match path {
+            Some(path) => format!("Copy attachment '{reference}' into the workspace as '{path}'"),
+            None => {
+                format!("Copy attachment '{reference}' into the workspace under '{COPIED_TO}/'")
             }
-            _ => self
-                .tools
-                .iter()
-                .find(|tool| tool.name == name)
-                .map(|tool| tool.description.clone())
-                .ok_or_else(|| ToolError::UnknownTool(name.to_string())),
-        }
+        })
+    }
+}
+
+/// The tool `attach`: a copy of an attachment the agent heard, put aside for the turn's next
+/// answer. What it attaches is shown by the answer that carries it; the call would only say so
+/// again (`ToolPresentation::QUIET`).
+#[derive(Debug)]
+pub(super) struct AttachTool {
+    description: ToolDescription,
+    /// The texts its results give.
+    prompts: PromptTexts,
+}
+
+impl AttachTool {
+    /// The tool, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(prompts: PromptTexts) -> Result<Self, PromptError> {
+        let parameters = ToolParameters::object([reference()], ["ref"]);
+        let description = ToolDescription {
+            presentation: ToolPresentation::QUIET,
+            ..described_as(&prompts, ATTACH, parameters, false)?
+        };
+        Ok(Self { description, prompts })
+    }
+
+    /// The text `key` of its results, rendered with `values`; `None`, logged, if it cannot be had -
+    /// the result is given without it.
+    fn text(&self, key: &str, values: impl Serialize) -> Option<String> {
+        tool_text(&self.prompts, NAMESPACE, ATTACHMENTS_KIND, key, values)
+            .inspect_err(|e| {
+                error!("A result of the attachment tools is given without saying what it did: {e}")
+            })
+            .ok()
+    }
+}
+
+#[async_trait]
+impl Tool for AttachTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let Named { reference } = arguments(params)?;
+        let (message, id) = attachment_named(turn, &reference)?;
+        let copy = turn.copy_attachment(message, id).await?;
+        let (classification, name) = (copy.classification.clone(), copy.name.clone());
+        turn.put_aside(copy);
+        let value = json!({ "ref": reference, "name": name.as_str(), "attached": self.text("attached", ()).unwrap_or_default() });
+        Ok(ToolOutput::classified(value, classification))
     }
 }
 
@@ -417,11 +512,19 @@ mod tests {
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
 
         let args = json!({ "ref": "a1" });
-        let first = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap().value;
+        let first = testing::tool_named(&tool, READ_ATTACHMENT)
+            .execute(&args, None, &mut turn)
+            .await
+            .unwrap()
+            .value;
         assert_eq!(first["content"].as_str().map(str::len), Some(MAX_PAGE_BYTES));
         assert!(first["next"].as_str().unwrap().contains("start_offset 65536"), "{first}");
         let args = json!({ "ref": "a1", "start_offset": MAX_PAGE_BYTES });
-        let last = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap().value;
+        let last = testing::tool_named(&tool, READ_ATTACHMENT)
+            .execute(&args, None, &mut turn)
+            .await
+            .unwrap()
+            .value;
         assert_eq!(last["content"], "x");
         assert!(last.get("next").is_none(), "{last}");
     }
@@ -456,10 +559,14 @@ mod tests {
         let tool = tool();
 
         let args = json!({ "ref": "a1" });
-        let read = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap();
+        let read = testing::tool_named(&tool, READ_ATTACHMENT)
+            .execute(&args, None, &mut turn)
+            .await
+            .unwrap();
         assert_eq!(read.value["content"], "\u{1b}[1mbold\u{1b}[0m\0\n", "nothing replaced");
         let args = json!({ "ref": "a2" });
-        let refused = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await;
+        let refused =
+            testing::tool_named(&tool, READ_ATTACHMENT).execute(&args, None, &mut turn).await;
         assert!(
             matches!(&refused, Err(ToolError::InvalidParameter(e)) if e.contains("not UTF-8")),
             "{refused:?}"
@@ -491,9 +598,15 @@ mod tests {
         let tool = tool();
 
         let args = json!({ "ref": "a1" });
-        let read = tool.execute(READ_ATTACHMENT, &args, None, &mut turn).await.unwrap();
+        let read = testing::tool_named(&tool, READ_ATTACHMENT)
+            .execute(&args, None, &mut turn)
+            .await
+            .unwrap();
         assert_eq!(read.value["content"], "text\n");
-        let copied = tool.execute(COPY_ATTACHMENT, &args, None, &mut turn).await.unwrap();
+        let copied = testing::tool_named(&tool, COPY_ATTACHMENT)
+            .execute(&args, None, &mut turn)
+            .await
+            .unwrap();
         assert_eq!(copied.value["path"], "attachments/page.txt");
         drop(turn);
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -511,7 +624,7 @@ mod tests {
             .await
             .unwrap()
             .into_iter()
-            .map(|t| t.name)
+            .map(|t| t.description().name.clone())
             .collect();
         assert_eq!(
             before,
@@ -522,8 +635,13 @@ mod tests {
         let said = said_with_attachments(&world, &session, b"line one\nline two\n").await;
         state.perceive(vec![Message { role: MessageRole::User, ..said.clone() }]);
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
-        let offered: Vec<String> =
-            tool.offered(&turn.situation()).await.unwrap().into_iter().map(|t| t.name).collect();
+        let offered: Vec<String> = tool
+            .offered(&turn.situation())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.description().name.clone())
+            .collect();
         assert_eq!(
             offered,
             [READ_ATTACHMENT, COPY_ATTACHMENT, ATTACH],
@@ -531,8 +649,8 @@ mod tests {
         );
 
         let (notes, chart) = (&said.attachments[0], &said.attachments[1]);
-        let read = tool
-            .execute(READ_ATTACHMENT, &json!({ "ref": "a1", "line_count": 1 }), None, &mut turn)
+        let read = testing::tool_named(&tool, READ_ATTACHMENT)
+            .execute(&json!({ "ref": "a1", "line_count": 1 }), None, &mut turn)
             .await
             .unwrap();
         assert_eq!(
@@ -546,31 +664,37 @@ mod tests {
             "classified as it is"
         );
         assert!(
-            matches!(tool.execute(READ_ATTACHMENT, &json!({ "ref": "a2" }), None, &mut turn).await, Err(ToolError::InvalidParameter(e)) if e.contains("image/png")),
+            matches!(testing::tool_named(&tool, READ_ATTACHMENT).execute(&json!({ "ref": "a2" }), None, &mut turn).await, Err(ToolError::InvalidParameter(e)) if e.contains("image/png")),
             "an image is no text"
         );
 
-        let viewed =
-            tool.execute(VIEW_ATTACHMENT, &json!({ "ref": "a2" }), None, &mut turn).await.unwrap();
+        let viewed = testing::tool_named(&tool, VIEW_ATTACHMENT)
+            .execute(&json!({ "ref": "a2" }), None, &mut turn)
+            .await
+            .unwrap();
         assert_eq!(
             viewed.shown.iter().map(|shown| shown.id).collect::<Vec<_>>(),
             [chart.id],
             "shown, as it is attached"
         );
         assert!(
-            matches!(tool.execute(VIEW_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn).await, Err(ToolError::InvalidParameter(e)) if e.contains("text/plain")),
+            matches!(testing::tool_named(&tool, VIEW_ATTACHMENT).execute(&json!({ "ref": "a1" }), None, &mut turn).await, Err(ToolError::InvalidParameter(e)) if e.contains("text/plain")),
             "a text is no image"
         );
         assert!(
             matches!(
-                tool.execute(VIEW_ATTACHMENT, &json!({ "ref": "a9" }), None, &mut turn).await,
+                testing::tool_named(&tool, VIEW_ATTACHMENT)
+                    .execute(&json!({ "ref": "a9" }), None, &mut turn)
+                    .await,
                 Err(ToolError::InvalidParameter(_))
             ),
             "none numbered so"
         );
 
-        let copied =
-            tool.execute(COPY_ATTACHMENT, &json!({ "ref": "a2" }), None, &mut turn).await.unwrap();
+        let copied = testing::tool_named(&tool, COPY_ATTACHMENT)
+            .execute(&json!({ "ref": "a2" }), None, &mut turn)
+            .await
+            .unwrap();
         assert_eq!(copied.value["path"], "attachments/chart.png");
         let place = world.files.path().join("shell").join(docs.id.to_string());
         assert_eq!(
@@ -580,11 +704,14 @@ mod tests {
         );
         assert_eq!(copied.classification.as_ref(), Some(&docs.classification));
         assert!(
-            tool.tools().iter().find(|t| t.name == COPY_ATTACHMENT).unwrap().requires_approval,
+            testing::tool_named(&tool, COPY_ATTACHMENT).description().requires_approval,
             "a write, always asked"
         );
 
-        tool.execute(ATTACH, &json!({ "ref": "a1" }), None, &mut turn).await.unwrap();
+        testing::tool_named(&tool, ATTACH)
+            .execute(&json!({ "ref": "a1" }), None, &mut turn)
+            .await
+            .unwrap();
         let aside: Vec<ContentRef> =
             turn.situation().agent_channel_state().turn.as_ref().unwrap().attachments.clone();
         assert_eq!(aside.len(), 1);
@@ -593,7 +720,7 @@ mod tests {
             "a copy of its own: {aside:?}"
         );
         assert_eq!(
-            tool.tools().iter().find(|t| t.name == ATTACH).unwrap().presentation,
+            testing::tool_named(&tool, ATTACH).description().presentation,
             ToolPresentation::QUIET,
             "the answer shows what was attached, not the call"
         );
@@ -622,7 +749,9 @@ mod tests {
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         assert!(
             matches!(
-                tool.execute(READ_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn).await,
+                testing::tool_named(&tool, READ_ATTACHMENT)
+                    .execute(&json!({ "ref": "a1" }), None, &mut turn)
+                    .await,
                 Err(ToolError::InvalidParameter(_))
             ),
             "as its message stands"
@@ -640,8 +769,13 @@ mod tests {
             agent_runtime(participant_runtime_in(&session.channels()[0], ActorId::Agent(helper))),
         )
         .unwrap();
-        let offered: Vec<String> =
-            tool.offered(&seeing.situation()).await.unwrap().into_iter().map(|t| t.name).collect();
+        let offered: Vec<String> = tool
+            .offered(&seeing.situation())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.description().name.clone())
+            .collect();
         assert_eq!(offered, [VIEW_ATTACHMENT, READ_ATTACHMENT, COPY_ATTACHMENT, ATTACH]);
         drop(seeing);
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -661,12 +795,25 @@ mod tests {
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
         let tool = tool();
         let (_, read) = world
-            .asked(tool.execute(READ_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn))
+            .asked(testing::tool_named(&tool, READ_ATTACHMENT).execute(
+                &json!({ "ref": "a1" }),
+                None,
+                &mut turn,
+            ))
             .await;
-        let (_, attached) =
-            world.asked(tool.execute(ATTACH, &json!({ "ref": "a1" }), None, &mut turn)).await;
+        let (_, attached) = world
+            .asked(testing::tool_named(&tool, ATTACH).execute(
+                &json!({ "ref": "a1" }),
+                None,
+                &mut turn,
+            ))
+            .await;
         let (_, copied) = world
-            .asked(tool.execute(COPY_ATTACHMENT, &json!({ "ref": "a1" }), None, &mut turn))
+            .asked(testing::tool_named(&tool, COPY_ATTACHMENT).execute(
+                &json!({ "ref": "a1" }),
+                None,
+                &mut turn,
+            ))
             .await;
         let reaching = [
             "alice as helper: GetSession(alice's) yes",

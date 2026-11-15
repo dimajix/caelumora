@@ -4,12 +4,13 @@
 //! The tool is the simplest one that asks: its arguments are its questions
 //! and whom they are put to, and its result is the answers, which it gives
 //! the model as they are. Asking, waiting and checking the answers are not
-//! the tool's (see `ToolProvider::questions`). Its questions are never
+//! the tool's (see `Tool::questions`). Its questions are never
 //! sensitive: their answers go to the model.
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{
-    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, tool_text, FixedTools, Tool, ToolError, ToolOutput, ToolProvider,
+    ToolResult,
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
@@ -32,39 +33,37 @@ pub const ASK_USER_KIND: &str = "ask_user";
 
 pub const ASK_USER_TOOL_NAME: &str = "ask_user";
 
+/// The tool `ask_user`.
 #[derive(Debug)]
-pub struct AskUserComponent {
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
+struct AskUserTool {
+    description: ToolDescription,
 }
 
-impl AskUserComponent {
-    /// The provider, its texts from `prompts`, told the limits of a call.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let limits = context! { max_questions => MAX_QUESTIONS, max_choices => MAX_CHOICES, max_header_chars => MAX_HEADER_CHARS };
-        let choice = ToolParameters::object(
-            vec![
-                ("label", ToolParameters::string()),
-                ("description", ToolParameters::string()),
-                ("recommended", ToolParameters::boolean()),
-            ],
-            vec!["label"],
-        );
-        let question = ToolParameters::object(
-            vec![
-                ("header", ToolParameters::string()),
-                ("question", ToolParameters::string()),
-                ("choices", ToolParameters::array(choice)),
-                ("multi_select", ToolParameters::boolean()),
-            ],
-            vec!["header", "question"],
-        );
-        let tools = vec![described(
+/// The tools of the component, their texts from `prompts`, told the limits of a call.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
+    let limits = context! { max_questions => MAX_QUESTIONS, max_choices => MAX_CHOICES, max_header_chars => MAX_HEADER_CHARS };
+    let choice = ToolParameters::object(
+        vec![
+            ("label", ToolParameters::string()),
+            ("description", ToolParameters::string()),
+            ("recommended", ToolParameters::boolean()),
+        ],
+        vec!["label"],
+    );
+    let question = ToolParameters::object(
+        vec![
+            ("header", ToolParameters::string()),
+            ("question", ToolParameters::string()),
+            ("choices", ToolParameters::array(choice)),
+            ("multi_select", ToolParameters::boolean()),
+        ],
+        vec!["header", "question"],
+    );
+    let ask_user = AskUserTool {
+        description: described(
             prompts,
             NAMESPACE,
             ASK_USER_KIND,
@@ -84,12 +83,12 @@ impl AskUserComponent {
                 presentation: QUESTIONS_PRESENTATION,
             },
             &limits,
-        )?];
-        Ok(Self {
-            description: tool_text(prompts, NAMESPACE, ASK_USER_KIND, "description", &limits)?,
-            tools,
-        })
-    }
+        )?,
+    };
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, ASK_USER_KIND, "description", &limits)?,
+        vec![Arc::new(ask_user)],
+    ))
 }
 
 /// The arguments of `ask_user`: the questions, and the handles of the users
@@ -101,25 +100,17 @@ struct AskUser {
 }
 
 #[async_trait]
-impl ToolProvider for AskUserComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+impl Tool for AskUserTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         _params: &Value,
         answers: Option<&Answers>,
-        _turn: &mut Turn,
+        _turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        if name != ASK_USER_TOOL_NAME {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
         // The executor runs it only with its answers.
         let answers = answers.ok_or_else(|| {
             ToolError::ExecutionFailed("it ran without the answers to its questions".to_string())
@@ -128,10 +119,7 @@ impl ToolProvider for AskUserComponent {
         Ok(serde_json::json!({ "answered_by": answers.answered_by_name, "responses": answers.responses }).into())
     }
 
-    fn questions(&self, name: &str, params: &Value) -> ToolResult<Option<Questions>> {
-        if name != ASK_USER_TOOL_NAME {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
+    fn questions(&self, params: &Value) -> ToolResult<Option<Questions>> {
         let AskUser { questions, ask } = arguments(params)?;
         Ok(Some(Questions {
             questions,
@@ -147,7 +135,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(AskUserComponent::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(&texts)?));
             Ok(facets)
         },
     );
@@ -163,7 +151,7 @@ mod tests {
 
     #[test]
     fn its_arguments_are_its_questions_put_to_the_handles_named() {
-        let tool = AskUserComponent::new(&testing::prompts()).unwrap();
+        let tool = testing::tool_named(&tools(&testing::prompts()).unwrap(), ASK_USER_TOOL_NAME);
         let params = serde_json::json!({
             "questions": [
                 { "header": "Database", "question": "Which one?", "choices": [{ "label": "Postgres", "recommended": true }, { "label": "SQLite" }] },
@@ -171,7 +159,7 @@ mod tests {
             ],
             "ask": ["@alice", "bob"],
         });
-        let questions = tool.questions(ASK_USER_TOOL_NAME, &params).unwrap().expect("it asks");
+        let questions = tool.questions(&params).unwrap().expect("it asks");
         assert_eq!(questions.check(), Ok(()));
         assert_eq!(
             questions.ask,
@@ -186,30 +174,28 @@ mod tests {
         let without_ask =
             serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }] });
         assert!(
-            matches!(
-                tool.questions(ASK_USER_TOOL_NAME, &without_ask),
-                Err(ToolError::InvalidParameter(_))
-            ),
+            matches!(tool.questions(&without_ask), Err(ToolError::InvalidParameter(_))),
             "`ask` is required"
         );
-        assert!(matches!(tool.questions("other", &params), Err(ToolError::UnknownTool(_))));
     }
 
     #[test]
     fn its_calls_are_presented_as_questions() {
         assert_eq!(
-            AskUserComponent::new(&testing::prompts()).unwrap().tools().remove(0).presentation,
+            testing::tool_named(&tools(&testing::prompts()).unwrap(), ASK_USER_TOOL_NAME)
+                .description()
+                .presentation,
             QUESTIONS_PRESENTATION
         );
     }
 
     #[tokio::test]
     async fn its_result_is_the_answers_as_given() {
-        let tool = AskUserComponent::new(&testing::prompts()).unwrap();
+        let tool = testing::tool_named(&tools(&testing::prompts()).unwrap(), ASK_USER_TOOL_NAME);
         let mut state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut state);
         let params = serde_json::json!({ "questions": [{ "header": "Name", "question": "Who?" }, { "header": "Ok", "question": "Go on?", "choices": [{ "label": "yes" }, { "label": "no" }] }], "ask": ["@alice"] });
-        let questions = tool.questions(ASK_USER_TOOL_NAME, &params).unwrap().expect("it asks");
+        let questions = tool.questions(&params).unwrap().expect("it asks");
         let answers = Answers {
             questions,
             answered_by: ActorId::None,
@@ -220,8 +206,7 @@ mod tests {
             ],
         };
 
-        let output =
-            tool.execute(ASK_USER_TOOL_NAME, &params, Some(&answers), &mut turn).await.unwrap();
+        let output = tool.execute(&params, Some(&answers), &mut turn).await.unwrap();
         assert_eq!(
             output.value,
             serde_json::json!({
@@ -234,7 +219,7 @@ mod tests {
             "classified as the channel, like what users write"
         );
         assert!(matches!(
-            tool.execute(ASK_USER_TOOL_NAME, &params, None, &mut turn).await,
+            tool.execute(&params, None, &mut turn).await,
             Err(ToolError::ExecutionFailed(_))
         ));
     }

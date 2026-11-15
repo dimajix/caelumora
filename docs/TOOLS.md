@@ -8,15 +8,19 @@ person, is in [APPROVALS.md](APPROVALS.md); how components are built in
 [COMPONENTS.md](COMPONENTS.md); how far a tool call may travel in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
-A component offers tools by implementing `ToolProvider`; one component may expose several tools.
-Besides running a call, a provider says what its tools are for, which of them it offers in a turn
-and why it offers none (`offered`, in general terms, never with the error), what approvers are shown
-for a call (`describe`), which calls are like a given one (`matcher`, for a rule derived from it),
-and what a call asks a person before it runs (`questions`). A parameter written in a language - a
-bash command line, `ToolParameters::shell` - says so; the model is not told of it, but the default
-`matcher` derives from it a rule on the words a command begins with
-([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two calls
-alike says better than the default.
+Every tool is an object of its own, a `Tool` (issue 584): it holds its `ToolDescription`, carries
+out a call (`execute`), and says what approvers are shown for a call (`describe`), which calls are
+like a given one (`matcher`, for a rule derived from it), and what a call asks a person before it
+runs (`questions`). A component gives an agent tools through the facet `ToolProvider`, which hands
+out its tools as objects and answers for them as a set: what they are for, which of them it offers
+in a turn and why it offers none (`offered`, in general terms, never with the error), and where
+their arguments go (`destination`). A provider that decides none of this beyond a description and a
+destination is `FixedTools`, the tools its component made as it was built; one whose offer depends
+on its tools holds each with what it is offered by, never choosing among them by their names. A
+parameter written in a language - a bash command line, `ToolParameters::shell` - says so; the model
+is not told of it, but the default `matcher` derives from it a rule on the words a command begins
+with ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two
+calls alike says better than the default.
 
 A `ToolDescription` declares a tool's name, description and parameters, whether it requires
 approval, its visibility, optionally the classification of its results, and its presentation: how
@@ -46,16 +50,16 @@ in the web UI. Only a generic provider such as `mcp_server` takes its descriptio
 configuration.
 
 **What a turn is offered** depends on where it works (issue
-[290](../issues/290-tools-offered-by-the-turn.md)). A provider has its tools (`tools`), by which a
-call finds it and whose names no other provider of the agent may have, and offers of them those
-that may be called in the turn's situation (`offered`): by default all, a provider whose tools
-depend on the place fewer, or none, saying why. It is asked once the turn is begun and before its
-context is built, given the turn's `Situation` - the place and whose authority it acts with -, as
-a prompt part is; what it offers is fixed in the turn (see
+[290](../issues/290-tools-offered-by-the-turn.md)). A provider has its tools (`tools`), among which
+a call finds its tool by name and whose names no other provider of the agent may have, and offers of
+them those that may be called in the turn's situation (`offered`): by default all, a provider whose
+tools depend on the place fewer, or none, saying why. It is asked once the turn is begun and before
+its context is built, given the turn's `Situation` - the place and whose authority it acts with -,
+as a prompt part is; what it offers is fixed in the turn (see
 [AGENT-TURN.md](AGENT-TURN.md#tools-offered)). Offering is a convenience for the model, never the
 guard: a call of a tool not offered is answered as unknown, and a call of one offered keeps its own
-checks, since what may be called can change while the turn runs. What the web UI shows of an
-agent's tools is what a turn would be offered now, in the agent's own name.
+checks, since what may be called can change while the turn runs. What the web UI shows of an agent's
+tools is what a turn would be offered now, in the agent's own name.
 
 The model needs no prompt to learn of its tools, but a source that is unavailable leaves no trace in
 what it is offered. The optional component `tool_sets` names the unavailable sets of the turn, with
@@ -99,8 +103,12 @@ call is the kernel's to decide it asks of the kernel, through the agent's runtim
 whether the policy permits the call (`CallTool`) and what the rules of its places say, once, as the
 call is admitted (`ActorRuntime::admit_tool_call`, see
 [Checked before anyone is asked](APPROVALS.md#checked-before-anyone-is-asked)); whether a rule
-denies it now, again as it runs (`rule_denying`); and what may flow where (`may_publish`). Before it
-hands a call to its tool, it checks besides that the call was offered to it. Only agents call tools:
+denies it now, again as it runs (`rule_denying`); and what may flow where (`may_publish`). It finds
+a call's tool among the tools its providers have now (`ToolProviders::find`), the one of the
+provider configured first, and asks that tool, never a provider by the tool's name: once as the call
+is admitted, for what it does, asks and is like, and again as it runs, since a provider's tools may
+change in between. Before it hands a call to its tool, it checks besides that the call was offered
+to it. Only agents call tools:
 the kernel makes an `ActorRuntime` for an agent alone, so that the executor need not ask. Afterwards
 the executor times the call, turns an error into a status and a next step, classifies the result,
 withholds what may not flow into the channel and marks what only the owner sees.

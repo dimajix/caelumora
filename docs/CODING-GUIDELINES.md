@@ -305,8 +305,9 @@ in several places (its name, its arm, its description elsewhere), a constant has
 together, and an arm answers a case that cannot come. Whoever writes or meets one weighs giving
 each case a type of its own, or a trait the cases implement, so that a case is found as itself and
 not matched again: a command is an object (`ChannelCommand`, `AgentCommand`, issue 583), found by
-its set, not a name its provider matches. A `match` over the variants of a state that handles each
-in the same respect ([States are types](#states-are-types)) is no such multiplexer.
+its set, as a tool is (`Tool`, issue 584), found by the executor among its providers' tools - not a
+name its provider matches. A `match` over the variants of a state that handles each in the same
+respect ([States are types](#states-are-types)) is no such multiplexer.
 
 ### A name is a `Name` where it is looked up
 

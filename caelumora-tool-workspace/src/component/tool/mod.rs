@@ -1,4 +1,5 @@
-//! The facet `ToolProvider` of `workspace` (issues 251, 290): the tools on the session's workspace.
+//! The facet `ToolProvider` of `workspace` (issues 251, 290, 584): the tools on the session's
+//! workspace, each a type of its own.
 //!
 //! - The shell (`shell`): `run_command` starts a command in the workspace's
 //!   directory and follows it for a while; one still running then is handed
@@ -9,14 +10,16 @@
 //!   `delete_file` change. What was read, and what was written, is given with the result as
 //!   knowledge by its path (`ToolOutput::knowledge`, issue 538), which the executor records.
 //!
-//! A turn is offered the tools that may be called on the workspace its channel may use (issue 290):
-//! none where there is none, none that change where its access list grants reading alone, no shell
-//! where its storage gives none. The workspace is reached on every call all the same - to read
-//! through the reader of it the situation hands out, to change through the writer the turn does
-//! (issues 344, 516) -, before anything is sent, in its context (issue 296): as a participant of
-//! the channel, where the channel uses it, its access list lets the agent read it - change it, for
-//! the shell and the tools that write (issue 23) - and it and the channel flow both ways. A result
-//! is classified as the workspace. Which calls need approval is configured as for `mcp_server`
+//! The component holds each tool with how it uses the workspace (`Use`), by which a turn is offered
+//! the tools that may be called on the workspace its channel may use (issue 290): none where there
+//! is none, none that change where its access list grants reading alone, no shell where its storage
+//! gives none. The workspace is reached on every call all the same - to read through the reader of
+//! it the situation hands out, to change through the writer the turn does (issues 344, 516), each
+//! use by a function of its own here (`reading`, `changing`, `shell`) -, before anything is sent,
+//! in its context (issue 296): as a participant of the channel, where the channel uses it, its
+//! access list lets the agent read it - change it, for the shell and the tools that write (issue
+//! 23) - and it and the channel flow both ways. A result is classified as the workspace
+//! (`of_workspace`). Which calls need approval is configured as for `mcp_server`
 //! (`requires_approval`, an `ApprovalMode`): all, none, or all but those that only read;
 //! `command_output`, `kill_command` and `publish_file` never ask.
 
@@ -30,33 +33,33 @@ use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    described, proposed_matcher, workspace_reader, workspace_writer, ToolError, ToolOutput,
-    ToolProvider, ToolResult,
+    described, workspace_reader, workspace_writer, Tool, ToolError, ToolOutput, ToolProvider,
+    ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_domain::approval::ToolMatcher;
+use caelumora_api::terminal::{Shell, Terminal, TerminalReader};
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
+use caelumora_domain::workspace::Workspace;
 use serde::Serialize;
-use serde_json::Value;
+use std::sync::Arc;
 use tracing::error;
 
-/// Its tools - those of the shell, then those on the files -, configured by `params`, their texts
-/// from `prompts`.
+/// Its tools - those of the shell, then those on the files -, each with how it uses the
+/// workspace, configured by `params`, their texts from `prompts`.
 ///
 /// # Errors
 /// `PromptError` if one of their texts cannot be had.
 pub(super) fn tools(
-    params: &WorkspaceParams,
+    params: &Arc<WorkspaceParams>,
     prompts: &PromptTexts,
-) -> Result<Vec<ToolDescription>, PromptError> {
+) -> Result<Vec<UsingTool>, PromptError> {
     let mut tools = shell::tools(params, prompts)?;
     tools.extend(files::tools(params, prompts)?);
     Ok(tools)
 }
 
-/// A tool of this component, `values` told its texts (issue 57), as the
+/// The description of a tool of this component, `values` told its texts (issue 57), as the
 /// model is offered it.
 ///
 /// # Errors
@@ -94,26 +97,60 @@ fn next(prompts: &PromptTexts, key: &str, values: impl Serialize) -> Option<Stri
         .ok()
 }
 
-/// How a call of one of its tools uses the workspace, both to be offered (issue 290) and to run:
-/// reading its files, changing them, or running a command, which may change anything its place
-/// reaches (issue 23).
+/// A tool of the component, held with how it uses the workspace, by which it is offered (issue
+/// 290).
+#[derive(Debug)]
+pub(super) struct UsingTool {
+    pub(super) using: Use,
+    pub(super) tool: Arc<dyn Tool>,
+}
+
+/// How a call of one of its tools uses the workspace, by which it is offered (issue 290): reading
+/// its files, changing them, or running a command, which may change anything its place reaches
+/// (issue 23). As a call runs, its tool reaches the workspace as its use asks - `reading`,
+/// `changing` or `shell` -, which the kernel checks whatever was offered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Use {
+pub(super) enum Use {
     Read,
     Change,
     Shell,
 }
 
-impl Use {
-    /// How the tool `name` uses the workspace; `None` for a name that is none of its tools.
-    fn of(name: &str) -> Option<Self> {
-        match name {
-            _ if shell::TOOLS.contains(&name) => Some(Self::Shell),
-            _ if files::read_only(name) => Some(Self::Read),
-            _ if files::TOOLS.contains(&name) => Some(Self::Change),
-            _ => None,
-        }
-    }
+/// The workspace a tool that only reads its files reads in `turn`, and its terminal: through the
+/// workspace's reader, what reading it asks (`Use::Read`).
+///
+/// # Errors
+/// What reaching it failed with.
+async fn reading(turn: &Turn<'_>) -> ToolResult<(Workspace, Arc<dyn TerminalReader>)> {
+    Ok(workspace_reader(&turn.situation()).await?.terminal().await?)
+}
+
+/// The workspace a tool that changes its files changes in `turn`, and its terminal: through the
+/// workspace's writer, what changing it asks (`Use::Change`).
+///
+/// # Errors
+/// What reaching it failed with.
+async fn changing(turn: &Turn<'_>) -> ToolResult<(Workspace, Arc<dyn Terminal>)> {
+    Ok(workspace_writer(turn).await?.terminal().await?)
+}
+
+/// The workspace a shell tool runs commands in for `turn`, and its shell as the turn's channel
+/// sees it: through the workspace's writer, since a command may change anything its place reaches
+/// (`Use::Shell`).
+///
+/// # Errors
+/// What reaching it failed with; `ExecutionFailed` where its storage gives no shell.
+async fn shell(turn: &Turn<'_>) -> ToolResult<(Workspace, Arc<dyn Shell>)> {
+    let (workspace, shell) = workspace_writer(turn).await?.shell().await?;
+    let shell = shell.ok_or_else(|| {
+        ToolError::ExecutionFailed("the workspace's storage gives it no shell".to_string())
+    })?;
+    Ok((workspace, shell))
+}
+
+/// `output`, which a tool gave of `workspace`, classified as the workspace.
+fn of_workspace(output: ToolOutput, workspace: Workspace) -> ToolOutput {
+    ToolOutput { classification: Some(workspace.classification), ..output }
 }
 
 #[async_trait]
@@ -122,88 +159,27 @@ impl ToolProvider for WorkspaceComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.iter().map(|using| Arc::clone(&using.tool)).collect()
     }
 
     /// The tools that may be called on the workspace the work may use in
     /// its channel (issue 290): none where there is none, none that change
     /// where its list grants reading alone, no shell where its storage gives
     /// none.
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Arc<dyn Tool>>, String> {
         let workspace = workspace_reader(situation).await.map_err(|e| e.to_string())?;
         let (writable, has_shell) = (workspace.may_write().await, workspace.has_shell());
         Ok(self
-            .tools()
-            .into_iter()
-            .filter(|tool| match Use::of(&tool.name) {
-                Some(Use::Read) => true,
-                Some(Use::Change) => writable,
-                Some(Use::Shell) => writable && has_shell,
-                None => false,
+            .tools
+            .iter()
+            .filter(|tool| match tool.using {
+                Use::Read => true,
+                Use::Change => writable,
+                Use::Shell => writable && has_shell,
             })
+            .map(|using| Arc::clone(&using.tool))
             .collect())
-    }
-
-    /// What an approver reads: the command, or the change, whole.
-    fn describe(&self, name: &str, params: &Value) -> ToolResult<String> {
-        match name {
-            _ if shell::TOOLS.contains(&name) => shell::describe(name, params),
-            _ if files::TOOLS.contains(&name) => files::describe(name, params),
-            _ => Err(ToolError::UnknownTool(name.to_string())),
-        }
-    }
-
-    /// For a change of a file, its path: a rule derived from an approved
-    /// write covers the file, whatever is written into it; one derived from
-    /// a move, that move. For a command, as its parameters tell
-    /// (`proposed_matcher`): the commands beginning with its first words,
-    /// however long a call waits for them.
-    fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
-        files::matcher(name, params).unwrap_or_else(|| {
-            let mut matcher = proposed_matcher(&self.tools(), name, params);
-            matcher.arguments.remove("wait_secs");
-            matcher
-        })
-    }
-
-    /// Checked again as it runs, whatever was offered: the workspace, and
-    /// what its list grants, may have changed since the turn began.
-    async fn execute(
-        &self,
-        name: &str,
-        params: &Value,
-        _answers: Option<&Answers>,
-        turn: &mut Turn,
-    ) -> ToolResult<ToolOutput> {
-        let Some(using) = Use::of(name) else {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        };
-        let (output, classification) = match using {
-            Use::Shell => {
-                let (workspace, shell) = workspace_writer(turn).await?.shell().await?;
-                let shell = shell.ok_or_else(|| {
-                    ToolError::ExecutionFailed(
-                        "the workspace's storage gives it no shell".to_string(),
-                    )
-                })?;
-                (shell::execute(self, name, params, shell).await?.into(), workspace.classification)
-            }
-            Use::Read => {
-                let (workspace, terminal) =
-                    workspace_reader(&turn.situation()).await?.terminal().await?;
-                let seen = (workspace.id, &workspace.classification);
-                let output = files::read(self, name, params, terminal.as_ref(), seen, turn).await?;
-                (output, workspace.classification)
-            }
-            Use::Change => {
-                let (workspace, terminal) = workspace_writer(turn).await?.terminal().await?;
-                let seen = (workspace.id, &workspace.classification);
-                let output = files::change(name, params, terminal.as_ref(), seen, turn).await?;
-                (output, workspace.classification)
-            }
-        };
-        Ok(ToolOutput { classification: Some(classification), ..output })
     }
 }
 
@@ -227,7 +203,7 @@ mod tests {
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use caelumora_kernel::workspace::WorkspaceSpec;
     use caelumora_security::SecurityContext;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::fs;
 
     /// Issue 516: a tool that only reads the files goes through the workspace's reader - finding
@@ -258,7 +234,11 @@ mod tests {
         let mut turn = agent_testing::turn(&session, helper, world.alice, &mut state);
 
         let (read, asked) = world
-            .asked(tool.execute(READ_FILE, &json!({ "path": "notes/a.md" }), None, &mut turn))
+            .asked(agent_testing::tool_named(&tool, READ_FILE).execute(
+                &json!({ "path": "notes/a.md" }),
+                None,
+                &mut turn,
+            ))
             .await;
         read.expect("read");
         let using = [
@@ -290,11 +270,7 @@ mod tests {
             .offered(&workspace_turn(&world, &mut state).situation())
             .await
             .expect("offered where it is used");
-        assert_eq!(
-            offered.len(),
-            shell::TOOLS.len() + files::TOOLS.len(),
-            "every tool: {offered:?}"
-        );
+        assert_eq!(offered.len(), tool.tools().len(), "every tool: {offered:?}");
 
         world.session.channels()[0]
             .update_uses_workspace(&SecurityContext::system(), false)
@@ -302,7 +278,7 @@ mod tests {
             .unwrap();
         let mut state = AgentChannelState::default();
         let mut turn = workspace_turn(&world, &mut state);
-        let unavailable = tool.offered(&turn.situation()).await;
+        let unavailable = tool.offered(&turn.situation()).await.map(|tools| tools.len());
         assert_eq!(
             unavailable,
             Err("there is no workspace you can use in this channel".to_string()),
@@ -312,7 +288,8 @@ mod tests {
             (RUN_COMMAND, json!({ "command": "touch here" })),
             (WRITE_FILE, json!({ "path": "here", "content": "x" })),
         ] {
-            let refused = tool.execute(name, &params, None, &mut turn).await;
+            let refused =
+                agent_testing::tool_named(&tool, name).execute(&params, None, &mut turn).await;
             assert!(
                 matches!(&refused, Err(ToolError::ExecutionFailed(why)) if why.contains("no workspace")),
                 "{name}: {refused:?}"
@@ -326,8 +303,8 @@ mod tests {
         let asking = |mode: Value| -> Vec<(String, bool)> {
             component(json!({ "requires_approval": mode }))
                 .tools()
-                .into_iter()
-                .map(|t| (t.name, t.requires_approval))
+                .iter()
+                .map(|t| (t.description().name.clone(), t.description().requires_approval))
                 .collect()
         };
         let asks = |mode: Value, name: &str| {
@@ -356,7 +333,7 @@ mod tests {
         assert!(!asks(json!(true), PUBLISH_FILE), "publishing gives nothing away");
         let defaults = component(json!({}));
         assert!(
-            defaults.tools().iter().all(|t| t.requires_approval
+            defaults.tools().iter().map(|t| t.description()).all(|t| t.requires_approval
                 || [COMMAND_OUTPUT, KILL_COMMAND, PUBLISH_FILE].contains(&t.name.as_str())),
             "all that may, unless configured"
         );

@@ -11,7 +11,8 @@
 use crate::components::notes::READ_NOTES_TOOL_NAME;
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{
-    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, tool_text, FixedTools, Tool, ToolError, ToolOutput, ToolProvider,
+    ToolResult,
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
@@ -38,24 +39,21 @@ const DEFAULT_LAST: usize = 20;
 /// The most messages one call returns.
 const MAX_LAST: usize = 100;
 
+/// The tool `read_history`.
 #[derive(Debug)]
-pub struct ChannelHistoryComponent {
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
+struct ReadHistoryTool {
+    description: ToolDescription,
 }
 
-impl ChannelHistoryComponent {
-    /// The component, its texts from `prompts`, told how many messages a
-    /// call returns.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        // What its texts are told.
-        let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST, read_notes => READ_NOTES_TOOL_NAME };
-        let tools = vec![described(
+/// The tools of the component, their texts from `prompts`, told how many messages a call returns.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
+    // What its texts are told.
+    let values = context! { max_last => MAX_LAST, default_last => DEFAULT_LAST, read_notes => READ_NOTES_TOOL_NAME };
+    let read_history = ReadHistoryTool {
+        description: described(
             prompts,
             NAMESPACE,
             CHANNEL_HISTORY_KIND,
@@ -76,49 +74,35 @@ impl ChannelHistoryComponent {
                 presentation: Default::default(),
             },
             &values,
-        )?];
-        Ok(Self {
-            description: tool_text(
-                prompts,
-                NAMESPACE,
-                CHANNEL_HISTORY_KIND,
-                "description",
-                &values,
-            )?,
-            tools,
-        })
-    }
+        )?,
+    };
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, CHANNEL_HISTORY_KIND, "description", &values)?,
+        vec![Arc::new(read_history)],
+    ))
 }
 
 #[async_trait]
-impl ToolProvider for ChannelHistoryComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+impl Tool for ReadHistoryTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        if name != READ_HISTORY_TOOL_NAME {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
         #[derive(Deserialize)]
-        struct ReadHistory {
+        struct Asked {
             channel: String,
             #[serde(default)]
             last: Option<usize>,
             #[serde(default)]
             query: Option<String>,
         }
-        let ReadHistory { channel, last, query } = arguments(params)?;
+        let Asked { channel, last, query } = arguments(params)?;
         let channel = channel.trim();
         if channel.is_empty() {
             return Err(ToolError::InvalidParameter("'channel' must name a channel".to_string()));
@@ -189,7 +173,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(ChannelHistoryComponent::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(&texts)?));
             Ok(facets)
         },
     );
@@ -254,12 +238,13 @@ mod tests {
         let helper = world.agent("helper", world.alice, &personality).await;
         let session = world.shared_session(&[helper], &[]).await;
         let main = &session.channels()[0];
-        let tool = ChannelHistoryComponent::new(&testing::prompts()).unwrap();
+        let tool =
+            testing::tool_named(&tools(&testing::prompts()).unwrap(), READ_HISTORY_TOOL_NAME);
         let mut state = AgentChannelState::default();
         let mut turn = testing::turn(&session, helper, world.alice, &mut state);
 
         let params = serde_json::json!({ "channel": main.name() });
-        let read = tool.execute(READ_HISTORY_TOOL_NAME, &params, None, &mut turn).await.unwrap();
+        let read = tool.execute(&params, None, &mut turn).await.unwrap();
         assert!(
             matches!(read.knowledge.as_slice(), [k] if k.channel == main.id() && k.session == session.id() && matches!(k.source, KnowledgeSource::History { .. })),
             "{:?}",

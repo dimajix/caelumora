@@ -30,13 +30,12 @@ use crate::NAMESPACE;
 use caelumora_agents::command::AgentCommand;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model, PromptPosition, PromptProvider};
 use caelumora_agents::situation::Situation;
-use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
+use caelumora_agents::tool::{ApprovalMode, ToolProvider};
 use caelumora_api::command::CommandProvider;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents, Params};
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -60,24 +59,14 @@ impl Params for SkillsParams {}
 #[derive(Debug)]
 struct SkillsComponent {
     position: PromptPosition,
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
     /// The texts of its catalogue and of a skill given.
     prompts: PromptTexts,
 }
 
 impl SkillsComponent {
-    /// The component configured by `params`, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    fn new(params: SkillsParams, prompts: PromptTexts) -> Result<Self, PromptError> {
-        let SkillsParams { position, requires_approval } = params;
-        let tools = tool::tools(&prompts, requires_approval)?;
-        let description = tool_text(&prompts, NAMESPACE, SKILLS_KIND, "description", ())?;
-        Ok(Self { position, description, tools, prompts })
+    /// The component with its catalogue at `position`, its texts from `prompts`.
+    fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+        Self { position, prompts }
     }
 
     /// The text of `skill` as the model is given it, titled with its name:
@@ -122,11 +111,13 @@ pub(crate) fn register(registry: &mut LibraryComponents<'_>) {
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
-            let params = SkillsParams::read(&descriptor.params)?;
-            let component = Arc::new(SkillsComponent::new(params, texts)?);
+            let SkillsParams { position, requires_approval } =
+                SkillsParams::read(&descriptor.params)?;
+            let component = Arc::new(SkillsComponent::new(position, texts));
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn PromptProvider>(Arc::<SkillsComponent>::clone(&component));
-            facets.insert::<dyn ToolProvider>(Arc::<SkillsComponent>::clone(&component));
+            facets
+                .insert::<dyn ToolProvider>(Arc::new(tool::tools(&component, requires_approval)?));
             facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(command::commands(
                 &component,
             )));

@@ -2,7 +2,7 @@
 //! conversation - `stop`, `bye` and `silence`.
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
-use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, tool_text, FixedTools, Tool, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
@@ -20,86 +20,70 @@ pub const STOP_TOOL_NAME: &str = "stop";
 pub const BYE_TOOL_NAME: &str = "bye";
 pub const SILENCE_TOOL_NAME: &str = "silence";
 
+/// A tool that ends the turn with the current tool step (`stop`, `bye`, `silence`): the agent is
+/// left in `state`, and the model told `status`. What it answers tells nothing: classified as the
+/// turn (issue 168).
 #[derive(Debug)]
-pub struct TurnEndComponent {
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
-}
-
-impl TurnEndComponent {
-    /// The provider, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let tool = |name: &str| {
-            described(
-                prompts,
-                NAMESPACE,
-                TURN_END_KIND,
-                ToolDescription {
-                    name: name.to_string(),
-                    description: String::new(),
-                    parameters: ToolParameters::object(
-                        Vec::<(String, ToolParameters)>::new(),
-                        Vec::<String>::new(),
-                    ),
-                    requires_approval: false,
-                    visibility: ToolVisibility::SHOWN,
-                    classification: None,
-                    presentation: Default::default(),
-                },
-                (),
-            )
-        };
-        let tools = vec![tool(STOP_TOOL_NAME)?, tool(BYE_TOOL_NAME)?, tool(SILENCE_TOOL_NAME)?];
-        Ok(Self {
-            description: tool_text(prompts, NAMESPACE, TURN_END_KIND, "description", ())?,
-            tools,
-        })
-    }
+struct TurnEndTool {
+    description: ToolDescription,
+    state: ActorState,
+    status: &'static str,
+    /// What the log says the agent is made to do: "Stopping", "Silencing".
+    logged: &'static str,
 }
 
 #[async_trait]
-impl ToolProvider for TurnEndComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+impl Tool for TurnEndTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         _params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        // What it answers tells nothing: classified as the turn (issue 168).
-        match name {
-            STOP_TOOL_NAME | BYE_TOOL_NAME => {
-                info!("Stopping agent {} {}", turn.situation().agent_id(), turn.agent_name());
-                turn.request_state(ActorState::Sleeping);
-                Ok(ToolOutput::classified(
-                    serde_json::json!({ "status": "stopped" }),
-                    turn.situation().label(),
-                ))
-            }
-            SILENCE_TOOL_NAME => {
-                info!("Silencing agent {} {}", turn.situation().agent_id(), turn.agent_name());
-                turn.request_state(ActorState::Idle);
-                Ok(ToolOutput::classified(
-                    serde_json::json!({ "status": "silent" }),
-                    turn.situation().label(),
-                ))
-            }
-            &_ => Err(ToolError::UnknownTool(name.to_string())),
-        }
+        info!("{} agent {} {}", self.logged, turn.situation().agent_id(), turn.agent_name());
+        turn.request_state(self.state);
+        Ok(ToolOutput::of_turn(serde_json::json!({ "status": self.status }), turn))
     }
+}
+
+/// The tools of the component, their texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
+    let tool = |name: &str, state, status, logged| -> Result<Arc<dyn Tool>, PromptError> {
+        let description = described(
+            prompts,
+            NAMESPACE,
+            TURN_END_KIND,
+            ToolDescription {
+                name: name.to_string(),
+                description: String::new(),
+                parameters: ToolParameters::object(
+                    Vec::<(String, ToolParameters)>::new(),
+                    Vec::<String>::new(),
+                ),
+                requires_approval: false,
+                visibility: ToolVisibility::SHOWN,
+                classification: None,
+                presentation: Default::default(),
+            },
+            (),
+        )?;
+        Ok(Arc::new(TurnEndTool { description, state, status, logged }))
+    };
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, TURN_END_KIND, "description", ())?,
+        vec![
+            tool(STOP_TOOL_NAME, ActorState::Sleeping, "stopped", "Stopping")?,
+            tool(BYE_TOOL_NAME, ActorState::Sleeping, "stopped", "Stopping")?,
+            tool(SILENCE_TOOL_NAME, ActorState::Idle, "silent", "Silencing")?,
+        ],
+    ))
 }
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
@@ -108,7 +92,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(TurnEndComponent::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(&texts)?));
             Ok(facets)
         },
     );
@@ -123,28 +107,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_tool() {
-        let provider = TurnEndComponent::new(&testing::prompts()).unwrap();
+        let provider = tools(&testing::prompts()).unwrap();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
-        let result = provider.execute(STOP_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
+        let result = testing::tool_named(&provider, STOP_TOOL_NAME)
+            .execute(&json!({}), None, &mut turn)
+            .await
+            .unwrap();
         assert_eq!(result.value["status"], "stopped");
         assert_eq!(
             turn.requested_state(),
             Some(ActorState::Sleeping),
             "the turn ends, the agent sleeps"
         );
-        provider.execute(SILENCE_TOOL_NAME, &json!({}), None, &mut turn).await.unwrap();
+        testing::tool_named(&provider, SILENCE_TOOL_NAME)
+            .execute(&json!({}), None, &mut turn)
+            .await
+            .unwrap();
         assert_eq!(
             turn.requested_state(),
             Some(ActorState::Idle),
             "the turn ends, the agent waits"
         );
 
-        let tools = provider.tools();
-        assert_eq!(tools.len(), 3);
-        assert_eq!(tools[0].name, STOP_TOOL_NAME);
-        assert_eq!(tools[1].name, BYE_TOOL_NAME);
-        assert_eq!(tools[2].name, SILENCE_TOOL_NAME);
+        let names: Vec<String> =
+            provider.tools().iter().map(|t| t.description().name.clone()).collect();
+        assert_eq!(names, [STOP_TOOL_NAME, BYE_TOOL_NAME, SILENCE_TOOL_NAME]);
     }
 }

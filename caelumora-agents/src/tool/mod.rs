@@ -1,9 +1,10 @@
-//! Tools (issue 52): the facet `ToolProvider`, the `ToolExecutor` that runs an agent's tool calls
-//! with the tools of its providers and with the checks the kernel keeps to itself (issues 127,
-//! 280), what tools share - a text given a page at a time (`page_of`, issue 282), or kept whole
-//! beside a preview (`KeepWholeAbove`, issue 552) -, and the built-in tool components, one file per
-//! component kind. A component that offers tools along with another facet - a prompt part, say -
-//! stays in `components`.
+//! Tools (issues 52, 584): a tool (`Tool`), the facet that gives an agent tools (`ToolProvider`,
+//! `FixedTools`), the `ToolExecutor` that runs an agent's tool calls with the tools of its
+//! providers and with the checks the kernel keeps to itself (issues 127, 280), what tools share - a
+//! text given a page at a time (`page_of`, issue 282), or kept whole beside a preview
+//! (`KeepWholeAbove`, issue 552) -, and the built-in tool components, one file per component kind.
+//! A component that offers tools along with another facet - a prompt part, say - stays in
+//! `components`.
 
 pub mod ask_user;
 pub mod calculator;
@@ -209,6 +210,12 @@ impl ToolOutput {
     /// `value`, classified `classification` by the tool.
     pub fn classified(value: Value, classification: Classification) -> Self {
         Self { classification: Some(classification), ..value.into() }
+    }
+
+    /// `value`, which tells only what the model asked for - derived from the arguments, or of what
+    /// the turn was given -, classified as the turn's label (issue 168).
+    pub fn of_turn(value: Value, turn: &Turn<'_>) -> Self {
+        Self::classified(value, turn.situation().label())
     }
 }
 
@@ -563,14 +570,58 @@ impl ToolError {
     }
 }
 
+/// A tool an agent may call (issue 584): what its model is offered of it, and how a call of it is
+/// described, asked about, matched and carried out - each of the one call, found by the tool's
+/// name (`ToolProviders`), never matching it again.
+#[async_trait]
+pub trait Tool: Send + Sync + Debug {
+    /// The tool as the model is offered it - its name, parameters, approval, visibility,
+    /// presentation -, held by the tool.
+    fn description(&self) -> &ToolDescription;
+
+    /// Carries a call out with `params` - with the `answers` to the questions it asked for the
+    /// call (`questions`), if it asked any.
+    async fn execute(
+        &self,
+        params: &Value,
+        answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput>;
+
+    /// What a call with `params` asks a person before it runs (issue 165): the answers are handed
+    /// to `execute`, and reach the model only as far as the tool puts them into its result. By
+    /// default nothing; an error is the call's, as with `describe`.
+    fn questions(&self, _params: &Value) -> ToolResult<Option<Questions>> {
+        Ok(None)
+    }
+
+    /// What other calls are like a call with `params` (issue 13): the matcher a rule derived from
+    /// it is offered with. By default as the tool's parameters tell (`proposed_matcher`): every
+    /// argument exactly, one written in a language by its meaning; a tool that knows more of what
+    /// makes two calls alike says better.
+    fn matcher(&self, params: &Value) -> ToolMatcher {
+        proposed_matcher(self.description(), params)
+    }
+
+    /// What a person deciding on a call with `params` is shown; by default what the tool does.
+    /// An error is the call's: arguments the tool cannot describe it cannot run with either.
+    fn describe(&self, _params: &Value) -> ToolResult<String> {
+        Ok(self.description().description.clone())
+    }
+}
+
+/// The facet of a component that gives an agent tools (issues 52, 584): the tools themselves, and
+/// what concerns them as a set - what they are for, which of them a piece of work is offered, where
+/// their arguments go.
 #[async_trait]
 pub trait ToolProvider: Send + Sync + Debug {
     /// What its tools are for, written for a model: the description of its
     /// tool set, which is named after its component (issue 194).
     fn description(&self) -> String;
-    /// Every tool it has: those it may offer, by which a call finds its
-    /// provider, and whose names no other provider of the agent may have.
-    fn tools(&self) -> Vec<ToolDescription>;
+    /// Every tool it has now: those it may offer, by which a call finds its tool, and whose names
+    /// no other provider of the agent may have. Asked at every call, since they may change while
+    /// the agent runs (issue 100).
+    fn tools(&self) -> Vec<Arc<dyn Tool>>;
     /// The tools of `tools` it offers the model in `work` (issue 290), asked
     /// as a turn begins: those that may be called there. `Err` with why it
     /// offers none, in general terms - never the error, which may name hosts
@@ -579,7 +630,7 @@ pub trait ToolProvider: Send + Sync + Debug {
     /// turn just begun, and - for what an agent would be offered (the
     /// agent's `tool_sets`) - of work that is no turn: what it decides by
     /// is the place and who acts, not the turn's state.
-    async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
+    async fn offered(&self, _situation: &Situation<'_>) -> Result<Vec<Arc<dyn Tool>>, String> {
         Ok(self.tools())
     }
     /// Where the arguments of its calls go (issue 180): the classification
@@ -588,39 +639,38 @@ pub trait ToolProvider: Send + Sync + Debug {
     fn destination(&self) -> Option<Classification> {
         None
     }
+}
 
-    /// Executes a specific tool by name - with the `answers` to the
-    /// questions it asked for the call (`questions`), if it asked any.
-    async fn execute(
-        &self,
-        name: &str,
-        params: &Value,
-        answers: Option<&Answers>,
-        turn: &mut Turn,
-    ) -> ToolResult<ToolOutput>;
-    /// What the call of tool `name` with `params` asks a person before it
-    /// runs (issue 165): the answers are handed to `execute`, and reach the
-    /// model only as far as the tool puts them into its result. By default
-    /// nothing; an error is the call's, as with `describe`.
-    fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
-        Ok(None)
+/// The tools a component made as it was built, offered wherever it is (issue 584): a provider that
+/// decides nothing - its tool set's description, its tools, and where their arguments go, which is
+/// nowhere outside unless set.
+#[derive(Debug)]
+pub struct FixedTools {
+    /// What its tools are for (`ToolProvider::description`).
+    pub description: String,
+    pub tools: Vec<Arc<dyn Tool>>,
+    /// Where the arguments of its tools' calls go (`ToolProvider::destination`); none unless set.
+    pub destination: Option<Classification>,
+}
+
+impl FixedTools {
+    /// The tools `tools`, whose set is for what `description` says.
+    pub fn new(description: String, tools: Vec<Arc<dyn Tool>>) -> Self {
+        Self { description, tools, destination: None }
     }
-    /// What other calls are like the call of tool `name` with `params`
-    /// (issue 13): the matcher a rule derived from it is offered with. By
-    /// default as the tool's parameters tell (`proposed_matcher`): every
-    /// argument exactly, one written in a language by its meaning; a tool
-    /// that knows more of what makes two calls alike says better.
-    fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
-        proposed_matcher(&self.tools(), name, params)
+}
+
+impl ToolProvider for FixedTools {
+    fn description(&self) -> String {
+        self.description.clone()
     }
-    /// Provides a textual description for a specific tool call
-    fn describe(&self, name: &str, _params: &Value) -> ToolResult<String> {
-        let tools = self.tools();
-        if let Some(tool) = tools.iter().find(|t| t.name == name) {
-            Ok(tool.description.to_string())
-        } else {
-            Err(ToolError::UnknownTool(name.to_string()))
-        }
+
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.tools.clone()
+    }
+
+    fn destination(&self) -> Option<Classification> {
+        self.destination.clone()
     }
 }
 
@@ -646,22 +696,17 @@ pub async fn workspace_writer(turn: &Turn<'_>) -> WorkspaceResult<Arc<dyn Worksp
     turn.writer::<dyn WorkspaceWriter>().await.ok_or(WorkspaceError::NotUsableInChannel)
 }
 
-/// What a rule derived from a call of the tool `name` with `params` is
-/// offered with, as the parameters of the tool of that name among `tools`
-/// tell (`ToolMatcher::proposed`, issue 247); the calls exactly like it if
-/// none has that name.
-pub fn proposed_matcher(tools: &[ToolDescription], name: &str, params: &Value) -> ToolMatcher {
+/// What a rule derived from a call of `tool` with `params` is offered with, as the tool's
+/// parameters tell (`ToolMatcher::proposed`, issue 247).
+pub fn proposed_matcher(tool: &ToolDescription, params: &Value) -> ToolMatcher {
     let call = ToolCall {
         id: None,
-        function_name: name.to_string(),
+        function_name: tool.name.clone(),
         arguments: params.clone(),
         visibility: ToolVisibility::SHOWN,
         presentation: Default::default(),
     };
-    match tools.iter().find(|tool| tool.name == name) {
-        Some(tool) => ToolMatcher::proposed(&call, &tool.parameters),
-        None => ToolMatcher::exact(&call),
-    }
+    ToolMatcher::proposed(&call, &tool.parameters)
 }
 
 /// How a tool call of the model is admitted, before anything runs
@@ -746,6 +791,14 @@ impl TryFrom<Value> for ApprovalMode {
     }
 }
 
+/// What other calls are like `call`, as its `tool` says (issue 13); `None` where that is no rule a
+/// person could keep (`ToolMatcher::check`, issue 400): a rule is offered only where it can be
+/// added.
+fn suggested(tool: &dyn Tool, call: &ToolCall) -> Option<ToolMatcher> {
+    let matcher = tool.matcher(&call.arguments);
+    matcher.check().is_ok().then_some(matcher)
+}
+
 /// Whether `call` names a tool `turn` was offered (issue 180): a tool of a
 /// set withheld in the turn's channel, or of none, is not called by name.
 fn offered(call: &ToolCall, turn: &Turn<'_>) -> bool {
@@ -794,12 +847,17 @@ impl ToolExecutor {
         Ok(Self { providers: ToolProviders::new(providers)?, runtime })
     }
 
-    /// What `call` asks before it runs, as its tool says, checked and put to
+    /// What `call` asks before it runs, as its `tool` says, checked and put to
     /// the users of the channel (issue 165) - the agent's owner and whoever
     /// caused the call as the context of `turn` names them (issues 255,
     /// 341). Every error is the call's: it cannot be asked.
-    fn questions(&self, call: &ToolCall, turn: &Turn<'_>) -> ToolResult<Option<Questions>> {
-        let Some(questions) = self.providers.questions(call)? else { return Ok(None) };
+    fn questions(
+        &self,
+        tool: &dyn Tool,
+        call: &ToolCall,
+        turn: &Turn<'_>,
+    ) -> ToolResult<Option<Questions>> {
+        let Some(questions) = tool.questions(&call.arguments)? else { return Ok(None) };
         questions.check().map_err(|e| ToolError::InvalidParameter(e.to_string()))?;
         let addressed = self
             .runtime
@@ -808,9 +866,10 @@ impl ToolExecutor {
         addressed.map(Some).map_err(|e| ToolError::InvalidParameter(e.to_string()))
     }
 
-    /// Runs `call` if it may be run now, with the `answers` to the questions
-    /// its tool asked, and answers it either way. Once `interrupted` ends -
-    /// the turn is cancelled or stopped (issue 161), or a user interrupts
+    /// Runs `call` with the tool of its name as the tools are now (`ToolProviders::find`) if it may
+    /// be run now, with the `answers` to the questions its tool asked, and answers it either way.
+    /// A call of a tool that is gone since it was admitted never ran: it has no timing. Once
+    /// `interrupted` ends - the turn is cancelled or stopped (issue 161), or a user interrupts
     /// this call alone (issue 276) - the call is no longer waited for:
     /// whatever the executor and its tool are doing is dropped, and the call
     /// is answered as interrupted, saying why, with when it started, so that
@@ -826,11 +885,14 @@ impl ToolExecutor {
         if let Err(e) = self.check(call, turn).await {
             return self.failed(call, e, turn);
         }
+        let Some(tool) = self.providers.find(&call.function_name) else {
+            return self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn);
+        };
         let started_at = Utc::now();
         // A tool that is done when it is interrupted has its result.
         let ran = tokio::select! {
             biased;
-            outcome = self.providers.execute(call, answers, turn) => Ok(outcome),
+            outcome = tool.execute(&call.arguments, answers, turn) => Ok(outcome),
             interruption = interrupted => Err(interruption),
         };
         let finished_at = Utc::now();
@@ -851,10 +913,6 @@ impl ToolExecutor {
                 return result;
             }
         };
-        // A call of a tool that does not exist never ran: no timing.
-        if matches!(outcome, Err(ToolError::UnknownTool(_))) {
-            return self.failed(call, ToolError::UnknownTool(call.function_name.clone()), turn);
-        }
         // Session, channel and agent are on the turn's span.
         debug!(tool = %call.function_name, duration_ms = (finished_at - started_at).num_milliseconds(), ok = outcome.is_ok(), "Tool ran");
         let mut result = match outcome {
@@ -1013,9 +1071,21 @@ impl ToolExecutor {
             }
             CallPermit::Ask | CallPermit::Open => {}
         }
-        let description = match self.providers.describe(call) {
+        // The tool as the tools are now: one offered may be gone since the turn began.
+        let Some(tool) = self.providers.find(&call.function_name) else {
+            info!(
+                "Tool call '{}' by agent {} names a tool that is gone",
+                call.function_name, agent
+            );
+            return Admission::Answered(Box::new(self.failed(
+                call,
+                ToolError::UnknownTool(call.function_name.clone()),
+                turn,
+            )));
+        };
+        let description = match tool.describe(&call.arguments) {
             Ok(description) => description,
-            Err(e @ (ToolError::InvalidParameter(_) | ToolError::UnknownTool(_))) => {
+            Err(e @ ToolError::InvalidParameter(_)) => {
                 info!("Tool call '{}' by agent {} cannot run: {}", call.function_name, agent, e);
                 return Admission::Answered(Box::new(self.failed(call, e, turn)));
             }
@@ -1024,7 +1094,7 @@ impl ToolExecutor {
                 "No description".to_string()
             }
         };
-        let questions = match self.questions(call, turn) {
+        let questions = match self.questions(tool.as_ref(), call, turn) {
             Ok(questions) => questions,
             Err(e) => {
                 info!(
@@ -1041,7 +1111,7 @@ impl ToolExecutor {
             _ if asks => Admission::Ask {
                 description,
                 explicit,
-                suggested: self.providers.matcher(call),
+                suggested: suggested(tool.as_ref(), call),
                 questions,
             },
             Some(questions) => Admission::Await(questions),
@@ -1131,6 +1201,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
     use std::future;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use tokio::time;
     use tokio_util::bytes::Bytes;
@@ -1213,15 +1284,45 @@ mod tests {
         );
     }
 
-    /// `test_tool` does not classify its result; `hr_tool` classifies it as
-    /// HR's; `configured_tool` does not classify, but is configured as HR's;
-    /// `showing_tool` shows an attachment of the channel's, `showing_hr_tool`
-    /// one of HR's (issue 282); `reading_tool` read the channel's history,
-    /// `reading_hr_tool` read it too and classifies its result as HR's
-    /// (issue 538).
+    /// A tool that answers what `answer` makes of the turn.
     #[derive(Debug)]
-    struct MockToolProvider {
-        requires_approval: bool,
+    struct Answering {
+        description: ToolDescription,
+        answer: fn(&Turn<'_>) -> ToolOutput,
+    }
+
+    #[async_trait]
+    impl Tool for Answering {
+        fn description(&self) -> &ToolDescription {
+            &self.description
+        }
+        async fn execute(
+            &self,
+            _params: &Value,
+            _answers: Option<&Answers>,
+            turn: &mut Turn<'_>,
+        ) -> ToolResult<ToolOutput> {
+            Ok((self.answer)(turn))
+        }
+    }
+
+    /// A tool that never ends.
+    #[derive(Debug)]
+    struct Hanging(ToolDescription);
+
+    #[async_trait]
+    impl Tool for Hanging {
+        fn description(&self) -> &ToolDescription {
+            &self.0
+        }
+        async fn execute(
+            &self,
+            _params: &Value,
+            _answers: Option<&Answers>,
+            _turn: &mut Turn<'_>,
+        ) -> ToolResult<ToolOutput> {
+            future::pending().await
+        }
     }
 
     fn hr() -> Classification {
@@ -1247,55 +1348,44 @@ mod tests {
         }
     }
 
-    #[async_trait]
-    impl ToolProvider for MockToolProvider {
-        fn description(&self) -> String {
-            "mock tools".to_string()
-        }
-        fn tools(&self) -> Vec<ToolDescription> {
-            vec![
-                tool("test_tool", self.requires_approval, None),
-                tool("hr_tool", self.requires_approval, None),
-                tool("configured_tool", self.requires_approval, Some(hr())),
-                tool("hanging_tool", self.requires_approval, None),
-                tool("showing_tool", self.requires_approval, None),
-                tool("showing_hr_tool", self.requires_approval, None),
-                tool("reading_tool", self.requires_approval, None),
-                tool("reading_hr_tool", self.requires_approval, None),
-            ]
-        }
-        async fn execute(
-            &self,
-            name: &str,
-            _params: &Value,
-            _answers: Option<&Answers>,
-            turn: &mut Turn,
-        ) -> ToolResult<ToolOutput> {
-            match name {
-                "hr_tool" => Ok(ToolOutput::classified(json!({"salary": 1}), hr())),
-                "reading_tool" => {
-                    let read = history_read(turn, None);
-                    Ok(ToolOutput { knowledge: vec![read], ..json!({"read": true}).into() })
-                }
-                "reading_hr_tool" => {
-                    let read = history_read(turn, Some(digest::prompt("hr")));
-                    let output = ToolOutput::classified(json!({"read": true}), hr());
-                    Ok(ToolOutput { knowledge: vec![read], ..output })
-                }
-                "configured_tool" => Ok(json!({"salary": 2}).into()),
-                "hanging_tool" => future::pending().await,
-                "showing_tool" | "showing_hr_tool" => {
-                    let classification = if name == "showing_hr_tool" {
-                        hr()
-                    } else {
-                        Classification::CHANNEL_DEFAULT
-                    };
-                    let shown = ContentRef { classification, ..make_content_ref("a.png", b"a") };
-                    Ok(ToolOutput { shown: vec![shown], ..json!({"shown": true}).into() })
-                }
-                _ => Ok(json!({"result": "ok"}).into()),
+    /// `test_tool` does not classify its result; `hr_tool` classifies it as
+    /// HR's; `configured_tool` does not classify, but is configured as HR's;
+    /// `hanging_tool` never ends; `showing_tool` shows an attachment of the channel's,
+    /// `showing_hr_tool` one of HR's (issue 282); `reading_tool` read the channel's history,
+    /// `reading_hr_tool` read it too and classifies its result as HR's (issue 538). Each asks for
+    /// approval if `requires_approval`.
+    fn mock_tools(requires_approval: bool) -> FixedTools {
+        let answering = |name: &str, classification, answer| -> Arc<dyn Tool> {
+            Arc::new(Answering {
+                description: tool(name, requires_approval, classification),
+                answer,
+            })
+        };
+        fn shown(classification: Classification) -> ToolOutput {
+            ToolOutput {
+                shown: vec![ContentRef { classification, ..make_content_ref("a.png", b"a") }],
+                ..json!({"shown": true}).into()
             }
         }
+        FixedTools::new(
+            "mock tools".to_string(),
+            vec![
+                answering("test_tool", None, |_| json!({"result": "ok"}).into()),
+                answering("hr_tool", None, |_| ToolOutput::classified(json!({"salary": 1}), hr())),
+                answering("configured_tool", Some(hr()), |_| json!({"salary": 2}).into()),
+                Arc::new(Hanging(tool("hanging_tool", requires_approval, None))),
+                answering("showing_tool", None, |_| shown(Classification::CHANNEL_DEFAULT)),
+                answering("showing_hr_tool", None, |_| shown(hr())),
+                answering("reading_tool", None, |turn| ToolOutput {
+                    knowledge: vec![history_read(turn, None)],
+                    ..json!({"read": true}).into()
+                }),
+                answering("reading_hr_tool", None, |turn| ToolOutput {
+                    knowledge: vec![history_read(turn, Some(digest::prompt("hr")))],
+                    ..ToolOutput::classified(json!({"read": true}), hr())
+                }),
+            ],
+        )
     }
 
     /// That the work of `turn` read its channel's history as of `digest`.
@@ -1404,11 +1494,7 @@ mod tests {
         requires_approval: bool,
         places: Places,
     ) -> (ToolExecutor, Arc<SessionController>) {
-        guarding(
-            access_policy,
-            vec![("tools", Arc::new(MockToolProvider { requires_approval }))],
-            places,
-        )
+        guarding(access_policy, vec![("tools", Arc::new(mock_tools(requires_approval)))], places)
     }
 
     /// The tools of `providers`, by their component ids, guarded by
@@ -1653,32 +1739,15 @@ mod tests {
         assert!(matches!(state.status, ToolCallStatus::Ready { answers: None }), "to be run");
     }
 
-    /// A tool whose arguments go to a remote side cleared for
-    /// `destination` (issue 180).
-    #[derive(Debug)]
-    struct Outward {
-        destination: Classification,
-    }
-
-    #[async_trait]
-    impl ToolProvider for Outward {
-        fn description(&self) -> String {
-            "sends out".to_string()
-        }
-        fn tools(&self) -> Vec<ToolDescription> {
-            vec![tool("send_out", false, None)]
-        }
-        fn destination(&self) -> Option<Classification> {
-            Some(self.destination.clone())
-        }
-        async fn execute(
-            &self,
-            _: &str,
-            _: &Value,
-            _: Option<&Answers>,
-            _: &mut Turn,
-        ) -> ToolResult<ToolOutput> {
-            Ok(json!({ "sent": true }).into())
+    /// A tool whose arguments go to a remote side cleared for `destination` (issue 180).
+    fn outward(destination: Classification) -> FixedTools {
+        let send_out = Answering {
+            description: tool("send_out", false, None),
+            answer: |_| json!({ "sent": true }).into(),
+        };
+        FixedTools {
+            destination: Some(destination),
+            ..FixedTools::new("sends out".to_string(), vec![Arc::new(send_out)])
         }
     }
 
@@ -1688,8 +1757,8 @@ mod tests {
         use caelumora_domain::confidentiality::Confidentiality;
         let access_policy: Arc<dyn AccessPolicy> = Arc::new(OwnershipPolicy::new());
         let outward: Arc<dyn ToolProvider> =
-            Arc::new(Outward { destination: Classification::general(Confidentiality::Internal) });
-        let local: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: false });
+            Arc::new(outward(Classification::general(Confidentiality::Internal)));
+        let local: Arc<dyn ToolProvider> = Arc::new(mock_tools(false));
         let (executor, _) = guarding(
             access_policy,
             vec![("outward", outward), ("local", local)],
@@ -1818,7 +1887,7 @@ mod tests {
         use caelumora_domain::confidentiality::{Compartment, Compartments};
         use caelumora_security::confidentiality::ConfidentialityRules;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
-        let tools: Arc<dyn ToolProvider> = Arc::new(MockToolProvider { requires_approval: true });
+        let tools: Arc<dyn ToolProvider> = Arc::new(mock_tools(true));
         guarding_under(
             Arc::new(AllowAllPolicy::new()),
             Arc::new(ConfidentialityRules::new(compartments)),
@@ -1857,6 +1926,59 @@ mod tests {
             "the result is the call's"
         );
         assert!(unknown.started_at.is_none(), "it never ran");
+    }
+
+    /// A provider whose one tool, `vanishing_tool`, is gone once `gone` is set: as an MCP server's
+    /// tools may be (issue 126).
+    #[derive(Debug, Default)]
+    struct Vanishing {
+        gone: AtomicBool,
+    }
+
+    impl ToolProvider for Vanishing {
+        fn description(&self) -> String {
+            "vanishing tools".to_string()
+        }
+        fn tools(&self) -> Vec<Arc<dyn Tool>> {
+            if self.gone.load(Ordering::SeqCst) {
+                return Vec::new();
+            }
+            vec![Arc::new(Answering {
+                description: tool("vanishing_tool", false, None),
+                answer: |_| json!({"result": "ok"}).into(),
+            })]
+        }
+    }
+
+    /// Issue 584: a tool is found as the tools are now, when a call is admitted and again when it
+    /// runs - one offered as the turn began that is gone since is answered as unknown, and never
+    /// ran.
+    #[tokio::test]
+    async fn a_call_of_a_tool_gone_since_the_turn_began_is_answered_as_unknown() {
+        let vanishing = Arc::new(Vanishing::default());
+        let provider = Arc::clone(&vanishing) as Arc<dyn ToolProvider>;
+        let (executor, _) = guarding(
+            Arc::new(AllowAllPolicy::new()),
+            vec![("vanishing", provider)],
+            Places::default(),
+        );
+        let mut agent_channel_state = agent_turn(&executor).await;
+        let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
+        assert!(
+            matches!(executor.admit(&call("vanishing_tool"), &turn).await, Admission::Run),
+            "admitted while it is there"
+        );
+
+        vanishing.gone.store(true, Ordering::SeqCst);
+        let admitted = executor.admit(&call("vanishing_tool"), &turn).await;
+        assert!(
+            matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool),
+            "{admitted:?}"
+        );
+        let ran =
+            executor.execute(&call("vanishing_tool"), None, &mut turn, future::pending()).await;
+        assert_eq!(ran.status, ToolResultStatus::UnknownTool);
+        assert!(ran.started_at.is_none(), "it never ran");
     }
 
     #[tokio::test]
@@ -1985,40 +2107,35 @@ mod tests {
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nthe rest";
 
-    /// Gives its model a file (issue 512): `draw` an image, `draw_secret` one whose result is
-    /// classified above every channel, `write` a text.
-    #[derive(Debug)]
-    struct Drawing;
-
-    #[async_trait]
-    impl ToolProvider for Drawing {
-        fn description(&self) -> String {
-            "draws".to_string()
+    /// Tools that give their model a file (issue 512): `draw` an image, `draw_secret` one whose
+    /// result is classified above every channel, `write` a text.
+    fn drawing() -> FixedTools {
+        let drawn = |name: &str, answer| -> Arc<dyn Tool> {
+            Arc::new(Answering { description: tool(name, false, None), answer })
+        };
+        fn files(file: &str, content: &'static [u8]) -> Vec<ToolContent> {
+            vec![ToolContent { name: file.to_string(), bytes: Bytes::from(content) }]
         }
-        fn tools(&self) -> Vec<ToolDescription> {
-            ["draw", "draw_secret", "write"].map(|name| tool(name, false, None)).into()
-        }
-        async fn execute(
-            &self,
-            name: &str,
-            _params: &Value,
-            _answers: Option<&Answers>,
-            _turn: &mut Turn,
-        ) -> ToolResult<ToolOutput> {
-            let (file, content): (&str, &'static [u8]) = match name {
-                "write" => ("notes.pdf", b"%PDF-1.7"),
-                _ => ("drawn.png", PNG),
-            };
-            let files = vec![ToolContent { name: file.to_string(), bytes: Bytes::from(content) }];
-            let output = match name {
-                "draw_secret" => ToolOutput::classified(
-                    json!({ "drawn": true }),
-                    Classification::general(Confidentiality::StrictlyConfidential),
-                ),
-                _ => json!({ "drawn": true }).into(),
-            };
-            Ok(ToolOutput { files, ..output })
-        }
+        FixedTools::new(
+            "draws".to_string(),
+            vec![
+                drawn("draw", |_| ToolOutput {
+                    files: files("drawn.png", PNG),
+                    ..json!({ "drawn": true }).into()
+                }),
+                drawn("draw_secret", |_| ToolOutput {
+                    files: files("drawn.png", PNG),
+                    ..ToolOutput::classified(
+                        json!({ "drawn": true }),
+                        Classification::general(Confidentiality::StrictlyConfidential),
+                    )
+                }),
+                drawn("write", |_| ToolOutput {
+                    files: files("notes.pdf", b"%PDF-1.7"),
+                    ..json!({ "drawn": true }).into()
+                }),
+            ],
+        )
     }
 
     /// Issue 512: what a tool gave its model is kept as the result's - in the agent's name, in the
@@ -2034,7 +2151,7 @@ mod tests {
         let drawing = ComponentImpl {
             id: "drawing".to_string(),
             fail_policy: Default::default(),
-            facet: Arc::new(Drawing) as Arc<dyn ToolProvider>,
+            facet: Arc::new(drawing()) as Arc<dyn ToolProvider>,
         };
         let runtime = agent_runtime(participant_runtime_in(main, ActorId::Agent(helper)));
         let executor = ToolExecutor::new(vec![drawing], runtime).unwrap();

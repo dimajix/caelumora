@@ -3,7 +3,8 @@
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{
-    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, tool_text, FixedTools, Tool, ToolError, ToolOutput, ToolProvider,
+    ToolResult,
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
@@ -19,21 +20,48 @@ pub const CALCULATOR_KIND: &str = "calculator";
 
 pub const CALCULATE_TOOL_NAME: &str = "calculate";
 
+/// The tool `calculate`, which evaluates a mathematical expression.
 #[derive(Debug)]
-pub struct CalculatorComponent {
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
+struct CalculateTool {
+    description: ToolDescription,
 }
 
-impl CalculatorComponent {
-    /// The provider, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let tools = vec![described(
+#[async_trait]
+impl Tool for CalculateTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        #[derive(Deserialize)]
+        struct Expression {
+            expression: String,
+        }
+        let Expression { expression } = arguments(params)?;
+
+        let result = meval::eval_str(&expression).map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e))
+        })?;
+
+        // Derived from the arguments alone.
+        let value =
+            serde_json::to_value(result).map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+        Ok(ToolOutput::of_turn(value, turn))
+    }
+}
+
+/// The tools of the component, their texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
+    let calculate = CalculateTool {
+        description: described(
             prompts,
             NAMESPACE,
             CALCULATOR_KIND,
@@ -50,50 +78,12 @@ impl CalculatorComponent {
                 presentation: Default::default(),
             },
             (),
-        )?];
-        Ok(Self {
-            description: tool_text(prompts, NAMESPACE, CALCULATOR_KIND, "description", ())?,
-            tools,
-        })
-    }
-}
-
-#[async_trait]
-impl ToolProvider for CalculatorComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
-    }
-
-    async fn execute(
-        &self,
-        name: &str,
-        params: &Value,
-        _answers: Option<&Answers>,
-        turn: &mut Turn,
-    ) -> ToolResult<ToolOutput> {
-        if name == CALCULATE_TOOL_NAME {
-            #[derive(Deserialize)]
-            struct Calculate {
-                expression: String,
-            }
-            let Calculate { expression } = arguments(params)?;
-
-            let result = meval::eval_str(&expression).map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to evaluate expression: {}", e))
-            })?;
-
-            // Derived from the arguments alone: classified as the turn (issue 168).
-            let value = serde_json::to_value(result)
-                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-            Ok(ToolOutput::classified(value, turn.situation().label()))
-        } else {
-            Err(ToolError::UnknownTool(name.to_string()))
-        }
-    }
+        )?,
+    };
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, CALCULATOR_KIND, "description", ())?,
+        vec![Arc::new(calculate)],
+    ))
 }
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
@@ -102,7 +92,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(CalculatorComponent::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(&texts)?));
             Ok(facets)
         },
     );
@@ -117,7 +107,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculator_tool() {
-        let provider = CalculatorComponent::new(&testing::prompts()).unwrap();
+        let calculate =
+            testing::tool_named(&tools(&testing::prompts()).unwrap(), CALCULATE_TOOL_NAME);
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -132,8 +123,7 @@ mod tests {
 
         for (expr, expected) in cases {
             let params = json!({ "expression": expr });
-            let result =
-                provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await.unwrap();
+            let result = calculate.execute(&params, None, &mut turn).await.unwrap();
             let val = result.value.as_f64().unwrap();
             assert!(
                 (val - expected).abs() < 1e-10,
@@ -147,12 +137,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculator_tool_invalid_expression() {
-        let provider = CalculatorComponent::new(&testing::prompts()).unwrap();
+        let calculate =
+            testing::tool_named(&tools(&testing::prompts()).unwrap(), CALCULATE_TOOL_NAME);
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
         let params = json!({ "expression": "invalid" });
-        let result = provider.execute(CALCULATE_TOOL_NAME, &params, None, &mut turn).await;
+        let result = calculate.execute(&params, None, &mut turn).await;
         assert!(result.is_err());
     }
 }

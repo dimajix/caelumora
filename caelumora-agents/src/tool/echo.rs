@@ -1,7 +1,7 @@
 //! The `echo` component: a tool that echoes its input, for testing.
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
-use crate::tool::{described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{described, tool_text, FixedTools, Tool, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
@@ -15,21 +15,35 @@ pub const ECHO_KIND: &str = "echo";
 
 pub const ECHO_TOOL_NAME: &str = "echo";
 
+/// The tool `echo`, which answers with its arguments.
 #[derive(Debug)]
-pub struct EchoComponent {
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
+struct EchoTool {
+    description: ToolDescription,
 }
 
-impl EchoComponent {
-    /// The provider, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    pub fn new(prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let tools = vec![described(
+#[async_trait]
+impl Tool for EchoTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        Ok(ToolOutput::of_turn(params.clone(), turn))
+    }
+}
+
+/// The tools of the component, their texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
+    let echo = EchoTool {
+        description: described(
             prompts,
             NAMESPACE,
             ECHO_KIND,
@@ -46,38 +60,12 @@ impl EchoComponent {
                 presentation: Default::default(),
             },
             (),
-        )?];
-        Ok(Self {
-            description: tool_text(prompts, NAMESPACE, ECHO_KIND, "description", ())?,
-            tools,
-        })
-    }
-}
-
-#[async_trait]
-impl ToolProvider for EchoComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
-    }
-
-    async fn execute(
-        &self,
-        name: &str,
-        params: &Value,
-        _answers: Option<&Answers>,
-        turn: &mut Turn,
-    ) -> ToolResult<ToolOutput> {
-        if name == ECHO_TOOL_NAME {
-            // The arguments themselves: classified as the turn (issue 168).
-            Ok(ToolOutput::classified(params.clone(), turn.situation().label()))
-        } else {
-            Err(ToolError::UnknownTool(name.to_string()))
-        }
-    }
+        )?,
+    };
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, ECHO_KIND, "description", ())?,
+        vec![Arc::new(echo)],
+    ))
 }
 
 pub fn register(registry: &mut LibraryComponents<'_>) {
@@ -86,7 +74,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |_descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(EchoComponent::new(&texts)?));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(&texts)?));
             Ok(facets)
         },
     );

@@ -1,8 +1,8 @@
-//! The file tools of `workspace` (issue 251, step 9): the workspace's files through its
-//! terminal, whatever its storage - a shell is not needed -, those that only read through a
-//! `TerminalReader` (`read`, issue 516), those that change through a `Terminal` (`change`). Paths
-//! are relative to the workspace's top directory and made `WorkspacePath`s before anything is
-//! asked.
+//! The file tools of `workspace` (issue 251, step 9), each a type of its own (issue 584): the
+//! workspace's files through its terminal, whatever its storage - a shell is not needed -, those
+//! that only read through a `TerminalReader` (`reading`, issue 516), those that change through a
+//! `Terminal` (`changing`). Paths are relative to the workspace's top directory and made
+//! `WorkspacePath`s before anything is asked.
 //!
 //! - `list_files`, `read_file` and `grep_files` only read; what they read they give with their
 //!   output as knowledge (`ToolOutput::knowledge`, issue 538), by its path within the workspace
@@ -12,20 +12,23 @@
 //!   away, so it never needs approval (issue 275).
 //! - `write_file`, `replace_in_file`, `move_file` and `delete_file` change; the approver reads the
 //!   change whole, and a rule derived from an approved one covers the file, whatever is written -
-//!   for a move, that move (`matcher`). `move_file` renames as well (issue 267): renaming is moving
-//!   within a directory. `write_file` and `replace_in_file` give what they wrote as knowledge, by
-//!   its path and the digest of what they wrote: what the agent knows of the file now.
+//!   for a move, that move (`changing_alike`). `move_file` renames as well (issue 267): renaming
+//!   is moving within a directory. `write_file` and `replace_in_file` give what they wrote as
+//!   knowledge, by its path and the digest of what they wrote: what the agent knows of the file
+//!   now.
 //!
 //! A file is read whole, up to `READ_LIMIT`, and given as text: one that is no UTF-8 is refused.
 //! A file the agent last knew otherwise than it is now - another changed it since it read, wrote or
 //! moved it - is neither written nor replaced in (issue 538): the model is told to read it again.
 //! The check and the write are not one step: what changes the file between them is overwritten.
 
-use super::tool;
-use crate::component::{WorkspaceComponent, WorkspaceParams};
+use super::{changing, of_workspace, reading, tool, Use, UsingTool};
+use crate::component::WorkspaceParams;
+use async_trait::async_trait;
 use bytes::Bytes;
 use caelumora_agents::tool::{
-    arguments, page_of, page_parameters, TextPosition, ToolError, ToolOutput, ToolResult,
+    arguments, page_of, page_parameters, proposed_matcher, TextPosition, Tool, ToolError,
+    ToolOutput, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_api::terminal::{
@@ -36,6 +39,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::digest::{self, ContentDigest, Digest};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
+use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation};
 use caelumora_domain::workspace::{Workspace, WorkspaceId};
 use futures::stream;
@@ -44,6 +48,7 @@ use regex::{Regex, RegexBuilder};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 /// A file read (issue 251): its `path`, and the `content` of its result
 /// as text, with the lines it covers - `start_line`, `start_offset`,
@@ -88,18 +93,6 @@ pub(super) const MOVE_FILE: &str = "move_file";
 pub(super) const DELETE_FILE: &str = "delete_file";
 pub(super) const PUBLISH_FILE: &str = "publish_file";
 
-/// The file tools, by name.
-pub(super) const TOOLS: [&str; 8] = [
-    LIST_FILES,
-    READ_FILE,
-    GREP_FILES,
-    WRITE_FILE,
-    REPLACE_IN_FILE,
-    MOVE_FILE,
-    DELETE_FILE,
-    PUBLISH_FILE,
-];
-
 /// The largest file read or searched.
 const READ_LIMIT: u64 = 4 * 1024 * 1024;
 /// The most entries one listing gives.
@@ -116,11 +109,6 @@ const MAX_NAME_CHARS: usize = 255;
 /// The longest pattern, in characters, and how large it may compile.
 const MAX_PATTERN_CHARS: usize = 500;
 const MAX_COMPILED_PATTERN_BYTES: usize = 1 << 20;
-
-/// Whether the file tool `name` only reads.
-pub(super) fn read_only(name: &str) -> bool {
-    matches!(name, LIST_FILES | READ_FILE | GREP_FILES | PUBLISH_FILE)
-}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -202,138 +190,109 @@ fn path(text: &str) -> ToolResult<WorkspacePath> {
     WorkspacePath::parse(text).map_err(ToolError::from)
 }
 
+/// The file tools, configured by `params`, their texts from `prompts`, each with how it uses the
+/// workspace: reading its files, or changing them.
+///
+/// # Errors
+/// `PromptError` if one of their texts cannot be had.
 pub(super) fn tools(
-    params: &WorkspaceParams,
+    params: &Arc<WorkspaceParams>,
     prompts: &PromptTexts,
-) -> Result<Vec<ToolDescription>, PromptError> {
-    let asks = |name: &str| params.requires_approval.required(read_only(name));
+) -> Result<Vec<UsingTool>, PromptError> {
+    let reads = params.requires_approval.required(true);
+    let changes = params.requires_approval.required(false);
     let values = context! { max_matches => MAX_MATCHES, default_matches => DEFAULT_MATCHES };
     let tool = |name: &str, parameters, requires_approval, presentation| {
         tool(prompts, name, parameters, requires_approval, presentation, &values)
     };
     let string = ToolParameters::string;
-    Ok(vec![
-        tool(
-            LIST_FILES,
-            ToolParameters::object([("path", string())], Vec::<&str>::new()),
-            asks(LIST_FILES),
-            FILE_LIST_PRESENTATION,
-        )?,
-        tool(
+    let list_files = ListFilesTool(tool(
+        LIST_FILES,
+        ToolParameters::object([("path", string())], Vec::<&str>::new()),
+        reads,
+        FILE_LIST_PRESENTATION,
+    )?);
+    let read_file = ReadFileTool {
+        description: tool(
             READ_FILE,
             ToolParameters::object(
                 [("path", string())].into_iter().chain(page_parameters()),
                 ["path"],
             ),
-            asks(READ_FILE),
+            reads,
             FILE_READ_PRESENTATION,
         )?,
-        tool(
-            GREP_FILES,
-            ToolParameters::object(
-                [
-                    ("pattern", string()),
-                    ("path", string()),
-                    ("max_matches", ToolParameters::number()),
-                ],
-                ["pattern"],
-            ),
-            asks(GREP_FILES),
-            FILE_SEARCH_PRESENTATION,
-        )?,
-        tool(
-            WRITE_FILE,
-            ToolParameters::object(
-                [("path", string()), ("content", string())],
-                ["path", "content"],
-            ),
-            asks(WRITE_FILE),
-            FILE_WRITE_PRESENTATION,
-        )?,
-        tool(
-            REPLACE_IN_FILE,
-            ToolParameters::object(
-                [
-                    ("path", string()),
-                    ("old_text", string()),
-                    ("new_text", string()),
-                    ("replace_all", ToolParameters::boolean()),
-                ],
-                ["path", "old_text", "new_text"],
-            ),
-            asks(REPLACE_IN_FILE),
-            FILE_EDIT_PRESENTATION,
-        )?,
-        tool(
-            MOVE_FILE,
-            ToolParameters::object([("from", string()), ("to", string())], ["from", "to"]),
-            asks(MOVE_FILE),
-            FILE_MOVE_PRESENTATION,
-        )?,
-        tool(
-            DELETE_FILE,
-            ToolParameters::object([("path", string())], ["path"]),
-            asks(DELETE_FILE),
-            ToolPresentation::DEFAULT,
-        )?,
-        tool(
-            PUBLISH_FILE,
-            ToolParameters::object(
-                [("path", string()), ("name", string()), ("description", string())],
-                ["path"],
-            ),
-            // Never asked (issue 275): it changes nothing, and hands the file
-            // to nobody who could not download it already.
-            false,
-            FILE_PUBLISH_PRESENTATION,
-        )?,
+        params: Arc::clone(params),
+        prompts: prompts.clone(),
+    };
+    let grep_files = GrepFilesTool(tool(
+        GREP_FILES,
+        ToolParameters::object(
+            [("pattern", string()), ("path", string()), ("max_matches", ToolParameters::number())],
+            ["pattern"],
+        ),
+        reads,
+        FILE_SEARCH_PRESENTATION,
+    )?);
+    let write_file = WriteFileTool(tool(
+        WRITE_FILE,
+        ToolParameters::object([("path", string()), ("content", string())], ["path", "content"]),
+        changes,
+        FILE_WRITE_PRESENTATION,
+    )?);
+    let replace_in_file = ReplaceInFileTool(tool(
+        REPLACE_IN_FILE,
+        ToolParameters::object(
+            [
+                ("path", string()),
+                ("old_text", string()),
+                ("new_text", string()),
+                ("replace_all", ToolParameters::boolean()),
+            ],
+            ["path", "old_text", "new_text"],
+        ),
+        changes,
+        FILE_EDIT_PRESENTATION,
+    )?);
+    let move_file = MoveFileTool(tool(
+        MOVE_FILE,
+        ToolParameters::object([("from", string()), ("to", string())], ["from", "to"]),
+        changes,
+        FILE_MOVE_PRESENTATION,
+    )?);
+    let delete_file = DeleteFileTool(tool(
+        DELETE_FILE,
+        ToolParameters::object([("path", string())], ["path"]),
+        changes,
+        ToolPresentation::DEFAULT,
+    )?);
+    let publish_file = PublishFileTool(tool(
+        PUBLISH_FILE,
+        ToolParameters::object(
+            [("path", string()), ("name", string()), ("description", string())],
+            ["path"],
+        ),
+        // Never asked (issue 275): it changes nothing, and hands the file
+        // to nobody who could not download it already.
+        false,
+        FILE_PUBLISH_PRESENTATION,
+    )?);
+    Ok(vec![
+        UsingTool { using: Use::Read, tool: Arc::new(list_files) },
+        UsingTool { using: Use::Read, tool: Arc::new(read_file) },
+        UsingTool { using: Use::Read, tool: Arc::new(grep_files) },
+        UsingTool { using: Use::Change, tool: Arc::new(write_file) },
+        UsingTool { using: Use::Change, tool: Arc::new(replace_in_file) },
+        UsingTool { using: Use::Change, tool: Arc::new(move_file) },
+        UsingTool { using: Use::Change, tool: Arc::new(delete_file) },
+        UsingTool { using: Use::Read, tool: Arc::new(publish_file) },
     ])
 }
 
-/// What an approver reads: what is read, or the change whole.
-pub(super) fn describe(name: &str, params: &Value) -> ToolResult<String> {
-    Ok(match name {
-        LIST_FILES => {
-            format!("List '{}' in the workspace", arguments::<At>(params)?.path.unwrap_or_default())
-        }
-        READ_FILE => format!("Read '{}' in the workspace", arguments::<Read>(params)?.path),
-        GREP_FILES => {
-            let Grep { pattern, path, .. } = arguments(params)?;
-            format!("Search the workspace's '{}' for:\n{pattern}", path.unwrap_or_default())
-        }
-        WRITE_FILE => {
-            let Write { path, content } = arguments(params)?;
-            format!("Write '{path}' in the workspace ({} bytes):\n{content}", content.len())
-        }
-        REPLACE_IN_FILE => {
-            let Replace { path, old_text, new_text, replace_all } = arguments(params)?;
-            let how = if replace_all { "every occurrence" } else { "once" };
-            format!("Replace in '{path}' in the workspace, {how}:\n--- old\n{old_text}\n+++ new\n{new_text}")
-        }
-        MOVE_FILE => {
-            let Move { from, to } = arguments(params)?;
-            let how = if renames(&path(&from)?, &path(&to)?) { "Rename" } else { "Move" };
-            format!("{how} '{from}' to '{to}' in the workspace")
-        }
-        PUBLISH_FILE => {
-            let Publish { path, name, .. } = arguments(params)?;
-            match name {
-                Some(name) => format!("Offer '{path}' in the workspace for download as '{name}'"),
-                None => format!("Offer '{path}' in the workspace for download"),
-            }
-        }
-        _ => format!("Delete '{}' from the workspace", arguments::<Delete>(params)?.path),
-    })
-}
-
-/// For a change, the calls changing the same file - for a move, the same
-/// move, since it changes two places; `None` for the others, which are
-/// alike when exactly alike.
-pub(super) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
-    if !TOOLS.contains(&name) || read_only(name) {
-        return None;
-    }
-    let keys: &[&str] = if name == MOVE_FILE { &["from", "to"] } else { &["path"] };
+/// For a change of `tool`, the calls changing the same places as one with `params` - the file
+/// named by `keys`, for a move both of its places, whatever is written -; as its parameters tell
+/// (`proposed_matcher`) where `params` name none.
+fn changing_alike(tool: &ToolDescription, keys: &[&str], params: &Value) -> ToolMatcher {
     let arguments = keys
         .iter()
         .map(|key| {
@@ -342,8 +301,11 @@ pub(super) fn matcher(name: &str, params: &Value) -> Option<ToolMatcher> {
                 ArgumentMatcher::Pattern(regex::escape(params.get(key)?.as_str()?)),
             ))
         })
-        .collect::<Option<BTreeMap<_, _>>>()?;
-    Some(ToolMatcher { tool: name.to_string(), arguments })
+        .collect::<Option<BTreeMap<_, _>>>();
+    match arguments {
+        Some(arguments) => ToolMatcher { tool: tool.name.clone(), arguments },
+        None => proposed_matcher(tool, params),
+    }
 }
 
 /// The bytes of the file `at`, at most `READ_LIMIT`.
@@ -501,6 +463,19 @@ fn unchanged(at: &WorkspacePath, known: Digest, now: Digest) -> ToolResult<()> {
     )))
 }
 
+/// `value`, which a tool gave of the file `at` of `workspace`, with what the work in `turn` knows
+/// of it now, as of `digest` (`known`), classified as the workspace.
+fn of_file(
+    turn: &Turn<'_>,
+    workspace: Workspace,
+    at: &WorkspacePath,
+    digest: Option<Digest>,
+    value: Value,
+) -> ToolOutput {
+    let knew = known(turn, (workspace.id, &workspace.classification), at, digest);
+    of_workspace(knowing(value, [knew]), workspace)
+}
+
 /// `value`, with what the tool read or wrote for it, `knowledge` (`ToolOutput::knowledge`).
 fn knowing(value: Value, knowledge: impl IntoIterator<Item = KnowledgeRef>) -> ToolOutput {
     ToolOutput { knowledge: knowledge.into_iter().collect(), ..value.into() }
@@ -524,185 +499,363 @@ pub(in crate::component) fn known(
     }
 }
 
-/// Runs the file tool `name` of `component` that only reads (`read_only`) with `params` on
-/// `terminal`, the files of `workspace` - its id and its classification -, as `component` is
-/// configured, with the texts its results give, in `turn`: its value, with what it read.
-pub(super) async fn read(
-    component: &WorkspaceComponent,
-    name: &str,
-    params: &Value,
-    terminal: &dyn TerminalReader,
-    workspace: (WorkspaceId, &Classification),
-    turn: &Turn<'_>,
-) -> ToolResult<ToolOutput> {
-    let prompts = &component.prompts;
-    let read =
-        |value, at: &WorkspacePath, digest| knowing(value, [known(turn, workspace, at, digest)]);
-    match name {
-        LIST_FILES => {
-            let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
-            let entries = terminal.list(&at).await?;
-            let listed: Vec<Value> = entries.iter().take(MAX_ENTRIES).map(entry).collect();
-            let value = json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES });
-            Ok(read(value, &at, None))
-        }
-        READ_FILE => {
-            let Read { path: at, start_line, start_offset, line_count } = arguments(params)?;
-            let at = path(&at)?;
-            let (text, digest) = text(terminal, &at).await?;
-            let mut result = page_of(
-                &text,
-                &format!("'{at}'"),
-                TextPosition::asked(start_line, start_offset),
-                line_count,
-                component.params.max_output_bytes,
-            )?
-            .value(prompts);
-            result["path"] = json!(at.to_string());
-            Ok(read(result, &at, Some(digest)))
-        }
-        GREP_FILES => {
-            let Grep { pattern, path: at, max_matches } = arguments(params)?;
-            if pattern.chars().count() > MAX_PATTERN_CHARS {
-                return Err(ToolError::InvalidParameter(format!(
-                    "the pattern is longer than {MAX_PATTERN_CHARS} characters"
-                )));
-            }
-            let pattern = RegexBuilder::new(&pattern)
-                .size_limit(MAX_COMPILED_PATTERN_BYTES)
-                .build()
-                .map_err(|e| {
-                    ToolError::InvalidParameter(format!(
-                        "the pattern is no regular expression: {e}"
-                    ))
-                })?;
-            let at = path(&at.unwrap_or_default())?;
-            let found = search(
-                terminal,
-                at.clone(),
-                &pattern,
-                max_matches.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES),
-            )
-            .await?;
-            Ok(read(found, &at, None))
-        }
-        PUBLISH_FILE => {
-            let Publish { path: at, name, description } = arguments(params)?;
-            let at = path(&at)?;
-            let found = terminal.stat(&at).await?;
-            if found.is_dir {
-                return Err(ToolError::InvalidParameter(format!(
-                    "'{at}' is a directory; only a file can be offered"
-                )));
-            }
-            let name = match name.as_deref().map(str::trim) {
-                Some(name) if !name.is_empty() => name.to_string(),
-                _ => at.file_name().unwrap_or_default().to_string(),
-            };
-            if name.chars().count() > MAX_NAME_CHARS
-                || name.contains(['/', '\\'])
-                || name.chars().any(char::is_control)
-            {
-                return Err(ToolError::InvalidParameter(format!("'{name}' is no name to offer a file under: at most {MAX_NAME_CHARS} characters, no slashes")));
-            }
-            let (size, digest) = digest(terminal, &at).await?;
-            let mut result = json!({ "workspace": workspace.0, "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
-            if let Some(description) =
-                description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty())
-            {
-                result["description"] = json!(description);
-            }
-            // Offered as a link: the model knows the place, not what the file holds.
-            Ok(read(result, &at, None))
-        }
-        _ => Err(ToolError::UnknownTool(name.to_string())),
+/// `list_files`: what a directory of the workspace holds.
+#[derive(Debug)]
+struct ListFilesTool(ToolDescription);
+
+#[async_trait]
+impl Tool for ListFilesTool {
+    fn description(&self) -> &ToolDescription {
+        &self.0
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = reading(turn).await?;
+        let at = path(&arguments::<At>(params)?.path.unwrap_or_default())?;
+        let entries = terminal.list(&at).await?;
+        let listed: Vec<Value> = entries.iter().take(MAX_ENTRIES).map(entry).collect();
+        let value = json!({ "path": at.to_string(), "entries": listed, "complete": entries.len() <= MAX_ENTRIES });
+        Ok(of_file(turn, workspace, &at, None, value))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        Ok(format!("List '{}' in the workspace", arguments::<At>(params)?.path.unwrap_or_default()))
     }
 }
 
-/// Runs the file tool `name` that changes the files with `params` on `terminal`, the files of
-/// `workspace` - its id and its classification -, in `turn`: its value, with what the agent knows
-/// of what it changed (issue 538) - a file written by its content as written, one moved by its
-/// content as the agent knew it where it did. A file the agent knew is written or replaced only as
-/// it knew it (`unchanged`).
-pub(super) async fn change(
-    name: &str,
-    params: &Value,
-    terminal: &dyn Terminal,
-    workspace: (WorkspaceId, &Classification),
-    turn: &Turn<'_>,
-) -> ToolResult<ToolOutput> {
-    let wrote =
-        |value, at: &WorkspacePath, digest| knowing(value, [known(turn, workspace, at, digest)]);
-    let last_known = |at: &WorkspacePath| {
-        turn.situation().agent_channel_state().last_known::<Workspace>(workspace.0, &at.to_string())
-    };
-    match name {
-        WRITE_FILE => {
-            let Write { path: at, content } = arguments(params)?;
-            let at = path(&at)?;
-            if let Some(knew) = last_known(&at) {
-                match terminal.stat(&at).await {
-                    // A file that is gone takes what is written: nothing is lost.
-                    Err(TerminalError::NotFound(_)) => {}
-                    Err(e) => return Err(e.into()),
-                    Ok(_) => unchanged(&at, knew, digest(terminal, &at).await?.1)?,
-                }
-            }
-            let (written, digest) = write(terminal, &at, content).await?;
-            Ok(wrote(json!({ "path": at.to_string(), "bytes": written }), &at, Some(digest)))
+/// `read_file`: a file of the workspace as text, a page at a time of at most what a result holds.
+#[derive(Debug)]
+struct ReadFileTool {
+    description: ToolDescription,
+    params: Arc<WorkspaceParams>,
+    /// What its results say of where to read on.
+    prompts: PromptTexts,
+}
+
+#[async_trait]
+impl Tool for ReadFileTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = reading(turn).await?;
+        let Read { path: at, start_line, start_offset, line_count } = arguments(params)?;
+        let at = path(&at)?;
+        let (text, digest) = text(terminal.as_ref(), &at).await?;
+        let mut result = page_of(
+            &text,
+            &format!("'{at}'"),
+            TextPosition::asked(start_line, start_offset),
+            line_count,
+            self.params.max_output_bytes,
+        )?
+        .value(&self.prompts);
+        result["path"] = json!(at.to_string());
+        Ok(of_file(turn, workspace, &at, Some(digest), result))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        Ok(format!("Read '{}' in the workspace", arguments::<Read>(params)?.path))
+    }
+}
+
+/// `grep_files`: the lines of the files of the workspace that match a pattern.
+#[derive(Debug)]
+struct GrepFilesTool(ToolDescription);
+
+#[async_trait]
+impl Tool for GrepFilesTool {
+    fn description(&self) -> &ToolDescription {
+        &self.0
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = reading(turn).await?;
+        let Grep { pattern, path: at, max_matches } = arguments(params)?;
+        if pattern.chars().count() > MAX_PATTERN_CHARS {
+            return Err(ToolError::InvalidParameter(format!(
+                "the pattern is longer than {MAX_PATTERN_CHARS} characters"
+            )));
         }
-        REPLACE_IN_FILE => {
-            let Replace { path: at, old_text, new_text, replace_all } = arguments(params)?;
-            if old_text.is_empty() {
-                return Err(ToolError::InvalidParameter(
-                    "'old_text' must not be empty".to_string(),
-                ));
-            }
-            let at = path(&at)?;
-            let (text, now) = text(terminal, &at).await?;
-            if let Some(knew) = last_known(&at) {
-                unchanged(&at, knew, now)?;
-            }
-            let found = text.matches(old_text.as_str()).count();
-            let replaced = match (found, replace_all) {
-                (0, _) => return Err(ToolError::InvalidParameter(format!("'old_text' does not occur in '{at}'"))),
-                (1, _) | (_, true) => text.replace(old_text.as_str(), &new_text),
-                (many, false) => return Err(ToolError::InvalidParameter(format!("'old_text' occurs {many} times in '{at}': give more of what surrounds it, or set replace_all"))),
-            };
-            let (_, digest) = write(terminal, &at, replaced).await?;
-            Ok(wrote(json!({ "path": at.to_string(), "replacements": found }), &at, Some(digest)))
-        }
-        MOVE_FILE => {
-            let Move { from, to } = arguments(params)?;
-            let (from, to) = (path(&from)?, path(&to)?);
-            terminal.move_entry(&from, &to).await.map_err(|e| match e {
-                TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => {
-                    ToolError::InvalidParameter(
-                        "the workspace itself cannot be moved, nor moved over".to_string(),
-                    )
-                }
-                e => ToolError::from(e),
+        let pattern = RegexBuilder::new(&pattern)
+            .size_limit(MAX_COMPILED_PATTERN_BYTES)
+            .build()
+            .map_err(|e| {
+                ToolError::InvalidParameter(format!("the pattern is no regular expression: {e}"))
             })?;
-            let moved = json!({
-                "from": from.to_string(),
-                "to": to.to_string(),
-                "renamed": renames(&from, &to)
-            });
-            // Where it lies now, as the agent knew it where it was, if it did.
-            let knew = last_known(&from).map(|digest| known(turn, workspace, &to, Some(digest)));
-            Ok(knowing(moved, knew))
+        let at = path(&at.unwrap_or_default())?;
+        let found = search(
+            terminal.as_ref(),
+            at.clone(),
+            &pattern,
+            max_matches.unwrap_or(DEFAULT_MATCHES).clamp(1, MAX_MATCHES),
+        )
+        .await?;
+        Ok(of_file(turn, workspace, &at, None, found))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        let Grep { pattern, path, .. } = arguments(params)?;
+        Ok(format!("Search the workspace's '{}' for:\n{pattern}", path.unwrap_or_default()))
+    }
+}
+
+/// `publish_file`: a file of the workspace offered for download, as a link to it as it is now.
+#[derive(Debug)]
+struct PublishFileTool(ToolDescription);
+
+#[async_trait]
+impl Tool for PublishFileTool {
+    fn description(&self) -> &ToolDescription {
+        &self.0
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = reading(turn).await?;
+        let Publish { path: at, name, description } = arguments(params)?;
+        let at = path(&at)?;
+        let found = terminal.stat(&at).await?;
+        if found.is_dir {
+            return Err(ToolError::InvalidParameter(format!(
+                "'{at}' is a directory; only a file can be offered"
+            )));
         }
-        DELETE_FILE => {
-            let at = path(&arguments::<Delete>(params)?.path)?;
-            terminal.delete(&at).await.map_err(|e| match e {
-                TerminalError::InvalidPath(_) if at.is_root() => ToolError::InvalidParameter(
-                    "the workspace itself cannot be deleted".to_string(),
-                ),
-                e => ToolError::from(e),
-            })?;
-            Ok(json!({ "path": at.to_string(), "deleted": true }).into())
+        let name = match name.as_deref().map(str::trim) {
+            Some(name) if !name.is_empty() => name.to_string(),
+            _ => at.file_name().unwrap_or_default().to_string(),
+        };
+        if name.chars().count() > MAX_NAME_CHARS
+            || name.contains(['/', '\\'])
+            || name.chars().any(char::is_control)
+        {
+            return Err(ToolError::InvalidParameter(format!("'{name}' is no name to offer a file under: at most {MAX_NAME_CHARS} characters, no slashes")));
         }
-        _ => Err(ToolError::UnknownTool(name.to_string())),
+        let (size, digest) = digest(terminal.as_ref(), &at).await?;
+        let mut result = json!({ "workspace": workspace.id, "path": at.to_string(), "name": name, "size": size, "modified": found.modified, "digest": digest.to_string() });
+        if let Some(description) =
+            description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty())
+        {
+            result["description"] = json!(description);
+        }
+        // Offered as a link: the model knows the place, not what the file holds.
+        Ok(of_file(turn, workspace, &at, None, result))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        let Publish { path, name, .. } = arguments(params)?;
+        Ok(match name {
+            Some(name) => format!("Offer '{path}' in the workspace for download as '{name}'"),
+            None => format!("Offer '{path}' in the workspace for download"),
+        })
+    }
+}
+
+/// The digest the agent of `turn` last knew the file `at` of `workspace` by, if it knew it (issue
+/// 538).
+fn last_known(turn: &Turn<'_>, workspace: &Workspace, at: &WorkspacePath) -> Option<Digest> {
+    turn.situation().agent_channel_state().last_known::<Workspace>(workspace.id, &at.to_string())
+}
+
+/// `write_file`: writes a file of the workspace whole - only as the agent knew it, if it did
+/// (`unchanged`) -, giving what it wrote as what the agent knows of the file now.
+#[derive(Debug)]
+struct WriteFileTool(ToolDescription);
+
+#[async_trait]
+impl Tool for WriteFileTool {
+    fn description(&self) -> &ToolDescription {
+        &self.0
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = changing(turn).await?;
+        let Write { path: at, content } = arguments(params)?;
+        let at = path(&at)?;
+        if let Some(knew) = last_known(turn, &workspace, &at) {
+            match terminal.stat(&at).await {
+                // A file that is gone takes what is written: nothing is lost.
+                Err(TerminalError::NotFound(_)) => {}
+                Err(e) => return Err(e.into()),
+                Ok(_) => unchanged(&at, knew, digest(terminal.as_ref(), &at).await?.1)?,
+            }
+        }
+        let (written, digest) = write(terminal.as_ref(), &at, content).await?;
+        let value = json!({ "path": at.to_string(), "bytes": written });
+        Ok(of_file(turn, workspace, &at, Some(digest), value))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        let Write { path, content } = arguments(params)?;
+        Ok(format!("Write '{path}' in the workspace ({} bytes):\n{content}", content.len()))
+    }
+
+    fn matcher(&self, params: &Value) -> ToolMatcher {
+        changing_alike(&self.0, &["path"], params)
+    }
+}
+
+/// `replace_in_file`: replaces a text in a file of the workspace - once, unless every occurrence
+/// is to be replaced -, only as the agent knew the file, if it did (`unchanged`).
+#[derive(Debug)]
+struct ReplaceInFileTool(ToolDescription);
+
+#[async_trait]
+impl Tool for ReplaceInFileTool {
+    fn description(&self) -> &ToolDescription {
+        &self.0
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = changing(turn).await?;
+        let Replace { path: at, old_text, new_text, replace_all } = arguments(params)?;
+        if old_text.is_empty() {
+            return Err(ToolError::InvalidParameter("'old_text' must not be empty".to_string()));
+        }
+        let at = path(&at)?;
+        let (text, now) = text(terminal.as_ref(), &at).await?;
+        if let Some(knew) = last_known(turn, &workspace, &at) {
+            unchanged(&at, knew, now)?;
+        }
+        let found = text.matches(old_text.as_str()).count();
+        let replaced = match (found, replace_all) {
+            (0, _) => return Err(ToolError::InvalidParameter(format!("'old_text' does not occur in '{at}'"))),
+            (1, _) | (_, true) => text.replace(old_text.as_str(), &new_text),
+            (many, false) => return Err(ToolError::InvalidParameter(format!("'old_text' occurs {many} times in '{at}': give more of what surrounds it, or set replace_all"))),
+        };
+        let (_, digest) = write(terminal.as_ref(), &at, replaced).await?;
+        let value = json!({ "path": at.to_string(), "replacements": found });
+        Ok(of_file(turn, workspace, &at, Some(digest), value))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        let Replace { path, old_text, new_text, replace_all } = arguments(params)?;
+        let how = if replace_all { "every occurrence" } else { "once" };
+        Ok(format!(
+            "Replace in '{path}' in the workspace, {how}:\n--- old\n{old_text}\n+++ new\n{new_text}"
+        ))
+    }
+
+    fn matcher(&self, params: &Value) -> ToolMatcher {
+        changing_alike(&self.0, &["path"], params)
+    }
+}
+
+/// `move_file`: moves or renames a file or directory of the workspace, never over something;
+/// where it lies now is known as the agent knew it where it was, if it did.
+#[derive(Debug)]
+struct MoveFileTool(ToolDescription);
+
+#[async_trait]
+impl Tool for MoveFileTool {
+    fn description(&self) -> &ToolDescription {
+        &self.0
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = changing(turn).await?;
+        let Move { from, to } = arguments(params)?;
+        let (from, to) = (path(&from)?, path(&to)?);
+        terminal.move_entry(&from, &to).await.map_err(|e| match e {
+            TerminalError::InvalidPath(_) if from.is_root() || to.is_root() => {
+                ToolError::InvalidParameter(
+                    "the workspace itself cannot be moved, nor moved over".to_string(),
+                )
+            }
+            e => ToolError::from(e),
+        })?;
+        let moved = json!({
+            "from": from.to_string(),
+            "to": to.to_string(),
+            "renamed": renames(&from, &to)
+        });
+        // Where it lies now, as the agent knew it where it was, if it did.
+        let knew = last_known(turn, &workspace, &from).map(|digest| {
+            known(turn, (workspace.id, &workspace.classification), &to, Some(digest))
+        });
+        Ok(of_workspace(knowing(moved, knew), workspace))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        let Move { from, to } = arguments(params)?;
+        let how = if renames(&path(&from)?, &path(&to)?) { "Rename" } else { "Move" };
+        Ok(format!("{how} '{from}' to '{to}' in the workspace"))
+    }
+
+    fn matcher(&self, params: &Value) -> ToolMatcher {
+        changing_alike(&self.0, &["from", "to"], params)
+    }
+}
+
+/// `delete_file`: deletes a file, or an empty directory, of the workspace.
+#[derive(Debug)]
+struct DeleteFileTool(ToolDescription);
+
+#[async_trait]
+impl Tool for DeleteFileTool {
+    fn description(&self) -> &ToolDescription {
+        &self.0
+    }
+
+    async fn execute(
+        &self,
+        params: &Value,
+        _answers: Option<&Answers>,
+        turn: &mut Turn<'_>,
+    ) -> ToolResult<ToolOutput> {
+        let (workspace, terminal) = changing(turn).await?;
+        let at = path(&arguments::<Delete>(params)?.path)?;
+        terminal.delete(&at).await.map_err(|e| match e {
+            TerminalError::InvalidPath(_) if at.is_root() => {
+                ToolError::InvalidParameter("the workspace itself cannot be deleted".to_string())
+            }
+            e => ToolError::from(e),
+        })?;
+        let value = json!({ "path": at.to_string(), "deleted": true });
+        Ok(of_workspace(value.into(), workspace))
+    }
+
+    fn describe(&self, params: &Value) -> ToolResult<String> {
+        Ok(format!("Delete '{}' from the workspace", arguments::<Delete>(params)?.path))
+    }
+
+    fn matcher(&self, params: &Value) -> ToolMatcher {
+        changing_alike(&self.0, &["path"], params)
     }
 }
 
@@ -710,7 +863,7 @@ pub(super) async fn change(
 mod tests {
     use super::*;
     use crate::component::testing::component;
-    use caelumora_agents::testing::workspace_turn;
+    use caelumora_agents::testing::{tool_named, workspace_turn};
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::digest;
@@ -747,7 +900,7 @@ mod tests {
             run(WRITE_FILE, json!({ "path": "docs/notes.txt", "content": "a side step\n" })),
         ];
         for (name, params) in calls {
-            let written = tool.execute(name, &params, None, &mut turn).await.unwrap();
+            let written = tool_named(&tool, name).execute(&params, None, &mut turn).await.unwrap();
             assert_eq!(written.classification.as_ref(), Some(&world.workspace.classification));
             known.extend(written.knowledge);
         }
@@ -756,8 +909,10 @@ mod tests {
             "# Plan\nfirst step\nsecond step\n"
         );
 
-        let listed =
-            tool.execute(LIST_FILES, &json!({ "path": "docs" }), None, &mut turn).await.unwrap();
+        let listed = tool_named(&tool, LIST_FILES)
+            .execute(&json!({ "path": "docs" }), None, &mut turn)
+            .await
+            .unwrap();
         known.extend(listed.knowledge);
         let listed = listed.value;
         let names: Vec<&str> = listed["entries"]
@@ -768,9 +923,8 @@ mod tests {
             .collect();
         assert_eq!(names, ["notes.txt", "plan.md"]);
 
-        let read = tool
+        let read = tool_named(&tool, READ_FILE)
             .execute(
-                READ_FILE,
                 &json!({ "path": "docs/plan.md", "start_line": 2, "line_count": 1 }),
                 None,
                 &mut turn,
@@ -784,8 +938,8 @@ mod tests {
             (Some("first step\n"), Some(2), Some(3))
         );
 
-        let found = tool
-            .execute(GREP_FILES, &json!({ "pattern": "step$" }), None, &mut turn)
+        let found = tool_named(&tool, GREP_FILES)
+            .execute(&json!({ "pattern": "step$" }), None, &mut turn)
             .await
             .unwrap();
         known.extend(found.knowledge);
@@ -806,9 +960,8 @@ mod tests {
         );
         assert_eq!(found["complete"], true);
 
-        let ambiguous = tool
+        let ambiguous = tool_named(&tool, REPLACE_IN_FILE)
             .execute(
-                REPLACE_IN_FILE,
                 &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "move" }),
                 None,
                 &mut turn,
@@ -818,18 +971,17 @@ mod tests {
             matches!(&ambiguous, Err(ToolError::InvalidParameter(why)) if why.contains("occurs 2 times")),
             "{ambiguous:?}"
         );
-        let replaced = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "first step", "new_text": "first move" }), None, &mut turn).await.unwrap();
+        let replaced = tool_named(&tool, REPLACE_IN_FILE).execute(&json!({ "path": "docs/plan.md", "old_text": "first step", "new_text": "first move" }), None, &mut turn).await.unwrap();
         assert_eq!(replaced.value["replacements"], 1);
         known.extend(replaced.knowledge);
-        let replaced = tool.execute(REPLACE_IN_FILE, &json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "stride", "replace_all": true }), None, &mut turn).await.unwrap();
+        let replaced = tool_named(&tool, REPLACE_IN_FILE).execute(&json!({ "path": "docs/plan.md", "old_text": "step", "new_text": "stride", "replace_all": true }), None, &mut turn).await.unwrap();
         known.extend(replaced.knowledge);
         assert_eq!(
             fs::read_to_string(world.dir().join("docs/plan.md")).unwrap(),
             "# Plan\nfirst move\nsecond stride\n"
         );
-        let absent = tool
+        let absent = tool_named(&tool, REPLACE_IN_FILE)
             .execute(
-                REPLACE_IN_FILE,
                 &json!({ "path": "docs/plan.md", "old_text": "nowhere", "new_text": "x" }),
                 None,
                 &mut turn,
@@ -837,18 +989,21 @@ mod tests {
             .await;
         assert!(matches!(absent, Err(ToolError::InvalidParameter(_))));
 
-        let not_empty =
-            tool.execute(DELETE_FILE, &json!({ "path": "docs" }), None, &mut turn).await;
+        let not_empty = tool_named(&tool, DELETE_FILE)
+            .execute(&json!({ "path": "docs" }), None, &mut turn)
+            .await;
         assert!(
             matches!(&not_empty, Err(ToolError::InvalidParameter(why)) if why.contains("not empty")),
             "{not_empty:?}"
         );
-        tool.execute(DELETE_FILE, &json!({ "path": "docs/notes.txt" }), None, &mut turn)
+        tool_named(&tool, DELETE_FILE)
+            .execute(&json!({ "path": "docs/notes.txt" }), None, &mut turn)
             .await
             .unwrap();
         assert!(!world.dir().join("docs/notes.txt").exists());
-        let outside =
-            tool.execute(READ_FILE, &json!({ "path": "../secret" }), None, &mut turn).await;
+        let outside = tool_named(&tool, READ_FILE)
+            .execute(&json!({ "path": "../secret" }), None, &mut turn)
+            .await;
         assert!(matches!(outside, Err(ToolError::InvalidParameter(_))), "the model's to correct");
 
         drop(turn);
@@ -928,49 +1083,64 @@ mod tests {
         let replace =
             |old: &str, new: &str| json!({ "path": "a.txt", "old_text": old, "new_text": new });
 
-        let written = tool.execute(WRITE_FILE, &write("a.txt", "one"), None, &mut turn).await;
+        let written =
+            tool_named(&tool, WRITE_FILE).execute(&write("a.txt", "one"), None, &mut turn).await;
         kept(&mut turn, written.unwrap());
         fs::write(file("a.txt"), "two").unwrap();
-        let refused = tool.execute(WRITE_FILE, &write("a.txt", "three"), None, &mut turn).await;
+        let refused =
+            tool_named(&tool, WRITE_FILE).execute(&write("a.txt", "three"), None, &mut turn).await;
         assert!(changed(&refused), "changed since written: {refused:?}");
-        let refused = tool.execute(REPLACE_IN_FILE, &replace("two", "four"), None, &mut turn).await;
+        let refused = tool_named(&tool, REPLACE_IN_FILE)
+            .execute(&replace("two", "four"), None, &mut turn)
+            .await;
         assert!(changed(&refused), "nor replaced in: {refused:?}");
         let searched = json!({ "pattern": "two", "path": "a.txt" });
-        let searched = tool.execute(GREP_FILES, &searched, None, &mut turn).await;
+        let searched = tool_named(&tool, GREP_FILES).execute(&searched, None, &mut turn).await;
         kept(&mut turn, searched.unwrap());
-        let refused = tool.execute(WRITE_FILE, &write("a.txt", "three"), None, &mut turn).await;
+        let refused =
+            tool_named(&tool, WRITE_FILE).execute(&write("a.txt", "three"), None, &mut turn).await;
         assert!(changed(&refused), "a search is no reading: {refused:?}");
         assert_eq!(fs::read_to_string(file("a.txt")).unwrap(), "two", "as the other left it");
 
-        let read = tool.execute(READ_FILE, &json!({ "path": "a.txt" }), None, &mut turn).await;
+        let read = tool_named(&tool, READ_FILE)
+            .execute(&json!({ "path": "a.txt" }), None, &mut turn)
+            .await;
         kept(&mut turn, read.unwrap());
-        let replaced =
-            tool.execute(REPLACE_IN_FILE, &replace("two", "four"), None, &mut turn).await;
+        let replaced = tool_named(&tool, REPLACE_IN_FILE)
+            .execute(&replace("two", "four"), None, &mut turn)
+            .await;
         kept(&mut turn, replaced.unwrap());
-        let written = tool.execute(WRITE_FILE, &write("a.txt", "five"), None, &mut turn).await;
+        let written =
+            tool_named(&tool, WRITE_FILE).execute(&write("a.txt", "five"), None, &mut turn).await;
         assert!(written.is_ok(), "read again, and changed by itself since: {written:?}");
         kept(&mut turn, written.unwrap());
         assert_eq!(fs::read_to_string(file("a.txt")).unwrap(), "five");
 
-        let deleted = tool.execute(DELETE_FILE, &json!({ "path": "a.txt" }), None, &mut turn).await;
+        let deleted = tool_named(&tool, DELETE_FILE)
+            .execute(&json!({ "path": "a.txt" }), None, &mut turn)
+            .await;
         kept(&mut turn, deleted.unwrap());
         fs::write(file("a.txt"), "theirs").unwrap();
-        let refused = tool.execute(WRITE_FILE, &write("a.txt", "six"), None, &mut turn).await;
+        let refused =
+            tool_named(&tool, WRITE_FILE).execute(&write("a.txt", "six"), None, &mut turn).await;
         assert!(changed(&refused), "made anew by another: {refused:?}");
         fs::remove_file(file("a.txt")).unwrap();
-        let written = tool.execute(WRITE_FILE, &write("a.txt", "seven"), None, &mut turn).await;
+        let written =
+            tool_named(&tool, WRITE_FILE).execute(&write("a.txt", "seven"), None, &mut turn).await;
         assert!(written.is_ok(), "gone since: {written:?}");
 
         let moved = json!({ "from": "a.txt", "to": "b.txt" });
         kept(&mut turn, written.unwrap());
-        let moved = tool.execute(MOVE_FILE, &moved, None, &mut turn).await;
+        let moved = tool_named(&tool, MOVE_FILE).execute(&moved, None, &mut turn).await;
         kept(&mut turn, moved.unwrap());
         fs::write(file("b.txt"), "theirs").unwrap();
-        let refused = tool.execute(WRITE_FILE, &write("b.txt", "eight"), None, &mut turn).await;
+        let refused =
+            tool_named(&tool, WRITE_FILE).execute(&write("b.txt", "eight"), None, &mut turn).await;
         assert!(changed(&refused), "known where it was moved to: {refused:?}");
 
         fs::write(file("c.txt"), "theirs").unwrap();
-        let never = tool.execute(WRITE_FILE, &write("c.txt", "mine"), None, &mut turn).await;
+        let never =
+            tool_named(&tool, WRITE_FILE).execute(&write("c.txt", "mine"), None, &mut turn).await;
         assert!(never.is_ok(), "never known: written as now");
     }
 
@@ -983,13 +1153,14 @@ mod tests {
         fs::write(world.dir().join("long.txt"), "first\n123456789012345\n").unwrap();
 
         let args = json!({ "path": "long.txt", "start_line": 2 });
-        let cut = tool.execute(READ_FILE, &args, None, &mut turn).await.unwrap().value;
+        let cut = tool_named(&tool, READ_FILE).execute(&args, None, &mut turn).await.unwrap().value;
         assert_eq!(cut["content"], "1234567890");
         assert_eq!((cut["start_line"].as_u64(), cut["end_line"].as_u64()), (Some(2), Some(2)));
         let next = cut["next"].as_str().unwrap();
         assert!(next.contains("start_line 2") && next.contains("start_offset 10"), "{cut}");
         let args = json!({ "path": "long.txt", "start_line": 2, "start_offset": 10 });
-        let rest = tool.execute(READ_FILE, &args, None, &mut turn).await.unwrap().value;
+        let rest =
+            tool_named(&tool, READ_FILE).execute(&args, None, &mut turn).await.unwrap().value;
         assert_eq!(rest["content"], "12345\n");
         assert_eq!(rest["start_offset"], 10);
         assert!(rest.get("next").is_none(), "{rest}");
@@ -1004,8 +1175,8 @@ mod tests {
         fs::write(world.dir().join("long.txt"), "line one\nline two\nline 3\n").unwrap();
         fs::write(world.dir().join("image.bin"), [0xff, 0xfe, 0x00, 0x81]).unwrap();
 
-        let first = tool
-            .execute(READ_FILE, &json!({ "path": "long.txt" }), None, &mut turn)
+        let first = tool_named(&tool, READ_FILE)
+            .execute(&json!({ "path": "long.txt" }), None, &mut turn)
             .await
             .unwrap()
             .value;
@@ -1014,26 +1185,27 @@ mod tests {
             (Some("line one\n"), Some(1))
         );
         assert!(first["next"].as_str().unwrap().contains("start_line 2"), "{first}");
-        let last = tool
-            .execute(READ_FILE, &json!({ "path": "long.txt", "start_line": 3 }), None, &mut turn)
+        let last = tool_named(&tool, READ_FILE)
+            .execute(&json!({ "path": "long.txt", "start_line": 3 }), None, &mut turn)
             .await
             .unwrap()
             .value;
         assert_eq!(last["content"], "line 3\n");
         assert!(last.get("next").is_none());
-        let beyond = tool
-            .execute(READ_FILE, &json!({ "path": "long.txt", "start_line": 9 }), None, &mut turn)
+        let beyond = tool_named(&tool, READ_FILE)
+            .execute(&json!({ "path": "long.txt", "start_line": 9 }), None, &mut turn)
             .await;
         assert!(matches!(beyond, Err(ToolError::InvalidParameter(_))));
 
-        let binary =
-            tool.execute(READ_FILE, &json!({ "path": "image.bin" }), None, &mut turn).await;
+        let binary = tool_named(&tool, READ_FILE)
+            .execute(&json!({ "path": "image.bin" }), None, &mut turn)
+            .await;
         assert!(
             matches!(&binary, Err(ToolError::InvalidParameter(why)) if why.contains("no text")),
             "{binary:?}"
         );
-        let searched = tool
-            .execute(GREP_FILES, &json!({ "pattern": "line" }), None, &mut turn)
+        let searched = tool_named(&tool, GREP_FILES)
+            .execute(&json!({ "pattern": "line" }), None, &mut turn)
             .await
             .unwrap()
             .value;
@@ -1046,7 +1218,9 @@ mod tests {
             (Some(2), Some(1), 3),
             "{searched}"
         );
-        let bad = tool.execute(GREP_FILES, &json!({ "pattern": "(" }), None, &mut turn).await;
+        let bad = tool_named(&tool, GREP_FILES)
+            .execute(&json!({ "pattern": "(" }), None, &mut turn)
+            .await;
         assert!(matches!(bad, Err(ToolError::InvalidParameter(_))));
     }
 
@@ -1060,13 +1234,8 @@ mod tests {
         fs::write(world.dir().join("docs/plan.md"), "plan").unwrap();
         fs::write(world.dir().join("docs/notes.md"), "notes").unwrap();
 
-        let renamed = tool
-            .execute(
-                MOVE_FILE,
-                &json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md" }),
-                None,
-                &mut turn,
-            )
+        let renamed = tool_named(&tool, MOVE_FILE)
+            .execute(&json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md" }), None, &mut turn)
             .await
             .unwrap();
         assert_eq!(
@@ -1074,9 +1243,8 @@ mod tests {
             json!({ "from": "docs/plan.md", "to": "docs/plan-v2.md", "renamed": true })
         );
         assert_eq!(renamed.classification.as_ref(), Some(&world.workspace.classification));
-        let moved = tool
+        let moved = tool_named(&tool, MOVE_FILE)
             .execute(
-                MOVE_FILE,
                 &json!({ "from": "docs/plan-v2.md", "to": "archive/2026/plan.md" }),
                 None,
                 &mut turn,
@@ -1091,9 +1259,8 @@ mod tests {
             "its directories made"
         );
 
-        let over = tool
+        let over = tool_named(&tool, MOVE_FILE)
             .execute(
-                MOVE_FILE,
                 &json!({ "from": "docs/notes.md", "to": "archive/2026/plan.md" }),
                 None,
                 &mut turn,
@@ -1104,24 +1271,20 @@ mod tests {
             "nothing is moved over: {over:?}"
         );
         assert_eq!(fs::read_to_string(world.dir().join("archive/2026/plan.md")).unwrap(), "plan");
-        let missing = tool
-            .execute(
-                MOVE_FILE,
-                &json!({ "from": "docs/gone.md", "to": "docs/here.md" }),
-                None,
-                &mut turn,
-            )
+        let missing = tool_named(&tool, MOVE_FILE)
+            .execute(&json!({ "from": "docs/gone.md", "to": "docs/here.md" }), None, &mut turn)
             .await;
         assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
-        let top = tool
-            .execute(MOVE_FILE, &json!({ "from": "", "to": "elsewhere" }), None, &mut turn)
+        let top = tool_named(&tool, MOVE_FILE)
+            .execute(&json!({ "from": "", "to": "elsewhere" }), None, &mut turn)
             .await;
         assert!(
             matches!(&top, Err(ToolError::InvalidParameter(why)) if why.contains("workspace itself")),
             "{top:?}"
         );
 
-        tool.execute(MOVE_FILE, &json!({ "from": "docs", "to": "old/docs" }), None, &mut turn)
+        tool_named(&tool, MOVE_FILE)
+            .execute(&json!({ "from": "docs", "to": "old/docs" }), None, &mut turn)
             .await
             .expect("a directory with what it holds");
         assert_eq!(fs::read_to_string(world.dir().join("old/docs/notes.md")).unwrap(), "notes");
@@ -1138,7 +1301,7 @@ mod tests {
         fs::create_dir_all(world.dir().join("out")).unwrap();
         fs::write(world.dir().join("out/report.csv"), "a,b\n1,2\n").unwrap();
 
-        let offered = tool.execute(PUBLISH_FILE, &json!({ "path": "out/report.csv", "name": " Report Q3.csv ", "description": "The figures" }), None, &mut turn).await.unwrap();
+        let offered = tool_named(&tool, PUBLISH_FILE).execute(&json!({ "path": "out/report.csv", "name": " Report Q3.csv ", "description": "The figures" }), None, &mut turn).await.unwrap();
         let read: Vec<_> = offered.knowledge.iter().map(|k| k.source.clone()).collect();
         let value = offered.value;
         assert_eq!(
@@ -1155,30 +1318,27 @@ mod tests {
         assert_eq!(value["workspace"], json!(world.workspace.id));
         assert!(value["modified"].is_string(), "{value}");
         assert_eq!(offered.classification.as_ref(), Some(&world.workspace.classification));
-        let plain = tool
-            .execute(PUBLISH_FILE, &json!({ "path": "out/report.csv" }), None, &mut turn)
+        let plain = tool_named(&tool, PUBLISH_FILE)
+            .execute(&json!({ "path": "out/report.csv" }), None, &mut turn)
             .await
             .unwrap()
             .value;
         assert_eq!(plain["name"], "report.csv", "its file name unless given");
         assert!(plain.get("description").is_none());
 
-        let directory =
-            tool.execute(PUBLISH_FILE, &json!({ "path": "out" }), None, &mut turn).await;
+        let directory = tool_named(&tool, PUBLISH_FILE)
+            .execute(&json!({ "path": "out" }), None, &mut turn)
+            .await;
         assert!(
             matches!(&directory, Err(ToolError::InvalidParameter(why)) if why.contains("directory")),
             "{directory:?}"
         );
-        let missing =
-            tool.execute(PUBLISH_FILE, &json!({ "path": "out/gone.csv" }), None, &mut turn).await;
+        let missing = tool_named(&tool, PUBLISH_FILE)
+            .execute(&json!({ "path": "out/gone.csv" }), None, &mut turn)
+            .await;
         assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
-        let slashed = tool
-            .execute(
-                PUBLISH_FILE,
-                &json!({ "path": "out/report.csv", "name": "../x.csv" }),
-                None,
-                &mut turn,
-            )
+        let slashed = tool_named(&tool, PUBLISH_FILE)
+            .execute(&json!({ "path": "out/report.csv", "name": "../x.csv" }), None, &mut turn)
             .await;
         assert!(matches!(slashed, Err(ToolError::InvalidParameter(_))), "{slashed:?}");
         assert!(world.dir().join("out/report.csv").is_file(), "nothing changed");
@@ -1198,13 +1358,8 @@ mod tests {
         let mut turn = workspace_turn(&world, &mut state);
         let tool = component(json!({}));
         let too_large = "x".repeat(MAX_FILE_BYTES as usize + 1);
-        let refused = tool
-            .execute(
-                WRITE_FILE,
-                &json!({ "path": "big.txt", "content": too_large }),
-                None,
-                &mut turn,
-            )
+        let refused = tool_named(&tool, WRITE_FILE)
+            .execute(&json!({ "path": "big.txt", "content": too_large }), None, &mut turn)
             .await;
         assert!(
             matches!(&refused, Err(ToolError::InvalidParameter(why)) if why.contains("larger than")),
@@ -1218,15 +1373,15 @@ mod tests {
         let tool = component(json!({}));
         let write = json!({ "path": "docs/a.md", "content": "hello\nworld" });
         assert_eq!(
-            tool.describe(WRITE_FILE, &write).unwrap(),
+            tool_named(&tool, WRITE_FILE).describe(&write).unwrap(),
             "Write 'docs/a.md' in the workspace (11 bytes):\nhello\nworld"
         );
         let replace = json!({ "path": "a.md", "old_text": "x", "new_text": "y" });
         assert_eq!(
-            tool.describe(REPLACE_IN_FILE, &replace).unwrap(),
+            tool_named(&tool, REPLACE_IN_FILE).describe(&replace).unwrap(),
             "Replace in 'a.md' in the workspace, once:\n--- old\nx\n+++ new\ny"
         );
-        let matcher = tool.matcher(WRITE_FILE, &write);
+        let matcher = tool_named(&tool, WRITE_FILE).matcher(&write);
         assert_eq!(
             (
                 matcher.tool.as_str(),
@@ -1238,15 +1393,16 @@ mod tests {
         assert_eq!(matcher.arguments["path"], ArgumentMatcher::Pattern(regex::escape("docs/a.md")));
         let moving = json!({ "from": "docs/a.md", "to": "docs/b.md" });
         assert_eq!(
-            tool.describe(MOVE_FILE, &moving).unwrap(),
+            tool_named(&tool, MOVE_FILE).describe(&moving).unwrap(),
             "Rename 'docs/a.md' to 'docs/b.md' in the workspace"
         );
         assert_eq!(
-            tool.describe(MOVE_FILE, &json!({ "from": "docs/a.md", "to": "archive/a.md" }))
+            tool_named(&tool, MOVE_FILE)
+                .describe(&json!({ "from": "docs/a.md", "to": "archive/a.md" }))
                 .unwrap(),
             "Move 'docs/a.md' to 'archive/a.md' in the workspace"
         );
-        let matcher = tool.matcher(MOVE_FILE, &moving);
+        let matcher = tool_named(&tool, MOVE_FILE).matcher(&moving);
         assert_eq!(
             matcher.arguments,
             BTreeMap::from([
@@ -1256,18 +1412,23 @@ mod tests {
             "that move, both of its places"
         );
         assert_eq!(
-            tool.describe(PUBLISH_FILE, &json!({ "path": "out/r.csv", "name": "Report.csv" }))
+            tool_named(&tool, PUBLISH_FILE)
+                .describe(&json!({ "path": "out/r.csv", "name": "Report.csv" }))
                 .unwrap(),
             "Offer 'out/r.csv' in the workspace for download as 'Report.csv'"
         );
-        let reading = tool.matcher(READ_FILE, &json!({ "path": "a.md", "start_line": 2 }));
+        let reading =
+            tool_named(&tool, READ_FILE).matcher(&json!({ "path": "a.md", "start_line": 2 }));
         assert_eq!(reading.arguments.len(), 2, "a read is alike when exactly alike");
     }
 
     #[test]
     fn the_file_tools_are_presented_as_what_they_do_to_files() {
-        let presented: BTreeMap<String, ToolPresentation> =
-            component(json!({})).tools().into_iter().map(|t| (t.name, t.presentation)).collect();
+        let presented: BTreeMap<String, ToolPresentation> = component(json!({}))
+            .tools()
+            .iter()
+            .map(|t| (t.description().name.clone(), t.description().presentation))
+            .collect();
         assert_eq!(presented[LIST_FILES], FILE_LIST_PRESENTATION);
         assert_eq!(presented[READ_FILE], FILE_READ_PRESENTATION);
         assert_eq!(presented[GREP_FILES], FILE_SEARCH_PRESENTATION);

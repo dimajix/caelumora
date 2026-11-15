@@ -1,14 +1,14 @@
 //! The component kind `web_search` (issue 544): what it is configured with and built of - the
 //! provider it searches with, of those Caelumora knows (`Provider`, Tavily's API in `tavily`), and
-//! what a search finds, whoever finds it (`Found`) -; its tool `search_web` is its facet
-//! `ToolProvider` (`tool`).
+//! what a search finds, whoever finds it (`Found`) -; its tool `search_web` is `tool`'s, given as
+//! the tools of a `FixedTools`.
 
 mod tavily;
 mod tool;
 
 use crate::{NAMESPACE, USER_AGENT};
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
-use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
+use caelumora_agents::tool::{tool_text, ApprovalMode, FixedTools, ToolProvider};
 use caelumora_api::component::{ComponentError, ComponentFacets, ComponentKind};
 use caelumora_api::component::{LibraryComponents, Params};
 use caelumora_api::error::describe_request_error;
@@ -16,11 +16,11 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::secret::SecretError;
-use caelumora_domain::tool::ToolDescription;
 use reqwest::Client as HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
+use tool::SearchWebTool;
 
 /// The kind of the component, and the path of its texts in the catalogue.
 const WEB_SEARCH_KIND: &str = "web_search";
@@ -79,42 +79,28 @@ enum SearchError {
     InvalidAnswer { endpoint: String, reason: String },
 }
 
-/// A component of the kind `web_search`: the tool `search_web`, which searches the web with one
-/// provider.
-#[derive(Debug)]
-struct WebSearchComponent {
+/// The tools of a component of the kind `web_search` configured by `params`: the tool
+/// `search_web`, which searches the web with one provider, asking with `http`, its texts from
+/// `prompts`, whose queries go where the provider is cleared for.
+///
+/// # Errors
+/// `PromptError` if one of its texts cannot be had.
+fn tools(
+    params: WebSearchParams,
     http: HttpClient,
-    provider: Provider,
-    endpoint: RemoteEndpoint,
-    destination: Classification,
-    description: String,
-    tool: ToolDescription,
-}
-
-impl WebSearchComponent {
-    /// The component configured by `params`, asking with `http`, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of its texts cannot be had.
-    fn new(
-        params: WebSearchParams,
-        http: HttpClient,
-        prompts: &PromptTexts,
-    ) -> Result<Self, PromptError> {
-        let tool = tool::search_web(prompts, params.requires_approval.required(true))?;
-        let description = match params.description {
-            Some(description) => description,
-            None => tool_text(prompts, NAMESPACE, WEB_SEARCH_KIND, "description", ())?,
-        };
-        Ok(Self {
-            http,
-            provider: params.provider,
-            endpoint: params.endpoint,
-            destination: params.destination.unwrap_or(Classification::PUBLIC),
-            description,
-            tool,
-        })
-    }
+    prompts: &PromptTexts,
+) -> Result<FixedTools, PromptError> {
+    let description = match params.description {
+        Some(description) => description,
+        None => tool_text(prompts, NAMESPACE, WEB_SEARCH_KIND, "description", ())?,
+    };
+    let requires_approval = params.requires_approval.required(true);
+    let search_web =
+        SearchWebTool::new(prompts, requires_approval, http, params.provider, params.endpoint)?;
+    Ok(FixedTools {
+        destination: Some(params.destination.unwrap_or(Classification::PUBLIC)),
+        ..FixedTools::new(description, vec![Arc::new(search_web)])
+    })
 }
 
 /// Registers the component kind `web_search`, which writes for the agent's model. A component
@@ -146,9 +132,8 @@ pub(super) fn register(registry: &mut LibraryComponents<'_>) {
                         describe_request_error(e)
                     ))
                 })?;
-            let component = WebSearchComponent::new(params, http, &prompts)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(component));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(params, http, &prompts)?));
             Ok(facets)
         },
     );
@@ -188,8 +173,8 @@ mod tests {
         let provider = built::<dyn ToolProvider>(&kernel, search).await.unwrap();
         let tools = provider.tools();
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "search_web");
-        assert!(!tools[0].requires_approval, "no approval unless configured");
+        assert_eq!(tools[0].description().name, "search_web");
+        assert!(!tools[0].description().requires_approval, "no approval unless configured");
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         assert_eq!(provider.description(), "Search the web.");
 
@@ -199,7 +184,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(cleared.destination(), Some(internal));
-        assert!(cleared.tools()[0].requires_approval, "as configured");
+        assert!(cleared.tools()[0].description().requires_approval, "as configured");
     }
 
     /// A provider has to be named, one Caelumora knows, and the endpoint has to name a key.

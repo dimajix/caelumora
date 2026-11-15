@@ -1,7 +1,7 @@
 //! The component kind `artifacts` (issues 271, 534): what it is configured with - whether a
 //! publication is asked for, what its tool set is for -; its tool `publish_artifact`, which
-//! publishes a file of the session's workspace as a version of an artifact, is its facet
-//! `ToolProvider` (`tool`).
+//! publishes a file of the session's workspace as a version of an artifact, is `tool`'s; the
+//! component is its `ToolProvider`, which offers it where a file can be published.
 
 mod tool;
 
@@ -10,11 +10,10 @@ pub use tool::{ARTIFACT_PUBLISH_PRESENTATION, PUBLISH_ARTIFACT};
 use crate::extension::ArtifactPublisher;
 use crate::NAMESPACE;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
-use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
+use caelumora_agents::tool::{tool_text, ApprovalMode, Tool, ToolProvider};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents, Params};
 use caelumora_api::workspace::WorkspaceReader;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -37,13 +36,13 @@ struct ArtifactsParams {
 
 impl Params for ArtifactsParams {}
 
-/// A component of the kind `artifacts`: the tool `publish_artifact`.
+/// A component of the kind `artifacts`: the tool `publish_artifact`, offered where a file can be
+/// published.
 #[derive(Debug)]
 struct ArtifactsComponent {
-    /// What its tool set is for and its tool, as the configuration or the
-    /// prompt catalogue words them (issue 57).
+    /// What its tool set is for, as the configuration or the prompt catalogue words it (issue 57).
     description: String,
-    tools: Vec<ToolDescription>,
+    publish: Arc<dyn Tool>,
 }
 
 impl ArtifactsComponent {
@@ -52,13 +51,13 @@ impl ArtifactsComponent {
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
     fn new(params: ArtifactsParams, prompts: &PromptTexts) -> Result<Self, PromptError> {
-        let tools =
-            vec![tool::publish_artifact(prompts, params.requires_approval.required(false))?];
+        let publish =
+            tool::PublishArtifactTool::new(prompts, params.requires_approval.required(false))?;
         let description = match params.description {
             Some(description) => description,
             None => tool_text(prompts, NAMESPACE, ARTIFACTS_KIND, "description", ())?,
         };
-        Ok(Self { description, tools })
+        Ok(Self { description, publish: Arc::new(publish) })
     }
 }
 

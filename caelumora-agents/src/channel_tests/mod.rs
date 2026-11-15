@@ -16,7 +16,7 @@ use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::{ContextError, PositionParams, Prompt, PromptPosition, PromptProvider};
 use crate::situation::Situation;
 use crate::testing::Scripted;
-use crate::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
+use crate::tool::{FixedTools, Tool, ToolError, ToolOutput, ToolProvider, ToolResult};
 use crate::turn::Turn;
 use anyhow::Result;
 use caelumora_api::command::CommandError;
@@ -379,16 +379,14 @@ impl PromptProvider for FirstOnly {
 /// answered, or of sensitive answers only how many there were.
 #[derive(Debug)]
 struct Asking {
+    description: ToolDescription,
     sensitive: bool,
 }
 
-#[async_trait::async_trait]
-impl ToolProvider for Asking {
-    fn description(&self) -> String {
-        "asks first".to_string()
-    }
-    fn tools(&self) -> Vec<ToolDescription> {
-        vec![ToolDescription {
+impl Asking {
+    /// The tool `asking`, in a set of its own.
+    fn tools(sensitive: bool) -> FixedTools {
+        let description = ToolDescription {
             name: "asking".to_string(),
             description: "asks first".to_string(),
             parameters: ToolParameters::object(
@@ -399,14 +397,21 @@ impl ToolProvider for Asking {
             visibility: Default::default(),
             classification: None,
             presentation: Default::default(),
-        }]
+        };
+        FixedTools::new("asks first".to_string(), vec![Arc::new(Self { description, sensitive })])
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for Asking {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
     async fn execute(
         &self,
-        _name: &str,
         _params: &Value,
         answers: Option<&Answers>,
-        _turn: &mut Turn,
+        _turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
         let answers =
             answers.ok_or_else(|| ToolError::ExecutionFailed("no answers".to_string()))?;
@@ -415,7 +420,7 @@ impl ToolProvider for Asking {
         }
         Ok(serde_json::json!({ "answered_by": answers.answered_by_name, "responses": answers.responses }).into())
     }
-    fn questions(&self, _name: &str, _params: &Value) -> ToolResult<Option<Questions>> {
+    fn questions(&self, _params: &Value) -> ToolResult<Option<Questions>> {
         use caelumora_domain::question::{Addressee, Question};
         Ok(Some(Questions {
             questions: vec![Question {
@@ -581,7 +586,7 @@ fn register_asking_tool(registry: &mut ComponentRegistry) {
         |descriptor, _context| {
             let AskingParams { sensitive } = AskingParams::read(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(Asking { sensitive }));
+            facets.insert::<dyn ToolProvider>(Arc::new(Asking::tools(sensitive)));
             Ok(facets)
         },
     );

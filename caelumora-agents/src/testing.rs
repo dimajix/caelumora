@@ -10,7 +10,7 @@
 
 use crate::library::{register_components, AgentsLibrary};
 use crate::prompt::{NAMESPACE, PROMPTS};
-use crate::tool::ToolProvider;
+use crate::tool::{Tool, ToolProvider};
 use crate::turn::Turn;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -83,14 +83,33 @@ pub fn turn<'a>(
 }
 
 /// What `provider` offers in a turn that reaches no channel (issue 290) -
-/// for a provider whose offer does not depend on the place.
+/// for a provider whose offer does not depend on the place -, as the tools are described.
 pub async fn offered_anywhere(provider: &dyn ToolProvider) -> Result<Vec<ToolDescription>, String> {
     let mut state = AgentChannelState::default();
     state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
     let Some(turn) = Turn::of(&mut state, detached_actor_runtime(AgentId::new())) else {
         return Err("no turn was begun".to_string());
     };
-    provider.offered(&turn.situation()).await
+    let offered = provider.offered(&turn.situation()).await?;
+    Ok(offered.iter().map(|tool| tool.description().clone()).collect())
+}
+
+/// The tools `provider` has now, as they are described: for a test of what a component gives.
+pub fn described_tools(provider: &dyn ToolProvider) -> Vec<ToolDescription> {
+    provider.tools().iter().map(|tool| tool.description().clone()).collect()
+}
+
+/// The tool named `name` among the tools `provider` has now, as a call finds it (issue 584): for
+/// a test that runs, asks or describes one tool of a component.
+///
+/// # Panics
+/// If `provider` has no tool of that name.
+pub fn tool_named(provider: &dyn ToolProvider, name: &str) -> Arc<dyn Tool> {
+    provider
+        .tools()
+        .into_iter()
+        .find(|tool| tool.description().name == name)
+        .unwrap_or_else(|| panic!("no tool '{name}'"))
 }
 
 /// What is asked in `world` when the agent of `owner`, with a component of `kind`,

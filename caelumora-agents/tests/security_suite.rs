@@ -32,7 +32,7 @@ use caelumora_agents::testing::{
 };
 use caelumora_agents::tool::echo::ECHO_KIND;
 use caelumora_agents::tool::sleep::SLEEP_KIND;
-use caelumora_agents::tool::{ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{FixedTools, Tool, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
@@ -1191,7 +1191,7 @@ async fn with_a_call_of(
         register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(ComponentKind::new("commands").provides::<dyn ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(Commands));
+            facets.insert::<dyn ToolProvider>(Arc::new(Commands::tools()));
             Ok(facets)
         });
     })
@@ -1214,17 +1214,15 @@ async fn with_a_call_of(
 /// their name before it runs (issue 165), the question `sensitive` or not.
 #[derive(Debug)]
 struct Asking {
+    description: ToolDescription,
     ask: Addressee,
     sensitive: bool,
 }
 
-#[async_trait]
-impl ToolProvider for Asking {
-    fn description(&self) -> String {
-        "asks before it runs".to_string()
-    }
-    fn tools(&self) -> Vec<ToolDescription> {
-        vec![ToolDescription {
+impl Asking {
+    /// The tool, in a set of its own.
+    fn tools(ask: Addressee, sensitive: bool) -> FixedTools {
+        let description = ToolDescription {
             name: "asking".to_string(),
             description: "asks before it runs".to_string(),
             parameters: ToolParameters::object(
@@ -1235,18 +1233,28 @@ impl ToolProvider for Asking {
             visibility: Default::default(),
             classification: None,
             presentation: Default::default(),
-        }]
+        };
+        FixedTools::new(
+            "asks before it runs".to_string(),
+            vec![Arc::new(Self { description, ask, sensitive })],
+        )
+    }
+}
+
+#[async_trait]
+impl Tool for Asking {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
     async fn execute(
         &self,
-        _: &str,
         _: &Value,
         answers: Option<&Answers>,
-        _: &mut Turn,
+        _: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
         Ok(serde_json::json!({ "answered": answers.is_some() }).into())
     }
-    fn questions(&self, _: &str, _: &Value) -> ToolResult<Option<Questions>> {
+    fn questions(&self, _: &Value) -> ToolResult<Option<Questions>> {
         use caelumora_domain::question::{Question, Questions};
         Ok(Some(Questions {
             questions: vec![Question {
@@ -1299,7 +1307,7 @@ async fn with_a_call_asking_whom(
             ComponentKind::new("asking").provides::<dyn ToolProvider>(),
             move |_, _| {
                 let mut facets = ComponentFacets::empty();
-                facets.insert::<dyn ToolProvider>(Arc::new(Asking { ask: ask.clone(), sensitive }));
+                facets.insert::<dyn ToolProvider>(Arc::new(Asking::tools(ask.clone(), sensitive)));
                 Ok(facets)
             },
         );
@@ -1539,15 +1547,14 @@ async fn ask_helper(world: &World, main: &ChannelLoop, user: UserId) -> Asked {
 /// shell command line (issue 247): what makes two of its calls alike is
 /// what its parameters say.
 #[derive(Debug)]
-struct Commands;
+struct Commands {
+    description: ToolDescription,
+}
 
-#[async_trait]
-impl ToolProvider for Commands {
-    fn description(&self) -> String {
-        "runs commands".to_string()
-    }
-    fn tools(&self) -> Vec<ToolDescription> {
-        vec![ToolDescription {
+impl Commands {
+    /// The tool, in a set of its own.
+    fn tools() -> FixedTools {
+        let description = ToolDescription {
             name: "run".to_string(),
             description: "runs a command".to_string(),
             parameters: ToolParameters::object(
@@ -1558,14 +1565,21 @@ impl ToolProvider for Commands {
             visibility: Default::default(),
             classification: None,
             presentation: Default::default(),
-        }]
+        };
+        FixedTools::new("runs commands".to_string(), vec![Arc::new(Self { description })])
+    }
+}
+
+#[async_trait]
+impl Tool for Commands {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
     async fn execute(
         &self,
-        _: &str,
         _: &Value,
         _: Option<&Answers>,
-        _: &mut Turn,
+        _: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
         Ok(serde_json::json!({}).into())
     }
@@ -1951,15 +1965,14 @@ async fn a_tool_call_is_approved_by_who_is_responsible_for_the_agent() {
 /// A tool whose arguments go to a remote side cleared for public alone -
 /// as an MCP server that names nothing (issue 180).
 #[derive(Debug)]
-struct Outward;
+struct Outward {
+    description: ToolDescription,
+}
 
-#[async_trait]
-impl ToolProvider for Outward {
-    fn description(&self) -> String {
-        "sends out".to_string()
-    }
-    fn tools(&self) -> Vec<ToolDescription> {
-        vec![ToolDescription {
+impl Outward {
+    /// The tool, in a set of its own.
+    fn tools() -> FixedTools {
+        let description = ToolDescription {
             name: "send_out".to_string(),
             description: "sends out".to_string(),
             parameters: ToolParameters::object(
@@ -1970,17 +1983,24 @@ impl ToolProvider for Outward {
             visibility: Default::default(),
             classification: None,
             presentation: Default::default(),
-        }]
+        };
+        FixedTools {
+            destination: Some(Classification::PUBLIC),
+            ..FixedTools::new("sends out".to_string(), vec![Arc::new(Self { description })])
+        }
     }
-    fn destination(&self) -> Option<Classification> {
-        Some(Classification::PUBLIC)
+}
+
+#[async_trait]
+impl Tool for Outward {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
     async fn execute(
         &self,
-        _: &str,
         _: &Value,
         _: Option<&Answers>,
-        _: &mut Turn,
+        _: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
         panic!("a withheld tool is never run")
     }
@@ -2011,7 +2031,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
         register_scripted(registry, ONCE_MODEL_KIND, vec![call]);
         registry.register(ComponentKind::new("outward").provides::<dyn ToolProvider>(), |_, _| {
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(Outward));
+            facets.insert::<dyn ToolProvider>(Arc::new(Outward::tools()));
             Ok(facets)
         });
     })

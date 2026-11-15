@@ -236,8 +236,9 @@ plugin or a library depends on:
     `SessionReader`). What it needs of another crate it declares as the trait that crate offers for
     it, or, of a system service, as the extension it reads or writes by: a reader its situation
     hands out (`Situation::reader`), a writer its turn (`Turn::writer`).
-*   **The facets it offers**, with what their signatures name: for a tool provider `ToolProvider`,
-    `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a call is made in;
+*   **The facets it offers**, with what their signatures name: for tools `ToolProvider`, `Tool`
+    and `FixedTools`, `ToolOutput`, `ToolError` and `ToolResult`, `ApprovalMode`, and the `Turn` a
+    call is made in;
     for an external agent `ExternalAgent`, `OutboundMessage` and `Said`, `ExternalEvent`,
     `ExternalStream`, `ExternalAgentError` and `ExternalAgentResult`.
 *   **If it talks to a remote system:** its errors described as the kernel's are -
@@ -273,7 +274,7 @@ into its `ActivityError` and `CommandError`.
 So the trait names its error type, and the plugin translates its own error into it where it
 answers - deciding there what may be shown, what is a refusal and what is a failure:
 
-*   a tool provider answers `ToolError`, an agent's command `CommandError`, a knowledge restorer
+*   a tool answers `ToolError`, an agent's command `CommandError`, a knowledge restorer
     `CompactionError`, an external agent `ExternalAgentError`, an agent's activity
     `ActivityError`;
 *   a prompt provider and a context provider answer `prompt::ContextError`, a message processor

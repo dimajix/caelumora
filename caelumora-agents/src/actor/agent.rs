@@ -845,7 +845,7 @@ impl AgentActor {
             // the step it now points at (or finalize immediately for an
             // empty plan) now that the tool-result message reporting the
             // create_plan call is already in place - this must not happen
-            // inside PlanningComponent::execute itself, since that
+            // inside the execution of `create_plan` itself, since that
             // would land a message between the assistant's tool-call message
             // and its own tool result.
             let progress_after = turn.plan_progress();

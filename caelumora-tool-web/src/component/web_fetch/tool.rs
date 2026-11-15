@@ -1,17 +1,18 @@
-//! The facet `ToolProvider` of `web_fetch` (issue 544): the tool `fetch_page`, which fetches a
-//! page of the web by its URL and gives it as text, a page at a time (`page_of`, issue 282), public
-//! as anything anyone can fetch. A rule derived from a call is about the pages of its host, not the
-//! one page (`ToolProvider::matcher`). A page above the component's threshold is kept whole beside
+//! The tool of `web_fetch` (issues 544, 584): `fetch_page`, which fetches a page of the web by its
+//! URL and gives it as text, a page at a time (`page_of`, issue 282), public as anything anyone can
+//! fetch. A rule derived from a call is about the pages of its host, not the one page
+//! (`Tool::matcher`). A page above the component's threshold is kept whole beside
 //! a preview of it (issue 547); of an HTML page asked for whole, its body as it came is kept beside
 //! its result too, wherever the turn can keep it (issue 553).
 
+use super::client::Client;
 use super::client::{FetchError, Refusal};
-use super::{WebFetchComponent, WEB_FETCH_KIND};
+use super::WEB_FETCH_KIND;
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::tool::{
-    arguments, described, page_of, page_parameters, proposed_matcher, TextPosition, ToolError,
-    ToolOutput, ToolProvider, ToolResult,
+    arguments, described, page_of, page_parameters, proposed_matcher, KeepWholeAbove, TextPosition,
+    Tool, ToolError, ToolOutput, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
@@ -52,27 +53,44 @@ struct Fetch {
     line_count: Option<usize>,
 }
 
-/// The tool `fetch_page`, its texts from `prompts`.
-///
-/// # Errors
-/// `PromptError` if one of its texts cannot be had.
-pub(super) fn fetch_page(
-    prompts: &PromptTexts,
-    requires_approval: bool,
-) -> Result<ToolDescription, PromptError> {
-    let tool = ToolDescription {
-        name: FETCH_PAGE.to_string(),
-        description: String::new(),
-        parameters: ToolParameters::object(
-            [("url", ToolParameters::string())].into_iter().chain(page_parameters()),
-            ["url"],
-        ),
-        requires_approval,
-        visibility: ToolVisibility::SHOWN,
-        classification: None,
-        presentation: WEB_PAGE_PRESENTATION,
-    };
-    described(prompts, NAMESPACE, WEB_FETCH_KIND, tool, ())
+/// The tool `fetch_page`.
+#[derive(Debug)]
+pub(super) struct FetchPageTool {
+    description: ToolDescription,
+    client: Client,
+    /// The texts its results give.
+    prompts: PromptTexts,
+    /// From how many bytes of its text on a page is kept whole, if any is.
+    keep_whole_above: Option<KeepWholeAbove>,
+}
+
+impl FetchPageTool {
+    /// The tool, fetching with `client`, which asks for approval if `requires_approval` and keeps
+    /// a page whole above `keep_whole_above`, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(
+        prompts: PromptTexts,
+        requires_approval: bool,
+        client: Client,
+        keep_whole_above: Option<KeepWholeAbove>,
+    ) -> Result<Self, PromptError> {
+        let tool = ToolDescription {
+            name: FETCH_PAGE.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object(
+                [("url", ToolParameters::string())].into_iter().chain(page_parameters()),
+                ["url"],
+            ),
+            requires_approval,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: WEB_PAGE_PRESENTATION,
+        };
+        let description = described(&prompts, NAMESPACE, WEB_FETCH_KIND, tool, ())?;
+        Ok(Self { description, client, prompts, keep_whole_above })
+    }
 }
 
 /// What the model is told of a page not fetched: a URL that is none, or that the rules do not
@@ -107,30 +125,17 @@ fn same_host(url: &str) -> Option<ToolMatcher> {
 }
 
 #[async_trait]
-impl ToolProvider for WebFetchComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        vec![self.tool.clone()]
-    }
-
-    /// Public: what a URL carries goes to anyone.
-    fn destination(&self) -> Option<Classification> {
-        Some(Classification::PUBLIC)
+impl Tool for FetchPageTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        if name != FETCH_PAGE {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
         let Fetch { url, start_line, start_offset, line_count } = arguments(params)?;
         let page = self.client.fetch(&url).await?;
         // What a page is classified, and so what is kept of it, as the executor keeps it.
@@ -167,19 +172,18 @@ impl ToolProvider for WebFetchComponent {
     }
 
     /// The calls that fetch a page of the same host; as the parameters tell for any other.
-    fn matcher(&self, name: &str, params: &Value) -> ToolMatcher {
+    fn matcher(&self, params: &Value) -> ToolMatcher {
         let url = params.get("url").and_then(Value::as_str);
-        match url.filter(|_| name == FETCH_PAGE).and_then(same_host) {
+        match url.and_then(same_host) {
             Some(matcher) => matcher,
-            None => proposed_matcher(&self.tools(), name, params),
+            None => proposed_matcher(&self.description, params),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::client::Client;
-    use super::super::WebFetchParams;
+    use super::super::{tools, WebFetchParams};
     use super::*;
     use crate::testing::prompts;
     use axum::routing::get;
@@ -189,7 +193,7 @@ mod tests {
         calling, detached_actor_runtime, register_scripted, saying, turn, world as agents_world,
         ONCE_MODEL_KIND,
     };
-    use caelumora_agents::tool::{ApprovalMode, KeepWholeAbove};
+    use caelumora_agents::tool::{ApprovalMode, ToolProvider};
     use caelumora_api::component::{ComponentFacets, ComponentKind};
     use caelumora_domain::actor::ActorEvent;
     use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
@@ -204,28 +208,24 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::time;
 
-    /// The component, fetching from the host itself too, keeping no page.
-    fn component() -> WebFetchComponent {
+    /// The tool, fetching from the host itself too, keeping no page.
+    fn fetch_page() -> FetchPageTool {
         built(None)
     }
 
-    /// The component, keeping a page whole above a part: `/long` is, `/page` is not.
-    fn keeping() -> WebFetchComponent {
+    /// The tool, keeping a page whole above a part: `/long` is, `/page` is not.
+    fn keeping() -> FetchPageTool {
         built(Some(KeepWholeAbove::try_from(MAX_PAGE_BYTES).unwrap()))
     }
 
-    fn built(keep_whole_above_bytes: Option<KeepWholeAbove>) -> WebFetchComponent {
-        let params = WebFetchParams {
-            requires_approval: ApprovalMode::never(),
-            description: None,
-            keep_whole_above_bytes,
-        };
-        WebFetchComponent::new(params, Client::reaching_the_host(), prompts()).unwrap()
+    fn built(keep_whole_above_bytes: Option<KeepWholeAbove>) -> FetchPageTool {
+        FetchPageTool::new(prompts(), false, Client::reaching_the_host(), keep_whole_above_bytes)
+            .unwrap()
     }
 
-    /// What `component` gives for a call of `fetch_page` with `params`, in a turn that reaches no
+    /// What `tool` gives for a call of `fetch_page` with `params`, in a turn that reaches no
     /// channel.
-    async fn fetched(component: &WebFetchComponent, params: Value) -> ToolResult<ToolOutput> {
+    async fn fetched(tool: &FetchPageTool, params: Value) -> ToolResult<ToolOutput> {
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             Default::default(),
@@ -234,22 +234,18 @@ mod tests {
             Default::default(),
         ));
         let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::new())).unwrap();
-        component.execute(FETCH_PAGE, &params, None, &mut turn).await
+        tool.execute(&params, None, &mut turn).await
     }
 
-    /// What `component` gives for each call of `fetch_page` with one of `calls`, each fetched, in a
+    /// What `tool` gives for each call of `fetch_page` with one of `calls`, each fetched, in a
     /// turn of an agent in a running session, which can keep what a tool gives.
-    async fn fetched_keeping(component: &WebFetchComponent, calls: &[Value]) -> Vec<ToolOutput> {
-        fetched_in(agents_world().await, component, calls).await
+    async fn fetched_keeping(tool: &FetchPageTool, calls: &[Value]) -> Vec<ToolOutput> {
+        fetched_in(agents_world().await, tool, calls).await
     }
 
-    /// What `component` gives for each call of `fetch_page` with one of `calls`, each fetched, in a
+    /// What `tool` gives for each call of `fetch_page` with one of `calls`, each fetched, in a
     /// turn of an agent in a running session of `world`.
-    async fn fetched_in(
-        world: World,
-        component: &WebFetchComponent,
-        calls: &[Value],
-    ) -> Vec<ToolOutput> {
+    async fn fetched_in(world: World, tool: &FetchPageTool, calls: &[Value]) -> Vec<ToolOutput> {
         let personality = world.personality("plain", None, &[]).await;
         let helper = world.agent("helper", world.alice, &personality).await;
         let session = world.shared_session(&[helper], &[]).await;
@@ -257,7 +253,7 @@ mod tests {
         for params in calls {
             let mut state = AgentChannelState::default();
             let mut turn = turn(&session, helper, world.alice, &mut state);
-            let output = component.execute(FETCH_PAGE, params, None, &mut turn).await;
+            let output = tool.execute(params, None, &mut turn).await;
             outputs.push(output.expect("fetched"));
         }
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
@@ -295,15 +291,14 @@ mod tests {
     async fn a_page_is_given_a_part_at_a_time_with_where_it_was_found_and_public() {
         let port = server().await;
         let url = format!("http://localhost:{port}/page");
-        let component = component();
-        assert_eq!(component.tools()[0].presentation, WEB_PAGE_PRESENTATION, "shown as a page");
-        let whole = fetched(&component, json!({ "url": url })).await.unwrap();
+        let tool = fetch_page();
+        assert_eq!(tool.description().presentation, WEB_PAGE_PRESENTATION, "shown as a page");
+        let whole = fetched(&tool, json!({ "url": url })).await.unwrap();
         assert_eq!(whole.classification, Some(Classification::PUBLIC));
         assert_eq!(whole.value["url"], json!(url));
         assert_eq!(whole.value["title"], json!("Three"));
         assert_eq!(whole.value["content"], json!("one\n\ntwo\n\nthree"));
-        let part =
-            fetched(&component, json!({ "url": url, "start_line": 3, "line_count": 1 })).await;
+        let part = fetched(&tool, json!({ "url": url, "start_line": 3, "line_count": 1 })).await;
         let part = part.unwrap();
         assert_eq!(part.value["content"], json!("two\n"));
         assert_eq!(part.value["total_lines"], json!(5), "says how much there is: {}", part.value);
@@ -313,12 +308,12 @@ mod tests {
     async fn a_line_longer_than_a_part_is_given_in_parts_of_it() {
         let port = server().await;
         let url = format!("http://localhost:{port}/long");
-        let component = component();
-        let first = fetched(&component, json!({ "url": url })).await.unwrap().value;
+        let tool = fetch_page();
+        let first = fetched(&tool, json!({ "url": url })).await.unwrap().value;
         assert_eq!(first["content"].as_str().map(str::len), Some(MAX_PAGE_BYTES));
         assert!(first["next"].as_str().unwrap().contains("start_offset 65536"), "{first}");
         let rest = json!({ "url": url, "start_line": 1, "start_offset": MAX_PAGE_BYTES });
-        let last = fetched(&component, rest).await.unwrap().value;
+        let last = fetched(&tool, rest).await.unwrap().value;
         assert_eq!(last["content"], json!("x"));
         assert_eq!(last["start_offset"], json!(MAX_PAGE_BYTES));
         assert!(last.get("next").is_none(), "{last}");
@@ -328,8 +323,8 @@ mod tests {
     async fn a_page_above_the_threshold_is_kept_whole_beside_a_preview() {
         let port = server().await;
         let url = format!("http://localhost:{port}/long");
-        let component = keeping();
-        let output = fetched(&component, json!({ "url": url })).await.unwrap();
+        let tool = keeping();
+        let output = fetched(&tool, json!({ "url": url })).await.unwrap();
         let [kept] = output.files.as_slice() else { panic!("one file: {:?}", output.files) };
         assert_eq!(kept.name, "localhost.txt");
         assert_eq!(kept.bytes.len(), MAX_PAGE_BYTES + 1, "the whole page");
@@ -345,7 +340,7 @@ mod tests {
     async fn a_page_is_kept_only_where_it_is_asked_whole_and_above_a_threshold() {
         let port = server().await;
         let long = format!("http://localhost:{port}/long");
-        let none = fetched(&component(), json!({ "url": long })).await.unwrap();
+        let none = fetched(&fetch_page(), json!({ "url": long })).await.unwrap();
         assert!(none.files.is_empty(), "no threshold, nothing kept");
         let keeping = keeping();
         let page = format!("http://localhost:{port}/page");
@@ -373,7 +368,7 @@ mod tests {
         let page = json!({ "url": format!("http://localhost:{port}/page") });
         let part = json!({ "url": format!("http://localhost:{port}/page"), "start_line": 1 });
         let text = json!({ "url": format!("http://localhost:{port}/long") });
-        let outputs = fetched_keeping(&component(), &[page.clone(), part, text]).await;
+        let outputs = fetched_keeping(&fetch_page(), &[page.clone(), part, text]).await;
         let [whole, part, text] = outputs.as_slice() else { panic!("three: {outputs:?}") };
         let [original] = whole.files.as_slice() else { panic!("one file: {:?}", whole.files) };
         assert_eq!(original.name, "localhost.html");
@@ -382,7 +377,7 @@ mod tests {
         assert!(part.files.is_empty(), "a part asked for: {:?}", part.files);
         assert!(text.files.is_empty(), "a text is its own original: {:?}", text.files);
 
-        let nowhere = fetched(&component(), page).await.unwrap();
+        let nowhere = fetched(&fetch_page(), page).await.unwrap();
         assert!(nowhere.files.is_empty(), "where nothing can be kept: {:?}", nowhere.files);
         assert_eq!(
             nowhere.value["content"],
@@ -420,7 +415,7 @@ mod tests {
     }
 
     /// What `read_attachment` called with `read` gives in the next step of the very turn that
-    /// fetched the page at `path` of `server` with the component `keeping`, though the transcript
+    /// fetched the page at `path` of `server` with the tool `keeping`, though the transcript
     /// numbered no attachment as the turn began: its status and its content.
     async fn read_after_fetching(path: &str, read: Value) -> (ToolResultStatus, String) {
         let port = server().await;
@@ -436,7 +431,15 @@ mod tests {
                 ComponentKind::new("fetching").provides::<dyn ToolProvider>(),
                 |_, _| {
                     let mut facets = ComponentFacets::empty();
-                    facets.insert::<dyn ToolProvider>(Arc::new(keeping()));
+                    let params = WebFetchParams {
+                        requires_approval: ApprovalMode::never(),
+                        description: None,
+                        keep_whole_above_bytes: Some(
+                            KeepWholeAbove::try_from(MAX_PAGE_BYTES).unwrap(),
+                        ),
+                    };
+                    let fetching = tools(params, Client::reaching_the_host(), prompts()).unwrap();
+                    facets.insert::<dyn ToolProvider>(Arc::new(fetching));
                     Ok(facets)
                 },
             );
@@ -506,16 +509,16 @@ mod tests {
 
     #[tokio::test]
     async fn what_cannot_be_fetched_is_told_as_the_models_to_correct_or_as_failed() {
-        let component = component();
-        let invalid = fetched(&component, json!({ "url": "ftp://example.org/" })).await;
+        let tool = fetch_page();
+        let invalid = fetched(&tool, json!({ "url": "ftp://example.org/" })).await;
         assert!(matches!(invalid, Err(ToolError::InvalidParameter(_))), "{invalid:?}");
-        let inside = fetched(&component, json!({ "url": "http://10.0.0.1/" })).await;
+        let inside = fetched(&tool, json!({ "url": "http://10.0.0.1/" })).await;
         assert!(
             matches!(&inside, Err(ToolError::InvalidParameter(m))
                 if m.contains("inside the network")),
             "{inside:?}"
         );
-        let unreachable = fetched(&component, json!({ "url": "http://127.0.0.1:1/" })).await;
+        let unreachable = fetched(&tool, json!({ "url": "http://127.0.0.1:1/" })).await;
         assert!(matches!(unreachable, Err(ToolError::ExecutionFailed(_))), "{unreachable:?}");
     }
 
@@ -523,8 +526,8 @@ mod tests {
     /// and about no other host, also behind credentials.
     #[test]
     fn a_rule_derived_from_a_call_is_about_the_pages_of_its_host() {
-        let component = component();
-        let matcher = component.matcher(FETCH_PAGE, &json!({ "url": "https://docs.rs/tokio" }));
+        let tool = fetch_page();
+        let matcher = tool.matcher(&json!({ "url": "https://docs.rs/tokio" }));
         let call = |url: &str| ToolCall {
             id: None,
             function_name: FETCH_PAGE.to_string(),
@@ -542,11 +545,11 @@ mod tests {
             assert_eq!(coverage, Coverage::Nothing, "{url}");
         }
         let written = "HTTPS://Docs.RS/tokio";
-        let matcher = component.matcher(FETCH_PAGE, &json!({ "url": written }));
+        let matcher = tool.matcher(&json!({ "url": written }));
         assert_eq!(matcher.matches(&call(written)).unwrap(), Coverage::Whole, "in any case");
         assert_eq!(
-            component.matcher(FETCH_PAGE, &json!({ "url": "no url" })),
-            proposed_matcher(&component.tools(), FETCH_PAGE, &json!({ "url": "no url" })),
+            tool.matcher(&json!({ "url": "no url" })),
+            proposed_matcher(tool.description(), &json!({ "url": "no url" })),
             "as the parameters tell where there is no host"
         );
     }

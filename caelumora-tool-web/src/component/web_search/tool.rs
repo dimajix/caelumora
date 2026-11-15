@@ -1,20 +1,20 @@
-//! The facet `ToolProvider` of `web_search` (issue 544): the tool `search_web`, which searches the
-//! web with the component's provider and gives what it found - title, URL and snippet of each
+//! The tool of `web_search` (issues 544, 584): `search_web`, which searches the web with the
+//! component's provider and gives what it found - title, URL and snippet of each
 //! page, and nothing of the query -, public as the web it found it on. Its key it resolves of the
 //! secrets of whoever asks it (`Situation::secrets`, issue 516).
 
-use super::{tavily, Found, Provider, SearchError, WebSearchComponent, WEB_SEARCH_KIND};
+use super::{tavily, Found, Provider, SearchError, WEB_SEARCH_KIND};
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_agents::tool::{
-    arguments, described, ToolError, ToolOutput, ToolProvider, ToolResult,
-};
+use caelumora_agents::tool::{arguments, described, Tool, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
+use caelumora_domain::remote::RemoteEndpoint;
 use caelumora_domain::secret::Secrets;
 use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, ToolVisibility};
+use reqwest::Client as HttpClient;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -40,31 +40,45 @@ struct Search {
     max_results: Option<usize>,
 }
 
-/// The tool `search_web`, its texts from `prompts`.
-///
-/// # Errors
-/// `PromptError` if one of its texts cannot be had.
-pub(super) fn search_web(
-    prompts: &PromptTexts,
-    requires_approval: bool,
-) -> Result<ToolDescription, PromptError> {
-    let tool = ToolDescription {
-        name: SEARCH_WEB.to_string(),
-        description: String::new(),
-        parameters: ToolParameters::object(
-            [("query", ToolParameters::string()), ("max_results", ToolParameters::number())],
-            ["query"],
-        ),
-        requires_approval,
-        visibility: ToolVisibility::SHOWN,
-        classification: None,
-        presentation: WEB_RESULTS_PRESENTATION,
-    };
-    let values = json!({ "default_results": DEFAULT_RESULTS, "max_results": MAX_RESULTS });
-    described(prompts, NAMESPACE, WEB_SEARCH_KIND, tool, values)
+/// The tool `search_web`: the web searched with one provider.
+#[derive(Debug)]
+pub(super) struct SearchWebTool {
+    description: ToolDescription,
+    http: HttpClient,
+    provider: Provider,
+    endpoint: RemoteEndpoint,
 }
 
-impl WebSearchComponent {
+impl SearchWebTool {
+    /// The tool, asking `provider` at `endpoint` with `http`, which asks for approval if
+    /// `requires_approval`, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(
+        prompts: &PromptTexts,
+        requires_approval: bool,
+        http: HttpClient,
+        provider: Provider,
+        endpoint: RemoteEndpoint,
+    ) -> Result<Self, PromptError> {
+        let tool = ToolDescription {
+            name: SEARCH_WEB.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object(
+                [("query", ToolParameters::string()), ("max_results", ToolParameters::number())],
+                ["query"],
+            ),
+            requires_approval,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: WEB_RESULTS_PRESENTATION,
+        };
+        let values = json!({ "default_results": DEFAULT_RESULTS, "max_results": MAX_RESULTS });
+        let description = described(prompts, NAMESPACE, WEB_SEARCH_KIND, tool, values)?;
+        Ok(Self { description, http, provider, endpoint })
+    }
+
     /// What the provider finds for `query`, at most `max_results` pages, asked with the key the
     /// endpoint names, resolved of `secrets`.
     ///
@@ -104,29 +118,17 @@ impl From<SearchError> for ToolError {
 }
 
 #[async_trait]
-impl ToolProvider for WebSearchComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        vec![self.tool.clone()]
-    }
-
-    fn destination(&self) -> Option<Classification> {
-        Some(self.destination.clone())
+impl Tool for SearchWebTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        if name != SEARCH_WEB {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
         let Search { query, max_results } = arguments(params)?;
         if query.trim().is_empty() {
             return Err(ToolError::InvalidParameter("the query is empty".to_string()));
@@ -147,7 +149,6 @@ impl ToolProvider for WebSearchComponent {
 
 #[cfg(test)]
 mod tests {
-    use super::super::WebSearchParams;
     use super::*;
     use crate::testing::prompts;
     use axum::extract::State;
@@ -240,32 +241,25 @@ mod tests {
     }
 
     /// The component searching with a stand-in of Tavily of its own.
-    async fn component_of_tavily() -> WebSearchComponent {
+    async fn component_of_tavily() -> SearchWebTool {
         component(tavily().await.0)
     }
 
     /// The component searching with Tavily at `endpoint`.
-    fn component(endpoint: RemoteEndpoint) -> WebSearchComponent {
-        let params = WebSearchParams {
-            provider: Provider::Tavily,
-            endpoint,
-            requires_approval: Default::default(),
-            destination: None,
-            description: None,
-        };
-        WebSearchComponent::new(
-            params,
-            HttpClient::builder().no_proxy().build().unwrap(),
-            &prompts(),
-        )
-        .unwrap()
+    fn component(endpoint: RemoteEndpoint) -> SearchWebTool {
+        let http = HttpClient::builder().no_proxy().build().unwrap();
+        SearchWebTool::new(&prompts(), false, http, Provider::Tavily, endpoint).unwrap()
     }
 
     #[tokio::test]
     async fn a_search_asks_tavily_with_the_key_for_results_alone_and_gives_the_pages_it_found() {
         let (endpoint, asked) = tavily().await;
         let component = component(endpoint);
-        assert_eq!(component.tools()[0].presentation, WEB_RESULTS_PRESENTATION, "shown as found");
+        assert_eq!(
+            component.description().presentation,
+            WEB_RESULTS_PRESENTATION,
+            "shown as found"
+        );
         let found = component.search(&*secrets(), "tokio", 2).await.unwrap();
         assert_eq!(
             found,
@@ -322,13 +316,13 @@ mod tests {
             json!({ "query": "tokio", "max_results": MAX_RESULTS + 1 }),
             json!({ "query": " " }),
         ] {
-            let refused = component.execute(SEARCH_WEB, &params, None, &mut turn).await;
+            let refused = component.execute(&params, None, &mut turn).await;
             assert!(matches!(refused, Err(ToolError::InvalidParameter(_))), "{refused:?}");
         }
         assert!(asked.lock().unwrap().is_empty(), "nothing asked");
         // The key is resolved of the secrets of whoever acts in the turn: here, there are none.
         let params = json!({ "query": "tokio" });
-        let unresolved = component.execute(SEARCH_WEB, &params, None, &mut turn).await;
+        let unresolved = component.execute(&params, None, &mut turn).await;
         assert!(
             matches!(&unresolved, Err(ToolError::ExecutionFailed(m)) if m.contains("TAVILY_KEY")),
             "{unresolved:?}"

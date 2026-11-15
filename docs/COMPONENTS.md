@@ -107,7 +107,7 @@ facet trait lives next to the code that uses it, not among the implementations -
 
 | Facet | What it contributes | Where the trait lives |
 |---|---|---|
-| `ToolProvider` | tools the model may call | `crate::tool` |
+| `ToolProvider` | tools the model may call, each a `Tool` | `crate::tool` |
 | `CommandProvider<dyn ChannelCommand>` | user commands run on the channel (`ChannelCommand`: `crate::command`) | `caelumora_api::command` |
 | `CommandProvider<dyn AgentCommand>` | user commands an agent carries out itself, of agents and external agents alike (`AgentCommand`: `caelumora_agents::command`) | `caelumora_api::command` |
 | `ActivityProvider` | what an agent does of its own accord before a model call - compacting its context | `crate::activity` |
@@ -352,7 +352,7 @@ by the agents' library (`caelumora_agents::library::register_components`, issue 
 
 | Module | Components |
 |---|---|
-| `tool/` | tool providers (`calculator`, `ask_user`, ...) |
+| `tool/` | components that give tools (`calculator`, `ask_user`, ...), and what tools share |
 | `command/` | command providers (`help`, and the command groups `participant`, `agent` and `channel`) |
 | `prompt/` | prompt providers (`system_prompt`, `channel_participants`, ...) and the context providers (`turn_context`, `external_context`), with what their parts share (`Prompt`) and the agents' texts in the prompt catalogue (`PROMPTS`) |
 | `moderator/` | the moderator and its responder policies |
@@ -383,11 +383,11 @@ The module `component` keeps what a kind is apart from what it does (issue 534),
 `caelumora-tool-attachment`. Its `mod.rs` holds what the kind is configured with and built of: its
 constant, its `…Params`, its `…Component` with its `new`, where it has one, `register`, and what
 several of its facets share, with the tests of these. Each facet the component serves is a child
-module of it, named after the facet - `tool.rs` for the `ToolProvider`, `prompt.rs` for the
+module of it, named after the facet - `tool.rs` for its tools, `prompt.rs` for the
 `PromptProvider`, `command.rs` for its commands -, which holds the facet's `impl` for the
-`…Component` - or, for commands, their types and the list the component contributes -, what only
-that facet uses - the tools' and commands' names and arguments, the helpers of its `impl` - and
-its tests; it may have children of
+`…Component` - or, for tools and commands, their types, and the `ToolProvider` of a component
+that decides what it offers -, what only that facet uses - the tools' and commands' names and
+arguments, the helpers of its `impl` - and its tests; it may have children of
 its own, as the `tool` of `caelumora-tool-workspace` has `files` and `shell`. A child, not a module
 beside it, so that it reaches the private fields of the `…Component` without their being opened to
 the crate. The module `component` is public only where the kind's name is used outside the crate -
@@ -409,18 +409,27 @@ Components follow one convention:
     kinds live in the domain, because `AppConfig`'s default names them.
 *   **Struct:** a struct that only contributes - to facets whose consumer collects them from every
     component, such as tools, prompt parts, commands, activities or knowledge to restore - is the
-    kind in CamelCase with `Component` (`CalculatorComponent`, `NotesComponent`). A struct that is
+    kind in CamelCase with `Component` (`NotesComponent`, `WorkspaceComponent`). A struct that is
     what a facet asks for - the moderator, a responder policy, the compaction strategy, a model's
     client, the external agent, the context provider - is named after that role, never with
     `Component` (`PolicyModerator`, `RoundRobinPolicy`, `SummaryCompaction`, `A2aAgent`,
     `TurnContextProvider`), even where it contributes beside it. A kind that gives nothing but
     commands has no struct: it contributes the list of them (`help`, `participant`, `agent`,
-    `channel`).
+    `channel`); one that gives nothing but tools neither: it contributes them as `FixedTools`
+    (`calculator`, `web_fetch`).
 *   **Commands:** each command is a type of its own (issue 583), named after it with `Command`
     (`CompactCommand`, `NotesCommand`), which holds its `CommandDescription`, made in its `new`,
     and what it needs to be carried out - the `…Component` it belongs to, a service
     (`Arc<AgentManager>`); its component contributes them as a list, made as it is built
     (`CommandProvider` for `Vec<Arc<C>>`).
+*   **Tools:** each tool is a type of its own (issue 584), named after it with `Tool`
+    (`WriteNoteTool`, `FetchPageTool`), which holds its `ToolDescription` and what it needs to be
+    carried out - its parameters, its texts, a client, the server it calls. The tools of a
+    component are made together, as struct literals in the one function that makes them all
+    (`tools`), where their descriptions share what builds them; a tool has a `new` only where that
+    function lies in another module than the tool. Its component gives them as `FixedTools`, or,
+    where it decides which of them a turn is offered, as a `ToolProvider` of its own that holds
+    each with what it is offered by.
 *   **Names:** every tool and command name is a constant (`CALCULATE_TOOL_NAME`).
 *   **Texts:** what a prompt part says is a text of the prompt catalogue, its key a constant
     (`TEXT`), rendered from the texts the component takes when it is made, in the variant of its

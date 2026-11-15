@@ -22,7 +22,6 @@ use caelumora_api::terminal::WorkspacePath;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::ToolDescription;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -103,11 +102,13 @@ fn at_root(name: &str) -> Option<WorkspacePath> {
 /// that tells the agent which workspace that is.
 #[derive(Debug)]
 struct WorkspaceComponent {
-    params: WorkspaceParams,
-    /// What its tool set is for and its tools, as the configuration or the
-    /// prompt catalogue words them (issue 57).
+    /// How it is configured, which its tools share.
+    params: Arc<WorkspaceParams>,
+    /// What its tool set is for, as the configuration or the prompt catalogue words it (issue
+    /// 57).
     description: String,
-    tools: Vec<ToolDescription>,
+    /// Its tools, each with how it uses the workspace, by which they are offered (issue 290).
+    tools: Vec<tool::UsingTool>,
     /// The files that say how to work on a workspace, each a file at its root, in the order they
     /// are named.
     instruction_files: Vec<WorkspacePath>,
@@ -121,6 +122,7 @@ impl WorkspaceComponent {
     /// # Errors
     /// `PromptError` if one of its texts cannot be had.
     fn new(params: WorkspaceParams, prompts: PromptTexts) -> Result<Self, PromptError> {
+        let params = Arc::new(params);
         let tools = tool::tools(&params, &prompts)?;
         let description = match &params.description {
             Some(description) => description.clone(),

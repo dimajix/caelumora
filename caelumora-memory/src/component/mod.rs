@@ -1,51 +1,43 @@
 //! The `agent_memory` component (issues 62, 518): an agent remembers what it should know across
 //! its channels and sessions - kept by the plugin for the agent, not in one channel.
 //!
-//! It translates the tools `remember`, `update_memory` and `forget` and renders the prompt part;
-//! the logic is `turn::TurnMemory`. Changes are staged on the turn and committed by the plugin to
-//! the agent's memory as it is when the turn completes, so that actors of the same agent in other
-//! channels and sessions neither lose nor overwrite them. The prompt part shows the entries that
-//! may be recalled in the current channel, which the plugin hands the work through its
-//! `MemoryReader` (issue 131). Under the ownership policy that is the flow rule of issue 133 - the
-//! entry's channel's classification must flow into this one's - within the session, and beyond it
-//! only where the entry's session permits it, then and now (issue 134). Only those can be updated
-//! or forgotten here. Its tools are `ToolVisibility::HIDDEN`: like private notes, memory is the
-//! agent's own, seen by its owner in the context panel - and through its command `/memory @agent`
-//! (`command`), for the agent's owners alone, which shows what the prompt part shows the model. Its
-//! entries are numbered differently from notes, on purpose: see `TurnMemory::remember`.
+//! Its tools `remember`, `update_memory`, `forget` and `reclassify_memory` (`tool`) translate a
+//! call, and it renders the prompt part; the logic is `turn::TurnMemory`. Changes are staged on the
+//! turn and committed by the plugin to the agent's memory as it is when the turn completes, so that
+//! actors of the same agent in other channels and sessions neither lose nor overwrite them. The
+//! prompt part shows the entries that may be recalled in the current channel, which the plugin
+//! hands the work through its `MemoryReader` (issue 131). Under the ownership policy that is the
+//! flow rule of issue 133 - the entry's channel's classification must flow into this one's - within
+//! the session, and beyond it only where the entry's session permits it, then and now (issue 134).
+//! Only those can be updated or forgotten here. Its tools are `ToolVisibility::HIDDEN`: like
+//! private notes, memory is the agent's own, seen by its owner in the context panel - and through
+//! its command `/memory @agent` (`command`), for the agent's owners alone, which shows what the
+//! prompt part shows the model. Its entries are numbered differently from notes, on purpose: see
+//! `TurnMemory::remember`.
 
 mod command;
+mod tool;
 mod turn;
 
 use crate::extension::{MemoryReader, MemoryWriter};
-use crate::memory::{AgentMemory, AgentMemoryId, Memory, MemoryId};
-use crate::NAMESPACE;
+use crate::memory::{AgentMemory, AgentMemoryId, Memory};
 use async_trait::async_trait;
 use caelumora_agents::command::AgentCommand;
-use caelumora_agents::components::notes::NOTE_PRESENTATION;
 use caelumora_agents::prompt::{
     texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
     PromptProvider,
 };
 use caelumora_agents::situation::Situation;
-use caelumora_agents::tool::{
-    classification_argument, described, id_argument, reclassify_parameters, text_argument,
-    tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
-};
-use caelumora_agents::turn::Turn;
+use caelumora_agents::tool::ToolProvider;
 use caelumora_api::command::CommandProvider;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolVisibility};
 use command::MemoryCommand;
-use serde_json::Value;
 use std::fmt;
 use std::fmt::Debug;
 use std::sync::Arc;
-use turn::TurnMemory;
 
 pub const AGENT_MEMORY_KIND: &str = "agent_memory";
 
@@ -64,10 +56,6 @@ pub struct AgentMemoryComponent {
     prompts: PromptTexts,
     /// Where its prompt part goes: before the turn's input unless configured otherwise.
     position: PromptPosition,
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them.
-    description: String,
-    tools: Vec<ToolDescription>,
 }
 
 impl Debug for AgentMemoryComponent {
@@ -76,152 +64,10 @@ impl Debug for AgentMemoryComponent {
     }
 }
 
-#[async_trait]
-impl ToolProvider for AgentMemoryComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
-    }
-
-    async fn execute(
-        &self,
-        name: &str,
-        params: &Value,
-        _answers: Option<&Answers>,
-        turn: &mut Turn,
-    ) -> ToolResult<ToolOutput> {
-        let value = match name {
-            REMEMBER_TOOL_NAME => self.execute_remember(params, turn).await,
-            UPDATE_MEMORY_TOOL_NAME => self.execute_update(params, turn).await,
-            FORGET_TOOL_NAME => self.execute_forget(params, turn).await,
-            RECLASSIFY_MEMORY_TOOL_NAME => self.execute_reclassify(params, turn).await,
-            _ => Err(ToolError::UnknownTool(name.to_string())),
-        }?;
-        // What these answer tells only what the model asked for: classified
-        // as the turn (issue 168).
-        Ok(ToolOutput::classified(value, turn.situation().label()))
-    }
-}
-
 impl AgentMemoryComponent {
-    /// The component, its texts from `prompts`, its prompt part at `position`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of its texts cannot be had.
-    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Result<Self, PromptError> {
-        let tools = vec![
-            described(
-                &prompts,
-                NAMESPACE,
-                AGENT_MEMORY_KIND,
-                ToolDescription {
-                    name: REMEMBER_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: ToolParameters::object(
-                        [("text", ToolParameters::string())],
-                        ["text"],
-                    ),
-                    requires_approval: false,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-            described(
-                &prompts,
-                NAMESPACE,
-                AGENT_MEMORY_KIND,
-                ToolDescription {
-                    name: UPDATE_MEMORY_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: ToolParameters::object(
-                        [("id", ToolParameters::number()), ("text", ToolParameters::string())],
-                        ["id", "text"],
-                    ),
-                    requires_approval: false,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-            described(
-                &prompts,
-                NAMESPACE,
-                AGENT_MEMORY_KIND,
-                ToolDescription {
-                    name: FORGET_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: ToolParameters::object([("id", ToolParameters::number())], ["id"]),
-                    requires_approval: false,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-            described(
-                &prompts,
-                NAMESPACE,
-                AGENT_MEMORY_KIND,
-                ToolDescription {
-                    name: RECLASSIFY_MEMORY_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: reclassify_parameters(&prompts)?,
-                    requires_approval: true,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-        ];
-        let description = tool_text(&prompts, NAMESPACE, AGENT_MEMORY_KIND, "description", ())?;
-        Ok(Self { prompts, position, description, tools })
-    }
-
-    /// `remember(text)`: remembers `text`, taken over when the turn
-    /// completes.
-    async fn execute_remember(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = TurnMemory::remember(turn, text_argument(params)?).await?;
-        Ok(serde_json::json!({ "status": "remembered", "id": id.0 }))
-    }
-
-    /// `update_memory(id, text)`: changes the text of an entry that may be
-    /// recalled here.
-    async fn execute_update(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id: MemoryId = id_argument(params)?;
-        let text = text_argument(params)?;
-        if TurnMemory::update(turn, id, text).await? {
-            Ok(serde_json::json!({ "status": "updated", "id": id.0 }))
-        } else {
-            Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
-        }
-    }
-
-    /// `reclassify_memory(id, level, compartments?)`: reclassifies an entry
-    /// that may be recalled here, as the policy allows.
-    async fn execute_reclassify(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id: MemoryId = id_argument(params)?;
-        let classification = classification_argument(params)?;
-        TurnMemory::reclassify(turn, id, classification.clone()).await?;
-        Ok(
-            serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }),
-        )
-    }
-
-    /// `forget(id)`: forgets an entry that may be recalled here.
-    async fn execute_forget(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id: MemoryId = id_argument(params)?;
-        if TurnMemory::forget(turn, id).await? {
-            Ok(serde_json::json!({ "status": "forgotten", "id": id.0 }))
-        } else {
-            Err(ToolError::InvalidParameter(format!("you remember nothing numbered {id} here")))
-        }
+    /// The component, its prompt part at `position`, its texts from `prompts`.
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+        Self { prompts, position }
     }
 }
 
@@ -285,10 +131,10 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             let texts = texts_of(&context).await?;
             let position =
                 PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
-            let component = Arc::new(AgentMemoryComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
-            facets.insert::<dyn PromptProvider>(component);
+            facets.insert::<dyn ToolProvider>(Arc::new(tool::tools(&texts)?));
+            facets
+                .insert::<dyn PromptProvider>(Arc::new(AgentMemoryComponent::new(position, texts)));
             let memory: Vec<Arc<dyn AgentCommand>> = vec![Arc::new(MemoryCommand::new())];
             facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(memory));
             Ok(facets)
@@ -301,12 +147,15 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 mod tests {
     use super::*;
     use crate::library::MemoryLibrary;
-    use crate::memory::{AgentMemory, MemoryChange};
+    use crate::memory::{AgentMemory, MemoryChange, MemoryId};
     use crate::plugin::MemoryPlugin;
+    use crate::NAMESPACE;
     use crate::PROMPTS;
     use caelumora_agents::library::AgentsLibrary;
-    use caelumora_agents::testing::prompts_with;
+    use caelumora_agents::testing::{prompts_with, tool_named};
     use caelumora_agents::tool::ToolError;
+    use caelumora_agents::tool::{FixedTools, Tool};
+    use caelumora_agents::turn::Turn;
     use caelumora_api::command::{CommandError, CommandResult};
     use caelumora_api::runtime::ActorRuntime;
     use caelumora_api::staging::CommitError;
@@ -356,10 +205,16 @@ mod tests {
     /// memory (issue 255).
     struct Remembering {
         component: AgentMemoryComponent,
+        tools: FixedTools,
         owner: ActorId,
     }
 
     impl Remembering {
+        /// Its tool named `name`.
+        fn tool(&self, name: &str) -> Arc<dyn Tool> {
+            tool_named(&self.tools, name)
+        }
+
         /// Begins a turn of `agent` in `state`, in channel `at`, as its actor
         /// begins one.
         fn begin(&self, state: &mut AgentChannelState, at: &At) {
@@ -394,8 +249,8 @@ mod tests {
             component: AgentMemoryComponent::new(
                 PromptPosition::BeforeTurnInput,
                 prompts_with(NAMESPACE, PROMPTS),
-            )
-            .unwrap(),
+            ),
+            tools: tool::tools(&prompts_with(NAMESPACE, PROMPTS)).unwrap(),
             owner,
         }
     }
@@ -549,7 +404,8 @@ mod tests {
         .expect("a turn was begun");
         turn.see(&at.1);
         memory
-            .execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": text }), None, &mut turn)
+            .tool(REMEMBER_TOOL_NAME)
+            .execute(&serde_json::json!({ "text": text }), None, &mut turn)
             .await
             .unwrap();
         turn.take_over().await;
@@ -597,12 +453,8 @@ mod tests {
             .expect("a turn was begun");
             turn.see(&team.1);
             let result = memory
-                .execute(
-                    REMEMBER_TOOL_NAME,
-                    &serde_json::json!({ "text": "Kaya likes tea." }),
-                    None,
-                    &mut turn,
-                )
+                .tool(REMEMBER_TOOL_NAME)
+                .execute(&serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn)
                 .await
                 .unwrap();
             assert_eq!(result.value["id"], 1);
@@ -641,7 +493,8 @@ mod tests {
         )
         .expect("a turn was begun");
         assert!(memory
-            .execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn)
+            .tool(FORGET_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1 }), None, &mut turn)
             .await
             .is_err());
         memory.begin(&mut state, &team);
@@ -651,7 +504,8 @@ mod tests {
         )
         .expect("a turn was begun");
         memory
-            .execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn)
+            .tool(FORGET_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1 }), None, &mut turn)
             .await
             .unwrap();
         turn.take_over().await;
@@ -736,12 +590,8 @@ mod tests {
         )
         .expect("a turn was begun");
         let there = memory
-            .execute(
-                UPDATE_MEMORY_TOOL_NAME,
-                &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }),
-                None,
-                &mut turn,
-            )
+            .tool(UPDATE_MEMORY_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn)
             .await;
         assert!(
             matches!(there, Err(ToolError::InvalidParameter(_))),
@@ -757,12 +607,8 @@ mod tests {
         .expect("a turn was begun");
         turn.see(&confidential.1);
         let updated = memory
-            .execute(
-                UPDATE_MEMORY_TOOL_NAME,
-                &serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }),
-                None,
-                &mut turn,
-            )
+            .tool(UPDATE_MEMORY_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1, "text": "Kaya likes coffee." }), None, &mut turn)
             .await
             .unwrap();
         assert_eq!(updated.value, serde_json::json!({ "status": "updated", "id": 1 }));
@@ -802,27 +648,26 @@ mod tests {
         )
         .expect("a turn was begun");
         memory
-            .execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "draft" }), None, &mut turn)
+            .tool(REMEMBER_TOOL_NAME)
+            .execute(&serde_json::json!({ "text": "draft" }), None, &mut turn)
             .await
             .unwrap();
         memory
-            .execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn)
+            .tool(FORGET_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1 }), None, &mut turn)
             .await
             .expect("remembered in this turn");
         assert!(
             memory
-                .execute(FORGET_TOOL_NAME, &serde_json::json!({ "id": 1 }), None, &mut turn)
+                .tool(FORGET_TOOL_NAME)
+                .execute(&serde_json::json!({ "id": 1 }), None, &mut turn)
                 .await
                 .is_err(),
             "forgotten already"
         );
         let forgotten = memory
-            .execute(
-                RECLASSIFY_MEMORY_TOOL_NAME,
-                &serde_json::json!({ "id": 1, "level": "public" }),
-                None,
-                &mut turn,
-            )
+            .tool(RECLASSIFY_MEMORY_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1, "level": "public" }), None, &mut turn)
             .await;
         assert!(
             matches!(forgotten, Err(ToolError::InvalidParameter(_))),
@@ -849,7 +694,8 @@ mod tests {
         let mut turn = Turn::of(&mut state, Arc::new(AgentRuntime::in_test(runtime)))
             .expect("a turn was begun");
         let refused = memory
-            .execute(REMEMBER_TOOL_NAME, &serde_json::json!({ "text": "alone" }), None, &mut turn)
+            .tool(REMEMBER_TOOL_NAME)
+            .execute(&serde_json::json!({ "text": "alone" }), None, &mut turn)
             .await;
         assert!(matches!(refused, Err(ToolError::ExecutionFailed(_))), "nothing to remember in");
         assert!(
@@ -966,12 +812,8 @@ mod tests {
             .expect("a turn was begun");
             turn.see(&Classification::general(Confidentiality::Internal));
             let result = memory
-                .execute(
-                    REMEMBER_TOOL_NAME,
-                    &serde_json::json!({ "text": "Kaya likes tea." }),
-                    None,
-                    &mut turn,
-                )
+                .tool(REMEMBER_TOOL_NAME)
+                .execute(&serde_json::json!({ "text": "Kaya likes tea." }), None, &mut turn)
                 .await
                 .unwrap();
             assert_eq!(
@@ -1048,18 +890,23 @@ mod tests {
         .expect("a turn was begun");
         let above = serde_json::json!({ "id": 1, "level": "confidential", "compartments": ["hr"] });
         assert!(
-            memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &above, None, &mut turn).await.is_err(),
+            memory
+                .tool(RECLASSIFY_MEMORY_TOOL_NAME)
+                .execute(&above, None, &mut turn)
+                .await
+                .is_err(),
             "never above the channel"
         );
         let unknown = serde_json::json!({ "id": 7, "level": "internal", "compartments": ["hr"] });
         assert!(matches!(
-            memory.execute(RECLASSIFY_MEMORY_TOOL_NAME, &unknown, None, &mut turn).await,
+            memory.tool(RECLASSIFY_MEMORY_TOOL_NAME).execute(&unknown, None, &mut turn).await,
             Err(ToolError::InvalidParameter(_))
         ));
         let released =
             serde_json::json!({ "id": 1, "level": "internal", "compartments": ["hr", "finance"] });
         memory
-            .execute(RECLASSIFY_MEMORY_TOOL_NAME, &released, None, &mut turn)
+            .tool(RECLASSIFY_MEMORY_TOOL_NAME)
+            .execute(&released, None, &mut turn)
             .await
             .expect("the agent releases what it remembers");
         turn.take_over().await;
@@ -1228,21 +1075,5 @@ mod tests {
         assert_eq!(remembered[1].origin.channel, public.0 .1, "made where the work reads from");
         commit(&team, MemoryChange::KIND, &[forget]).await.expect("recalled where it is forgotten");
         assert_eq!(sessions.remembered(agent).await.len(), 1);
-    }
-
-    #[test]
-    fn every_entry_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = AgentMemoryComponent::new(
-            PromptPosition::BeforeTurnInput,
-            prompts_with(NAMESPACE, PROMPTS),
-        )
-        .unwrap()
-        .tools();
-        assert!(
-            tools
-                .iter()
-                .all(|t| (t.presentation, t.visibility)
-                    == (NOTE_PRESENTATION, ToolVisibility::HIDDEN))
-        );
     }
 }

@@ -8,7 +8,8 @@ use crate::prompt::{
 };
 use crate::situation::Situation;
 use crate::tool::{
-    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, tool_text, FixedTools, Tool, ToolError, ToolOutput, ToolProvider,
+    ToolResult,
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
@@ -37,19 +38,10 @@ pub const CREATE_PLAN_TOOL_NAME: &str = "create_plan";
 /// dominate by then.
 const PLANNING: &str = "agents.planning";
 
-/// The tool `create_plan` and when to use it: the tool is available at every point in a turn (not
-/// phase-gated) and without approval, as a tool without an effect outside the turn - whoever wants
-/// to see plans first sets a rule of a place that asks for it (issue 13), and `describe` shows them
-/// the plan. `execute()` parses the plan and either stores it on `Turn` as a fresh plan, or, if one
-/// is already in progress, appends the new steps to it (see `execute` below). Also implements
-/// `PromptProvider` to contribute the text `PLANNING`, which the context provider collects with
-/// every other prompt part (issue 99).
+/// When to use the tool `create_plan` (`CreatePlanTool`): the `PromptProvider` contributing the
+/// text `PLANNING`, which the context provider collects with every other prompt part (issue 99).
 #[derive(Debug)]
 pub struct PlanningComponent {
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
     /// The texts of its prompt part.
     prompts: PromptTexts,
     /// Where its prompt part goes: in the system prompt unless configured otherwise.
@@ -57,16 +49,32 @@ pub struct PlanningComponent {
 }
 
 impl PlanningComponent {
-    /// The provider, its texts from `prompts`, told how many steps a plan
-    /// has at most; it keeps `prompts` for its prompt part at `position`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Result<Self, PromptError> {
-        // What its texts are told.
-        let values = context! { max_steps => Plan::MAX_STEPS };
-        let tools = vec![described(
-            &prompts,
+    /// The prompt part at `position`, its text from `prompts`.
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+        Self { prompts, position }
+    }
+}
+
+/// The tool `create_plan`: available at every point in a turn (not phase-gated) and without
+/// approval, as a tool without an effect outside the turn - whoever wants to see plans first sets
+/// a rule of a place that asks for it (issue 13), and `describe` shows them the plan. `execute`
+/// parses the plan and either stores it on `Turn` as a fresh plan, or, if one is already in
+/// progress, appends the new steps to it.
+#[derive(Debug)]
+struct CreatePlanTool {
+    description: ToolDescription,
+}
+
+/// The tools of the component, their texts from `prompts`, told how many steps a plan has at most.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
+    // What its texts are told.
+    let values = context! { max_steps => Plan::MAX_STEPS };
+    let create_plan = CreatePlanTool {
+        description: described(
+            prompts,
             NAMESPACE,
             PLANNING_KIND,
             ToolDescription {
@@ -91,10 +99,12 @@ impl PlanningComponent {
                 presentation: PLAN_PRESENTATION,
             },
             &values,
-        )?];
-        let description = tool_text(&prompts, NAMESPACE, PLANNING_KIND, "description", &values)?;
-        Ok(Self { description, tools, prompts, position })
-    }
+        )?,
+    };
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, PLANNING_KIND, "description", &values)?,
+        vec![Arc::new(create_plan)],
+    ))
 }
 
 #[async_trait]
@@ -136,21 +146,16 @@ fn parse_plan(args: &Value) -> ToolResult<Plan> {
 }
 
 #[async_trait]
-impl ToolProvider for PlanningComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+impl Tool for CreatePlanTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        _name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
         let incoming = parse_plan(params)?;
         // A plan larger than a plan may be is the model's to correct; the
@@ -162,7 +167,7 @@ impl ToolProvider for PlanningComponent {
                 Plan::MAX_STEPS
             )));
         }
-        // What it answers tells nothing: classified as the turn (issue 168).
+        // What it answers tells nothing.
         match turn.take_plan() {
             Some(mut state) => {
                 let start = state.plan.steps.len();
@@ -178,22 +183,16 @@ impl ToolProvider for PlanningComponent {
                 // untouched - the current step continues uninterrupted, and
                 // the new steps get picked up once it converges.
                 turn.set_plan(state);
-                Ok(ToolOutput::classified(
-                    serde_json::json!({ "status": "steps_added" }),
-                    turn.situation().label(),
-                ))
+                Ok(ToolOutput::of_turn(serde_json::json!({ "status": "steps_added" }), turn))
             }
             None => {
                 turn.set_plan(PlanState { plan: incoming, progress: PlanProgress::Step(0) });
-                Ok(ToolOutput::classified(
-                    serde_json::json!({ "status": "accepted" }),
-                    turn.situation().label(),
-                ))
+                Ok(ToolOutput::of_turn(serde_json::json!({ "status": "accepted" }), turn))
             }
         }
     }
 
-    fn describe(&self, _name: &str, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<String> {
         let plan = parse_plan(params)?;
         let steps = plan
             .steps
@@ -217,10 +216,9 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
             let position = PositionParams::position_of(&descriptor.params, PromptPosition::Start)?;
-            let provider = Arc::new(PlanningComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::<PlanningComponent>::clone(&provider));
-            facets.insert::<dyn PromptProvider>(provider);
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(&texts)?));
+            facets.insert::<dyn PromptProvider>(Arc::new(PlanningComponent::new(position, texts)));
             Ok(facets)
         },
     );
@@ -233,32 +231,24 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use serde_json::json;
 
+    /// The tool `create_plan`, as the component gives it.
+    fn create_plan() -> Arc<dyn Tool> {
+        testing::tool_named(&tools(&testing::prompts()).unwrap(), CREATE_PLAN_TOOL_NAME)
+    }
+
     #[test]
     fn create_plan_tool_requires_no_approval() {
-        assert!(
-            !PlanningComponent::new(PromptPosition::Start, testing::prompts())
-                .unwrap()
-                .tools()
-                .remove(0)
-                .requires_approval
-        );
+        assert!(!create_plan().description().requires_approval);
     }
 
     #[test]
     fn create_plan_calls_are_shown_as_a_plan() {
-        assert_eq!(
-            PlanningComponent::new(PromptPosition::Start, testing::prompts())
-                .unwrap()
-                .tools()
-                .remove(0)
-                .presentation,
-            PLAN_PRESENTATION
-        );
+        assert_eq!(create_plan().description().presentation, PLAN_PRESENTATION);
     }
 
     #[tokio::test]
     async fn create_plan_tool_execute_stores_the_parsed_plan() {
-        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
+        let create_plan = create_plan();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -270,7 +260,7 @@ mod tests {
             ]
         });
 
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, None, &mut turn).await;
+        let result = create_plan.execute(&params, None, &mut turn).await;
         assert!(result.is_ok());
 
         let plan_state = turn.plan().expect("plan should be set after execute");
@@ -281,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_plan_tool_execute_appends_steps_to_a_plan_mid_step() {
-        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
+        let create_plan = create_plan();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -298,7 +288,7 @@ mod tests {
             "summary": "updated",
             "steps": [ { "description": "second" } ]
         });
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, None, &mut turn).await;
+        let result = create_plan.execute(&params, None, &mut turn).await;
         assert!(result.is_ok());
 
         let plan_state = turn.plan().expect("plan should still be set");
@@ -311,7 +301,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_plan_tool_execute_resumes_a_finalizing_plan_when_steps_are_added() {
-        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
+        let create_plan = create_plan();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
@@ -328,7 +318,7 @@ mod tests {
             "summary": "updated",
             "steps": [ { "description": "one more thing" } ]
         });
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &params, None, &mut turn).await;
+        let result = create_plan.execute(&params, None, &mut turn).await;
         assert!(result.is_ok());
 
         let plan_state = turn.plan().expect("plan should still be set");
@@ -339,11 +329,11 @@ mod tests {
 
     #[tokio::test]
     async fn create_plan_tool_execute_rejects_malformed_arguments() {
-        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
+        let create_plan = create_plan();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
 
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &json!({}), None, &mut turn).await;
+        let result = create_plan.execute(&json!({}), None, &mut turn).await;
         assert!(
             matches!(result, Err(ToolError::InvalidParameter(_))),
             "the model is asked to correct the call: {result:?}"
@@ -353,25 +343,23 @@ mod tests {
 
     #[tokio::test]
     async fn a_plan_has_at_most_its_number_of_steps_those_appended_included() {
-        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
+        let create_plan = create_plan();
         let mut agent_channel_state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut agent_channel_state);
         let steps = |n: usize| json!({ "summary": "work", "steps": (0..n).map(|i| json!({ "description": format!("step {i}") })).collect::<Vec<_>>() });
 
-        let result = provider
-            .execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS + 1), None, &mut turn)
-            .await;
+        let result = create_plan.execute(&steps(Plan::MAX_STEPS + 1), None, &mut turn).await;
         assert!(
             matches!(&result, Err(ToolError::InvalidParameter(m)) if m.contains("at most 20")),
             "the model is asked to correct the call: {result:?}"
         );
         assert!(turn.plan().is_none());
 
-        provider
-            .execute(CREATE_PLAN_TOOL_NAME, &steps(Plan::MAX_STEPS - 1), None, &mut turn)
+        create_plan
+            .execute(&steps(Plan::MAX_STEPS - 1), None, &mut turn)
             .await
             .expect("one step less than it may have");
-        let result = provider.execute(CREATE_PLAN_TOOL_NAME, &steps(2), None, &mut turn).await;
+        let result = create_plan.execute(&steps(2), None, &mut turn).await;
         assert!(
             matches!(result, Err(ToolError::InvalidParameter(_))),
             "appended, it would have one too many: {result:?}"
@@ -381,16 +369,13 @@ mod tests {
             Plan::MAX_STEPS - 1,
             "as it was"
         );
-        provider
-            .execute(CREATE_PLAN_TOOL_NAME, &steps(1), None, &mut turn)
-            .await
-            .expect("the last step it may have");
+        create_plan.execute(&steps(1), None, &mut turn).await.expect("the last step it may have");
         assert_eq!(turn.plan().unwrap().plan.steps.len(), Plan::MAX_STEPS);
     }
 
     #[test]
     fn create_plan_tool_describe_renders_summary_and_steps() {
-        let provider = PlanningComponent::new(PromptPosition::Start, testing::prompts()).unwrap();
+        let create_plan = create_plan();
         let params = json!({
             "summary": "Investigate and fix the bug",
             "steps": [
@@ -399,8 +384,7 @@ mod tests {
             ]
         });
 
-        let description =
-            provider.describe(CREATE_PLAN_TOOL_NAME, &params).expect("valid plan should describe");
+        let description = create_plan.describe(&params).expect("valid plan should describe");
         assert!(description.contains("Investigate and fix the bug"));
         assert!(description.contains("1. Reproduce the issue"));
         assert!(description.contains("2. Find the root cause"));
@@ -411,7 +395,6 @@ mod tests {
         let mut state = AgentChannelState::default();
         let turn = Turn::begun(Default::default(), &mut state);
         let prompt = PlanningComponent::new(PromptPosition::Start, testing::prompts())
-            .unwrap()
             .get_prompt(&turn.situation())
             .await
             .expect("prompt should be available");

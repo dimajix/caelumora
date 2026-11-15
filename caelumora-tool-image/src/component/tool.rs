@@ -1,16 +1,12 @@
-//! The facet `ToolProvider` of `image_generation` (issues 512, 525): the tool `generate_image`,
-//! which generates an image with one of the image models its agent is given, and gives it the
-//! agent's model to see.
+//! The tool of `image_generation` (issues 512, 525, 584): `generate_image`, which generates an
+//! image with one of the image models its agent is given, and gives it the agent's model to see.
 
-use super::{ImageGenerationComponent, IMAGE_GENERATION_KIND};
+use super::IMAGE_GENERATION_KIND;
 use crate::NAMESPACE;
 use async_trait::async_trait;
-use caelumora_agents::tool::{
-    arguments, described, ToolError, ToolOutput, ToolProvider, ToolResult,
-};
+use caelumora_agents::tool::{arguments, described, Tool, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::image::{Image, ImageModelClient, ImageRequest};
-use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
@@ -52,45 +48,55 @@ fn random_seed() -> u64 {
     rand::random_range(0..MAX_SEED)
 }
 
-/// The tool `generate_image` over `models`, the first the default, its texts from `prompts`.
-///
-/// # Errors
-/// `PromptError` if one of its texts cannot be had.
-pub(super) fn generate_image(
-    prompts: &PromptTexts,
-    requires_approval: bool,
-    models: &[Arc<dyn ImageModelClient>],
-) -> Result<ToolDescription, PromptError> {
-    let values = json!({
-        "models": models
-            .iter()
-            .map(|m| json!({ "name": m.name(), "description": m.description() }))
-            .collect::<Vec<_>>(),
-        "default": models.first().map(|model| model.name()),
-    });
-    let tool = ToolDescription {
-        name: GENERATE_IMAGE.to_string(),
-        description: String::new(),
-        parameters: ToolParameters::object(
-            [
-                ("prompt", ToolParameters::string()),
-                ("model", ToolParameters::string()),
-                ("negative_prompt", ToolParameters::string()),
-                ("width", ToolParameters::number()),
-                ("height", ToolParameters::number()),
-                ("seed", ToolParameters::number()),
-            ],
-            ["prompt"],
-        ),
-        requires_approval,
-        visibility: ToolVisibility::SHOWN,
-        classification: None,
-        presentation: IMAGE_PRESENTATION,
-    };
-    described(prompts, NAMESPACE, IMAGE_GENERATION_KIND, tool, &values)
+/// The tool `generate_image`: an image generated with one of its image models.
+#[derive(Debug)]
+pub(super) struct GenerateImageTool {
+    description: ToolDescription,
+    /// Every model offered, in the order of the agent's components; the first is the default.
+    models: Vec<Arc<dyn ImageModelClient>>,
 }
 
-impl ImageGenerationComponent {
+impl GenerateImageTool {
+    /// The tool over `models`, the first the default, which asks for approval if
+    /// `requires_approval`, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(
+        prompts: &PromptTexts,
+        requires_approval: bool,
+        models: Vec<Arc<dyn ImageModelClient>>,
+    ) -> Result<Self, PromptError> {
+        let values = json!({
+            "models": models
+                .iter()
+                .map(|m| json!({ "name": m.name(), "description": m.description() }))
+                .collect::<Vec<_>>(),
+            "default": models.first().map(|model| model.name()),
+        });
+        let tool = ToolDescription {
+            name: GENERATE_IMAGE.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object(
+                [
+                    ("prompt", ToolParameters::string()),
+                    ("model", ToolParameters::string()),
+                    ("negative_prompt", ToolParameters::string()),
+                    ("width", ToolParameters::number()),
+                    ("height", ToolParameters::number()),
+                    ("seed", ToolParameters::number()),
+                ],
+                ["prompt"],
+            ),
+            requires_approval,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: IMAGE_PRESENTATION,
+        };
+        let description = described(prompts, NAMESPACE, IMAGE_GENERATION_KIND, tool, &values)?;
+        Ok(Self { description, models })
+    }
+
     /// The model named `name`, of those offered; the default if none is named.
     ///
     /// # Errors
@@ -112,30 +118,18 @@ impl ImageGenerationComponent {
 }
 
 #[async_trait]
-impl ToolProvider for ImageGenerationComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        vec![self.tool.clone()]
-    }
-
-    fn destination(&self) -> Option<Classification> {
-        Some(self.destination.clone())
+impl Tool for GenerateImageTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     /// Generates the image, classified as the turn's label: it follows from the arguments alone.
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        if name != GENERATE_IMAGE {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
         let Call { model, prompt, negative_prompt, width, height, seed } = arguments(params)?;
         let model = self.model(model.as_deref())?;
         let request = ImageRequest { prompt, negative_prompt, width, height, seed };
@@ -158,21 +152,24 @@ impl ToolProvider for ImageGenerationComponent {
             .into_iter()
             .map(|image| ToolContent { name: image.name, bytes: image.content })
             .collect();
-        Ok(ToolOutput { files, ..ToolOutput::classified(value, turn.situation().label()) })
+        Ok(ToolOutput { files, ..ToolOutput::of_turn(value, turn) })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::ImageGenerationParams;
+    use crate::component::{tools, ImageGenerationParams};
     use crate::testing::prompts;
     use bytes::Bytes;
     use caelumora_agents::testing::detached_actor_runtime;
+    use caelumora_agents::testing::tool_named;
+    use caelumora_agents::tool::{FixedTools, ToolProvider};
     use caelumora_api::component::{ComponentResult, Params};
     use caelumora_api::model::{ModelError, ModelResult};
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
+    use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::work::Work;
     use std::sync::Mutex;
 
@@ -212,18 +209,14 @@ mod tests {
         Ok(vec![Image { name: "drawn.png".to_string(), content: Bytes::from_static(PNG) }])
     }
 
-    fn built(params: Value, models: &[Arc<Painter>]) -> ComponentResult<ImageGenerationComponent> {
+    fn built(params: Value, models: &[Arc<Painter>]) -> ComponentResult<FixedTools> {
         let models = models.iter().map(|m| Arc::<Painter>::clone(m) as Arc<dyn ImageModelClient>);
-        Ok(ImageGenerationComponent::new(
-            ImageGenerationParams::read(&params)?,
-            models.collect(),
-            &prompts(),
-        )?)
+        Ok(tools(ImageGenerationParams::read(&params)?, models.collect(), &prompts())?)
     }
 
     /// What `tool` gives for a call of `generate_image` with `params`, in a turn that reaches no
     /// channel.
-    async fn generated(tool: &ImageGenerationComponent, params: Value) -> ToolResult<ToolOutput> {
+    async fn generated(tool: &FixedTools, params: Value) -> ToolResult<ToolOutput> {
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
             Default::default(),
@@ -233,7 +226,7 @@ mod tests {
         ));
         let mut turn = Turn::of(&mut state, detached_actor_runtime(AgentId::default()))
             .expect("a turn was begun");
-        tool.execute(GENERATE_IMAGE, &params, None, &mut turn).await
+        tool_named(tool, GENERATE_IMAGE).execute(&params, None, &mut turn).await
     }
 
     #[tokio::test]
@@ -330,6 +323,7 @@ mod tests {
         let models = [painter("fast", drawn), painter("slow", drawn)];
         let tool = built(json!({}), &models).unwrap();
         let [generate] = tool.tools().try_into().unwrap();
+        let generate = generate.description();
         assert!(!generate.requires_approval, "asks nobody unless configured");
         assert_eq!(generate.presentation, IMAGE_PRESENTATION);
         assert!(
@@ -341,6 +335,6 @@ mod tests {
         );
         assert_eq!(tool.destination(), Some(Classification::PUBLIC));
         let asked = built(json!({ "requires_approval": true }), &models).unwrap();
-        assert!(asked.tools()[0].requires_approval);
+        assert!(asked.tools()[0].description().requires_approval);
     }
 }

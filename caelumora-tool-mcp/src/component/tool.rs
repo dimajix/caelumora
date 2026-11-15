@@ -1,6 +1,7 @@
-//! The facet `ToolProvider` of `mcp_server` (issues 32, 126, 161, 188, 194, 246): the tools of
-//! the component's MCP server, described as configured or as the server describes itself, and
-//! unavailable - with why, in general terms - if the server could not be asked for them.
+//! The tools of `mcp_server` (issues 32, 126, 161, 188, 194, 246, 584): those of the component's
+//! MCP server, each an `McpTool` made of what was discovered, their set described as configured
+//! or as the server describes itself, and unavailable - with why, in general terms - if the server
+//! could not be asked for them.
 //!
 //! Tools are namespaced as `"{descriptor_id}__{remote_tool_name}"` to avoid collisions with
 //! built-in tools or other MCP servers, since an agent's tools are found by name across all its
@@ -12,10 +13,12 @@
 //! credential it resolves of the secrets of whoever asks it (`Situation::secrets`, issue 516). What
 //! a tool answers above the component's bound is kept whole beside a preview (issue 552).
 
-use super::{McpServerComponent, McpServerParams};
+use super::{Discovered, McpServer, McpServerComponent, McpServerParams};
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
-use caelumora_agents::tool::{cut_to_preview, ToolError, ToolOutput, ToolProvider, ToolResult};
+use caelumora_agents::tool::{
+    cut_to_preview, Tool, ToolError, ToolOutput, ToolProvider, ToolResult,
+};
 use caelumora_agents::turn::Turn;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::question::Answers;
@@ -28,6 +31,7 @@ use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
 use serde_json::Value;
+use std::sync::Arc;
 use tokio::time;
 use tracing::warn;
 
@@ -75,19 +79,10 @@ fn read_only(annotations: Option<&ToolAnnotations>) -> bool {
 /// offered as `<component id>__<remote name>`.
 const NAME_SEPARATOR: &str = "__";
 
-impl McpServerComponent {
-    fn strip_prefix<'a>(&self, name: &'a str) -> ToolResult<&'a str> {
-        name.strip_prefix(self.descriptor_id.as_str())
-            .and_then(|rest| rest.strip_prefix(NAME_SEPARATOR))
-            .ok_or_else(|| ToolError::UnknownTool(name.to_string()))
-    }
-
+impl McpServer {
     /// The server's tools and what it says of itself, discovered in
     /// the name `secrets` are bound to, within the endpoint's timeout.
-    async fn discover(
-        &self,
-        secrets: &dyn Secrets,
-    ) -> McpResult<(Vec<ToolDescription>, Option<String>)> {
+    async fn discover(&self, secrets: &dyn Secrets) -> McpResult<Discovered> {
         let discover = async {
             let auth_header = self.params.endpoint.bearer_token(secrets).await?;
             discover_tools(&self.descriptor_id, &self.params, auth_header).await
@@ -128,7 +123,7 @@ async fn discover_tools(
     descriptor_id: &str,
     params: &McpServerParams,
     auth_header: Option<String>,
-) -> McpResult<(Vec<ToolDescription>, Option<String>)> {
+) -> McpResult<Discovered> {
     let endpoint = &params.endpoint;
     let service = connect(endpoint, auth_header).await?;
     let instructions = service
@@ -148,7 +143,7 @@ async fn discover_tools(
         .map(|t| {
             let description = t.description.map(|d| d.to_string()).unwrap_or_default();
             let schema = Value::Object((*t.input_schema).clone());
-            ToolDescription {
+            let tool = ToolDescription {
                 name: format!("{}{}{}", descriptor_id, NAME_SEPARATOR, t.name),
                 description,
                 parameters: schema_to_tool_parameters(&schema),
@@ -158,10 +153,11 @@ async fn discover_tools(
                 visibility: ToolVisibility::SHOWN,
                 classification: params.classification.clone(),
                 presentation: Default::default(),
-            }
+            };
+            (t.name.to_string(), tool)
         })
         .collect();
-    Ok((tools, instructions))
+    Ok(Discovered { tools, instructions })
 }
 
 /// Best-effort conversion of a JSON-Schema fragment (as used by MCP tool
@@ -211,7 +207,7 @@ fn schema_to_tool_parameters(schema: &Value) -> ToolParameters {
     }
 }
 
-impl McpServerComponent {
+impl McpServer {
     /// What the model of the agent is given of what the tool `name` answered (issue 552). As it
     /// came, up to the component's bound: the structured content if there is any, else the text,
     /// else the blocks of the answer as JSON. Above the bound, measured on that, a preview of the
@@ -268,16 +264,24 @@ impl McpServerComponent {
 #[async_trait]
 impl ToolProvider for McpServerComponent {
     fn description(&self) -> String {
-        self.params
+        let server = &self.server;
+        server
+            .params
             .description
             .clone()
-            .or_else(|| self.discovered.current().and_then(|discovered| discovered.1.clone()))
-            .unwrap_or_else(|| format!("The tools of the MCP server '{}'.", self.descriptor_id))
+            .or_else(|| {
+                server.discovered.current().and_then(|discovered| discovered.instructions.clone())
+            })
+            .unwrap_or_else(|| format!("The tools of the MCP server '{}'.", server.descriptor_id))
     }
 
     /// Its tools as last discovered; none before they were.
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.discovered.current().map(|discovered| discovered.0.clone()).unwrap_or_default()
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        self.server
+            .discovered
+            .current()
+            .map(|discovered| self.tools_of(&discovered))
+            .unwrap_or_default()
     }
 
     /// Its tools wherever it is asked, discovered again in the name of
@@ -285,17 +289,18 @@ impl ToolProvider for McpServerComponent {
     /// cannot be asked leaves the tools discovered before (issue 126), or,
     /// without any, its tool set unavailable (issue 32) - and is asked again
     /// the next time.
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Arc<dyn Tool>>, String> {
+        let server = &self.server;
         let secrets = situation.secrets();
-        match self.discovered.get(|| self.discover(&*secrets)).await {
-            Ok(discovered) => Ok(discovered.0.clone()),
-            Err(e) => match self.discovered.current() {
+        match server.discovered.get(|| server.discover(&*secrets)).await {
+            Ok(discovered) => Ok(self.tools_of(&discovered)),
+            Err(e) => match server.discovered.current() {
                 Some(discovered) => {
-                    warn!("MCP tool component '{}' failed to discover its tools again ({}); keeping those discovered before", self.descriptor_id, e);
-                    Ok(discovered.0.clone())
+                    warn!("MCP tool component '{}' failed to discover its tools again ({}); keeping those discovered before", server.descriptor_id, e);
+                    Ok(self.tools_of(&discovered))
                 }
                 None => {
-                    warn!("MCP tool component '{}' failed to connect/discover tools ({}); no tools available", self.descriptor_id, e);
+                    warn!("MCP tool component '{}' failed to connect/discover tools ({}); no tools available", server.descriptor_id, e);
                     Err(e.unavailable())
                 }
             },
@@ -303,24 +308,57 @@ impl ToolProvider for McpServerComponent {
     }
 
     fn destination(&self) -> Option<Classification> {
-        Some(self.params.destination.clone().unwrap_or(Classification::PUBLIC))
+        Some(self.server.params.destination.clone().unwrap_or(Classification::PUBLIC))
+    }
+}
+
+impl McpServerComponent {
+    /// The tools of what was `discovered`, each reaching the server.
+    fn tools_of(&self, discovered: &Discovered) -> Vec<Arc<dyn Tool>> {
+        discovered
+            .tools
+            .iter()
+            .map(|(remote_name, description)| {
+                Arc::new(McpTool {
+                    description: description.clone(),
+                    remote_name: remote_name.clone(),
+                    server: Arc::clone(&self.server),
+                }) as Arc<dyn Tool>
+            })
+            .collect()
+    }
+}
+
+/// A tool of the MCP server, offered as `<component id>__<remote name>` and called by its remote
+/// name.
+#[derive(Debug)]
+struct McpTool {
+    description: ToolDescription,
+    remote_name: String,
+    server: Arc<McpServer>,
+}
+
+#[async_trait]
+impl Tool for McpTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        let remote_name = self.strip_prefix(name)?.to_string();
+        let server = &self.server;
+        let name = &self.description.name;
         let secrets = turn.situation().secrets();
 
         let call_result: McpResult<ToolOutput> = async {
-            let auth_header = self.params.endpoint.bearer_token(&*secrets).await?;
+            let auth_header = server.params.endpoint.bearer_token(&*secrets).await?;
 
-            let service = connect(&self.params.endpoint, auth_header).await?;
-            let mut request = CallToolRequestParams::new(remote_name.clone());
+            let service = connect(&server.params.endpoint, auth_header).await?;
+            let mut request = CallToolRequestParams::new(self.remote_name.clone());
             if let Some(arguments) = params.as_object().cloned() {
                 request = request.with_arguments(arguments);
             }
@@ -330,7 +368,7 @@ impl ToolProvider for McpServerComponent {
             // as much as `notifications/cancelled` would.
             let call = service.call_tool(request);
 
-            let result = time::timeout(self.params.timeout(), call).await;
+            let result = time::timeout(server.params.timeout(), call).await;
             let _ = service.cancel().await;
 
             let result = result.map_err(|_| McpError::Timeout(format!("MCP tool call to '{}' timed out", name)))?
@@ -338,12 +376,12 @@ impl ToolProvider for McpServerComponent {
                     // A server that does not know the tool answers so (MCP's
                     // "Unknown tool"): it has others now.
                     if matches!(&e, ServiceError::McpError(error) if error.code == ErrorCode::INVALID_PARAMS) {
-                        self.discovered.invalidate();
+                        server.discovered.invalidate();
                     }
-                    McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, self.params.endpoint.redact_in(&e.to_string())))
+                    McpError::ToolCallFailed(format!("MCP tool call to '{}' failed: {}", name, server.params.endpoint.redact_in(&e.to_string())))
                 })?;
 
-            self.output_of(name, result)
+            server.output_of(name, result)
         }.await;
 
         call_result.map_err(|e| ToolError::ExecutionFailed(e.to_string()))
@@ -375,15 +413,16 @@ mod tests {
         }
     }
 
-    fn provider() -> McpServerComponent {
-        McpServerComponent::new("github-mcp".to_string(), unconfigured(), prompts())
+    /// The server of the component `github-mcp`, configured with nothing but its endpoint.
+    fn server() -> McpServer {
+        McpServer::new("github-mcp".to_string(), unconfigured(), prompts())
     }
 
-    /// The component `tracker`, which keeps what lies above `BOUND`.
-    fn keeping() -> McpServerComponent {
+    /// The server of the component `tracker`, which keeps what lies above `BOUND`.
+    fn keeping() -> McpServer {
         let keep_whole_above_bytes = Some(KeepWholeAbove::try_from(BOUND).unwrap());
         let params = McpServerParams { keep_whole_above_bytes, ..unconfigured() };
-        McpServerComponent::new("tracker".to_string(), params, prompts())
+        McpServer::new("tracker".to_string(), params, prompts())
     }
 
     /// An answer with `text`, if any, and with `structured` content, if any.
@@ -419,7 +458,7 @@ mod tests {
         }
         let at = answer(Some(&long[1..]), None);
         assert!(keeping.output_of("t", at).unwrap().files.is_empty(), "at the bound");
-        let whole = provider().output_of("t", answer(Some(&long), None)).unwrap();
+        let whole = server().output_of("t", answer(Some(&long), None)).unwrap();
         assert_eq!(whole, json!(long).into(), "without a bound, whatever its size");
     }
 
@@ -479,7 +518,7 @@ mod tests {
         let Err(cut) = keeping().output_of("t", failure()) else { panic!("it failed") };
         let cut = cut.to_string();
         assert!(cut.len() < BOUND && cut.ends_with("e..."), "{}", cut.len());
-        let Err(whole) = provider().output_of("t", failure()) else { panic!("it failed") };
+        let Err(whole) = server().output_of("t", failure()) else { panic!("it failed") };
         assert!(whole.to_string().ends_with(&long), "without a bound, as it came");
     }
 
@@ -488,7 +527,7 @@ mod tests {
         let blocks = vec![ContentBlock::image("x", "image/png")];
         let json = serde_json::to_value(&blocks).unwrap().to_string();
         let result = CallToolResult::error(blocks);
-        let Err(failure) = provider().output_of("t", result) else { panic!("it failed") };
+        let Err(failure) = server().output_of("t", result) else { panic!("it failed") };
         assert!(failure.to_string().ends_with(&json), "{failure}");
     }
 
@@ -521,23 +560,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn namespacing_round_trips_through_prefix_stripping() {
-        let provider = provider();
-        let stripped = provider.strip_prefix("github-mcp__search").unwrap();
-        assert_eq!(stripped, "search");
-        assert!(provider.strip_prefix("unrelated_tool").is_err());
-    }
-
     /// Issue 180: the server is cleared for what is configured, public unless configured.
     #[test]
     fn the_server_is_cleared_for_what_is_configured_and_public_unless() {
-        let provider = provider();
+        let provider = McpServerComponent::new("github-mcp".to_string(), unconfigured(), prompts());
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         let internal = Classification::general(Confidentiality::Internal);
         let cleared = McpServerComponent::new(
             "github-mcp".to_string(),
-            McpServerParams { destination: Some(internal.clone()), ..provider.params.clone() },
+            McpServerParams { destination: Some(internal.clone()), ..unconfigured() },
             prompts(),
         );
         assert_eq!(cleared.destination(), Some(internal));

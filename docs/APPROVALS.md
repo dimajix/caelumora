@@ -214,7 +214,7 @@ kernel (`ActorRuntime::admit_tool_call`, issue 516), and decides the rest itself
 
 ## Questions
 
-A tool may ask a person before its call runs (`ToolProvider::questions`), and the answers are handed
+A tool may ask a person before its call runs (`Tool::questions`), and the answers are handed
 to its `execute`. They are no messages, and the model learns of them only what the tool puts into
 its result. The turn waits for them as for an approval. The built-in `ask_user` is the simplest such
 tool: the model writes the questions and names whom to ask by their handles, and the result is the

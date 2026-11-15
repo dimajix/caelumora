@@ -7,7 +7,8 @@
 
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
 use crate::tool::{
-    arguments, described, tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, tool_text, FixedTools, Tool, ToolError, ToolOutput, ToolProvider,
+    ToolResult,
 };
 use crate::turn::Turn;
 use async_trait::async_trait;
@@ -58,31 +59,29 @@ impl Params for SleepParams {
     }
 }
 
+/// The tool `sleep`, which waits.
 #[derive(Debug)]
-pub struct SleepComponent {
+struct SleepTool {
+    description: ToolDescription,
     /// How long a call without `seconds` waits.
     seconds: f64,
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them (issue 57).
-    description: String,
-    tools: Vec<ToolDescription>,
 }
 
-impl SleepComponent {
-    /// The provider whose tool waits `seconds` unless told otherwise, and
-    /// asks for approval if `requires_approval`; its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of them cannot be had.
-    pub fn new(
-        seconds: f64,
-        requires_approval: bool,
-        prompts: &PromptTexts,
-    ) -> Result<Self, PromptError> {
-        // What its texts are told, written as Rust writes them - `5`, not `5.0`.
-        let values =
-            context! { seconds => seconds.to_string(), max_seconds => MAX_SECONDS.to_string() };
-        let tools = vec![described(
+/// The tools of the component: `sleep`, which waits `seconds` unless told otherwise, and asks for
+/// approval if `requires_approval`; their texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(
+    seconds: f64,
+    requires_approval: bool,
+    prompts: &PromptTexts,
+) -> Result<FixedTools, PromptError> {
+    // What its texts are told, written as Rust writes them - `5`, not `5.0`.
+    let values =
+        context! { seconds => seconds.to_string(), max_seconds => MAX_SECONDS.to_string() };
+    let sleep = SleepTool {
+        description: described(
             prompts,
             NAMESPACE,
             SLEEP_KIND,
@@ -99,13 +98,13 @@ impl SleepComponent {
                 presentation: Default::default(),
             },
             &values,
-        )?];
-        Ok(Self {
-            seconds,
-            description: tool_text(prompts, NAMESPACE, SLEEP_KIND, "description", &values)?,
-            tools,
-        })
-    }
+        )?,
+        seconds,
+    };
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, SLEEP_KIND, "description", &values)?,
+        vec![Arc::new(sleep)],
+    ))
 }
 
 /// `seconds` if it is a time to wait: finite, not negative, at most
@@ -116,41 +115,30 @@ fn duration(seconds: f64) -> Option<Duration> {
 }
 
 #[async_trait]
-impl ToolProvider for SleepComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+impl Tool for SleepTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
     }
 
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        if name != SLEEP_TOOL_NAME {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
         #[derive(Deserialize)]
-        struct Sleep {
+        struct Asked {
             #[serde(default)]
             seconds: Option<f64>,
         }
-        let Sleep { seconds } = arguments(params)?;
+        let Asked { seconds } = arguments(params)?;
         let seconds = seconds.unwrap_or(self.seconds);
         let wait = duration(seconds).ok_or_else(|| {
             ToolError::InvalidParameter(format!("'seconds' must be between 0 and {MAX_SECONDS}"))
         })?;
         time::sleep(wait).await;
-        // Derived from the arguments alone: classified as the turn (issue 168).
-        Ok(ToolOutput::classified(
-            serde_json::json!({ "status": "slept", "seconds": seconds }),
-            turn.situation().label(),
-        ))
+        // Derived from the arguments alone.
+        Ok(ToolOutput::of_turn(serde_json::json!({ "status": "slept", "seconds": seconds }), turn))
     }
 }
 
@@ -163,11 +151,7 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             let texts = texts_of(&context).await?;
             let SleepParams { seconds, requires_approval } = SleepParams::read(&descriptor.params)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(SleepComponent::new(
-                seconds,
-                requires_approval,
-                &texts,
-            )?));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(seconds, requires_approval, &texts)?));
             Ok(facets)
         },
     );
@@ -182,27 +166,21 @@ mod tests {
 
     #[tokio::test]
     async fn sleep_waits_as_long_as_it_is_told_within_its_limit() {
-        let tool = SleepComponent::new(0.05, false, &testing::prompts()).unwrap();
+        let tool =
+            testing::tool_named(&tools(0.05, false, &testing::prompts()).unwrap(), SLEEP_TOOL_NAME);
         let mut state = AgentChannelState::default();
         let mut turn = Turn::begun(AgentId::default(), &mut state);
 
         let started = Instant::now();
-        let slept = tool.execute(SLEEP_TOOL_NAME, &Value::Null, None, &mut turn).await.unwrap();
+        let slept = tool.execute(&Value::Null, None, &mut turn).await.unwrap();
         assert!(started.elapsed() >= Duration::from_millis(50), "the component's default");
         assert_eq!(slept.value["seconds"], 0.05);
 
-        let told = tool
-            .execute(SLEEP_TOOL_NAME, &serde_json::json!({ "seconds": 0 }), None, &mut turn)
-            .await
-            .unwrap();
+        let told =
+            tool.execute(&serde_json::json!({ "seconds": 0 }), None, &mut turn).await.unwrap();
         assert_eq!(told.value["seconds"], 0.0, "the call's");
         let too_long = tool
-            .execute(
-                SLEEP_TOOL_NAME,
-                &serde_json::json!({ "seconds": MAX_SECONDS + 1.0 }),
-                None,
-                &mut turn,
-            )
+            .execute(&serde_json::json!({ "seconds": MAX_SECONDS + 1.0 }), None, &mut turn)
             .await;
         assert!(matches!(too_long, Err(ToolError::InvalidParameter(_))));
     }

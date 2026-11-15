@@ -7,7 +7,7 @@
 
 use axum::Router;
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_agents::testing::{agent_runtime, offered_anywhere};
+use caelumora_agents::testing::{agent_runtime, described_tools, offered_anywhere, tool_named};
 use caelumora_agents::tool::{ToolError, ToolOutput, ToolProvider, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::runtime::ActorRuntime;
@@ -156,7 +156,7 @@ async fn executed(
     state.begin_turn(Work::new(Default::default(), None, Default::default(), Default::default()));
     let mut turn =
         Turn::of(&mut state, detached_actor_runtime(AgentId::default())).expect("a turn was begun");
-    provider.execute(name, &params, None, &mut turn).await
+    tool_named(provider, name).execute(&params, None, &mut turn).await
 }
 
 /// What a turn outside of a running session acts through: the runtime of
@@ -190,7 +190,7 @@ async fn discovers_and_calls_echo_tool_over_streamable_http() {
         Ok(2),
         "all of them, wherever"
     );
-    let tools = provider.tools();
+    let tools = described_tools(provider.as_ref());
     assert_eq!(
         names(&tools),
         ["test-echo__echo", "test-echo__forget"],
@@ -393,7 +393,11 @@ async fn the_tools_follow_a_replaced_server_once_those_discovered_expired() {
         Ok(vec!["test-echo__echo".to_string()]),
         "discovered again"
     );
-    assert_eq!(names(&refreshed.tools()), ["test-echo__echo"], "and so found by a call");
+    assert_eq!(
+        names(&described_tools(refreshed.as_ref())),
+        ["test-echo__echo"],
+        "and so found by a call"
+    );
     assert_eq!(
         offered_anywhere(kept.as_ref()).await.map(|tools| tools.len()),
         Ok(2),

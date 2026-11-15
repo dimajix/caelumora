@@ -1,6 +1,6 @@
 //! The component kind `web_fetch` (issue 544): what it is configured with and built of - the
 //! client that fetches its pages (`client`), from what addresses (`address`), read as text
-//! (`text`) -; its tool `fetch_page` is its facet `ToolProvider` (`tool`).
+//! (`text`) -; its tool `fetch_page` is `tool`'s, given as the tools of a `FixedTools`.
 
 mod address;
 mod client;
@@ -9,15 +9,16 @@ mod tool;
 
 use crate::NAMESPACE;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model};
-use caelumora_agents::tool::{tool_text, ApprovalMode, KeepWholeAbove, ToolProvider};
+use caelumora_agents::tool::{tool_text, ApprovalMode, FixedTools, KeepWholeAbove, ToolProvider};
 use caelumora_api::component::{ComponentError, ComponentFacets, ComponentKind};
 use caelumora_api::component::{LibraryComponents, Params};
 use caelumora_api::error::describe_request_error;
+use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
-use caelumora_domain::tool::ToolDescription;
 use client::Client;
 use serde::Deserialize;
 use std::sync::Arc;
+use tool::FetchPageTool;
 
 /// The kind of the component, and the path of its texts in the catalogue.
 const WEB_FETCH_KIND: &str = "web_fetch";
@@ -42,37 +43,31 @@ struct WebFetchParams {
 
 impl Params for WebFetchParams {}
 
-/// A component of the kind `web_fetch`: the tool `fetch_page`, which fetches a page of the web by
-/// its URL.
-#[derive(Debug)]
-struct WebFetchComponent {
+/// The tools of a component of the kind `web_fetch` configured by `params`: the tool `fetch_page`,
+/// which fetches a page of the web by its URL with `client`, its texts from `prompts`, whose
+/// arguments go anywhere - what a URL carries goes to anyone, so its set's destination is public.
+///
+/// # Errors
+/// `PromptError` if one of its texts cannot be had.
+fn tools(
+    params: WebFetchParams,
     client: Client,
-    description: String,
-    tool: ToolDescription,
-    /// The texts its results give.
     prompts: PromptTexts,
-    /// From how many bytes of its text on a page is kept whole, if any is.
-    keep_whole_above: Option<KeepWholeAbove>,
-}
-
-impl WebFetchComponent {
-    /// The component configured by `params`, fetching with `client`, its texts from `prompts`.
-    ///
-    /// # Errors
-    /// `PromptError` if one of its texts cannot be had.
-    fn new(
-        params: WebFetchParams,
-        client: Client,
-        prompts: PromptTexts,
-    ) -> Result<Self, PromptError> {
-        let tool = tool::fetch_page(&prompts, params.requires_approval.required(true))?;
-        let description = match params.description {
-            Some(description) => description,
-            None => tool_text(&prompts, NAMESPACE, WEB_FETCH_KIND, "description", ())?,
-        };
-        let keep_whole_above = params.keep_whole_above_bytes;
-        Ok(Self { client, description, tool, prompts, keep_whole_above })
-    }
+) -> Result<FixedTools, PromptError> {
+    let description = match params.description {
+        Some(description) => description,
+        None => tool_text(&prompts, NAMESPACE, WEB_FETCH_KIND, "description", ())?,
+    };
+    let fetch_page = FetchPageTool::new(
+        prompts,
+        params.requires_approval.required(true),
+        client,
+        params.keep_whole_above_bytes,
+    )?;
+    Ok(FixedTools {
+        destination: Some(Classification::PUBLIC),
+        ..FixedTools::new(description, vec![Arc::new(fetch_page)])
+    })
 }
 
 /// Registers the component kind `web_fetch`, which writes for the agent's model.
@@ -93,9 +88,8 @@ pub(super) fn register(registry: &mut LibraryComponents<'_>) {
                     describe_request_error(e)
                 ))
             })?;
-            let component = WebFetchComponent::new(params, client, prompts)?;
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::new(component));
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(params, client, prompts)?));
             Ok(facets)
         },
     );
@@ -122,14 +116,14 @@ mod tests {
         let provider = built::<dyn ToolProvider>(&kernel, fetch).await.unwrap();
         let tools = provider.tools();
         assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].name, "fetch_page");
-        assert!(!tools[0].requires_approval, "no approval unless configured");
+        assert_eq!(tools[0].description().name, "fetch_page");
+        assert!(!tools[0].description().requires_approval, "no approval unless configured");
         assert_eq!(provider.destination(), Some(Classification::PUBLIC));
         assert_eq!(provider.description(), "Fetch pages of the web by their URL.");
 
         let asking = descriptor("asking", WEB_FETCH_KIND, json!({ "requires_approval": true }));
         let asking = built::<dyn ToolProvider>(&kernel, asking).await.unwrap();
-        assert!(asking.tools()[0].requires_approval, "as configured");
+        assert!(asking.tools()[0].description().requires_approval, "as configured");
         assert!(
             WebFetchParams::read(&json!({ "destination": { "level": "internal" } })).is_err(),
             "its destination is not configured: what it fetches from is anyone"

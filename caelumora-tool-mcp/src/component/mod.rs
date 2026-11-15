@@ -1,6 +1,7 @@
 //! The component kind `mcp_server` (issues 78, 126, 180, 534): what it is configured with - one
 //! remote MCP server, how its tools are approved and classified, what it is cleared for -; the
-//! tools of that server are its facet `ToolProvider` (`tool`).
+//! tools of that server, discovered as they are offered, are `tool`'s, and the component is their
+//! `ToolProvider`.
 
 mod tool;
 
@@ -74,15 +75,31 @@ impl McpServerParams {
     }
 }
 
+/// What was discovered of a server.
+#[derive(Debug)]
+struct Discovered {
+    /// Each tool by its remote name, with its description as it is offered.
+    tools: Vec<(String, ToolDescription)>,
+    /// What the server says of itself, if it does.
+    instructions: Option<String>,
+}
+
 /// A component of the kind `mcp_server`: the tools of one remote MCP server, reached over the
 /// Streamable HTTP transport, as one tool set.
 #[derive(Debug)]
 struct McpServerComponent {
+    server: Arc<McpServer>,
+}
+
+/// One remote MCP server as the component and each of its tools reach it (issue 584): how it is
+/// configured, what was discovered of it, and the texts its results give. What was discovered is
+/// kept as descriptions, not as tools, which hold the server.
+#[derive(Debug)]
+struct McpServer {
     descriptor_id: String,
     params: McpServerParams,
-    /// The server's tools, and what it says of itself (`instructions`) if
-    /// it does, as last discovered.
-    discovered: ExpiringCache<(Vec<ToolDescription>, Option<String>)>,
+    /// What was last discovered of the server.
+    discovered: ExpiringCache<Discovered>,
     /// The texts its results give.
     prompts: PromptTexts,
 }
@@ -90,6 +107,14 @@ struct McpServerComponent {
 impl McpServerComponent {
     /// The component `descriptor_id` configured by `params`, its texts from `prompts`; its tools
     /// are not discovered yet.
+    fn new(descriptor_id: String, params: McpServerParams, prompts: PromptTexts) -> Self {
+        Self { server: Arc::new(McpServer::new(descriptor_id, params, prompts)) }
+    }
+}
+
+impl McpServer {
+    /// The server of the component `descriptor_id` configured by `params`, its texts from
+    /// `prompts`; nothing is discovered of it yet.
     fn new(descriptor_id: String, params: McpServerParams, prompts: PromptTexts) -> Self {
         let discovered = ExpiringCache::new(params.refresh());
         Self { descriptor_id, params, discovered, prompts }

@@ -1,4 +1,4 @@
-//! The facet `ToolProvider` of `artifacts` (issue 271): `publish_artifact`, which publishes a
+//! The tool of `artifacts` (issues 271, 584): `publish_artifact`, which publishes a
 //! file of the session's workspace as a version of an artifact: a fixed copy, kept beyond the
 //! workspace, downloaded at the message that published it. Beside it, `publish_file` of
 //! `workspace` offers a file as a link to it as it is now (issue 273).
@@ -16,7 +16,7 @@ use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::situation::Situation;
 use caelumora_agents::tool::{
-    arguments, described, workspace_reader, ToolError, ToolOutput, ToolProvider, ToolResult,
+    arguments, described, workspace_reader, Tool, ToolError, ToolOutput, ToolProvider, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_api::error::ContentError;
@@ -29,6 +29,7 @@ use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation, 
 use caelumora_domain::value::name::ScopedName;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::sync::Arc;
 
 /// A file published as a version of an artifact (issue 271): its
 /// `name`, `version`, `size`, `description` and the `artifact` it is
@@ -49,28 +50,33 @@ struct Publish {
     description: Option<String>,
 }
 
-/// The tool `publish_artifact`, asked for as `requires_approval` says, its texts from `prompts`.
-///
-/// # Errors
-/// `PromptError` if one of its texts cannot be had.
-pub(super) fn publish_artifact(
-    prompts: &PromptTexts,
-    requires_approval: bool,
-) -> Result<ToolDescription, PromptError> {
-    let string = ToolParameters::string;
-    let tool = ToolDescription {
-        name: PUBLISH_ARTIFACT.to_string(),
-        description: String::new(),
-        parameters: ToolParameters::object(
-            [("path", string()), ("name", string()), ("description", string())],
-            ["path"],
-        ),
-        requires_approval,
-        visibility: ToolVisibility::SHOWN,
-        classification: None,
-        presentation: ARTIFACT_PUBLISH_PRESENTATION,
-    };
-    described(prompts, NAMESPACE, ARTIFACTS_KIND, tool, ())
+/// The tool `publish_artifact`.
+#[derive(Debug)]
+pub(super) struct PublishArtifactTool {
+    description: ToolDescription,
+}
+
+impl PublishArtifactTool {
+    /// The tool, asked for as `requires_approval` says, its texts from `prompts`.
+    ///
+    /// # Errors
+    /// `PromptError` if one of its texts cannot be had.
+    pub(super) fn new(prompts: &PromptTexts, requires_approval: bool) -> Result<Self, PromptError> {
+        let string = ToolParameters::string;
+        let tool = ToolDescription {
+            name: PUBLISH_ARTIFACT.to_string(),
+            description: String::new(),
+            parameters: ToolParameters::object(
+                [("path", string()), ("name", string()), ("description", string())],
+                ["path"],
+            ),
+            requires_approval,
+            visibility: ToolVisibility::SHOWN,
+            classification: None,
+            presentation: ARTIFACT_PUBLISH_PRESENTATION,
+        };
+        Ok(Self { description: described(prompts, NAMESPACE, ARTIFACTS_KIND, tool, ())? })
+    }
 }
 
 /// What publishing failed of, as the model is told it: what it can correct - a name, a file, a
@@ -96,14 +102,14 @@ impl ToolProvider for ArtifactsComponent {
         self.description.clone()
     }
 
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
+    fn tools(&self) -> Vec<Arc<dyn Tool>> {
+        vec![Arc::clone(&self.publish)]
     }
 
     /// Its tool where a file can be published: where the work may use a
     /// workspace in its channel, and a storage of content is configured
     /// (issues 290, 282).
-    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<ToolDescription>, String> {
+    async fn offered(&self, situation: &Situation<'_>) -> Result<Vec<Arc<dyn Tool>>, String> {
         // A work that reaches no workspace is told so first; one that does is given no publisher
         // only where no storage of content is configured.
         workspace_reader(situation).await.map_err(|e| e.to_string())?;
@@ -112,12 +118,16 @@ impl ToolProvider for ArtifactsComponent {
         }
         Ok(self.tools())
     }
+}
+
+#[async_trait]
+impl Tool for PublishArtifactTool {
+    fn description(&self) -> &ToolDescription {
+        &self.description
+    }
 
     /// What an approver reads: which file is published as what.
-    fn describe(&self, name: &str, params: &Value) -> ToolResult<String> {
-        if name != PUBLISH_ARTIFACT {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
+    fn describe(&self, params: &Value) -> ToolResult<String> {
         let Publish { path, name, .. } = arguments(params)?;
         Ok(match name {
             Some(name) => format!("Publish '{path}' in the workspace as the artifact '{name}'"),
@@ -127,14 +137,10 @@ impl ToolProvider for ArtifactsComponent {
 
     async fn execute(
         &self,
-        name: &str,
         params: &Value,
         _answers: Option<&Answers>,
-        turn: &mut Turn,
+        turn: &mut Turn<'_>,
     ) -> ToolResult<ToolOutput> {
-        if name != PUBLISH_ARTIFACT {
-            return Err(ToolError::UnknownTool(name.to_string()));
-        }
         let Publish { path, name, description } = arguments(params)?;
         let at = WorkspacePath::parse(&path)?;
         let name = match name.as_deref().map(str::trim) {

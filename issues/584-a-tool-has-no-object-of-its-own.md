@@ -65,3 +65,22 @@ since the facet changing breaks every provider at once; what the review of the s
 
 **2026-11-15** - Step 1 done: `ToolDescription` in `caelumora-domain`, the web UI's type of the
 same name, in place of `Tool`; no behaviour changed.
+
+**2026-11-15** - Step 2 done: `Tool` in `caelumora_agents::tool`, every tool a type of its own
+named `…Tool`, as commands are named `…Command`; `ToolProvider` gives its tools as objects,
+`offered` too; `FixedTools` is the provider of the components that decide nothing - those that
+only held tools are gone -, and the tool facet of those that bring a prompt part beside them; the
+workspace holds each tool with how it uses the workspace (`UsingTool`), the attachments those
+offered apart as fields of their own, MCP's tools are made of what was discovered and reach the
+server's shared part (`McpServer`). `ToolProviders::find` gives the tool, which the executor asks
+as a call is admitted and again as it runs; only the executor answers a tool as unknown. Beside the
+plan: the public and the private notes share their four tools, told apart by their `NoteKind`
+(`note_tools`), with the texts they had; and a call of a tool gone since its turn began is held by
+a test.
+
+**2026-11-15** - Decided with the maintainer after step 2: the tools of a component are made as
+struct literals in the one function that makes them, a `new` only where that lies in another module
+(COMPONENTS.md); the `Use` a workspace tool is held with decides what it is offered by, not how it
+reaches the workspace, which the kernel checks anyway - documented, not bound; a call of a tool gone
+since its turn began is logged as naming a tool that is gone.
+

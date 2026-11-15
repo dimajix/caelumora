@@ -21,7 +21,7 @@
 //! shows them what the prompt part shows the model: the private notes the agent recalls here.
 
 use crate::command::AgentCommand;
-use crate::components::notes::NOTE_PRESENTATION;
+use crate::components::notes::note_tools;
 use crate::notes::{AgentNotes, NoteKind};
 use crate::prompt::NAMESPACE;
 use crate::prompt::{
@@ -29,10 +29,7 @@ use crate::prompt::{
     PromptProvider,
 };
 use crate::situation::Situation;
-use crate::tool::{
-    classification_argument, described, id_argument, reclassify_parameters, text_argument,
-    tool_text, ToolError, ToolOutput, ToolProvider, ToolResult,
-};
+use crate::tool::{tool_text, FixedTools, ToolProvider};
 use crate::turn::Turn;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
@@ -41,12 +38,9 @@ use caelumora_api::reader::{PrivateNotesElsewhere, ViewResult};
 use caelumora_domain::command::{CommandDescription, CommandOutput};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
-use caelumora_domain::note::{Note, NoteId};
+use caelumora_domain::note::Note;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
-use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolVisibility};
 use caelumora_domain::value::command_name::CommandName;
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -69,179 +63,31 @@ pub struct PrivateNotesComponent {
     prompts: PromptTexts,
     /// Where its prompt part goes: before the turn's input unless configured otherwise.
     position: PromptPosition,
-    /// What its tool set is for and its tools, as the prompt catalogue
-    /// words them.
-    description: String,
-    tools: Vec<ToolDescription>,
-}
-
-#[async_trait]
-impl ToolProvider for PrivateNotesComponent {
-    fn description(&self) -> String {
-        self.description.clone()
-    }
-
-    fn tools(&self) -> Vec<ToolDescription> {
-        self.tools.clone()
-    }
-
-    async fn execute(
-        &self,
-        name: &str,
-        params: &Value,
-        _answers: Option<&Answers>,
-        turn: &mut Turn,
-    ) -> ToolResult<ToolOutput> {
-        let value = match name {
-            WRITE_PRIVATE_NOTE_TOOL_NAME => self.execute_write_private_note(params, turn),
-            UPDATE_PRIVATE_NOTE_TOOL_NAME => self.execute_update_private_note(params, turn),
-            REVOKE_PRIVATE_NOTE_TOOL_NAME => self.execute_revoke_private_note(params, turn),
-            RECLASSIFY_PRIVATE_NOTE_TOOL_NAME => {
-                self.execute_reclassify_private_note(params, turn).await
-            }
-            _ => Err(ToolError::UnknownTool(name.to_string())),
-        }?;
-        // What these answer tells only what the model asked for: classified
-        // as the turn (issue 168).
-        Ok(ToolOutput::classified(value, turn.situation().label()))
-    }
 }
 
 impl PrivateNotesComponent {
-    /// The component, its texts from `prompts`, its prompt part at `position`; whether a note may
-    /// be reclassified, the kernel decides, asked in the turn's context
-    /// (`Turn::may_reclassify_note`, issue 516).
-    ///
-    /// # Errors
-    /// `PromptError` if one of its texts cannot be had.
-    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Result<Self, PromptError> {
-        let tools = vec![
-            described(
-                &prompts,
-                NAMESPACE,
-                PRIVATE_NOTES_KIND,
-                ToolDescription {
-                    name: WRITE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: ToolParameters::object(
-                        [("text", ToolParameters::string())],
-                        ["text"],
-                    ),
-                    requires_approval: false,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-            described(
-                &prompts,
-                NAMESPACE,
-                PRIVATE_NOTES_KIND,
-                ToolDescription {
-                    name: UPDATE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: ToolParameters::object(
-                        [("id", ToolParameters::number()), ("text", ToolParameters::string())],
-                        ["id", "text"],
-                    ),
-                    requires_approval: false,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-            described(
-                &prompts,
-                NAMESPACE,
-                PRIVATE_NOTES_KIND,
-                ToolDescription {
-                    name: REVOKE_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: ToolParameters::object([("id", ToolParameters::number())], ["id"]),
-                    requires_approval: false,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-            described(
-                &prompts,
-                NAMESPACE,
-                PRIVATE_NOTES_KIND,
-                ToolDescription {
-                    name: RECLASSIFY_PRIVATE_NOTE_TOOL_NAME.to_string(),
-                    description: String::new(),
-                    parameters: reclassify_parameters(&prompts)?,
-                    requires_approval: true,
-                    visibility: ToolVisibility::HIDDEN,
-                    classification: None,
-                    presentation: NOTE_PRESENTATION,
-                },
-                (),
-            )?,
-        ];
-        let description = tool_text(&prompts, NAMESPACE, PRIVATE_NOTES_KIND, "description", ())?;
-        Ok(Self { prompts, position, description, tools })
+    /// The component, its prompt part at `position`, its texts from `prompts`.
+    pub(crate) fn new(position: PromptPosition, prompts: PromptTexts) -> Self {
+        Self { prompts, position }
     }
+}
 
-    /// `write_private_note(text)`: notes `text` privately, taken over when
-    /// the turn completes.
-    fn execute_write_private_note(&self, params: &Value, turn: &mut Turn<'_>) -> ToolResult<Value> {
-        let id = AgentNotes::note(turn, NoteKind::Private, text_argument(params)?);
-        Ok(serde_json::json!({ "status": "noted privately", "id": id.0 }))
-    }
-
-    /// `update_private_note(id, text)`: changes the text of one of the
-    /// agent's private notes of this channel.
-    fn execute_update_private_note(
-        &self,
-        params: &Value,
-        turn: &mut Turn<'_>,
-    ) -> ToolResult<Value> {
-        let id: NoteId = id_argument(params)?;
-        if AgentNotes::update(turn, NoteKind::Private, id, text_argument(params)?) {
-            Ok(serde_json::json!({ "status": "updated", "id": id.0 }))
-        } else {
-            Err(ToolError::InvalidParameter(format!(
-                "you have no private note #{id} in this channel"
-            )))
-        }
-    }
-
-    /// `reclassify_private_note(id, level, compartments?)`: reclassifies one
-    /// of the agent's private notes of this channel, as the policy allows.
-    async fn execute_reclassify_private_note(
-        &self,
-        params: &Value,
-        turn: &mut Turn<'_>,
-    ) -> ToolResult<Value> {
-        let id: NoteId = id_argument(params)?;
-        let classification = classification_argument(params)?;
-        AgentNotes::reclassify(turn, NoteKind::Private, id, classification.clone()).await?;
-        Ok(
-            serde_json::json!({ "status": "reclassified", "id": id.0, "classification": classification.to_string() }),
-        )
-    }
-
-    /// `revoke_private_note(id)`: revokes one of the agent's private notes
-    /// of this channel.
-    fn execute_revoke_private_note(
-        &self,
-        params: &Value,
-        turn: &mut Turn<'_>,
-    ) -> ToolResult<Value> {
-        let id: NoteId = id_argument(params)?;
-        if AgentNotes::revoke(turn, NoteKind::Private, id) {
-            Ok(serde_json::json!({ "status": "revoked", "id": id.0 }))
-        } else {
-            Err(ToolError::InvalidParameter(format!(
-                "you have no private note #{id} in this channel"
-            )))
-        }
-    }
+/// The tools of the component, their texts from `prompts`.
+///
+/// # Errors
+/// `PromptError` if one of them cannot be had.
+fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
+    let names = [
+        WRITE_PRIVATE_NOTE_TOOL_NAME,
+        UPDATE_PRIVATE_NOTE_TOOL_NAME,
+        REVOKE_PRIVATE_NOTE_TOOL_NAME,
+        RECLASSIFY_PRIVATE_NOTE_TOOL_NAME,
+    ];
+    let tools = note_tools(prompts, PRIVATE_NOTES_KIND, NoteKind::Private, names)?;
+    Ok(FixedTools::new(
+        tool_text(prompts, NAMESPACE, PRIVATE_NOTES_KIND, "description", ())?,
+        tools,
+    ))
 }
 
 #[async_trait]
@@ -388,10 +234,11 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             let texts = texts_of(&context).await?;
             let position =
                 PositionParams::position_of(&descriptor.params, PromptPosition::BeforeTurnInput)?;
-            let component = Arc::new(PrivateNotesComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
-            facets.insert::<dyn ToolProvider>(Arc::<PrivateNotesComponent>::clone(&component));
-            facets.insert::<dyn PromptProvider>(component);
+            facets.insert::<dyn ToolProvider>(Arc::new(tools(&texts)?));
+            facets.insert::<dyn PromptProvider>(Arc::new(PrivateNotesComponent::new(
+                position, texts,
+            )));
             let private_notes: Vec<Arc<dyn AgentCommand>> =
                 vec![Arc::new(PrivateNotesCommand::new())];
             facets.insert::<dyn CommandProvider<dyn AgentCommand>>(Arc::new(private_notes));
@@ -403,13 +250,16 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::components::notes::NOTE_PRESENTATION;
     use crate::testing;
+    use crate::tool::ToolError;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::ChannelId;
     use caelumora_domain::command::CommandVisibility;
     use caelumora_domain::ledger::Change;
     use caelumora_domain::message::MessageId;
-    use caelumora_domain::note::NoteOrigin;
+    use caelumora_domain::note::{NoteId, NoteOrigin};
+    use caelumora_domain::tool::ToolVisibility;
     use caelumora_kernel::testing::Discard;
     use chrono::Utc;
 
@@ -501,17 +351,11 @@ mod tests {
     #[tokio::test]
     async fn private_notes_are_numbered_apart_from_public_ones_and_taken_over_with_the_turn() {
         let mut state = AgentChannelState::default();
-        let tools = PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
-            .unwrap();
+        let tools = tools(&testing::prompts()).unwrap();
         let mut turn = Turn::begun(AgentId::new(), &mut state);
         AgentNotes::note(&mut turn, NoteKind::Public, "public".to_string());
-        let noted = tools
-            .execute(
-                WRITE_PRIVATE_NOTE_TOOL_NAME,
-                &serde_json::json!({ "text": "secret" }),
-                None,
-                &mut turn,
-            )
+        let noted = testing::tool_named(&tools, WRITE_PRIVATE_NOTE_TOOL_NAME)
+            .execute(&serde_json::json!({ "text": "secret" }), None, &mut turn)
             .await
             .unwrap();
         assert_eq!(noted.value["id"], 1, "its own numbering");
@@ -535,31 +379,16 @@ mod tests {
 
         // The next turn.
         let mut turn = Turn::begun(AgentId::new(), &mut state);
-        let unknown = tools
-            .execute(
-                REVOKE_PRIVATE_NOTE_TOOL_NAME,
-                &serde_json::json!({ "id": 9 }),
-                None,
-                &mut turn,
-            )
+        let unknown = testing::tool_named(&tools, REVOKE_PRIVATE_NOTE_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 9 }), None, &mut turn)
             .await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
-        let unknown = tools
-            .execute(
-                UPDATE_PRIVATE_NOTE_TOOL_NAME,
-                &serde_json::json!({ "id": 9, "text": "x" }),
-                None,
-                &mut turn,
-            )
+        let unknown = testing::tool_named(&tools, UPDATE_PRIVATE_NOTE_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 9, "text": "x" }), None, &mut turn)
             .await;
         assert!(matches!(unknown, Err(ToolError::InvalidParameter(_))));
-        tools
-            .execute(
-                UPDATE_PRIVATE_NOTE_TOOL_NAME,
-                &serde_json::json!({ "id": 1, "text": "a secret" }),
-                None,
-                &mut turn,
-            )
+        testing::tool_named(&tools, UPDATE_PRIVATE_NOTE_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1, "text": "a secret" }), None, &mut turn)
             .await
             .unwrap();
         assert!(
@@ -582,13 +411,8 @@ mod tests {
         );
 
         let mut turn = Turn::begun(AgentId::new(), &mut state);
-        tools
-            .execute(
-                REVOKE_PRIVATE_NOTE_TOOL_NAME,
-                &serde_json::json!({ "id": 1 }),
-                None,
-                &mut turn,
-            )
+        testing::tool_named(&tools, REVOKE_PRIVATE_NOTE_TOOL_NAME)
+            .execute(&serde_json::json!({ "id": 1 }), None, &mut turn)
             .await
             .unwrap();
         turn.commit(false, &Discard).await;
@@ -597,12 +421,11 @@ mod tests {
 
     #[test]
     fn every_private_note_acted_on_is_shown_as_a_note_to_the_owner_alone() {
-        let tools = PrivateNotesComponent::new(PromptPosition::BeforeTurnInput, testing::prompts())
-            .unwrap()
-            .tools();
+        let tools = tools(&testing::prompts()).unwrap().tools();
         assert!(
             tools
                 .iter()
+                .map(|t| t.description())
                 .all(|t| (t.presentation, t.visibility)
                     == (NOTE_PRESENTATION, ToolVisibility::HIDDEN))
         );

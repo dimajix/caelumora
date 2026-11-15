@@ -18,7 +18,7 @@ use bytes::Bytes;
 use caelumora_agents::library::AgentsLibrary;
 use caelumora_agents::testing::{
     self as agent_testing, asked_as_a_call_on_the_workspace, asked_for_a_call, calling,
-    register_scripted, ONCE_MODEL_KIND,
+    register_scripted, tool_named, ONCE_MODEL_KIND,
 };
 use caelumora_agents::tool::{ToolError, ToolProvider};
 use caelumora_api::error::ContentError;
@@ -165,8 +165,7 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     fs::write(dir.join("out/report.csv"), "a,b").unwrap();
 
     let (first, asked) = world
-        .asked(tool.execute(
-            PUBLISH_ARTIFACT,
+        .asked(tool_named(tool.as_ref(), PUBLISH_ARTIFACT).execute(
             &json!({ "path": "out/report.csv", "description": "The figures" }),
             None,
             &mut turn,
@@ -217,13 +216,8 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     assert_eq!(first["digest"], digest::content(b"a,b").to_string());
 
     fs::write(dir.join("out/report.csv"), "a,b\n1,2").unwrap();
-    let second = tool
-        .execute(
-            PUBLISH_ARTIFACT,
-            &json!({ "path": "out/report.csv", "name": "report.csv" }),
-            None,
-            &mut turn,
-        )
+    let second = tool_named(tool.as_ref(), PUBLISH_ARTIFACT)
+        .execute(&json!({ "path": "out/report.csv", "name": "report.csv" }), None, &mut turn)
         .await
         .unwrap()
         .value;
@@ -243,20 +237,17 @@ async fn a_file_is_published_as_versions_of_an_artifact_kept_apart_from_the_work
     fs::remove_file(dir.join("out/report.csv")).unwrap();
     assert!(content(2).is_file(), "kept beyond the file");
 
-    let missing =
-        tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out/report.csv" }), None, &mut turn).await;
+    let missing = tool_named(tool.as_ref(), PUBLISH_ARTIFACT)
+        .execute(&json!({ "path": "out/report.csv" }), None, &mut turn)
+        .await;
     assert!(matches!(missing, Err(ToolError::InvalidParameter(_))), "{missing:?}");
-    let directory =
-        tool.execute(PUBLISH_ARTIFACT, &json!({ "path": "out" }), None, &mut turn).await;
+    let directory = tool_named(tool.as_ref(), PUBLISH_ARTIFACT)
+        .execute(&json!({ "path": "out" }), None, &mut turn)
+        .await;
     assert!(matches!(directory, Err(ToolError::InvalidParameter(_))), "{directory:?}");
     fs::write(dir.join("out/x.csv"), "x").unwrap();
-    let long = tool
-        .execute(
-            PUBLISH_ARTIFACT,
-            &json!({ "path": "out/x.csv", "name": "x".repeat(101) }),
-            None,
-            &mut turn,
-        )
+    let long = tool_named(tool.as_ref(), PUBLISH_ARTIFACT)
+        .execute(&json!({ "path": "out/x.csv", "name": "x".repeat(101) }), None, &mut turn)
         .await;
     assert!(
         matches!(long, Err(ToolError::InvalidParameter(_))),
@@ -287,7 +278,7 @@ async fn the_tool_is_offered_where_the_channel_uses_a_workspace() {
     let mut state = AgentChannelState::default();
     let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     assert_eq!(
-        tool.offered(&turn.situation()).await,
+        tool.offered(&turn.situation()).await.map(|tools| tools.len()),
         Err("there is no workspace you can use in this channel".to_string()),
         "not where the channel uses none"
     );
@@ -312,7 +303,7 @@ async fn the_tool_is_not_offered_without_a_storage_of_content() {
     let mut state = AgentChannelState::default();
     let turn = agent_testing::turn(&session, helper, world.alice, &mut state);
     assert_eq!(
-        tool.offered(&turn.situation()).await,
+        tool.offered(&turn.situation()).await.map(|tools| tools.len()),
         Err("no storage of content is configured".to_string())
     );
     drop(turn);
@@ -326,7 +317,9 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
         built::<dyn ToolProvider>(&world.kernel, descriptor("artifacts", ARTIFACTS_KIND, params))
     };
     let asks = async |mode: Value| {
-        tool(json!({ "requires_approval": mode })).await.unwrap().tools()[0].requires_approval
+        tool(json!({ "requires_approval": mode })).await.unwrap().tools()[0]
+            .description()
+            .requires_approval
     };
     assert!(
         asks(json!(true)).await && asks(json!("unless_read_only")).await,
@@ -334,11 +327,11 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     );
     assert!(!asks(json!(false)).await);
     let unconfigured = tool(json!({})).await.unwrap();
-    assert!(unconfigured.tools()[0].requires_approval, "unless configured");
-    assert_eq!(unconfigured.tools()[0].presentation, ARTIFACT_PUBLISH_PRESENTATION);
+    assert!(unconfigured.tools()[0].description().requires_approval, "unless configured");
+    assert_eq!(unconfigured.tools()[0].description().presentation, ARTIFACT_PUBLISH_PRESENTATION);
     assert_eq!(
-        unconfigured
-            .describe(PUBLISH_ARTIFACT, &json!({ "path": "out/r.csv", "name": "Report.csv" }))
+        tool_named(unconfigured.as_ref(), PUBLISH_ARTIFACT)
+            .describe(&json!({ "path": "out/r.csv", "name": "Report.csv" }))
             .unwrap(),
         "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'"
     );
