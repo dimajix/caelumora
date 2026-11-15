@@ -9,8 +9,9 @@
 )]
 
 use caelumora_agents::library::AgentsLibrary;
-use caelumora_agents::testing::{agent_runtime, calling, register_scripted};
-use caelumora_domain::actor::ActorId;
+use caelumora_agents::testing::{about_agent_commands, agent_runtime, calling, register_scripted};
+use caelumora_api::command::CommandError;
+use caelumora_domain::actor::{ActorEvent, ActorId};
 use caelumora_domain::agent::{AgentId, Personality};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
@@ -18,8 +19,9 @@ use caelumora_domain::ledger::Change;
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::removal::Removal;
 use caelumora_domain::turn::{StagedChange, StagedChanges};
+use caelumora_kernel::channel::testing::as_command_error;
 use caelumora_kernel::session::SessionLoop;
-use caelumora_kernel::testing::{participant_runtime_in, World};
+use caelumora_kernel::testing::{participant_runtime_in, shown, World};
 use caelumora_memory::component::AGENT_MEMORY_KIND;
 use caelumora_memory::extension::MemoryWriter;
 use caelumora_memory::library::MemoryLibrary;
@@ -119,6 +121,61 @@ async fn what_an_agent_remembers_is_committed_in_its_owners_name_where_it_reads(
     assert!(
         helpers.contains(&&"alice as helper, asked by bob: GetSession(alice's) yes".to_string()),
         "its session reached as the agent reaches it: {asked:?}"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/memory` (issue 574) shows an agent's memory to its owner alone: bob, who asked it to remember,
+/// neither sees nor asks for the command; alice does, and the agent answers her alone with what it
+/// recalls there, read in its name - with her rights - as its turns read it.
+#[tokio::test]
+async fn an_agents_memory_is_shown_by_command_to_its_owner_alone() {
+    let world = world_remembering("bob likes tea").await;
+    let (session, helper) = with_a_rememberer(&world).await;
+    ask_to_remember(&world, &session, helper).await;
+    let main = &session.channels()[0];
+
+    let bob = main.user_actor(world.bob).unwrap();
+    let (refused, asked) = world.asked(bob.execute_command("memory @helper")).await;
+    let refused = refused.expect_err("not his");
+    assert!(
+        matches!(as_command_error(&refused), CommandError::Unknown(name) if name == "memory"),
+        "unknown to him: {refused}"
+    );
+    assert_eq!(
+        about_agent_commands(&asked),
+        ["bob: ShowAgentCommand(alice's) no"],
+        "never granted to him"
+    );
+
+    let alice = main.user_actor(world.alice).unwrap();
+    let mut hers = alice.watch();
+    let (answer, asked) = world
+        .asked(async {
+            alice.execute_command("memory @helper").await.expect("hers, as its owner");
+            shown(&mut hers, "CommandExecuted").await
+        })
+        .await;
+    assert!(
+        matches!(
+            answer,
+            ActorEvent::CommandExecuted { ref output, ref to, .. }
+                if output.ends_with("of its memory here:\n- #1 bob likes tea")
+                    && *to == Some(ActorId::User(world.alice))
+        ),
+        "carried out for her alone: {answer:?}"
+    );
+    assert_eq!(
+        asked,
+        [
+            "alice: ShowAgentCommand(alice's) yes",
+            "alice: ShowAgentCommand(alice's) yes",
+            "alice: ExecuteAgentCommand(alice's) yes",
+            // Read as its turns read it, in its name.
+            "alice as helper: GetSession(alice's) yes",
+            "alice as helper: GetMemory(alice's) yes",
+        ],
+        "asked of her, then read in its name"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }

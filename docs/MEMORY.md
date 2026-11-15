@@ -109,7 +109,10 @@ skills.
     channel's session then. It is read and written in the agent's name, each read and write asked
     of the policy as for any document, and removed when the agent is purged.
 *   **Tools.** `remember(text)`, `update_memory(id, text)` and `forget(id)`, all hidden: like
-    private notes, memory is the agent's own, seen by its owner in the context panel only.
+    private notes, memory is the agent's own, seen by its owner in the context panel, and through
+    `/memory @agent`, a command of the agent for its owners alone, which shows what may be recalled
+    where it is carried out, as the prompt part shows it (see
+    [COMMANDS.md](COMMANDS.md#commands-of-an-agent)).
 *   **Reached as a system service.** A work reads what it may recall through the `MemoryReader` of
     its situation, and a turn reserves numbers through the `MemoryWriter` it is given and stages its
     changes, which the plugin commits when the turn completes (see

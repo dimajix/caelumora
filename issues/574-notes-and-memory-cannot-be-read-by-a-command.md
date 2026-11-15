@@ -57,7 +57,10 @@ agent, as its owner's.
     prompt part of `private_notes` leaves out channels without notes, which
     `SessionReader::own_private_notes` gives none of (`render`); two `matches!` of the agents'
     security suite are laid out past 100 characters; CONFIDENTIALITY.md names the context panel
-    alone as where an agent's owner sees its private notes.
+    alone as where an agent's owner sees its private notes. After step 3 besides: a heading of
+    MEMORY.md is not bold; the kernel drops why the session of a work could not be read for its
+    readers and writers (`extension_of`) without logging it; and seven commands check alike that
+    they were given no arguments, which `caelumora_api::command::no_arguments` does for them all.
 
 What a person reads by such a command is not recorded as knowledge: it is part of no turn's
 context.
@@ -84,3 +87,7 @@ at all, so the command meets no channel read entry by entry.
 carries out for its owners alone, shows what its prompt part gives the model - the private notes of
 the channel, numbered, and of the session's other channels as far as they may be copied there - as
 one function gives both (`recalled`).
+
+**2026-11-15** - Step 3 done: `/memory @agent`, a command of the agent that `agent_memory` carries
+out for its owners alone (`component/command.rs` of `caelumora-memory`), shows what its
+`MemoryReader` gives the work - what may be recalled in the channel -, as the prompt part does.

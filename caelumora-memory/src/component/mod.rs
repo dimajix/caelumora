@@ -10,15 +10,18 @@
 //! entry's channel's classification must flow into this one's - within the session, and beyond it
 //! only where the entry's session permits it, then and now (issue 134). Only those can be updated
 //! or forgotten here. Its tools are `ToolVisibility::HIDDEN`: like private notes, memory is the
-//! agent's own, seen by its owner in the context panel only. Its entries are numbered differently
-//! from notes, on purpose: see `TurnMemory::remember`.
+//! agent's own, seen by its owner in the context panel - and through its command `/memory @agent`
+//! (`command`), for the agent's owners alone, which shows what the prompt part shows the model. Its
+//! entries are numbered differently from notes, on purpose: see `TurnMemory::remember`.
 
+mod command;
 mod turn;
 
 use crate::extension::{MemoryReader, MemoryWriter};
 use crate::memory::{AgentMemory, AgentMemoryId, Memory, MemoryId};
 use crate::NAMESPACE;
 use async_trait::async_trait;
+use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::components::notes::NOTE_PRESENTATION;
 use caelumora_agents::prompt::{
     texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
@@ -273,7 +276,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
                 .reads::<dyn MemoryReader>()
                 .writes::<dyn MemoryWriter>()
                 .provides::<dyn ToolProvider>()
-                .provides::<dyn PromptProvider>(),
+                .provides::<dyn PromptProvider>()
+                .provides::<dyn AgentCommandProvider>(),
         ),
         |descriptor, context| async move {
             let texts = texts_of(&context).await?;
@@ -282,7 +286,8 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
             let component = Arc::new(AgentMemoryComponent::new(position, texts)?);
             let mut facets = ComponentFacets::empty();
             facets.insert::<dyn ToolProvider>(Arc::<AgentMemoryComponent>::clone(&component));
-            facets.insert::<dyn PromptProvider>(component);
+            facets.insert::<dyn PromptProvider>(Arc::<AgentMemoryComponent>::clone(&component));
+            facets.insert::<dyn AgentCommandProvider>(component);
             Ok(facets)
         },
     );
@@ -299,12 +304,14 @@ mod tests {
     use caelumora_agents::library::AgentsLibrary;
     use caelumora_agents::testing::prompts_with;
     use caelumora_agents::tool::ToolError;
+    use caelumora_api::command::{CommandError, CommandResult};
     use caelumora_api::runtime::ActorRuntime;
     use caelumora_api::staging::CommitError;
     use caelumora_domain::actor::{ActorId, EventContext};
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::channel::testing::{bare_channel, main_channel};
     use caelumora_domain::channel::{ChannelId, Participant};
+    use caelumora_domain::command::{CommandOutput, CommandVisibility};
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::confidentiality::{Compartment, Compartments, Place, Reading};
     use caelumora_domain::ledger::Change;
@@ -316,6 +323,7 @@ mod tests {
     use caelumora_domain::turn::{StagedChange, StagedChanges};
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::command_name::CommandName;
     use caelumora_domain::work::Work;
     use caelumora_kernel::kernel::{AgentRuntime, Kernel, ParticipantRuntime};
     use caelumora_kernel::session::testing::{
@@ -367,6 +375,20 @@ mod tests {
                 self.owner,
             );
             sessions.runtime_in(at, agent).acting_as(context)
+        }
+    }
+
+    impl Remembering {
+        /// Calls its tool `name` with `params` in `turn` - by its own method, since the component
+        /// carries out a command by a method of the same name.
+        async fn execute(
+            &self,
+            name: &str,
+            params: &Value,
+            answers: Option<&Answers>,
+            turn: &mut Turn<'_>,
+        ) -> ToolResult<ToolOutput> {
+            ToolProvider::execute(&self.component, name, params, answers, turn).await
         }
     }
 
@@ -648,6 +670,61 @@ mod tests {
         assert!(sessions.remembered(agent).await.is_empty());
     }
 
+    /// What `/memory` with `args` answers in a turn of `agent` in channel `at`.
+    async fn shown(
+        memory: &Remembering,
+        sessions: &Sessions,
+        agent: AgentId,
+        at: At,
+        args: &str,
+    ) -> CommandResult<CommandOutput> {
+        let mut state = AgentChannelState::default();
+        memory.begin(&mut state, &at);
+        let mut turn = Turn::of(
+            &mut state,
+            Arc::new(AgentRuntime::in_test(memory.runtime_in(sessions, &at, agent))),
+        )
+        .expect("a turn was begun");
+        let command: &dyn AgentCommandProvider = &memory.component;
+        command.execute(&CommandName::fixed(command::MEMORY_COMMAND_NAME), args, &mut turn).await
+    }
+
+    /// `/memory` (issue 574) shows what the prompt part shows the model: what may be recalled
+    /// where it is carried out, each entry with its number, to the issuer alone - nothing where
+    /// nothing may be recalled.
+    #[tokio::test]
+    async fn the_memory_command_shows_what_is_recalled_where_it_is_carried_out() {
+        let agent = AgentId::new();
+        let mut sessions = Sessions::under(Default::default());
+        let owner = sessions.user("owner").await;
+        let memory = component(ActorId::User(owner));
+        let session = sessions.create(owner, PrivacyConfig::Private).await;
+        let team = sessions
+            .create_channel(session, Classification::general(Confidentiality::Internal))
+            .await;
+        let public = sessions
+            .create_channel(session, Classification::general(Confidentiality::Public))
+            .await;
+        remember(&memory, &sessions, agent, team.clone(), "Kaya likes tea.").await;
+        remember(&memory, &sessions, agent, team.clone(), "Bob likes coffee.").await;
+
+        let answer = shown(&memory, &sessions, agent, team.clone(), "").await.expect("shown");
+        assert_eq!(answer.visibility, CommandVisibility::Private, "to the issuer alone");
+        assert_eq!(
+            answer.text,
+            "What agent recalls of its memory here:\n- #1 Kaya likes tea.\n- #2 Bob likes coffee.",
+            "each entry with its number"
+        );
+        let answer = shown(&memory, &sessions, agent, public, "").await.expect("shown");
+        assert!(
+            answer.text.ends_with("recalls nothing of its memory here."),
+            "a public channel may not read an internal one: {}",
+            answer.text
+        );
+        let refused = shown(&memory, &sessions, agent, team, "all").await;
+        assert!(matches!(refused, Err(CommandError::InvalidArguments { .. })), "{refused:?}");
+    }
+
     #[tokio::test]
     async fn an_entry_is_updated_only_where_it_is_recalled_and_stands_where_it_was_updated() {
         let agent = AgentId::new();
@@ -772,7 +849,7 @@ mod tests {
     }
 
     /// Issue 518: the memory is reached through the work's session, as the plugin binds it; a
-    /// turn that reaches none neither recalls nor remembers.
+    /// turn that reaches none neither recalls nor remembers, and `/memory` fails there (issue 574).
     #[tokio::test]
     async fn a_turn_in_no_session_neither_recalls_nor_remembers() {
         let agent = AgentId::new();
@@ -795,6 +872,10 @@ mod tests {
             memory.get_prompt(&turn.situation()).await.unwrap().text.is_empty(),
             "nor to recall from"
         );
+        let command: &dyn AgentCommandProvider = &memory.component;
+        let unread =
+            command.execute(&CommandName::fixed(command::MEMORY_COMMAND_NAME), "", &mut turn).await;
+        assert!(matches!(unread, Err(CommandError::Failed { .. })), "nor to show: {unread:?}");
     }
 
     /// Lets channels read each other until it is told to refuse, and records in whose name it is
