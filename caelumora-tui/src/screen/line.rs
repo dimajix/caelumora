@@ -1,5 +1,7 @@
 //! The way of drawing `line`: what is printed is written line by line, and what the user types is
-//! read by rustyline (issue 569).
+//! read by rustyline (issue 569), which completes it at Tab from what can be typed (`Completing`,
+//! issue 579) - listing the candidates at a second Tab, as lines a screen reader reads, and hinting
+//! nothing beside the cursor.
 
 use super::words::{
     attachment, error_word, how_to_answer, how_to_approve, missed, offered_words, outcome,
@@ -8,15 +10,21 @@ use super::words::{
 use super::{Screen, Typed};
 use crate::asking::{Asked, Asking};
 use crate::printed::{Printed, Said, Saying};
+use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use async_trait::async_trait;
 use caelumora_domain::approval::ApprovalRequest;
 use caelumora_domain::question::QuestionRequest;
 use caelumora_domain::tool::{ToolCall, ToolCallResult};
+use rustyline::completion::Completer;
 use rustyline::error::ReadlineError;
+use rustyline::highlight::Highlighter;
+use rustyline::hint::Hinter;
 use rustyline::history::DefaultHistory;
-use rustyline::{Editor, ExternalPrinter};
+use rustyline::validate::Validator;
+use rustyline::{CompletionType, Config, Context, Editor, ExternalPrinter, Helper};
 use std::sync::mpsc as std_mpsc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use tokio::sync::mpsc;
 use tracing::warn;
@@ -34,6 +42,8 @@ pub(crate) struct LineScreen {
     input: mpsc::UnboundedReceiver<Result<String, ReadlineError>>,
     /// What was shown asked last, written once as it was shown.
     shown: Option<Asking>,
+    /// What the editor completes from, as last offered.
+    completing: Completing,
 }
 
 impl LineScreen {
@@ -42,12 +52,15 @@ impl LineScreen {
     /// # Errors
     /// If the terminal cannot be read from.
     pub(crate) fn new() -> Result<Self, ReadlineError> {
-        let mut editor = Editor::new()?;
+        let config = Config::builder().completion_type(CompletionType::List).build();
+        let mut editor = Editor::with_config(config)?;
+        let completing = Completing::new();
+        editor.set_helper(Some(completing.clone()));
         let printer = editor.create_external_printer().ok();
         let printer = printer.map(|printer| Box::new(printer) as Box<dyn ExternalPrinter + Send>);
         let (start, started) = std_mpsc::channel();
         let input = spawn_rustyline_input(editor, started);
-        Ok(Self { printer, start: Some(start), input, shown: None })
+        Ok(Self { printer, start: Some(start), input, shown: None, completing })
     }
 
     /// Writes `lines` above the line being typed, where there is a printer for it; else, or where
@@ -92,6 +105,11 @@ impl Screen for LineScreen {
         }
     }
 
+    /// Hands `typeable` to the editor, which completes from it at the next Tab.
+    fn offer(&mut self, typeable: Arc<Typeable>) {
+        self.completing.offer(typeable);
+    }
+
     async fn next_input(&mut self) -> Typed {
         if let Some(start) = self.start.take() {
             // Fails only where the thread ended already, which the input then tells.
@@ -109,7 +127,7 @@ impl Screen for LineScreen {
 /// Reads lines with `editor`, in a thread of its own, once `started` tells it to begin, until
 /// reading fails or nobody takes them.
 fn spawn_rustyline_input(
-    mut editor: Editor<(), DefaultHistory>,
+    mut editor: Editor<Completing, DefaultHistory>,
     started: std_mpsc::Receiver<()>,
 ) -> mpsc::UnboundedReceiver<Result<String, ReadlineError>> {
     let (input_tx, input_rx) = mpsc::unbounded_channel::<Result<String, ReadlineError>>();
@@ -133,6 +151,53 @@ fn spawn_rustyline_input(
     });
     input_rx
 }
+
+/// What the editor of `line` completes what is typed with (issue 579): what can be typed, as the
+/// talk last offered it - shared between the screen, which is offered it, and the editor's thread,
+/// which cannot ask the talk.
+#[derive(Clone)]
+struct Completing {
+    typeable: Arc<Mutex<Arc<Typeable>>>,
+}
+
+impl Completing {
+    /// Completing from nothing, until something is offered.
+    fn new() -> Self {
+        Self { typeable: Arc::new(Mutex::new(Arc::new(Typeable::default()))) }
+    }
+
+    /// Completes from `typeable` from now on.
+    fn offer(&self, typeable: Arc<Typeable>) {
+        *self.typeable.lock().unwrap_or_else(PoisonError::into_inner) = typeable;
+    }
+}
+
+impl Completer for Completing {
+    type Candidate = String;
+
+    /// What completes `line` up to `pos` (`Typeable::complete`).
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<String>)> {
+        let typeable = Arc::clone(&self.typeable.lock().unwrap_or_else(PoisonError::into_inner));
+        let completion = typeable.complete(line, pos);
+        Ok((completion.start, completion.candidates))
+    }
+}
+
+/// No hint beside the cursor: a screen reader would read it as typed.
+impl Hinter for Completing {
+    type Hint = String;
+}
+
+impl Highlighter for Completing {}
+
+impl Validator for Completing {}
+
+impl Helper for Completing {}
 
 /// The lines `printed` is written as: in words, not marked by symbols or colours, which a screen
 /// reader reads as they are or not at all.
@@ -250,6 +315,7 @@ mod tests {
     use caelumora_domain::approval::testing::make_approval_request;
     use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::command::ParameterKind;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::question::testing::make_question_request;
@@ -261,6 +327,20 @@ mod tests {
     use caelumora_domain::value::name::Name;
     use serde_json::json;
     use serde_json::Value;
+
+    /// Issue 579: the editor completes what is typed from what was offered last - the handles of
+    /// the participants after an `@` here -, from where the handle begins.
+    #[test]
+    fn the_editor_completes_from_what_was_offered_last() {
+        let completing = Completing::new();
+        let history = DefaultHistory::new();
+        let completed = |line: &str| completing.complete(line, line.len(), &Context::new(&history));
+        assert_eq!(completed("hi @b").unwrap(), (3, Vec::new()), "nobody offered yet");
+        let mut offered = Typeable::default();
+        offered.add_named(ParameterKind::Participant, ["@bob".to_string(), "@bea".to_string()]);
+        completing.offer(Arc::new(offered));
+        assert_eq!(completed("hi @b").unwrap(), (3, vec!["@bea".to_string(), "@bob".to_string()]));
+    }
 
     fn said(words: Option<&str>, attachments: Vec<ContentRef>, saying: Saying) -> Printed {
         let words = words.map(|text| Words { text: text.to_string(), mentions: Vec::new() });

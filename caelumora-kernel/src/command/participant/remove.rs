@@ -5,7 +5,9 @@ use crate::command::{
 };
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::value::command_name::CommandName;
 
 const REMOVE_COMMAND_NAME: &str = "participant remove";
@@ -23,7 +25,9 @@ impl RemoveCommand {
             description:
                 "Removes the participant named from this channel; they stay in the session."
                     .to_string(),
-            parameters: vec![CommandParameter::required("participant")],
+            parameters: vec![
+                CommandParameter::required("participant").of_kind(ParameterKind::Participant)
+            ],
             owners_only: false,
         })
     }

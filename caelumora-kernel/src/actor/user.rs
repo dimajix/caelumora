@@ -20,7 +20,7 @@ use caelumora_domain::approval::{
     ApprovalDecision, ApprovalId, ApprovalRequest, ApprovalRule, ApprovalRuleId, RuleDecision,
 };
 use caelumora_domain::channel::ChannelId;
-use caelumora_domain::command::{CommandDescription, CommandVisibility};
+use caelumora_domain::command::{addressed, CommandDescription, CommandVisibility};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::content::ContentId;
 use caelumora_domain::mention::{handle_of, is_group_handle};
@@ -687,8 +687,8 @@ impl UserActor {
                 let (name, args) = commands.into_iter().find_map(|command| {
                     command.strip_from(line).map(|args| (command.name, args))
                 })?;
-                let (whom, rest) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
-                Some((agent, name, whom, rest.trim()))
+                let (whom, rest) = addressed(args);
+                Some((agent, name, whom, rest.unwrap_or_default().trim_end()))
             })
             .collect();
         let Some((_, name, whom, _)) = understanding.first() else {

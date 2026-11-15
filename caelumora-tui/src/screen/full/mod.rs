@@ -1,5 +1,6 @@
 //! The way of drawing `full`: the terminal's whole window, what was printed scrolled above and the
-//! line typed below, as Claude Code draws it (issue 569).
+//! line typed below, as Claude Code draws it (issue 569). Tab completes what is typed from what can
+//! be typed, showing what remains above the line (issue 579).
 
 mod choosing;
 mod clipboard;
@@ -11,6 +12,7 @@ mod styled;
 use super::{Screen, Typed};
 use crate::asking::Asked;
 use crate::printed::Printed;
+use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use async_trait::async_trait;
 use choosing::{Choosing, Taken};
@@ -33,6 +35,7 @@ use scrollback::Scrollback;
 use selection::Selection;
 use std::io;
 use std::panic;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use styled::{live_lines, status_line, styled, typed_line};
 use tokio::time::{self, Interval, MissedTickBehavior};
@@ -49,6 +52,12 @@ const FRAME: Duration = Duration::from_millis(50);
 
 /// How many rows the mouse wheel scrolls by.
 const WHEEL_ROWS: usize = 3;
+
+/// How many rows the candidates of a completion take at most, above the line typed.
+const CANDIDATE_ROWS: u16 = 3;
+
+/// What sets the candidates of a completion apart from each other in a row.
+const SPACING: &str = "   ";
 
 /// How many rows `line` takes at `width` columns, broken at words as it is drawn - which
 /// ratatui's `Paragraph::line_count` counts, under its feature `unstable-rendered-line-info`.
@@ -78,8 +87,8 @@ pub(crate) struct FullScreen {
 
 /// What the full-screen window shows, and how keys, the mouse and pasted text change it: what was
 /// printed and what streams, scrolled by the user alone; what is asked of the user; the status
-/// line of the answers under way; the line typed; and what the user marks with the mouse, and the
-/// choice they click.
+/// line of the answers under way; the candidates of a completion; the line typed, which Tab
+/// completes; and what the user marks with the mouse, and the choice they click.
 #[derive(Debug, Default)]
 struct Window {
     /// What was printed, and what streams after it.
@@ -96,6 +105,11 @@ struct Window {
     /// What the user marks with the mouse, until a key or the left button is pressed, text pasted,
     /// the wheel turned or the window resized - each of which may move other text under its cells.
     selection: Option<Selection>,
+    /// What can be typed, as last offered, which Tab completes the line from.
+    typeable: Arc<Typeable>,
+    /// The candidates of the last completion where there were several, shown above the line typed
+    /// until another key is pressed or text pasted.
+    candidates: Vec<String>,
 }
 
 impl FullScreen {
@@ -169,6 +183,11 @@ impl Screen for FullScreen {
         self.changed = true;
     }
 
+    /// Completes from `typeable` at the next Tab.
+    fn offer(&mut self, typeable: Arc<Typeable>) {
+        self.window.offer(typeable);
+    }
+
     fn ask(&mut self, asked: Option<&Asked>) {
         self.changed |= self.window.ask(asked);
     }
@@ -199,6 +218,11 @@ impl Screen for FullScreen {
 }
 
 impl Window {
+    /// Completes the line typed from `typeable` at the next Tab.
+    fn offer(&mut self, typeable: Arc<Typeable>) {
+        self.typeable = typeable;
+    }
+
     /// Shows the answers `under_way`: what they streamed after what was printed, and where they
     /// stand in the status line.
     fn show_under_way(&mut self, under_way: &[UnderWay]) {
@@ -232,6 +256,7 @@ impl Window {
             Event::Mouse(mouse) => self.take_mouse(&mouse),
             Event::Paste(text) => {
                 self.selection = None;
+                self.candidates.clear();
                 self.input.paste(&text);
                 None
             }
@@ -294,10 +319,16 @@ impl Window {
     }
 
     /// Takes in `key`, a page being `page` rows: what ends the program or the input, scrolls,
-    /// chooses among what is asked while nothing is typed (`Choosing::take_key`), or edits the
-    /// line typed - and answers the line where it ends it, shown
+    /// chooses among what is asked while nothing is typed (`Choosing::take_key`), completes the
+    /// line typed (Tab, `InputLine::complete`) - showing the candidates where there are several,
+    /// until another key is pressed -, or edits it - and answers the line where it ends it, shown
     /// as sent and the end of what was printed followed.
     fn take_key(&mut self, key: &KeyEvent, page: usize) -> Option<Typed> {
+        if key.code == KeyCode::Tab && key.modifiers.is_empty() {
+            self.candidates = self.input.complete(&self.typeable);
+            return None;
+        }
+        self.candidates.clear();
         let control = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
         // Shift and the arrows scroll, also while something is asked.
@@ -327,9 +358,10 @@ impl Window {
         None
     }
 
-    /// Draws the window on `frame` at `now`: what was printed and what streams; the status line
-    /// where answers are under way; a rule, which tells where the user scrolled up; the line
-    /// typed, with the cursor in it; and over all, what the user marks.
+    /// Draws the window on `frame` at `now`: what was printed and what streams; what is asked; the
+    /// status line where answers are under way; the candidates of a completion, in the room left
+    /// (`candidate_rows`); a rule, which tells where the user scrolled up; the line typed, with
+    /// the cursor in it; and over all, what the user marks.
     fn draw(&mut self, frame: &mut Frame, now: Instant) {
         let area = frame.area();
         let (rows, cursor) = self.input.rows(PROMPT, area.width);
@@ -337,10 +369,17 @@ impl Window {
         let status_rows = u16::from(!self.under_way.is_empty());
         let asked_rows = self.choosing.as_ref().map_or(0, |choosing| choosing.height(area.width));
         let asked_rows = u16::try_from(asked_rows).unwrap_or(u16::MAX).min(area.height / 2);
-        let [printed, asking, status, rule, typed] = Layout::vertical([
+        // What is left beside the line typed, the rule, what is asked, the status line and a row of
+        // what was printed: the candidates never push the line typed out of the window.
+        let room = area.height.saturating_sub(input_rows + 1 + asked_rows + status_rows + 1);
+        let candidates =
+            candidate_rows(&self.candidates, area.width, usize::from(CANDIDATE_ROWS.min(room)));
+        let candidate_rows = u16::try_from(candidates.len()).unwrap_or(u16::MAX);
+        let [printed, asking, status, offered, rule, typed] = Layout::vertical([
             Constraint::Min(1),
             Constraint::Length(asked_rows),
             Constraint::Length(status_rows),
+            Constraint::Length(candidate_rows),
             Constraint::Length(1),
             Constraint::Length(input_rows),
         ])
@@ -354,6 +393,7 @@ impl Window {
             frame.render_widget(Paragraph::new(choosing.rows()).wrap(Wrap { trim: false }), asking);
         }
         frame.render_widget(status_line(&self.under_way, now), status);
+        frame.render_widget(Paragraph::new(candidates), offered);
         let waits = self.choosing.as_ref().and_then(Choosing::waiting);
         frame.render_widget(rule_line(self.scrollback.below(), waits, rule), rule);
 
@@ -366,6 +406,38 @@ impl Window {
             selection.highlight(frame.buffer_mut());
         }
     }
+}
+
+/// The rows `candidates` of a completion are shown in above the line typed, dim: as many whole
+/// ones a row as fit in `width` columns, set apart from each other, in at most `most` rows - the
+/// last telling how many more there are, where they do not all fit.
+fn candidate_rows(candidates: &[String], width: u16, most: usize) -> Vec<Line<'static>> {
+    let width = usize::from(width);
+    let taken =
+        |row: &[String]| -> usize { row.iter().map(|c| c.chars().count() + SPACING.len()).sum() };
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for candidate in candidates {
+        let fits = rows.last().is_some_and(|row| taken(row) + candidate.chars().count() <= width);
+        match rows.last_mut() {
+            Some(row) if fits => row.push(candidate.clone()),
+            _ => rows.push(vec![candidate.clone()]),
+        }
+    }
+    if rows.len() > most {
+        rows.truncate(most);
+        let before: usize = rows.iter().rev().skip(1).map(Vec::len).sum();
+        if let Some(row) = rows.last_mut() {
+            // The last row shortened until it holds how many more there are.
+            let more = |row: &[String]| format!("+{} more", candidates.len() - before - row.len());
+            while !row.is_empty() && taken(row) + more(row).chars().count() > width {
+                row.pop();
+            }
+            let told = more(row);
+            row.push(told);
+        }
+    }
+    let dim = Style::new().dim();
+    rows.into_iter().map(|row| Line::styled(row.join(SPACING), dim)).collect()
 }
 
 /// The rule between what was printed and the line typed, across `area`: how many rows lie
@@ -394,6 +466,7 @@ mod tests {
     use caelumora_domain::approval::testing::make_approval_request;
     use caelumora_domain::approval::ApprovalRequest;
     use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::command::ParameterKind;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::{Choice, Question, QuestionRequest, Questions};
     use caelumora_domain::session::SessionId;
@@ -425,6 +498,66 @@ mod tests {
             window.take_key(&key(KeyCode::Char(c)), 5);
         }
         window.take_key(&key(KeyCode::Enter), 5)
+    }
+
+    /// Issue 579: Tab completes the line typed from what was offered; where several candidates
+    /// remain, they are shown above the line, until another key is pressed or text pasted.
+    #[test]
+    fn tab_completes_the_line_and_shows_the_candidates_left_until_another_key() {
+        let mut window = Window::default();
+        let mut typeable = Typeable::default();
+        typeable.add_named(ParameterKind::Participant, ["@alice", "@bob"].map(String::from));
+        window.offer(Arc::new(typeable));
+        for c in "hi @".chars() {
+            window.take_key(&key(KeyCode::Char(c)), 5);
+        }
+        window.take_key(&key(KeyCode::Tab), 5);
+        let (rows, _) = drawn(&mut window, 40, 5);
+        assert_eq!(rows[2], "@alice   @all   @bob   @channel", "{rows:?}");
+        assert_eq!(rows[3], "─".repeat(40));
+        assert_eq!(rows[4], "> hi @");
+        window.take_key(&key(KeyCode::Char('b')), 5);
+        let (rows, _) = drawn(&mut window, 40, 5);
+        assert_eq!(rows[2], "", "another key ends them: {rows:?}");
+        window.take_key(&key(KeyCode::Tab), 5);
+        let (rows, cursor) = drawn(&mut window, 40, 5);
+        assert_eq!(rows[3], "─".repeat(40), "none shown for one: {rows:?}");
+        assert_eq!(rows[4], "> hi @bob");
+        assert_eq!(cursor, Position::new(9, 4));
+        window.take_key(&key(KeyCode::Char(' ')), 5);
+        window.take_key(&key(KeyCode::Char('@')), 5);
+        window.take_key(&key(KeyCode::Tab), 5);
+        window.take_event(Event::Paste("x".to_string()), 5);
+        assert!(window.candidates.is_empty(), "text pasted ends them");
+    }
+
+    /// Issue 579: the candidates are shown whole, as many a row as fit, in at most so many rows as
+    /// there is room for, the last telling how many more there are.
+    #[test]
+    fn the_candidates_are_shown_whole_and_how_many_more_there_are() {
+        let shown = |candidates: &[&str], width, most| -> Vec<String> {
+            let candidates: Vec<String> = candidates.iter().map(|c| c.to_string()).collect();
+            let rows = candidate_rows(&candidates, width, most);
+            rows.iter().map(|row| row.spans.iter().map(|s| s.content.as_ref()).collect()).collect()
+        };
+        assert_eq!(shown(&["session new", "session list"], 20, 3), ["session new", "session list"]);
+        assert_eq!(shown(&["ab", "cd", "ef"], 20, 3), ["ab   cd   ef"]);
+        assert_eq!(shown(&["abcd", "efgh", "ijkl", "mnop"], 11, 2), ["abcd   efgh", "ijkl   mnop"]);
+        assert_eq!(
+            shown(&["abcd", "efgh", "ijkl", "mnop", "qrst"], 11, 2),
+            ["abcd   efgh", "+3 more"]
+        );
+        assert_eq!(shown(&["ab", "cd", "ef", "gh"], 12, 1), ["ab   +3 more"]);
+        assert!(shown(&["ab", "cd"], 20, 0).is_empty(), "no room, none shown");
+        let mut window = Window::default();
+        let mut typeable = Typeable::default();
+        typeable.add_named(ParameterKind::Participant, ["@alice", "@bob"].map(String::from));
+        window.offer(Arc::new(typeable));
+        window.take_key(&key(KeyCode::Char('@')), 5);
+        window.take_key(&key(KeyCode::Tab), 5);
+        let (rows, cursor) = drawn(&mut window, 8, 4);
+        assert_eq!(rows[3], "> @", "the line typed keeps its row: {rows:?}");
+        assert_eq!(cursor, Position::new(3, 3));
     }
 
     /// The window shows what was printed above, the status line of an answer under way, the rule,

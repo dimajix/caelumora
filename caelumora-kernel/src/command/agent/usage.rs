@@ -8,7 +8,9 @@ use crate::view::ParticipantView;
 use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::message::TokenUsage;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
@@ -30,7 +32,7 @@ impl UsageCommand {
                 "Tells how full the context of each agent of this channel is, or of the one \
                           named, and how many tokens its calls used."
                     .to_string(),
-            parameters: vec![CommandParameter::optional("agent")],
+            parameters: vec![CommandParameter::optional("agent").of_kind(ParameterKind::Agent)],
             owners_only: false,
         })
     }

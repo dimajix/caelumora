@@ -28,9 +28,13 @@ itself.
 The client decides whether a line is a command and sends it as one rather than as a message; the
 message API stays plain text. The rule is `caelumora_domain::command::parse_input`, mirrored in the
 web UI: a leading `/` starts a command, and the rest of the line is sent, trimmed; `//` sends a
-literal `/`. Only this lexical rule is repeated per frontend, and in the web UI how a command's
-parameters are written (`usageOf`, see below). Which command of the channel a line is, what it
-means, who may run it and what it answers is decided in one place.
+literal `/`. Only this lexical rule is repeated per frontend, in the web UI how a command's
+parameters are written (`usageOf`, see below), and in the terminal what completes a command (issue
+579): from the domain's rules - a name begun by what is typed (`CommandName::is_begun_by`), an
+agent's command naming its agent by its first word (`command::addressed`, as the agents' actors
+read it) -, its first argument by its kind, until the keyword of a later parameter is typed. Which
+command of the channel a line is, what it means, who may run it and what it answers is decided in
+one place.
 
 ### Commands of the terminal
 
@@ -102,15 +106,18 @@ collide are the same whoever runs the commands, and an agent's actor keeps its c
 What a command is given to run with - the session, or an agent's turn - and who asks whether it may
 be seen and run are its kind's: the channel's commands the executor itself (`ShowCommand`,
 `ExecuteCommand`), an agent's the channel's door as it admits the request (`ShowAgentCommand`,
-`ExecuteAgentCommand`, issue 516). What a command takes is described by its parameters (issue
-583, `CommandParameter`): each with its name, whether it is required, and the word that introduces
-it, if one does - `as` of `/agent create <personality> [as <name>]` -, the last taking the rest of
-the line. `/help` and the web UI write them from that (`CommandDescription::usage`). A command
-that names no parameters is not run with arguments, and one with a required parameter not without
-any: whoever runs it - the executor once it may be run, an agent's actor before it begins, the
-terminal - refuses it so (`check_arguments`), so that no command checks it itself. What the
-arguments name - whom, which channel - the command reads itself. How a command runs is the
-command's business, and there is nothing about running commands to try out.
+`ExecuteAgentCommand`, issue 516). What a command takes is described by its parameters (issue 583,
+`CommandParameter`): each with its name, whether it is required, the word that introduces it, if one
+does - `as` of `/agent create <personality> [as <name>]` -, the last taking the rest of the line,
+and what it takes (`ParameterKind`, issue 579) - text, a participant or an agent by its handle, an
+agent of the session, a channel, a channel the user takes part in, a personality, a command, a
+session or a template -, which a frontend may complete it from. `/help` and the web UI write them
+from that (`CommandDescription::usage`). A command that names no parameters is not run with
+arguments, and one with a required parameter not without any: whoever runs it - the executor once it
+may be run, an agent's actor before it begins, the terminal - refuses it so (`check_arguments`), so
+that no command checks it itself. What the arguments name - whom, which channel - the command reads
+itself. How a command runs is the command's business, and there is nothing about running commands to
+try out.
 
 ### Seeing and running
 

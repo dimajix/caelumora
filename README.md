@@ -110,6 +110,11 @@ alike - and which no rule of a place asks a person to decide - offers them from 
 channel or in the session, as the web UI does. `/help` lists the commands of the channel
 and those the terminal carries out itself: `/session list`, `/session new`, `/session resume` and
 `/session delete` reach the sessions of the directory while the program runs, `/exit` ends it.
+Tab completes what is typed (issue 579): a command by its name or short form - the channel's, its
+agents', the terminal's -, after an agent's command the agent, after a command its argument where
+it names someone, a channel, a personality, a command, a session or a template, and a handle after
+`@`. Where several remain, `full` shows them above the line typed - in a few rows, telling how many
+more there are -, and in `line` a second Tab lists them all.
 
 ### Running the Program
 

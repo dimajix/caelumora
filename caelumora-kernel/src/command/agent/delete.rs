@@ -7,7 +7,9 @@ use crate::view::AgentView;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
@@ -27,7 +29,9 @@ impl DeleteCommand {
             name: CommandName::fixed(DELETE_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Deletes the agent of this session named; it can be restored.".to_string(),
-            parameters: vec![CommandParameter::required("agent")],
+            parameters: vec![
+                CommandParameter::required("agent").of_kind(ParameterKind::SessionAgent)
+            ],
             owners_only: false,
         };
         Self { description, agents }

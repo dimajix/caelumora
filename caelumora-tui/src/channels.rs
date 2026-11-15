@@ -3,10 +3,12 @@
 
 use crate::followed::Followed;
 use crate::printed::Printed;
+use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::{Channel, ChannelId, JOINED};
+use caelumora_domain::command::ParameterKind;
 use caelumora_domain::event::{EntityChange, GlobalEvent};
 use caelumora_domain::question::QuestionRequest;
 use caelumora_domain::session::SessionId;
@@ -14,7 +16,7 @@ use caelumora_kernel::actor::user::Lagged;
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::event::{EventBus, EventSubscription, SubscriptionTopic};
 use caelumora_kernel::session::SessionLoop;
-use caelumora_kernel::view::Views;
+use caelumora_kernel::view::{AgentView, Views};
 use futures::future::select_all;
 use std::future;
 use std::sync::Arc;
@@ -82,6 +84,27 @@ impl Channels {
     }
 
     /// The session whose channels are followed.
+    /// Adds to `typeable` what the user can type of the session and the channel talked in (issue
+    /// 579): the channels of the session and its agents, as they read them (`SessionView`), the
+    /// channels followed, which they take part in, and what may be typed in the channel talked in
+    /// (`Followed::add_typeable`). What cannot be read
+    /// adds nothing.
+    pub(crate) async fn add_typeable(&self, typeable: &mut Typeable) {
+        if let Ok(session) = self.views.session(self.session.id()).await {
+            let channels = session.channels().await;
+            typeable
+                .add_named(ParameterKind::Channel, channels.iter().map(|c| c.name().to_string()));
+            let agents = session.agents().await.unwrap_or_default();
+            let handles = agents.iter().filter_map(AgentView::handle).map(|h| format!("@{h}"));
+            typeable.add_named(ParameterKind::SessionAgent, handles);
+        }
+        let joined = self.followed.iter().map(|followed| followed.name().to_string());
+        typeable.add_named(ParameterKind::JoinedChannel, joined);
+        if let Some(talked_in) = self.talked_in() {
+            talked_in.add_typeable(typeable).await;
+        }
+    }
+
     pub(crate) fn session_id(&self) -> SessionId {
         self.session.id()
     }

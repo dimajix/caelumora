@@ -6,10 +6,9 @@ use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
 use caelumora_domain::command::{
-    help_topic, CommandDescription, CommandOutput, CommandParameter, HELP_KIND,
+    self, help_topic, CommandDescription, CommandOutput, CommandParameter, ParameterKind, HELP_KIND,
 };
 use caelumora_domain::value::command_name::CommandName;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub const HELP_COMMAND_NAME: &str = "help";
@@ -28,7 +27,9 @@ impl HelpCommand {
             aliases: Vec::new(),
             description: "Lists the commands you can use, those of a group, or describes one."
                 .to_string(),
-            parameters: vec![CommandParameter::optional("group or command")],
+            parameters: vec![
+                CommandParameter::optional("group or command").of_kind(ParameterKind::Command)
+            ],
             owners_only: false,
         })
     }
@@ -46,25 +47,13 @@ impl Command for HelpCommand {
     }
 }
 
-/// The commands the agents of the channel carry out that the issuer may
-/// see (issue 269), by name, each with the handles of the agents that do.
-async fn agents_commands(
-    context: &CommandContext<'_>,
-) -> BTreeMap<CommandName, (CommandDescription, Vec<String>)> {
-    let mut by_name: BTreeMap<CommandName, (CommandDescription, Vec<String>)> = BTreeMap::new();
-    for (agent, commands) in
-        context.channel.agent_commands(&context.issuer.security_context()).await
-    {
-        let Some(handle) = agent.handle else { continue };
-        for command in commands {
-            by_name
-                .entry(command.name.clone())
-                .or_insert_with(|| (command, Vec::new()))
-                .1
-                .push(format!("@{handle}"));
-        }
-    }
-    by_name
+/// The commands the agents of the channel carry out that the issuer may see (issue 269), by name,
+/// each with the handles of the agents that do (`command::agents_commands`).
+async fn agents_commands(context: &CommandContext<'_>) -> Vec<(CommandDescription, Vec<String>)> {
+    let agents = context.channel.agent_commands(&context.issuer.security_context()).await;
+    command::agents_commands(agents.into_iter().filter_map(|(agent, commands)| {
+        agent.handle.map(|handle| (format!("@{handle}"), commands))
+    }))
 }
 
 #[async_trait]
@@ -86,7 +75,7 @@ impl ChannelCommand for HelpCommand {
             if let Some(command) = visible.iter().find(|c| c.is_named(name)) {
                 return Ok(CommandOutput::private(command.help_line()));
             }
-            if let Some((command, handles)) = of_agents.values().find(|(c, _)| c.is_named(name)) {
+            if let Some((command, handles)) = of_agents.iter().find(|(c, _)| c.is_named(name)) {
                 return Ok(CommandOutput::private(format!(
                     "{} Carried out by {}.",
                     command.agent_help_line(),
@@ -99,7 +88,7 @@ impl ChannelCommand for HelpCommand {
         let in_group =
             |command: &CommandDescription| topic.as_ref().is_none_or(|g| g.begins(&command.name));
         let listed: Vec<&CommandDescription> = visible.iter().filter(|c| in_group(c)).collect();
-        let of_agents: Vec<_> = of_agents.values().filter(|(c, _)| in_group(c)).collect();
+        let of_agents: Vec<_> = of_agents.iter().filter(|(c, _)| in_group(c)).collect();
         if listed.is_empty() && of_agents.is_empty() {
             return Err(unknown());
         }

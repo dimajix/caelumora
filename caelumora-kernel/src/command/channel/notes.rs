@@ -5,7 +5,9 @@ use super::this_or_named;
 use crate::command::{command_error, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::value::command_name::CommandName;
 
 const NOTES_COMMAND_NAME: &str = "channel notes";
@@ -24,7 +26,7 @@ impl NotesCommand {
                 "Shows what the agents noted in this channel, or in the one of this session \
                           named."
                     .to_string(),
-            parameters: vec![CommandParameter::optional("channel")],
+            parameters: vec![CommandParameter::optional("channel").of_kind(ParameterKind::Channel)],
             owners_only: false,
         })
     }

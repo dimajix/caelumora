@@ -1002,14 +1002,28 @@ export type RetryTarget = { message: string } | { turn: string };
 export type RetryRefused = 'not_its_answer' | 'not_last' | 'calls_ran' | 'asked_again' | 'elsewhere' | 'ended';
 
 /**
- * A parameter of a command (issue 583): what it is called, whether it must be given, and the word
- * that introduces it, if one does.
+ * A parameter of a command (issue 583): what it is called, whether it must be given, the word that
+ * introduces it, if one does, and what it takes (issue 579), text where absent.
  */
 export interface CommandParameter {
   name: string;
   required: boolean;
   keyword?: string;
+  kind?: ParameterKind;
 }
+
+/** What a parameter of a command takes (issue 579): what a frontend may complete it from. */
+export type ParameterKind =
+  | 'text'
+  | 'participant'
+  | 'agent'
+  | 'session_agent'
+  | 'channel'
+  | 'joined_channel'
+  | 'personality'
+  | 'command'
+  | 'session'
+  | 'template';
 
 /** A user command, as `/help` and completion show it (issue 28). */
 export interface CommandDescription {

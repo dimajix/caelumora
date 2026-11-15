@@ -2,6 +2,7 @@
 //! and what the user's commands there need of it (issue 561).
 
 use crate::printed::{ErrorKind, Printed, Said, Saying, Words};
+use crate::typeable::Typeable;
 use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_api::reader::ViewResult;
@@ -9,6 +10,7 @@ use caelumora_domain::actor::{ActorEvent, ActorId, Envelope};
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::ChannelId;
+use caelumora_domain::command::{agents_commands, ParameterKind};
 use caelumora_domain::history::{HistoryEntry, HistoryPage};
 use caelumora_domain::mention::{is_group_handle, mention_spans};
 use caelumora_domain::message::{Message, MessageId};
@@ -210,6 +212,34 @@ impl Followed {
     /// passes through as it goes.
     pub(crate) fn actor(&self) -> Option<Arc<UserActor>> {
         self.channel.user_actor(self.user)
+    }
+
+    /// Adds to `typeable` what the user can type in the channel (issue 579): its commands they
+    /// may see (`UserActor::visible_commands`), the handles of its participants and of its agents,
+    /// the commands its agents carry out that they may see (`command::agents_commands`), and the
+    /// personalities they may read, which an agent made here is made of. What cannot be read adds
+    /// nothing.
+    pub(crate) async fn add_typeable(&self, typeable: &mut Typeable) {
+        if let Some(actor) = self.actor() {
+            typeable.add_commands(actor.visible_commands().await);
+        }
+        let participants = match self.view().await {
+            Ok(view) => view.participants().await,
+            Err(_) => Vec::new(),
+        };
+        let mut agents = Vec::new();
+        for participant in &participants {
+            let Some(handle) = participant.handle() else { continue };
+            let handle = format!("@{handle}");
+            typeable.add_named(ParameterKind::Participant, [handle.clone()]);
+            if participant.id().as_agent_id().is_some() {
+                agents.push((handle, participant.commands().await));
+            }
+        }
+        typeable.add_named(ParameterKind::Agent, agents.iter().map(|(handle, _)| handle.clone()));
+        typeable.add_agents_commands(agents_commands(agents));
+        let personalities = self.views.personalities().await.unwrap_or_default();
+        typeable.add_named(ParameterKind::Personality, personalities.into_iter().map(|p| p.name));
     }
 
     /// What the channel shows next, as `ChannelWatch::next`.

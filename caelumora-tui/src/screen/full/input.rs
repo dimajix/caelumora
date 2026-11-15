@@ -1,6 +1,7 @@
 //! The line the user types in the full-screen terminal: its text, where the cursor stands in it,
 //! and the lines typed before (issue 569).
 
+use crate::typeable::Typeable;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Position;
 use unicode_width::UnicodeWidthChar;
@@ -60,6 +61,31 @@ impl InputLine {
     pub(super) fn paste(&mut self, text: &str) {
         for c in text.chars().filter(|c| *c != '\r') {
             self.insert(c);
+        }
+    }
+
+    /// Completes what is typed up to the cursor from `typeable` (issue 579), as rustyline does in
+    /// `line`: with the one candidate there is, or with what all candidates begin with where that
+    /// is longer than what is typed; answers the candidates where there are several, for the user
+    /// to see.
+    pub(super) fn complete(&mut self, typeable: &Typeable) -> Vec<String> {
+        let text: String = self.chars.iter().collect();
+        let cursor: usize = self.chars[..self.cursor].iter().map(|c| c.len_utf8()).sum();
+        let completion = typeable.complete(&text, cursor);
+        let replaced = text[completion.start..cursor].chars().count();
+        let with = match completion.candidates.as_slice() {
+            [] => return Vec::new(),
+            [only] => Some(only.clone()),
+            several => Some(common_beginning(several)).filter(|c| c.chars().count() > replaced),
+        };
+        if let Some(with) = with {
+            let start = self.cursor - replaced;
+            self.chars.splice(start..self.cursor, with.chars());
+            self.cursor = start + with.chars().count();
+        }
+        match completion.candidates.len() {
+            1 => Vec::new(),
+            _ => completion.candidates,
         }
     }
 
@@ -176,6 +202,16 @@ impl InputLine {
     }
 }
 
+/// What all of `candidates` begin with, character by character.
+fn common_beginning(candidates: &[String]) -> String {
+    let mut common: Vec<char> = candidates.first().map(|c| c.chars().collect()).unwrap_or_default();
+    for candidate in candidates.iter().skip(1) {
+        let shared = common.iter().zip(candidate.chars()).take_while(|(a, b)| **a == *b).count();
+        common.truncate(shared);
+    }
+    common.into_iter().collect()
+}
+
 /// `value` as a column or row of the terminal, which has no more than `u16::MAX` of them.
 fn to_u16(value: usize) -> u16 {
     u16::try_from(value).unwrap_or(u16::MAX)
@@ -184,6 +220,7 @@ fn to_u16(value: usize) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::command::ParameterKind;
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -202,6 +239,37 @@ mod tests {
     /// The text typed, as the rows of a window wide enough show it.
     fn text(input: &InputLine) -> String {
         input.rows("", u16::MAX).0.join("\n")
+    }
+
+    /// Issue 579: what is typed is completed up to the cursor - with the one candidate, or with
+    /// what several begin with, which are answered -, the cursor after what completed it.
+    #[test]
+    fn what_is_typed_is_completed_up_to_the_cursor() {
+        let mut typeable = Typeable::default();
+        let handles = ["@alice", "@all", "@bob"].map(String::from);
+        typeable.add_named(ParameterKind::Participant, handles);
+        let mut input = InputLine::default();
+        typed(&mut input, "ä @b");
+        assert!(input.complete(&typeable).is_empty(), "one candidate, none to show");
+        assert_eq!(text(&input), "ä @bob");
+        input.take_key(&key(KeyCode::Char(' ')));
+        typed(&mut input, "@A");
+        assert_eq!(input.complete(&typeable), ["@alice", "@all"]);
+        assert_eq!(text(&input), "ä @bob @al", "what they begin with");
+        assert_eq!(input.complete(&typeable), ["@alice", "@all"], "shown again, the line kept");
+        assert_eq!(text(&input), "ä @bob @al");
+        input.take_key(&key(KeyCode::Home));
+        assert!(input.complete(&typeable).is_empty(), "nothing before the cursor");
+        assert_eq!(text(&input), "ä @bob @al");
+        for _ in 0..4 {
+            input.take_key(&key(KeyCode::Right));
+        }
+        input.take_key(&key(KeyCode::Delete));
+        input.take_key(&key(KeyCode::Delete));
+        assert_eq!(text(&input), "ä @b @al");
+        input.complete(&typeable);
+        input.take_key(&key(KeyCode::Char('!')));
+        assert_eq!(text(&input), "ä @bob! @al", "where the cursor stands, and after it");
     }
 
     /// Keys edit the line as a shell's are, and Enter ends it.
