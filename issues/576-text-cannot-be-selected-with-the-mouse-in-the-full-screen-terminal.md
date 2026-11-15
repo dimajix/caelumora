@@ -1,6 +1,6 @@
 # 576 — Text cannot be selected with the mouse in the full-screen terminal
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** medium
 **Area:** User interaction
@@ -29,11 +29,71 @@ user is used to.
     for scrolling with the wheel, or the wheel's arrow keys scroll while nothing is typed.
 *   Whatever is chosen, the README says how to select.
 
+No mouse mode of a terminal reports the wheel and clicks while leaving dragging and the middle
+button to the terminal: once presses are reported (`?1000h`), the terminal selects nothing. So
+either the terminal does all - without capture, where in the alternate screen the wheel arrives as
+arrow keys, which the line typed and the choices take - or the program does all.
+
+Claude Code (2.1.322) offers both: its classic way of drawing writes into the terminal's own
+scrollback, without the alternate screen, and leaves the mouse to the terminal; its full-screen way
+captures the mouse and does all itself - dragging marks, releasing copies to the clipboard and the
+primary selection (by `wl-copy`, `xclip` or `xsel`, else by OSC 52), a middle click pastes the
+primary selection, and clicks reach what is shown.
+
+Decided (2026-11-15): `full` keeps capturing the mouse and selects itself, as Claude Code's
+full-screen way does; the keys stay as they are. The clipboard and the primary selection are reached
+through the crate `arboard`, wherever there is a display; where there is none - over SSH -, text is
+copied by OSC 52. A click on one of the choices of what is asked chooses it. Steps, each reviewed on
+its own:
+
+1.  Dragging marks what it passes over in the window, and releasing copies it to the clipboard and
+    the primary selection.
+2.  The words of choosing are freed for the mouse: a choice taken among several is checked, no
+    longer marked - "mark" is what dragging does -, and the choice the cursor stands on is the
+    cursor, no longer the one selected. No behaviour changes but the keys told: "Space checks".
+3.  A click on a choice chooses it; where several may be taken, it checks or unchecks it.
+4.  `Choosing` tells how many rows it is drawn in (`height`), which the window counted itself so
+    far, while `take_click` counted them by `wrapped_rows`. No behaviour changes.
+
+A middle click is left to the terminal (decided 2026-11-15, after step 1): RustRover's terminal
+pastes the primary selection on it even while the mouse is captured, so the view pasting it too
+would paste it twice; Kitty pastes nothing on it then.
+
+How it feels is judged after the steps: scrolling while dragging past the edge, a double click for
+a word, soft-wrapped lines copied as one, and a notice that something was copied are left out until
+then.
+
 ## Done when
 
-- Text of the full-screen view is selected, copied and pasted with the mouse as the terminal does
-  it elsewhere, and the view can still be scrolled.
+- Text of the full-screen view is selected and copied with the mouse as the terminal does it
+  elsewhere, and the view can still be scrolled; pasting with the middle button is the terminal's.
 
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-15** - Decided with the maintainer: `full` selects itself, as Claude Code's full-screen
+way does, through `arboard` and OSC 52; a click chooses among what is asked. Three steps.
+
+**2026-11-15** - Step 1 done: dragging with the left button marks cells of the window, shown
+reversed, and releasing copies their text as drawn to the clipboard and the primary selection
+(`Selection`, `Clipboard`); a key, a paste, a new press, the wheel or a resize drops the marking.
+
+**2026-11-15** - The middle click is the terminal's: RustRover's pastes the primary selection on it
+despite the capture, and the view pasting it as well would paste it twice. The step that would have
+pasted it is dropped. Before a click chooses, a step of its own frees the words of choosing: a
+choice taken among several is checked, the one the cursor stands on is the cursor.
+
+**2026-11-15** - Step 2 done: `Choosing` checks the choices taken among several (`checked`,
+`check`) and keeps its `cursor`; the keys tell "Space checks".
+
+**2026-11-15** - Step 3 done: a click on a choice of what is asked chooses it, as its digit does -
+where several may be chosen, it checks the choice or takes its check away, the cursor moved to it
+(`Choosing::take_click`); the window keeps where it drew what is asked. A click on a wrapped
+choice finds it on each of its rows. What is left is judging how it feels.
+
+**2026-11-15** - Step 4 added after the review of step 3, and done: `Choosing::height` counts the
+rows of what is asked as `take_click` does, and `Window::draw` lays it out by them.
+
+**2026-11-15** - Done: the maintainer tried marking, copying and clicking in Kitty and RustRover;
+pasting with the middle button is the terminal's.

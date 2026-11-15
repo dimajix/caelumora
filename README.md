@@ -95,13 +95,16 @@ The TUI is drawn in one of two ways, chosen with `--screen` (issue 569). `full`,
 the whole window, as Claude Code does: what the channel shows above - scrolled with Page Up and
 Page Down, Shift and the arrows, or the mouse wheel, and following its end again with Ctrl+End -,
 the answers of agents as they stream at its end, a status line that tells who answers and where
-they stand, and the line typed below; text is selected with Shift held. `line` writes line by line,
+they stand, and the line typed below. Dragging the mouse marks text, which is copied to the
+clipboard and the primary selection as the button is released; with Shift held, the terminal marks
+it instead. `line` writes line by line,
 each line once, above the line being typed - for a screen reader, and wherever input or output is
 no terminal. Both show what agents say, the tools they call and how the calls ended, and of a
 channel the program opens, continues or switches to what was said in it so far - the messages
 among its last 50 items. An approval pending in the channel talked in - of an agent whose calls
 the user may approve -, and questions put to the user there, are asked as they come (issue 571): in `full` as a choice above the line typed - the
-arrows and Enter, or the number of a choice; Esc puts it aside to type on, and takes it up again -,
+arrows and Enter, the number of a choice or a click on it; Esc puts it aside to type on, and takes
+it up again -,
 in `line` with the choices numbered, the number typed. An approval whose tool suggests the calls
 alike - and which no rule of a place asks a person to decide - offers them from now on, in the
 channel or in the session, as the web UI does. `/help` lists the commands of the channel
