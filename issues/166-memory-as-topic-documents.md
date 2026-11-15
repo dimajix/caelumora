@@ -64,17 +64,54 @@ are in the context, the body is loaded when the skill is used.
 - Documents that are revised in place are what consolidation ([55](55-notes-by-reflection.md)) needs
   as its target.
 
+## What exists
+
+As of 2026-11-15, since this issue was opened, the memory has changed in ways that settle some of
+the questions below and sharpen others (see [MEMORY.md](../docs/MEMORY.md#agent-memory)):
+
+- **A system service of its own.** The memory is the crate `caelumora-memory`, a plugin that keeps
+  and decides and a library with the `agent_memory` component
+  ([518](518-memory-is-reached-through-the-agents-state.md)). An agent's memory is one document of
+  the kind `memory` (`AgentMemory`), kept under the agent's id, owned by its owner, removed when the
+  agent is purged. A work reads what it may recall through the `MemoryReader` the plugin binds to
+  it; a turn reserves numbers through its `MemoryWriter` and stages its changes, which the plugin
+  checks again and commits to the memory as stored, under a lock per agent.
+- **Entries are revised in place.** `update_memory(id, text)` ([302](302-update-note.md)) replaces
+  the text of an entry, which keeps its number; the ledger knows `Add`, `Update`, `Remove` and
+  `Reclassify`. "No revising" above no longer holds - what is still missing is room for more than
+  a line, grouping by topic, and fetching on demand.
+- **Every version carries the label of the turn that wrote it.** A new entry and an updated one are
+  classified as `Situation::label` - the join of what the turn has seen, at most its channel
+  ([168](168-turn-label-as-high-water-mark.md)) -, and every change records where it was made: the
+  channel and its session's privacy then (`MemoryOrigin`, [134](134-session-privacy.md)). An entry
+  is recalled only where its label may be read, decided by the plugin, asked of the policy
+  ([131](131-agent-memory-bypasses-policy.md)); it is changed only where it is recalled, or in the
+  turn that remembered it. For entries the question of
+  [169](169-changing-classified-content.md) is thereby answered by a label per version, not by a
+  fixed container - which works because the memory's prompt part shows every entry, so the turn
+  that updates one has seen it and its label is at least the entry's.
+- **Its texts are in the prompt catalogue** ([57](57-prompt-catalogue.md)),
+  `caelumora-memory/src/prompts.yaml` - where the guidance for the model belongs.
+- **What is read is recorded** as `KnowledgeSource::entity::<AgentMemory>(id, digest)`: the memory
+  as a whole by its digest, once per channel its recalled entries were written in, marked private.
+- **Skills have the shape this issue wants** ([22](22-skill-management.md)): a catalogue of names
+  and descriptions as a prompt part, `load_skill(name)` giving the body into the agent's transcript
+  (`Turn::give`, as a `Given` entry naming the skill), `list_skills` for a catalogue grown since the
+  prompt was built.
+
 ## Considerations
 
 - **The index is derived, not written.** In Claude Code the index is a file of its own, kept in step
   by the model. Here the index line should be part of the document (name and description, as in the
   front matter), and the index the list of the documents that may be recalled. Then it cannot drift,
   and it is filtered by the same rule as the documents.
-- **Confidentiality is the hard part** - decided on the basis of [167](167-origin-and-releases.md)
-  (origin and releases). Today every entry carries the classification of the channel it was written
-  in and is recalled only where that may be read ([131](131-agent-memory-bypasses-policy.md),
-  [133](133-classification-model.md), [134](134-session-privacy.md)). A document written to from
-  several channels mixes their classifications. Options:
+- **Confidentiality is the hard part.** Today every version of an entry carries the label of the
+  turn that wrote it and is recalled only where that may be read (see *What exists*). The History
+  below leans the other way - a document keeps the one classification it was given, as
+  [169](169-changing-classified-content.md) proposes -, while `update_memory`, decided after it
+  ([302](302-update-note.md)), gives each version its writer's label. Documents have to settle this
+  one way: carried over as it is, the label per version is the first option below. A document
+  written to from several channels mixes their classifications. Options:
   - The document's classification is the join of everything written to it, raised by every write
     from a higher channel. Simple and safe, but a single confidential sentence makes the whole topic
     disappear from everywhere below it - and the agent may then start a second document on the same
@@ -86,35 +123,67 @@ are in the context, the body is loaded when the skill is used.
   - Writing to a document from a channel lower than the document is refused, or forks the document.
     The index line itself leaks the topic's existence and has to be classified like the document (at
     least). `reclassify_memory` has to work on whatever unit is chosen.
-- **Changing a document.** The ledger knows `Add`, `Remove` and `Reclassify`. Documents need
-  replacing the text (or a section, or an edit by search and replace, like a file-edit tool) - a
-  `Revise` change, or the ledger's "remove and add again" with the topic as stable identity instead
-  of a number. The chain stays append-only, so earlier versions remain (principle 8 of
-  [19](19-memory-tiers.md)); concurrent writes from turns in several channels need the same care as
-  `reserve_memory_id` today - last writer wins on one document is the case to decide.
+  - **A blind write lowers.** With the label per version, an entry's update is safe today only
+    because the prompt part shows the entry, which raises the turn's label to it. With only the
+    index in the prompt, a turn that replaces a document it has not fetched writes it at its own,
+    possibly lower, label - and what the document said before is lost from where it was readable,
+    or the new version is readable where the old one was not. A write to a document the turn has
+    not read in its current version should be refused, as the file tools write a file only as the
+    agent last knew it (`AgentChannelState::last_known`,
+    [MEMORY.md](../docs/MEMORY.md#recording-what-was-read)).
+- **Changing a document.** The ledger knows `Add`, `Update`, `Remove` and `Reclassify`; `Update`
+  replaces an entry's whole text, which for a document of some length means the model repeats all
+  of it. Wanted besides: replacing a section, named by its heading, or an edit by search and
+  replace, like a file-edit tool - either a change of its own in the ledger, or resolved by the
+  component into the new whole text before it is staged. The chain stays append-only, so earlier
+  versions remain (principle 8 of [19](19-memory-tiers.md)). Concurrent writes: the plugin commits
+  a turn's changes to the memory as stored, under a lock per agent, so nothing is lost on the
+  level of the chain - but a whole text staged in one turn overwrites what another turn wrote to
+  the same document meanwhile. An edit staged as such (a section, a search and replace) can be
+  applied to the current version instead, and refused where it no longer fits; since the plugin
+  commits a turn's changes all or none, one such conflict would discard all of them. If
+  [582](582-a-soul-the-agent-writes-itself.md) chooses the same editing operation for the soul, it
+  is written once, as a function over a Markdown text in `caelumora-domain`.
 - **Naming a document.** A slug the model chooses (`user-preferences`) instead of a number: readable
-  in the index, stable across revisions, unique per agent. Numbers were chosen for notes because the
-  model repeats them; a slug serves that as well.
+  in the index, stable across revisions. Numbers were chosen for notes because the model repeats
+  them; a slug serves that as well. But a slug unique per agent leaks: a turn in a public channel
+  that creates `project-x` and is told the name is taken learns that a document exists it may not
+  recall - the probing that reading other channels rules out. Either names are unique only among
+  the documents recalled in a place - so that two documents of one name may exist, the second
+  option above -, or the identity is a reserved number as now and the slug only what the index
+  shows.
 - **Tools.** Along the lines of `read_memory(topic)`, `write_memory(topic, description, text)`
   (create or replace), `edit_memory(topic, old, new)` perhaps, `forget(topic)`,
   `reclassify_memory(topic, ...)`. All `ToolVisibility::HIDDEN`, as now. Dedicated tools rather than
   generic file tools: Caelumora has no file system for agents, and the tools are where
   classification and staging are enforced.
-- **Recording what was read.** `KnowledgeSource::Memory { agent, digest }` records the whole chain.
-  With an index and fetched documents, the index shown in the prompt and each document read are
-  separate reads; the reference has to name the document (and its version) - the same refinement
-  [58](58-notes-in-every-prompt.md) and [59](59-retrieval-of-notes.md) need.
+- **How a fetched document reaches the model.** As the tool's result, or - as a skill does - given
+  into the transcript (`Turn::give`) as a `Given` entry naming the document. Either way it stands
+  in the transcript as it was when fetched; a later revision from another channel is not seen
+  until it is fetched again, and a compaction has to give again what the agent knew
+  (`KnowledgeRestorer`, [AGENT-TURN.md](../docs/AGENT-TURN.md#compaction)).
+- **Recording what was read.** `KnowledgeSource::entity::<AgentMemory>(id, digest)` records the
+  memory as a whole, by the digest of its chain. With an index and fetched documents, the index
+  shown in the prompt and each document read are separate reads; the reference has to name the
+  document (and its version) - the same refinement [58](58-notes-in-every-prompt.md) and
+  [59](59-retrieval-of-notes.md) need.
 - **Commit, don't write.** A written document is staged and taken over with the turn, like every
   change to memory now. Within the turn, `read_memory` should see the turn's own staged writes
   ([156](156-notes-and-memory-staged-scans.md)).
-- **The same pattern as skills.** Skills ([22](22-skill-management.md)) will want exactly this: an
-  index of names and descriptions in the context, the body loaded by a tool. Worth building the
-  "index in the prompt, body by tool" part once - a prompt part plus a fetch tool over documents
-  with name, description and classification - and using it for both.
+- **The same pattern as skills.** Skills ([22](22-skill-management.md)) now have exactly this: a
+  catalogue of names and descriptions as a prompt part, the body loaded by `load_skill`. The
+  memory's index and fetch tool should be built the same way - the same form of the index, the
+  same way the body reaches the transcript. What they share beyond that is small: a skill is an
+  entity of its own, managed by people, while a memory document is part of the agent's memory,
+  written by the agent, with a classification per version. Whether a common type for "an index
+  line and a body" earns its place is to be judged once both exist side by side.
 - **Replace or add.** Either `agent_memory` is changed to documents (its entries need not be
   migrated, see [108](108-serde-defaults-for-legacy.md)), or a second component is offered beside it
   and chosen per personality, as private notes and memory are ([68](68-notes-in-agent-state.md)).
   Two memories side by side for the same purpose is the less clean option.
+- **Not the agent's character.** What the agent is to be - its manner, its instructions to itself -
+  is not memory: it is in every prompt, everywhere, under rules of its own. It is the soul of
+  [582](582-a-soul-the-agent-writes-itself.md), a component of its own, independent of the memory.
 - **Guidance for the model.** Much of how well Claude Code's memory works is in the instructions:
   when to write, update rather than duplicate, delete what is wrong, do not store what is derivable,
   treat recalled memory as possibly stale. These belong in the component's prompt part or tool
@@ -145,3 +214,11 @@ are in the context, the body is loaded when the skill is used.
   classification it was given; who may change it and what a write must respect are decided in
   [169](169-changing-classified-content.md), which this issue depends on. Left here: what is special
   to memory documents - which classification a new one gets, and who owns it.
+- **2026-11-15** — Brought up to date with the memory as it stands after
+  [302](302-update-note.md) and [518](518-memory-is-reached-through-the-agents-state.md) (*What
+  exists*): entries are revised in place, each version labelled as the turn that wrote it, and the
+  memory is a plugin and a library of its own. The considerations name what that changes: the label
+  per version stands against the fixed classification leaned to above, a blind write to a document
+  not fetched would lower it, a slug unique per agent would reveal documents that may not be
+  recalled, and concurrent edits meet the all-or-none commit. The agent's character is split off
+  into [582](582-a-soul-the-agent-writes-itself.md), independent of the memory.
