@@ -13,7 +13,6 @@ pub use state::{ActorState, ProcessingStateHolder};
 
 use crate::agent::AgentId;
 use crate::approval::ApproverId;
-use crate::mention::handle_of;
 use crate::query::FieldValue;
 use crate::user::UserId;
 use crate::value::name::Name;
@@ -114,13 +113,12 @@ pub struct ActorDescription {
 }
 
 impl ActorDescription {
-    /// The handle it is `@`-mentioned by (`mention::handle_of`), or `None`
-    /// if it cannot be mentioned: one that is neither a user nor an agent,
-    /// and a name that yields none.
+    /// The handle it is `@`-mentioned by (`Name::handle`), or `None` if it cannot be mentioned:
+    /// one that is neither a user nor an agent, and a name that yields none.
     pub fn handle(&self) -> Option<String> {
         matches!(self.id, ActorId::User(_) | ActorId::Agent(_))
-            .then(|| handle_of(self.name.as_str()))
-            .filter(|handle| !handle.is_empty())
+            .then(|| self.name.handle())
+            .flatten()
     }
 
     /// Whether it is a person: a user, not an agent, an approver or the

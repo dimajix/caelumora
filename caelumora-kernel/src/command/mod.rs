@@ -260,12 +260,8 @@ pub(crate) fn named_one<T>(
 ) -> CommandResult<T> {
     let invalid =
         |reason: String| CommandError::InvalidArguments { command: command.to_string(), reason };
-    let mut handles: Vec<String> = among
-        .iter()
-        .map(|m| name(m).handle())
-        .filter(|handle| !handle.is_empty())
-        .map(|handle| format!("@{handle}"))
-        .collect();
+    let mut handles: Vec<String> =
+        among.iter().filter_map(|m| name(m).handle()).map(|handle| format!("@{handle}")).collect();
     handles.sort();
     let mut found = named(among, wanted, &name);
     match found.len() {

@@ -64,10 +64,10 @@ impl Name {
         self.text.as_str()
     }
 
-    /// The handle the name is `@`-mentioned by (see `crate::mention`);
-    /// empty if it has no character a handle may have.
-    pub fn handle(&self) -> String {
-        handle_of(self.as_str())
+    /// The handle the name is `@`-mentioned by (see `crate::mention`); `None` if it has no
+    /// character a handle may have, so that it cannot be mentioned.
+    pub fn handle(&self) -> Option<String> {
+        Some(handle_of(self.as_str())).filter(|handle| !handle.is_empty())
     }
 }
 
@@ -148,7 +148,7 @@ pub fn named<T>(mut among: Vec<T>, text: &str, name: impl Fn(&T) -> &Name) -> Ve
         }
     }
     let handle = handle_of(text);
-    among.into_iter().filter(|m| !handle.is_empty() && name(m).handle() == handle).collect()
+    among.into_iter().filter(|m| name(m).handle().is_some_and(|h| h == handle)).collect()
 }
 
 /// The name of a definition and the scope it lies in (issue 177): what it
@@ -276,7 +276,8 @@ mod tests {
         assert!(name("Jonathan") != "", "a text that is no name is none");
         let set: HashSet<Name> = [name("Sassy"), name("sassy")].into_iter().collect();
         assert_eq!(set.len(), 1);
-        assert_eq!(name("Dr. Who").handle(), "dr-who");
+        assert_eq!(name("Dr. Who").handle().as_deref(), Some("dr-who"));
+        assert_eq!(name("!!!").handle(), None, "nothing left to be mentioned by");
     }
 
     #[test]

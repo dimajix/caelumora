@@ -44,7 +44,7 @@ pub(super) trait ParticipantState: Send + Sync + Debug {
 
     /// The handle it is `@`-mentioned by (`Name::handle`), or `None` if it cannot be mentioned.
     fn handle(&self) -> Option<String> {
-        self.name().map(Name::handle).filter(|handle| !handle.is_empty())
+        self.name().and_then(Name::handle)
     }
 
     /// How it is introduced (issue 176). Public, like the name.

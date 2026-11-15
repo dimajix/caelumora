@@ -32,10 +32,10 @@ impl AgentView {
         &self.agent.name.name
     }
 
-    /// The handle it is `@`-mentioned by (see `caelumora_domain::mention`), or `None` if its name
-    /// yields none - as a participant's (`ParticipantView::handle`).
+    /// The handle it is `@`-mentioned by (`Name::handle`), or `None` if its name yields none - as
+    /// a participant's (`ParticipantView::handle`).
     pub fn handle(&self) -> Option<String> {
-        Some(self.name().handle()).filter(|handle| !handle.is_empty())
+        self.name().handle()
     }
 
     /// The name of its personality, without its scope, and whether it runs here or elsewhere - as

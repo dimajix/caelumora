@@ -455,7 +455,7 @@ impl ChannelLoop {
             .filter(|running| !channel.is_internal(running.actor.id()))
             .map(|ChannelActor { actor: a, .. }| {
                 let name = a.name();
-                let handle = Some(name.handle()).filter(|h| !h.is_empty());
+                let handle = name.handle();
                 ChannelParticipant { id: a.id(), name, handle }
             })
             .collect()

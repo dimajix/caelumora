@@ -295,7 +295,6 @@ export const api = {
     return res.json();
   },
 
-  /** `actorUuid` is the id of the user or agent, without its kind. */
   /** One participant, with who it is (issue 244). */
   async getParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<ChannelParticipant> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`);
@@ -313,6 +312,7 @@ export const api = {
     return res.json();
   },
 
+  /** Removes `actorUuid` - the id of the user or agent, without its kind - from the channel. */
   async removeParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
     const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`, {
       method: 'DELETE',
