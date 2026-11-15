@@ -21,6 +21,7 @@ use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_agents::command::AgentCommandProvider;
 use caelumora_agents::components::channel_history::CHANNEL_HISTORY_KIND;
+use caelumora_agents::components::private_notes::PRIVATE_NOTES_KIND;
 use caelumora_agents::external::{
     ExternalAgent, ExternalAgentResult, ExternalEvent, ExternalStream, OutboundMessage,
 };
@@ -53,7 +54,9 @@ use caelumora_domain::confidentiality::{Classification, Confidentiality, Visibil
 use caelumora_domain::context::ModelProfile;
 use caelumora_domain::external_agent::{ConversationId, TaskId};
 use caelumora_domain::group::GroupId;
-use caelumora_domain::message::{Message, MessageEvent};
+use caelumora_domain::ledger::Change;
+use caelumora_domain::message::{Message, MessageEvent, MessageId};
+use caelumora_domain::note::{NoteId, NoteOrigin};
 use caelumora_domain::query::Query;
 use caelumora_domain::question::{Addressee, Answers, QuestionId, QuestionRequest, Questions};
 use caelumora_domain::removal::Removal;
@@ -947,6 +950,85 @@ async fn an_agents_private_notes_are_its_owners_alone() {
     assert!(
         matches!(notes(world.bob).await, Err(ViewError::Forbidden { .. })),
         "not by bob, who takes part"
+    );
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+}
+
+/// `/private-notes` (issue 574) shows an agent's private notes to its owner alone, as what it saw:
+/// bob, who may write in the channel, neither sees nor asks for it; alice does, and the agent
+/// answers her alone with what it noted for itself.
+#[tokio::test]
+async fn an_agents_private_notes_are_shown_by_command_to_its_owner_alone() {
+    let world = World::with(&[], &[&AgentsLibrary], |registry| {
+        register_scripted(registry, "silent", vec![Message::new(Classification::PUBLIC)]);
+    })
+    .await;
+    let mut noting = Personality {
+        components: ComponentConfig {
+            component_nodes: vec![
+                ComponentDescriptor::new("model", "silent"),
+                ComponentDescriptor::new("private_notes", PRIVATE_NOTES_KIND),
+            ],
+        },
+        ..world.personality("noting", None, &[]).await
+    };
+    world.kernel.entity_stores().personalities.update(&World::system(), &mut noting).await.unwrap();
+    let helper = world.agent("helper", world.alice, &noting).await;
+    let session = world.shared_session(&[helper], &[]).await;
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+
+    let bob = main.user_actor(world.bob).unwrap();
+    let (refused, asked) = world.asked(bob.execute_command("private-notes @helper")).await;
+    let refused = refused.expect_err("not his");
+    assert!(
+        matches!(
+            as_command_error(&refused),
+            CommandError::Unknown(name) if name == "private-notes"
+        ),
+        "unknown to him: {refused}"
+    );
+    assert_eq!(
+        about_agent_commands(&asked),
+        ["bob: ShowAgentCommand(alice's) no"],
+        "never granted to him"
+    );
+
+    // What it noted for itself, as its state keeps it when the session starts again.
+    world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    let states = world.kernel.state_store();
+    let mut state = states.get_agent_channel_state(helper, main.id()).await.unwrap();
+    let noted = Change::Add {
+        id: NoteId(1),
+        text: "secret".to_string(),
+        classification: Classification::CHANNEL_DEFAULT,
+    };
+    state.private_notes.push(noted, NoteOrigin::default(), MessageId::default());
+    states.put_agent_channel_state(helper, main.id(), &mut state).await.unwrap();
+    let session = world.manager.open(&World::as_user(world.alice), session.id()).await.unwrap();
+    let alice = session.channels()[0].user_actor(world.alice).unwrap();
+    let mut hers = alice.watch();
+    // It takes no arguments, which the agent refuses before it begins (`check_arguments`).
+    alice.execute_command("private-notes @helper now").await.expect("hers to ask for");
+    let refused = shown(&mut hers, "CommandFailed").await;
+    assert!(
+        matches!(
+            refused,
+            ActorEvent::CommandFailed { ref reason, turn_id: None, .. }
+                if reason.contains("it takes no arguments")
+        ),
+        "refused, never begun: {refused:?}"
+    );
+    alice.execute_command("private-notes @helper").await.expect("hers, as its owner");
+    let answer = shown(&mut hers, "CommandExecuted").await;
+    assert!(
+        matches!(
+            answer,
+            ActorEvent::CommandExecuted { ref output, ref to, .. }
+                if output.ends_with("In this channel:\n- #1 secret")
+                    && *to == Some(ActorId::User(world.alice))
+        ),
+        "carried out for her alone: {answer:?}"
     );
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
@@ -4038,7 +4120,10 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
 
     let refused = bob.execute_command("seal @helper").await.expect_err("not his");
     assert!(
-        matches!(refused.downcast_ref::<CommandError>(), Some(CommandError::Unknown(name)) if name == "seal"),
+        matches!(
+            refused.downcast_ref::<CommandError>(),
+            Some(CommandError::Unknown(name)) if name == "seal"
+        ),
         "unknown to him: {refused}"
     );
     let mut hers = main.user_actor(world.alice).unwrap().watch();
@@ -4047,9 +4132,10 @@ async fn a_bystander_asks_an_agent_for_its_command_but_not_for_one_of_its_owners
         .execute_command("seal @helper")
         .await
         .expect("hers, as its owner");
-    assert!(
-        matches!(shown(&mut hers, "CommandExecuted").await, ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done")
-    );
+    assert!(matches!(
+        shown(&mut hers, "CommandExecuted").await,
+        ActorEvent::CommandExecuted { ref output, .. } if output == "seal: done"
+    ));
     world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
 }
 

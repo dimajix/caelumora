@@ -43,9 +43,10 @@ argument, else the one whose id begins so (`beginning_with`, issue
 as the channel's are, with the domain's `Command`, and a line is tried against them before it goes
 to the channel: so no name or short form of them may begin, or be the beginning of, one of the
 channel's - which a test holds for the commands a session has by default, not for those a
-configuration, a template or an agent adds. One that takes no arguments refuses them. `/help` lists
-them after the channel's, and tells of one of them, or of a group of them, where the channel knows
-nothing of what is asked or no channel is talked in. `/exit` (`/quit`) belongs to no group, as
+configuration, a template or an agent adds. One that takes no arguments refuses them, by the rule
+of every command ([below](#commands-are-components)). `/help` lists them after the channel's, and
+tells of one of them, or of a group of them, where the channel knows nothing of what is asked or no
+channel is talked in. `/exit` (`/quit`) belongs to no group, as
 `/help` does: ending the program acts on no entity of a channel.
 
 ### Names
@@ -90,8 +91,11 @@ the command a line begins and refusing two that collide are the same whoever run
 an agent's actor keeps its commands in one too. What a command is given to run with - the session,
 or an agent's turn - and who asks whether it may be seen and run are the facet's: the channel's
 commands the executor itself (`ShowCommand`, `ExecuteCommand`), an agent's the channel's door as it
-admits the request (`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). How a command runs is the
-command's business, and there is nothing about running commands to try out.
+admits the request (`ShowAgentCommand`, `ExecuteAgentCommand`, issue 516). A command that names no
+parameters (`Command::usage`) takes no arguments: whoever runs it - the executor once it may be
+run, an agent's actor before it begins, the terminal - refuses them (`check_arguments`), so that
+no command checks it itself. How a command runs is the command's business, and there is nothing
+about running commands to try out.
 
 ### Seeing and running
 
@@ -115,9 +119,10 @@ the right are refused on running them. `/participant list` asks what reading the
 its view does, and `/agent list` what reading the session's agents asks (`SessionView::agents`): an
 agent the issuer may not read is neither listed nor deleted by name. `/agent usage` asks what
 reading the channel asks, as `/participant list` does - nothing of the agents themselves
-(`ParticipantView::usage`). `/channel list` and
-`/channel describe` ask what reading the session's channels asks, and `/channel rename`, `summary`
-and `briefing` what changing the channel they are issued in asks (`UpdateChannel`).
+(`ParticipantView::usage`). `/channel list`, `/channel describe` and `/channel notes` ask what
+reading the session's channels asks - the notes nothing of the agents that wrote them
+(`ChannelView::notes`) -, and `/channel rename`, `summary` and `briefing` what changing the channel
+they are issued in asks (`UpdateChannel`).
 `/channel create` asks what making a channel asks (`SessionLoop::create_channel`: `CreateChannel`,
 `UpdateSession`), with the issuer alone in it, `/channel delete` what reading the channel named and
 deleting it ask (`SessionLoop::delete_channel`: `DeleteChannel`, `UpdateSession`), and
@@ -152,10 +157,10 @@ be named by; `/channel leave` among the agents of the issuer's own among them, `
 among every agent of them; `/agent delete` seeks among the agents `/agent list` lists, taking part
 or not. A
 channel is named by its whole name, which is the only one of its session (`/channel describe`,
-`SessionView::channel_named`); one the issuer may not read is answered like one that does not
-exist. `/channel delete` deletes the channel it is issued in as well, and `/channel leave` takes
-the issuer out of it: a command runs in the issuer's call, not in the channel, so its answer still
-reaches them. `/channel join` alone does not
+`/channel notes`, `SessionView::channel_named`); one the issuer may not read is answered like one
+that does not exist. `/channel delete` deletes the channel it is issued in as well, and
+`/channel leave` takes the issuer out of it: a command runs in the issuer's call, not in the
+channel, so its answer still reaches them. `/channel join` alone does not
 seek among the channels the issuer reads, since who may join a channel reads nothing of it before
 they did ([SECURITY.md](SECURITY.md#access-lists)): it takes the running channel of that name, and
 answers one the issuer may not join - by its access list, or not cleared for it -, or that does not
@@ -213,14 +218,15 @@ external agent alike.
     contexts continued in the agent's name - its owner's rights, the issuer as initiator
     ([SECURITY.md](SECURITY.md#in-whose-name-an-agent-acts)). The agent asks nothing: what reached
     it was admitted. Carried out, the turn is taken over and stored; not carried out - the command
-    failed, or the agent has none of that name -, it is dropped as if it had never begun, and the
-    agent answers `CommandFailed` to the issuer.
+    failed, its arguments were refused, or the agent has none of that name -, it is dropped as if it
+    had never begun, and the agent answers `CommandFailed` to the issuer.
 *   **Begun.** The agent tells the issuer alone that it began, whatever its answer's visibility:
     for `/compact`, the issuer sees it begin and everybody sees it done.
 *   **Answered.** Carried out, the agent answers `CommandExecuted` - to the issuer alone if the
     answer is private, to every user otherwise; not carried out, `CommandFailed` to the issuer
-    alone, with why. A command answers what it did, not what it read: nothing withholds its answer
-    as a tool's result is withheld.
+    alone, with why. Nothing withholds its answer as a tool's result is withheld: a command that
+    answers what it read - `/skills`, `/private-notes`, `/memory` - reads through the readers of
+    the agent's work, which give only what may be told in the channel.
 *   **Recorded.** What was carried out - by an agent, with its arguments and on whose word, or by
     the session (`/agent wakeup`) - goes into the channel's history with what it answered, to whom
     it was answered: the issuer alone for a private answer, every user otherwise (issue 417). A
@@ -245,6 +251,7 @@ external agent alike.
 | `/agent usage` | - | the channel | `agent` | `[agent]` | private | Tells how full the context of each agent taking part in the channel is, or of the one named - its tokens against its size, where known - and the input and output tokens of all its calls; without an agent, adds up the calls of them all. |
 | `/channel list` | - | the channel | `channel` | - | private | Lists the channels of the session the user may read: whether it is this one, whether the user takes part, and its summary. |
 | `/channel describe` | - | the channel | `channel` | `[channel]` | private | Describes this channel, or the one of the session named: its summary, briefing, classification and language. |
+| `/channel notes` | - | the channel | `channel` | `[channel]` | private | Shows what the agents noted in this channel, or in the one of the session named, by their authors - read as the channel's, as a notice board is ([MEMORY.md](MEMORY.md#notes)). |
 | `/channel create` | - | the channel | `channel` | `<name>` | private | Makes a channel of the session, with the user alone in it. |
 | `/channel delete` | - | the channel | `channel` | `<channel>` | private | Deletes the channel of the session named, also this one; it can be restored. |
 | `/channel join` | - | the channel | `channel` | `<channel>` | private | Joins the channel of the session named, if the user may join it. |
@@ -254,6 +261,8 @@ external agent alike.
 | `/channel briefing` | - | the channel | `channel` | `[text]` | private | Says what an agent should know before it works in this channel, its summary kept; without a text, removes it. |
 | `/skill` | - | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | - | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
+| `/private-notes` | - | the agent | `private_notes` | `@agent` | private | For the agent's owners: shows the private notes it recalls here - of this channel, and of the session's other channels as far as they may be told here ([MEMORY.md](MEMORY.md#private-notes)). |
+| `/memory` | - | the agent | `agent_memory` | `@agent` | private | For the agent's owners: shows what it recalls of its memory here, as far as it may be told here ([MEMORY.md](MEMORY.md#agent-memory)). |
 | `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
 | `/exit` | `/quit` | the terminal | - | - | - | Ends the program, the session shut down in order. |
 | `/channel switch` | `/switch` | the terminal | - | `<channel>` | - | Talks in another channel of the session the user takes part in. |

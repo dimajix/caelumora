@@ -55,7 +55,7 @@ impl ChannelCommandProvider for AgentGroupComponent {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         match name.as_str() {
-            list::LIST_COMMAND_NAME => list::execute(args, context).await,
+            list::LIST_COMMAND_NAME => list::execute(context).await,
             create::CREATE_COMMAND_NAME => create::execute(&self.agents, args, context).await,
             delete::DELETE_COMMAND_NAME => delete::execute(&self.agents, args, context).await,
             wakeup::WAKEUP_COMMAND_NAME => wakeup::execute(args, context).await,

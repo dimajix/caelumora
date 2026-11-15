@@ -2,7 +2,7 @@
 
 use crate::command::{command_error, taking_part, CommandContext};
 use anyhow::Error;
-use caelumora_api::command::{CommandError, CommandResult};
+use caelumora_api::command::CommandResult;
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::command::{Command, CommandOutput};
 use caelumora_domain::value::command_name::CommandName;
@@ -24,17 +24,8 @@ pub(super) fn command() -> Command {
 /// Runs `/participant list`: who takes part in the channel now, as the issuer reads it
 /// (`ChannelView::participants`) - a line each, with the handle, whether a user or an agent, and an
 /// agent's personality. Only the issuer is answered.
-pub(super) async fn execute(
-    args: &str,
-    context: &CommandContext<'_>,
-) -> CommandResult<CommandOutput> {
+pub(super) async fn execute(context: &CommandContext<'_>) -> CommandResult<CommandOutput> {
     let failed = |e: Error| command_error(LIST_COMMAND_NAME, &e);
-    if !args.trim().is_empty() {
-        return Err(CommandError::InvalidArguments {
-            command: LIST_COMMAND_NAME.to_string(),
-            reason: "it takes no arguments".to_string(),
-        });
-    }
     let mut text = String::from("Taking part in this channel:\n\n");
     for participant in taking_part(LIST_COMMAND_NAME, context).await? {
         let name = participant.name().map_or("someone who no longer exists", Name::as_str);

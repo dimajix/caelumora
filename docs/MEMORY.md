@@ -63,8 +63,12 @@ published in the channel.
 *   **Prompt part.** A part before the turn's input unless its `position` says otherwise, empty
     when nothing is noted: the agent's own notes first, then those of the other agents of the
     channel.
-*   **Clients** get the notes per agent with the channel's snapshot and read them again when the
-    global stream announces a change (see [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)).
+*   **Read as the channel's.** Though each note is its author's, what is noted in a channel is read
+    as the channel's, as a notice board is: whoever reads the channel reads the notes of its agents
+    (`ChannelView::notes`), nothing asked of the agents themselves. Clients get them per agent with
+    the channel's snapshot and read them again when the global stream announces a change (see
+    [WEB-UI.md](WEB-UI.md#participants-moderator-and-notes)); `/channel notes` shows them (see
+    [COMMANDS.md](COMMANDS.md)).
 
 ## Private notes
 
@@ -85,7 +89,11 @@ public notes.
 *   **Hidden calls.** The tools are hidden, so their calls never reach the channel. "Private" means
     private from other agents and other users, not from the agent's owner, who sees them in the
     context panel and - from every channel of the session they may read - in the private notes
-    panel (see [WEB-UI.md](WEB-UI.md)).
+    panel (see [WEB-UI.md](WEB-UI.md)); `/private-notes @agent`, a command of the agent for its
+    owners alone, shows them what the prompt part shows the model (see
+    [COMMANDS.md](COMMANDS.md#commands-of-an-agent)) - read through the agent, as the agent reads
+    them, so also of a channel it left that the owner may not read, which the panel, reading
+    through the channels, leaves out.
 
 ## Agent memory
 
@@ -101,13 +109,16 @@ skills.
     channel's session then. It is read and written in the agent's name, each read and write asked
     of the policy as for any document, and removed when the agent is purged.
 *   **Tools.** `remember(text)`, `update_memory(id, text)` and `forget(id)`, all hidden: like
-    private notes, memory is the agent's own, seen by its owner in the context panel only.
+    private notes, memory is the agent's own, seen by its owner in the context panel, and through
+    `/memory @agent`, a command of the agent for its owners alone, which shows what may be recalled
+    where it is carried out, as the prompt part shows it (see
+    [COMMANDS.md](COMMANDS.md#commands-of-an-agent)).
 *   **Reached as a system service.** A work reads what it may recall through the `MemoryReader` of
     its situation, and a turn reserves numbers through the `MemoryWriter` it is given and stages its
     changes, which the plugin commits when the turn completes (see
     [PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Both are bound to the
     work's session as it reads it; a turn that reaches none neither recalls nor remembers.
-*   *Where it is recalled.** Every entry carries the label of the turn that wrote it
+*   **Where it is recalled.** Every entry carries the label of the turn that wrote it
     ([CONFIDENTIALITY.md](CONFIDENTIALITY.md#what-a-turn-writes-as)) and is recalled only where that
     may be read. The plugin decides it as it makes the reader, in the context of the work - the
     agent's, with its owner's rights - once per channel the entries come from; the agent side is

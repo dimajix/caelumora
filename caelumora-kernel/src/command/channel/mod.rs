@@ -1,7 +1,7 @@
 //! The built-in command group `channel` (issue 560): the commands on the channels of a session -
-//! `channel list`, `describe`, `create`, `delete`, `join`, `leave`, `rename`, `summary` and
-//! `briefing` -, contributed by one component, one file per command. Those that change or leave a
-//! channel act on the one they are issued in; those that make, delete or join one name it.
+//! `channel list`, `describe`, `notes`, `create`, `delete`, `join`, `leave`, `rename`, `summary`
+//! and `briefing` -, contributed by one component, one file per command. Those that change or
+//! leave a channel act on the one they are issued in; those that make, delete or join one name it.
 
 mod briefing;
 mod create;
@@ -10,6 +10,7 @@ mod describe;
 mod join;
 mod leave;
 mod list;
+mod notes;
 mod rename;
 mod summary;
 
@@ -25,8 +26,8 @@ use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
 /// The component of the command group `channel`: `/channel list`, `/channel describe`,
-/// `/channel create`, `/channel delete`, `/channel join`, `/channel leave`, `/channel rename`,
-/// `/channel summary` and `/channel briefing`.
+/// `/channel notes`, `/channel create`, `/channel delete`, `/channel join`, `/channel leave`,
+/// `/channel rename`, `/channel summary` and `/channel briefing`.
 #[derive(Debug)]
 pub(crate) struct ChannelGroupComponent;
 
@@ -35,6 +36,7 @@ impl ProvidesCommands for ChannelGroupComponent {
         vec![
             list::command(),
             describe::command(),
+            notes::command(),
             create::command(),
             delete::command(),
             join::command(),
@@ -55,8 +57,9 @@ impl ChannelCommandProvider for ChannelGroupComponent {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         match name.as_str() {
-            list::LIST_COMMAND_NAME => list::execute(args, context).await,
+            list::LIST_COMMAND_NAME => list::execute(context).await,
             describe::DESCRIBE_COMMAND_NAME => describe::execute(args, context).await,
+            notes::NOTES_COMMAND_NAME => notes::execute(args, context).await,
             create::CREATE_COMMAND_NAME => create::execute(args, context).await,
             delete::DELETE_COMMAND_NAME => delete::execute(args, context).await,
             join::JOIN_COMMAND_NAME => join::execute(args, context).await,
@@ -66,6 +69,22 @@ impl ChannelCommandProvider for ChannelGroupComponent {
             briefing::BRIEFING_COMMAND_NAME => briefing::execute(args, context).await,
             _ => Err(CommandError::Unknown(name.to_string())),
         }
+    }
+}
+
+/// The channel the command `command` is issued in, or the one of the session `args` names
+/// (`channel_named`), as the issuer reads it.
+///
+/// # Errors
+/// As `CommandContext::channel_view` and `channel_named`.
+async fn this_or_named(
+    command: &str,
+    args: &str,
+    context: &CommandContext<'_>,
+) -> CommandResult<ChannelView> {
+    match args.trim() {
+        "" => context.channel_view(command).await,
+        wanted => channel_named(command, wanted, context).await,
     }
 }
 

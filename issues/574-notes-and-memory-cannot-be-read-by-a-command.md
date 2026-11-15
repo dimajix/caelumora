@@ -1,6 +1,6 @@
 # 574 — An agent's notes and memory cannot be read by a command
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -35,6 +35,37 @@ cannot be looked up at all.
 *   **Recorded as read?** What an agent reads is recorded as knowledge; what a person reads by a
     command is not part of any turn.
 
+Decided (2026-11-15), with the maintainer, in three steps. Notes stay the agent's that wrote them
+([19](19-memory-tiers.md), principle 2), but what is noted in a channel is read as the channel's,
+as a notice board is: every reader of the channel sees it, only who pinned a note takes it down.
+What an agent keeps for itself - its private notes and its memory - is read by commands of the
+agent, as its owner's.
+
+1.  **`/channel notes [channel]`**, a command of the channel in the group `channel`, answered to
+    the issuer alone: the notes the agents published in the channel, or in the one of the session
+    named, by their authors, read through `ChannelView::notes`.
+2.  **The private notes**, by a command of the agent that the component `private_notes` carries
+    out, for the agent's owners alone (`owners_only`), read as its turn reads them.
+3.  **The memory**, by `/memory @agent`, a command of the agent that the component `agent_memory`
+    carries out, for the agent's owners alone: what of it may be recalled in the channel, as its
+    `MemoryReader` gives it. A command of the channel that the memory's plugin contributes was
+    weighed and set aside: the commands of a session are configured as components of the kernel's
+    kinds, and the plugin would need a way of its own into them, and the kernel's helpers of the
+    commands made public.
+
+4.  **Tidying what the steps came across**, added at the maintainer's word after step 2: the
+    prompt part of `private_notes` leaves out channels without notes, which
+    `SessionReader::own_private_notes` gives none of (`render`); two `matches!` of the agents'
+    security suite are laid out past 100 characters; CONFIDENTIALITY.md names the context panel
+    alone as where an agent's owner sees its private notes. After step 3 besides: a heading of
+    MEMORY.md is not bold; the kernel drops why the session of a work could not be read for its
+    readers and writers (`extension_of`) without logging it; and seven commands check alike that
+    they were given no arguments, which whoever runs a command checks once instead
+    (`caelumora_api::command::check_arguments`).
+
+What a person reads by such a command is not recorded as knowledge: it is part of no turn's
+context.
+
 ## Done when
 
 - A command shows the notes an agent published in the channel, and to its owner its private notes.
@@ -43,3 +74,28 @@ cannot be looked up at all.
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-15** - Decided with the maintainer before the work began, in three steps: `/channel notes`
+for what is noted in a channel, read as the channel's; commands of the agent for its private notes
+and for its memory.
+
+**2026-11-15** - Step 1 done: `/channel notes [channel]` (`command/channel/notes.rs`) reads
+`ChannelView::notes`, of the channel issued in or the one named, which it finds as
+`/channel describe` does (`command::channel::this_or_named`). A user reads a channel whole or not
+at all, so the command meets no channel read entry by entry.
+
+**2026-11-15** - Step 2 done: `/private-notes @agent`, a command of the agent that `private_notes`
+carries out for its owners alone, shows what its prompt part gives the model - the private notes of
+the channel, numbered, and of the session's other channels as far as they may be copied there - as
+one function gives both (`recalled`).
+
+**2026-11-15** - Step 3 done: `/memory @agent`, a command of the agent that `agent_memory` carries
+out for its owners alone (`component/command.rs` of `caelumora-memory`), shows what its
+`MemoryReader` gives the work - what may be recalled in the channel -, as the prompt part does.
+
+**2026-11-15** - Step 4 done. Decided with the maintainer beside: that a command takes no arguments
+is checked not by each command, but by whoever runs it, from what it says of itself - a command
+naming no parameters (`Command::usage`) takes none (`caelumora_api::command::check_arguments`), as
+the terminal already checked its own -, so that `/skills` also refuses what it was given; a
+`no_arguments` called by every command was weighed first. `extension_of` logs why the session of a
+work could not be read.

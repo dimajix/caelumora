@@ -61,7 +61,8 @@ pub trait SessionReader: Send + Sync {
     /// The channels of the session the reader may read.
     async fn channels(&self) -> Vec<Box<dyn ChannelReader>>;
 
-    /// The reader's private notes in the session's other channels (issue 255).
+    /// The reader's private notes in the session's other channels (issue 255), as far as they may
+    /// be copied to where it reads from; channels with none of them are left out.
     async fn own_private_notes(&self) -> Vec<PrivateNotesElsewhere>;
 
     /// How session `id` stands for the flow rule now, `None` if it is gone (issue 134).

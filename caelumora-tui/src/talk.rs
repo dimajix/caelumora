@@ -10,7 +10,7 @@ use crate::printed::{ErrorKind, Printed};
 use crate::sessions::{listing, Opening, Sessions, SessionsError};
 use crate::under_way::UnderWay;
 use anyhow::Result;
-use caelumora_api::command::CommandError;
+use caelumora_api::command::{check_arguments, CommandError};
 use caelumora_domain::approval::{ApprovalRequest, ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_domain::command::{parse_input, UserInput};
 use caelumora_domain::question::{Question, QuestionRequest, Response};
@@ -255,12 +255,10 @@ impl Talk {
             UserInput::Message(_) => None,
         };
         if let Some((terminal, args)) = terminal {
-            let command = terminal.command();
-            if command.usage.is_none() && !args.is_empty() {
-                let message = format!("/{} takes no arguments", command.name);
+            if let Err(e) = check_arguments(&terminal.command(), args) {
                 return Ok(Handled::Printed(vec![Printed::Error {
                     kind: ErrorKind::Failed,
-                    message,
+                    message: e.to_string(),
                 }]));
             }
         }
@@ -833,7 +831,7 @@ mod tests {
             assert!(matches!(handled, Handled::Exit), "{exit}");
         }
         let refused = typed(&mut talk, "/exit now").await;
-        assert_eq!(refused, ["Error: /exit takes no arguments"]);
+        assert_eq!(refused, ["Error: /exit: it takes no arguments"]);
         assert!(typed(&mut talk, "exit").await.is_empty(), "said");
     }
 
