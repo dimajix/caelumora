@@ -4,7 +4,9 @@ use super::channel_named;
 use crate::command::{command_error, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::value::command_name::CommandName;
 
 const DELETE_COMMAND_NAME: &str = "channel delete";
@@ -22,7 +24,7 @@ impl DeleteCommand {
             description:
                 "Deletes the channel of this session named, also this one; it can be restored."
                     .to_string(),
-            parameters: vec![CommandParameter::required("channel")],
+            parameters: vec![CommandParameter::required("channel").of_kind(ParameterKind::Channel)],
             owners_only: false,
         })
     }

@@ -126,8 +126,8 @@ pub fn help_topic(args: &str) -> Result<Option<CommandName>, ValueError> {
 
 /// A parameter of a command (issue 583): what it is called, whether it must be given, and the word
 /// that introduces it, if one does - `as` of `/agent create <personality> [as <name>]`. The last a
-/// command takes is the rest of the line, since what it names may hold spaces. What value it takes
-/// is the command's to read (issue 579 will describe it).
+/// command takes is the rest of the line, since what it names may hold spaces. What it takes is its
+/// kind (issue 579), which a frontend may complete it from; how its value is read is the command's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandParameter {
     /// What it is called, in a list of commands and where it is missing.
@@ -137,22 +137,66 @@ pub struct CommandParameter {
     /// The word it is introduced by, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyword: Option<String>,
+    /// What it takes; text unless named.
+    #[serde(default, skip_serializing_if = "ParameterKind::is_text")]
+    pub kind: ParameterKind,
+}
+
+/// What a parameter of a command takes (issue 579): what a frontend may complete it from. How the
+/// command reads it is its own - one that takes someone takes a handle or a name alike
+/// (`named_one`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterKind {
+    /// Anything written: nothing to complete it from.
+    #[default]
+    Text,
+    /// A participant of the channel, by its handle.
+    Participant,
+    /// An agent taking part in the channel, by its handle: what a command acts on in the channel.
+    Agent,
+    /// An agent of the session, as `/agent list` shows it, by its handle: what a command acts on
+    /// whether it takes part in the channel or not.
+    SessionAgent,
+    /// A channel of the session, by its name.
+    Channel,
+    /// A personality, by its name.
+    Personality,
+    /// A command or a group of commands, by its name.
+    Command,
+    /// A session of the terminal's directory, by its id.
+    Session,
+    /// A session template, by its name.
+    Template,
+}
+
+impl ParameterKind {
+    /// Whether it is text, which nothing completes - and is left out where a parameter is written
+    /// down.
+    fn is_text(&self) -> bool {
+        *self == ParameterKind::Text
+    }
 }
 
 impl CommandParameter {
     /// The parameter `name` a command cannot do without.
     pub fn required(name: &str) -> Self {
-        Self { name: name.to_string(), required: true, keyword: None }
+        Self { name: name.to_string(), required: true, keyword: None, kind: ParameterKind::Text }
     }
 
     /// The parameter `name` a command does without.
     pub fn optional(name: &str) -> Self {
-        Self { name: name.to_string(), required: false, keyword: None }
+        Self { name: name.to_string(), required: false, keyword: None, kind: ParameterKind::Text }
     }
 
     /// The parameter, introduced by `keyword`.
     pub fn introduced_by(self, keyword: &str) -> Self {
         Self { keyword: Some(keyword.to_string()), ..self }
+    }
+
+    /// The parameter, taking what `kind` names.
+    pub fn of_kind(self, kind: ParameterKind) -> Self {
+        Self { kind, ..self }
     }
 
     /// How it is written in a list of commands: `<name>` if it is required, `[name]` if not; with
@@ -329,6 +373,24 @@ mod tests {
         assert_eq!(written(CommandParameter::optional("agent")), "[agent]");
         assert_eq!(written(CommandParameter::required("to").introduced_by("as")), "as <to>");
         assert_eq!(named("help", &[]).usage(), None, "none taken");
+    }
+
+    /// Issue 579: what a parameter takes is told by its kind, and text - which nothing completes -
+    /// is left out where it is written down, as it is read where it is missing.
+    #[test]
+    fn a_parameter_tells_what_it_takes_and_text_unless_named() {
+        let channel = CommandParameter::optional("channel").of_kind(ParameterKind::Channel);
+        let written = serde_json::to_value(&channel).unwrap();
+        assert_eq!(written["kind"], "channel");
+        assert_eq!(serde_json::from_value::<CommandParameter>(written).unwrap(), channel);
+        let text = serde_json::to_value(CommandParameter::required("name")).unwrap();
+        assert!(text.get("kind").is_none(), "text is left out: {text}");
+        assert_eq!(
+            serde_json::from_value::<CommandParameter>(text).unwrap().kind,
+            ParameterKind::Text,
+            "and read where it is missing"
+        );
+        assert_eq!(channel.written(), "[channel]", "it is not written in a list of commands");
     }
 
     #[test]

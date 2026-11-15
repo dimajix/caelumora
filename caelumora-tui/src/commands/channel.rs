@@ -4,7 +4,7 @@ use super::TerminalCommand;
 use crate::talk::{Handled, Talk};
 use async_trait::async_trait;
 use caelumora_api::command::Command;
-use caelumora_domain::command::{CommandDescription, CommandParameter};
+use caelumora_domain::command::{CommandDescription, CommandParameter, ParameterKind};
 use caelumora_domain::value::command_name::CommandName;
 
 /// `/channel switch [channel]` (`/switch`): talks in another channel the user takes part in;
@@ -19,7 +19,7 @@ impl SwitchCommand {
             name: CommandName::fixed("channel switch"),
             aliases: vec![CommandName::fixed("switch")],
             description: "Talks in another channel of the session you take part in.".to_string(),
-            parameters: vec![CommandParameter::optional("channel")],
+            parameters: vec![CommandParameter::optional("channel").of_kind(ParameterKind::Channel)],
             owners_only: false,
         })
     }

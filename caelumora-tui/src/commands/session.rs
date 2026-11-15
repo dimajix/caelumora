@@ -6,7 +6,7 @@ use crate::sessions::Opening;
 use crate::talk::{Handled, Talk};
 use async_trait::async_trait;
 use caelumora_api::command::Command;
-use caelumora_domain::command::{CommandDescription, CommandParameter};
+use caelumora_domain::command::{CommandDescription, CommandParameter, ParameterKind};
 use caelumora_domain::value::command_name::CommandName;
 
 /// `/session list`: lists the sessions of the directory.
@@ -53,7 +53,9 @@ impl NewCommand {
             description:
                 "Starts a session from the template named, or the program's, and talks in it."
                     .to_string(),
-            parameters: vec![CommandParameter::optional("template")],
+            parameters: vec![
+                CommandParameter::optional("template").of_kind(ParameterKind::Template)
+            ],
             owners_only: false,
         })
     }
@@ -86,7 +88,7 @@ impl ResumeCommand {
             description:
                 "Continues the session of this directory whose id begins so, and talks in it."
                     .to_string(),
-            parameters: vec![CommandParameter::required("id")],
+            parameters: vec![CommandParameter::required("id").of_kind(ParameterKind::Session)],
             owners_only: false,
         })
     }
@@ -116,7 +118,7 @@ impl DeleteCommand {
             name: CommandName::fixed("session delete"),
             aliases: Vec::new(),
             description: "Deletes the session of this directory whose id begins so, not the one talked in; it can be restored.".to_string(),
-            parameters: vec![CommandParameter::required("id")],
+            parameters: vec![CommandParameter::required("id").of_kind(ParameterKind::Session)],
             owners_only: false,
         })
     }

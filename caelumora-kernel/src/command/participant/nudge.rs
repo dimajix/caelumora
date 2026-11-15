@@ -4,7 +4,9 @@ use crate::channel::ChannelError;
 use crate::command::{command_error, named_one, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::value::command_name::CommandName;
 
 const NUDGE_COMMAND_NAME: &str = "participant nudge";
@@ -20,8 +22,12 @@ impl NudgeCommand {
         Self(CommandDescription {
             name: CommandName::fixed(NUDGE_COMMAND_NAME),
             aliases: vec![CommandName::fixed("nudge")],
-            description: "Asks the participant named to respond to the conversation as it stands, without a message.".to_string(),
-            parameters: vec![CommandParameter::required("participant")],
+            description: "Asks the participant named to respond to the conversation as it stands, \
+                          without a message."
+                .to_string(),
+            parameters: vec![
+                CommandParameter::required("participant").of_kind(ParameterKind::Participant)
+            ],
             owners_only: false,
         })
     }

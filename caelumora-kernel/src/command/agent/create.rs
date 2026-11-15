@@ -6,7 +6,9 @@ use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_api::reader::ViewError;
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
@@ -31,7 +33,7 @@ impl CreateCommand {
                 "Makes an agent of the personality named, in this session, named after it unless named."
                     .to_string(),
             parameters: vec![
-                CommandParameter::required("personality"),
+                CommandParameter::required("personality").of_kind(ParameterKind::Personality),
                 CommandParameter::optional("name").introduced_by("as"),
             ],
             owners_only: false,

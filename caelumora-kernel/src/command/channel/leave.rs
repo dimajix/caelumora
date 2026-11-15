@@ -6,7 +6,9 @@ use crate::command::{
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::{Command, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
+use caelumora_domain::command::{
+    CommandDescription, CommandOutput, CommandParameter, ParameterKind,
+};
 use caelumora_domain::value::command_name::CommandName;
 
 const LEAVE_COMMAND_NAME: &str = "channel leave";
@@ -25,7 +27,7 @@ impl LeaveCommand {
                 "Leaves this channel, or takes the agent of yours named out of it; you stay \
                           in the session."
                     .to_string(),
-            parameters: vec![CommandParameter::optional("agent")],
+            parameters: vec![CommandParameter::optional("agent").of_kind(ParameterKind::Agent)],
             owners_only: false,
         })
     }

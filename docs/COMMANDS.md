@@ -102,15 +102,17 @@ collide are the same whoever runs the commands, and an agent's actor keeps its c
 What a command is given to run with - the session, or an agent's turn - and who asks whether it may
 be seen and run are its kind's: the channel's commands the executor itself (`ShowCommand`,
 `ExecuteCommand`), an agent's the channel's door as it admits the request (`ShowAgentCommand`,
-`ExecuteAgentCommand`, issue 516). What a command takes is described by its parameters (issue
-583, `CommandParameter`): each with its name, whether it is required, and the word that introduces
-it, if one does - `as` of `/agent create <personality> [as <name>]` -, the last taking the rest of
-the line. `/help` and the web UI write them from that (`CommandDescription::usage`). A command
-that names no parameters is not run with arguments, and one with a required parameter not without
-any: whoever runs it - the executor once it may be run, an agent's actor before it begins, the
-terminal - refuses it so (`check_arguments`), so that no command checks it itself. What the
-arguments name - whom, which channel - the command reads itself. How a command runs is the
-command's business, and there is nothing about running commands to try out.
+`ExecuteAgentCommand`, issue 516). What a command takes is described by its parameters (issue 583,
+`CommandParameter`): each with its name, whether it is required, the word that introduces it, if one
+does - `as` of `/agent create <personality> [as <name>]` -, the last taking the rest of the line,
+and what it takes (`ParameterKind`, issue 579) - text, a participant or an agent by its handle, an
+agent of the session, a channel, a personality, a command, a session or a template -, which a
+frontend may complete it from. `/help` and the web UI write them from that
+(`CommandDescription::usage`). A command that names no parameters is not run with arguments, and one
+with a required parameter not without any: whoever runs it - the executor once it may be run, an
+agent's actor before it begins, the terminal - refuses it so (`check_arguments`), so that no command
+checks it itself. What the arguments name - whom, which channel - the command reads itself. How a
+command runs is the command's business, and there is nothing about running commands to try out.
 
 ### Seeing and running
 
