@@ -107,14 +107,14 @@ pub trait HistoryStore: Debug + Send + Sync {
     async fn rebuild(&self, channel: ChannelId) -> StoreResult<()>;
 }
 
-/// Who took part in a channel when (issue 417): each participant's ranges
-/// of positions in which it was given what went to every participant, oldest
-/// first, each from the `from` of the `HistoryShared` before its
-/// `ParticipantJoined`, or else from its join, up to the `until` of its
-/// `ParticipantLeft`.
-/// Derived from the chain beside the items, by `take`, and rebuilt with them;
-/// kept whole beside the chain - also by a database (issue 04), which would
-/// otherwise rebuild in SQL what a share before a join gives.
+/// Who took part in a channel when (issue 417): each participant's ranges of positions in which it
+/// was given what went to every participant, oldest first, each from the `from` of the
+/// `HistoryShared` before its `ParticipantJoined`, or else from its join, up to the `until` of its
+/// `ParticipantLeft`. At most one range of a participant is open: a join recorded while it is - an
+/// actor started again without a leave recorded before, issue 568 - continues it.
+/// Derived from the chain beside the items, by `take`, and rebuilt with them; kept whole beside the
+/// chain - also by a database (issue 04), which would otherwise rebuild in SQL what a share before
+/// a join gives.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Attendance {
     ranges: Vec<(ActorId, Range<Position>)>,
@@ -135,10 +135,10 @@ impl Attendance {
         attendance
     }
 
-    /// Takes `node`, the next of the chain, in - once: a node before the end
-    /// of what was taken in is not taken in again. A share is kept for the
-    /// join that follows it, a join opens a range, a leave closes the open
-    /// one of its participant.
+    /// Takes `node`, the next of the chain, in - once: a node before the end of what was taken in
+    /// is not taken in again. A share is kept for the join that follows it, a join opens a range -
+    /// or, while one of its participant is open, moves its start back to where the join's share
+    /// begins, if that lies before -, a leave closes the open one.
     pub fn take(&mut self, node: &Node<Recorded>) {
         if node.seq < self.end {
             return;
@@ -155,20 +155,27 @@ impl Attendance {
                     .iter()
                     .position(|(of, _)| of == participant)
                     .map_or(node.seq, |at| self.shared.remove(at).1);
-                self.ranges.push((*participant, from..Position::MAX));
+                match self.open_range(*participant) {
+                    Some(open) => open.start = open.start.min(from),
+                    None => self.ranges.push((*participant, from..Position::MAX)),
+                }
             }
             HistoryEntry::ParticipantLeft { participant, until, .. } => {
-                if let Some((_, range)) = self
-                    .ranges
-                    .iter_mut()
-                    .rev()
-                    .find(|(of, range)| of == participant && range.end == Position::MAX)
-                {
-                    range.end = (*until).max(range.start);
+                if let Some(open) = self.open_range(*participant) {
+                    open.end = (*until).max(open.start);
                 }
             }
             _ => {}
         }
+    }
+
+    /// The open range of `participant`, if it takes part.
+    fn open_range(&mut self, participant: ActorId) -> Option<&mut Range<Position>> {
+        self.ranges
+            .iter_mut()
+            .rev()
+            .find(|(of, range)| *of == participant && range.end == Position::MAX)
+            .map(|(_, range)| range)
     }
 
     /// The ranges of `participant`, oldest first.
@@ -421,6 +428,17 @@ mod tests {
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::user::UserId;
     use chrono::Utc;
+
+    /// That `participant` joined, by their own act.
+    fn joined(participant: ActorId) -> HistoryEntry {
+        HistoryEntry::ParticipantJoined {
+            participant,
+            name: String::new(),
+            by: participant,
+            by_name: String::new(),
+            at: Utc::now(),
+        }
+    }
 
     fn label(item: &HistoryEntry) -> String {
         match item.said() {
@@ -803,13 +821,6 @@ mod tests {
     fn what_went_to_every_participant_is_given_to_who_was_one_then() {
         use caelumora_domain::user::UserId;
         let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
-        let joined = |participant| HistoryEntry::ParticipantJoined {
-            participant,
-            name: String::new(),
-            by: participant,
-            by_name: String::new(),
-            at: Utc::now(),
-        };
         let said = |n: u128, by: ActorId| HistoryEntry::Said {
             message: Message { sender_id: by, ..make_message(id(n)) },
         };
@@ -886,5 +897,56 @@ mod tests {
             attendance.of_participant(bob),
             "an entry taken in twice changes nothing"
         );
+    }
+
+    /// Issue 568: a join recorded while its participant's range is open - its actor started again
+    /// without a leave recorded before - opens no second range, and moves the start of the open one
+    /// back only where its share reaches further; the leave closes the one range.
+    #[test]
+    fn a_join_while_its_participant_takes_part_continues_its_range() {
+        let (alice, bob) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let said = |n: u128| HistoryEntry::Said {
+            message: Message { sender_id: bob, ..make_message(id(n)) },
+        };
+        let mut history = History::default();
+        for (entry, sender) in [
+            (joined(bob), bob),     // 0
+            (said(1), bob),         // 1
+            (joined(alice), alice), // 2
+            (said(2), bob),         // 3
+            (joined(alice), alice), // 4: nothing shared, the range goes on from 2
+            (
+                HistoryEntry::HistoryShared {
+                    participant: alice,
+                    from: Position::new(1),
+                    by: bob,
+                    by_name: String::new(),
+                    at: Utc::now(),
+                },
+                ActorId::System,
+            ), // 5
+            (joined(alice), alice), // 6: what was shared reaches back to 1
+            (said(3), bob),         // 7
+            (
+                HistoryEntry::ParticipantLeft {
+                    participant: alice,
+                    name: String::new(),
+                    by: alice,
+                    by_name: String::new(),
+                    until: Position::new(8),
+                    at: Utc::now(),
+                },
+                alice,
+            ), // 8
+            (said(4), bob),         // 9: after she left
+        ] {
+            assert!(history.enter(Recorded::new(entry, sender, Audience::Everybody)));
+        }
+        let ranges: Vec<_> = Attendance::of(history.all_entries())
+            .of_participant(alice)
+            .into_iter()
+            .map(|range| (range.start.get(), range.end.get()))
+            .collect();
+        assert_eq!(ranges, [(1, 8)], "one range, from what was shared to where she left");
     }
 }

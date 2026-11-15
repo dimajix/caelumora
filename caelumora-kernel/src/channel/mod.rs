@@ -191,15 +191,13 @@ async fn stopped(tasks: &[TaskTracker]) -> bool {
 /// A change to the actors a running channel runs (issue 46), carried out by
 /// `run`, which owns their tasks.
 enum ActorChange {
-    /// The actor to start - every actor of the channel is started so, as
-    /// the channel is built and as a participant joins -, from which
-    /// position on it is given the history - `None`: what is said from its
-    /// start on, a founder's (issue 420) or an actor's that starts again with
-    /// its channel -, and on whose behalf it joined, in whose name `run`
-    /// announces it as it starts it (`ParticipantJoined`, issue 408), with
-    /// what it was given (`HistoryShared`, issue 417) - `None` for an actor
-    /// that starts again with its channel, or an internal one, which join
-    /// nothing.
+    /// The actor to start - every actor of the channel is started so, as the channel is built and
+    /// as a participant joins -, from which position on it is given the history - `None`: what is
+    /// said from its start on, a founder's (issue 420), a newcomer's granted no message (issue 568)
+    /// or an actor's that starts again with its channel -, and on whose behalf it joined, in whose
+    /// name `run` announces it as it starts it (`ParticipantJoined`, issue 408), with what it was
+    /// given (`HistoryShared`, issue 417) - `None` for an actor that starts again with its channel,
+    /// or an internal one, which join nothing.
     Start(ChannelActor, Option<Position>, Option<SecurityContext>),
     /// The actor that leaves, what it was called as it left, and on whose
     /// behalf it was removed - in whose name `run` announces it once its

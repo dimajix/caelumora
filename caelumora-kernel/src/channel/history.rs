@@ -30,7 +30,7 @@ async fn start_of(
     channel: ChannelId,
     access: HistoryAccess,
     now: DateTime<Utc>,
-) -> StoreResult<Option<HistoryStart>> {
+) -> StoreResult<HistoryStart> {
     let mut newest: Vec<Message> = Vec::new();
     let mut before = None;
     while !access.read_enough(&newest, now) {
@@ -69,23 +69,24 @@ impl ChannelLoop {
         }
     }
 
-    /// The position from which on a participant granted `access` now sees
-    /// the history (`start_of`, issue 417): fixed as it joins, so that what
-    /// it is given does not move with what is said after. If the message
-    /// the view begins at is gone meanwhile, from the history's end, so that
-    /// nothing is seen rather than more than was granted.
+    /// The position from which on a participant granted `access` now sees the history (`start_of`,
+    /// issue 417): fixed as it joins, so that what it is given does not move with what is said
+    /// after. `None` - what is said from its start on, as a founder (`ActorChange::Start`) - where
+    /// the view begins at the join (`HistoryStart::Join`), and where the message it begins at is
+    /// gone meanwhile, so that nothing is seen rather than more than was granted.
     ///
     /// # Errors
     /// If the store cannot be read.
-    pub(crate) async fn history_start(&self, access: HistoryAccess) -> StoreResult<Position> {
-        let Some(start) =
-            start_of(self.history_store.as_ref(), self.id, access, Utc::now()).await?
-        else {
-            return Ok(Position::START);
-        };
-        Ok(match self.history_store.said(self.id, &Reader::Channel, start.message()).await? {
-            Some((at, _)) => start.from(at),
-            None => self.state.lock().await.history.end(),
+    pub(crate) async fn history_start(
+        &self,
+        access: HistoryAccess,
+    ) -> StoreResult<Option<Position>> {
+        Ok(match start_of(self.history_store.as_ref(), self.id, access, Utc::now()).await? {
+            HistoryStart::Beginning => Some(Position::START),
+            HistoryStart::From(message) => {
+                self.history_store.said(self.id, &Reader::Channel, message).await?.map(|(at, _)| at)
+            }
+            HistoryStart::Join => None,
         })
     }
 

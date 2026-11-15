@@ -166,7 +166,7 @@ impl ChannelLoop {
 
         let from = match entry {
             Entry::Founding => None,
-            Entry::Added | Entry::Joining => Some(self.history_start(history).await?),
+            Entry::Added | Entry::Joining => self.history_start(history).await?,
         };
         let before = self.channel.add_participant(&storing, found.clone()).await?;
 
@@ -282,13 +282,14 @@ impl ChannelLoop {
     /// an actor that did not rest and for which no leave was announced: left out as the channel
     /// started, since what it runs with - its personality, its components - was withdrawn, or one
     /// whose start failed as it was added and whose rollback failed too. For it this join is one
-    /// too many, on the bus and in the history. Rare - it needs what it runs with given back while
-    /// the session runs, then one of the occasions that have the agents followed; telling it apart
-    /// would need the channel to keep why it left out whom (issue 564). One that cannot be read or
-    /// run is logged and left as it is. Of a running one only whether it exists is asked, not again
-    /// whether it may run. One change of a participant at a time (`changing`, issue 564), as
-    /// `take_in` makes it: an agent being taken in or let go meanwhile is looked at once that is
-    /// done, and not at all once it is no longer listed.
+    /// too many on the bus; the history records it, since its actor starts only now, and keeps the
+    /// range of attendance it has open (`Attendance`, issue 568). Rare - it needs what it runs with
+    /// given back while the session runs, then one of the occasions that have the agents followed;
+    /// telling it apart would need the channel to keep why it left out whom (issue 564). One that
+    /// cannot be read or run is logged and left as it is. Of a running one only whether it exists
+    /// is asked, not again whether it may run. One change of a participant at a time (`changing`,
+    /// issue 564), as `take_in` makes it: an agent being taken in or let go meanwhile is looked at
+    /// once that is done, and not at all once it is no longer listed.
     pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
         let agents: Vec<Participant> = self
             .channel()
@@ -577,7 +578,7 @@ mod tests {
     use crate::error::is_forbidden;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError, SessionManager};
-    use crate::testing::{Script, World};
+    use crate::testing::{attributes, Script, ScriptedAgents, World};
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_api::actor::Actor;
@@ -1255,5 +1256,204 @@ mod tests {
         assert!(!after.lists(scout), "taken back out");
         assert!(after.former.is_empty(), "made no former participant");
         world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
+    }
+
+    /// How an agent is taken into a channel again while its range of attendance is still open
+    /// (issue 568): listed, but left out as its channel started, and no leave recorded.
+    #[derive(Debug, Clone, Copy)]
+    enum Again {
+        /// Left out since its personality was withdrawn, added by its owner once it is given back
+        /// (`take_in`).
+        Added,
+        /// Left out so, followed by the channel once it is given back (`follow_agents`).
+        Followed,
+        /// Deleted while its session was stopped, and restored.
+        Restored,
+    }
+
+    /// Where `channel` stopped delivering to `participant` by the leave its history records, at
+    /// most five seconds after it was let go: its actor ends first.
+    async fn left_until(channel: &ChannelLoop, participant: ActorId) -> Position {
+        let until = |entries: Vec<HistoryEntry>| {
+            entries.iter().find_map(|e| match e {
+                HistoryEntry::ParticipantLeft { participant: p, until, .. }
+                    if *p == participant =>
+                {
+                    Some(*until)
+                }
+                _ => None,
+            })
+        };
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(until) = until(channel.history_entries().await) {
+                    break until;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the leave is recorded")
+    }
+
+    /// Issue 568: an agent taken into a channel again while its range of attendance is still
+    /// open, in each way `Again` names, joins again in the history, since its actor starts only
+    /// now, but keeps the one range it has, which ends where it leaves.
+    #[tokio::test]
+    async fn one_taken_in_again_while_it_attends_attends_until_it_leaves() {
+        for again in [Again::Added, Again::Followed, Again::Restored] {
+            let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+            let world = World::with(&[], &[&answering], |_| {}).await;
+            let alice = World::as_user(world.alice);
+            let bob = World::as_user(world.bob);
+            let mut personality =
+                world.personality("shared", Some(world.bob), &[world.alice]).await;
+            let helper = world.agent("helper", world.alice, &personality).await;
+            let actor = ActorId::Agent(helper);
+            let session = world.shared_session(&[helper], &[]).await;
+            let founded = &session.channels()[0];
+            assert_eq!(joins_recorded(founded, actor).await, 1, "a founder");
+            let founding = founded.attendance(actor).await[0].start;
+            assert!(founding > Position::START, "after the users' joins, so that a move shows");
+            world.manager.stop(&alice, session.id()).await.unwrap();
+            let personalities = &world.kernel.entity_stores().personalities;
+            match again {
+                Again::Added | Again::Followed => {
+                    personality.security_attributes = attributes(Some(world.bob), &[]);
+                    personalities.update(&bob, &mut personality).await.unwrap();
+                }
+                Again::Restored => {
+                    assert!(world.kernel.agent_manager().delete(&alice, helper).await.unwrap());
+                }
+            }
+
+            let session = world.manager.open(&alice, session.id()).await.unwrap();
+            let main = Arc::clone(&session.channels()[0]);
+            assert!(!main.participant_ids().contains(&actor), "{again:?}: left out as it starts");
+            assert!(main.channel().lists(actor), "{again:?}: listed still");
+            match again {
+                Again::Added | Again::Followed => {
+                    personality.security_attributes = attributes(Some(world.bob), &[world.alice]);
+                    personalities.update(&bob, &mut personality).await.unwrap();
+                }
+                Again::Restored => {
+                    world.kernel.agent_manager().restore(&alice, helper).await.unwrap();
+                }
+            }
+            match again {
+                Again::Added => {
+                    main.add_participant(&alice, actor, HistoryAccess::None).await.unwrap();
+                }
+                Again::Followed => main.follow_agents(Some(helper)).await,
+                // The session follows the agent as it learns of the restore.
+                Again::Restored => {}
+            }
+            time::timeout(Duration::from_secs(5), async {
+                while !main.participant_ids().contains(&actor) {
+                    time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("{again:?}: it runs again"));
+            assert_eq!(joins_recorded(&main, actor).await, 2, "{again:?}: its actor joined again");
+
+            main.remove_participant(&alice, actor).await.unwrap();
+            let until = left_until(&main, actor).await;
+            let ranges = main.attendance(actor).await;
+            assert!(
+                matches!(ranges.as_slice(), [range]
+                    if range.start == founding && range.end == until),
+                "{again:?}: one range, from its founding to where it left: {ranges:?}"
+            );
+            world.manager.stop(&alice, session.id()).await.unwrap();
+        }
+    }
+
+    /// That `newcomer`, added to `channel` granted nothing, is shared nothing and sees nothing
+    /// recorded before its join, once that is recorded: `case` says where.
+    async fn given_nothing_before_its_join(channel: &ChannelLoop, newcomer: ActorId, case: &str) {
+        assert_eq!(joins_recorded(channel, newcomer).await, 1, "{case}: joined");
+        let shared = channel.history_entries().await.into_iter().any(|e| {
+            matches!(e, HistoryEntry::HistoryShared { participant, .. } if participant == newcomer)
+        });
+        assert!(!shared, "{case}: nothing shared is recorded");
+        let visible = channel.visible_entries(newcomer).await;
+        assert!(
+            matches!(visible.first(), Some(HistoryEntry::ParticipantJoined { participant, .. })
+                if *participant == newcomer),
+            "{case}: its own join first: {visible:?}"
+        );
+    }
+
+    /// Issue 568: a newcomer granted nothing is given nothing recorded before its join - in a
+    /// channel where nothing was said yet, the joins of its founders; after an agent answered,
+    /// how its turn ended, which follows the last message.
+    #[tokio::test]
+    async fn one_granted_nothing_sees_nothing_recorded_before_its_join() {
+        let answering = ScriptedAgents(Script::Answers("ok".to_string()));
+        let world = World::with(&[], &[&answering], |_| {}).await;
+        let alice = World::as_user(world.alice);
+        let plain = world.personality("plain", Some(world.alice), &[]).await;
+        let helper = world.agent("helper", world.alice, &plain).await;
+        let first = world.agent("first", world.alice, &plain).await;
+        let second = world.agent("second", world.alice, &plain).await;
+        let session = world.shared_session(&[helper], &[first, second]).await;
+        let main = Arc::clone(&session.channels()[0]);
+        assert_eq!(joins_recorded(&main, ActorId::Agent(helper)).await, 1, "a founder");
+
+        main.add_participant(&alice, ActorId::Agent(first), HistoryAccess::None).await.unwrap();
+        given_nothing_before_its_join(&main, ActorId::Agent(first), "nothing said yet").await;
+
+        let writer = main.user_actor(world.alice).expect("a founder");
+        writer.send_message(Some("@helper hello".to_string()), None, Vec::new()).await.unwrap();
+        let turn_ended_last = |entries: Vec<HistoryEntry>| {
+            let said = entries.iter().rposition(|e| e.said().is_some());
+            let ended =
+                entries.iter().rposition(|e| matches!(e, HistoryEntry::TurnFinished { .. }));
+            said.is_some() && ended > said
+        };
+        time::timeout(Duration::from_secs(5), async {
+            while !turn_ended_last(main.history_entries().await) {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("an answer, and its turn's end after it");
+        main.add_participant(&alice, ActorId::Agent(second), HistoryAccess::None).await.unwrap();
+        given_nothing_before_its_join(&main, ActorId::Agent(second), "after a turn ended").await;
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 568: a grant counts messages alone - joins and other events are none -, so that one
+    /// granted more messages than there are sees them all, from the oldest on, but not the joins
+    /// recorded before it.
+    #[tokio::test]
+    async fn a_grant_begins_at_the_oldest_message_it_grants() {
+        let kernel = test_kernel();
+        let manager = SessionManager::new(Arc::clone(&kernel));
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let channel = session.create_channel(&ctx, spec("side", vec![])).await.unwrap();
+        let ActorId::User(owner) = ctx.initiator_id else { unreachable!() };
+        let writer = channel.user_actor(owner).expect("the creator takes part");
+        writer.send_message(Some("one".to_string()), None, Vec::new()).await.unwrap();
+        history_of(&channel, 1).await;
+
+        let more = HistoryAccess::LastMessages { count: 9 };
+        channel.add_participant(&ctx, other, more).await.expect("a user of the session joins");
+
+        assert_eq!(joins_recorded(&channel, other).await, 1, "joined");
+        let visible = channel.visible_entries(other).await;
+        assert!(
+            visible
+                .first()
+                .and_then(HistoryEntry::said)
+                .is_some_and(|m| m.content.as_deref() == Some("one")),
+            "from the message on, not the founder's join before it: {visible:?}"
+        );
+        assert!(
+            visible.iter().any(|e| matches!(e, HistoryEntry::HistoryShared { .. })),
+            "what it was given is recorded, since it lies before its join: {visible:?}"
+        );
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }
