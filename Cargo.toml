@@ -45,11 +45,15 @@ aho-corasick = "1.1"
 any_ascii = "=0.3.3"
 anyhow = "1.0.104"
 arc-swap = "1.9.2"
+# The clipboard and the primary selection the full-screen terminal copies to (issue 576), on
+# Wayland through its data control too; without images.
+arboard = { version = "3.7", default-features = false, features = ["wayland-data-control"] }
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "password-hash"] }
 async-stream = "0.3.6"
 async-trait = "0.1"
 axum = "0.8.9"
-# The images an Ollama model is given along (issue 282).
+# The images an Ollama model is given along (issue 282), what the full-screen terminal copies by
+# OSC 52 (issue 576).
 base64 = "0.22"
 bitflags = "2"
 bollard = "0.21"
