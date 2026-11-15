@@ -2,7 +2,7 @@
 // the client decides whether a line is a command or a message, and sends it
 // to the matching endpoint.
 
-import type {CommandDescription} from './types';
+import type {CommandDescription, CommandParameter} from './types';
 
 /**
  * A line of user input, classified. A command is the line after the slash: which command it is,
@@ -37,4 +37,19 @@ export function commandQueryAt(text: string, caret: number): string | null {
 /** Whether `command` is completed from `query`: its name or an alias begins with it. */
 export function completes(command: CommandDescription, query: string): boolean {
   return [command.name, ...(command.aliases ?? [])].some(name => name.startsWith(query));
+}
+
+/**
+ * The parameters of `command` as a list of commands writes them - `<personality> [as <name>]` -,
+ * `null` if it takes none. Mirrors `caelumora_domain::command::CommandDescription::usage`.
+ */
+export function usageOf(command: CommandDescription): string | null {
+  const written = (command.parameters ?? []).map(writtenParameter);
+  return written.length > 0 ? written.join(' ') : null;
+}
+
+/** How `parameter` is written: `<name>` if required, `[name]` if not, its keyword before it. */
+function writtenParameter({name, required, keyword}: CommandParameter): string {
+  if (keyword === undefined) return required ? `<${name}>` : `[${name}]`;
+  return required ? `${keyword} <${name}>` : `[${keyword} <${name}>]`;
 }

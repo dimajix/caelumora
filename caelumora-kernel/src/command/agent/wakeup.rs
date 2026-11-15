@@ -3,7 +3,7 @@
 use crate::command::{command_error, named_one, names, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 
 const WAKEUP_COMMAND_NAME: &str = "agent wakeup";
@@ -20,7 +20,7 @@ impl WakeupCommand {
             name: CommandName::fixed(WAKEUP_COMMAND_NAME),
             aliases: vec![CommandName::fixed("wakeup")],
             description: "Wakes the sleeping agents of this channel, or the one named.".to_string(),
-            usage: Some("[agent]".to_string()),
+            parameters: vec![CommandParameter::optional("agent")],
             owners_only: false,
         })
     }

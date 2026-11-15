@@ -5,7 +5,7 @@ use super::TerminalCommand;
 use crate::talk::{Handled, Talk};
 use async_trait::async_trait;
 use caelumora_api::command::Command;
-use caelumora_domain::command::CommandDescription;
+use caelumora_domain::command::{CommandDescription, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 
 /// `/approval approve [id]` (`/approve`) and `/approval deny [id]` (`/deny`): approve or deny a
@@ -26,7 +26,7 @@ impl ApprovalCommand {
                 name: CommandName::fixed("approval approve"),
                 aliases: vec![CommandName::fixed("approve")],
                 description: "Approves the call asked of you, or the one waiting for approval whose id begins so.".to_string(),
-                usage: Some("[id]".to_string()),
+                parameters: vec![CommandParameter::optional("id")],
                 owners_only: false,
             },
             approved: true,
@@ -40,7 +40,7 @@ impl ApprovalCommand {
                 name: CommandName::fixed("approval deny"),
                 aliases: vec![CommandName::fixed("deny")],
                 description: "Denies the call asked of you, or the one waiting for approval whose id begins so.".to_string(),
-                usage: Some("[id]".to_string()),
+                parameters: vec![CommandParameter::optional("id")],
                 owners_only: false,
             },
             approved: false,

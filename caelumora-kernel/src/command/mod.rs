@@ -127,8 +127,9 @@ impl CommandContext<'_> {
 /// ChannelCommand>`, and a session's `CommandExecutor` runs it.
 #[async_trait]
 pub trait ChannelCommand: Command {
-    /// Runs the command with `args`, the rest of the input line after its name, which it parses
-    /// itself; a command that names no parameters is never given any (`check_arguments`).
+    /// Runs the command with `args`, the rest of the input line after its name, trimmed, which it
+    /// parses itself; a command that names no parameters is never given any, one with a required
+    /// parameter never none (`check_arguments`).
     ///
     /// # Errors
     /// `CommandError::InvalidArguments` for arguments it cannot use,
@@ -210,8 +211,8 @@ impl CommandExecutor {
 
     /// Runs `command`, found by `find`, with `args` for `context.issuer`: `Unknown` if the issuer
     /// may not see it, since one they may not see is unknown to them, not refused; `Forbidden` if
-    /// they may see but not run it; `InvalidArguments` if it takes no arguments and was given some
-    /// (`check_arguments`).
+    /// they may see but not run it; `InvalidArguments` if it takes no arguments and was given some,
+    /// or requires one and was given none (`check_arguments`).
     ///
     /// # Errors
     /// As above; otherwise whatever the command reports.
@@ -375,7 +376,7 @@ mod tests {
             name: CommandName::fixed(command),
             aliases: Vec::new(),
             description: String::new(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         }))];
         ComponentImpl {

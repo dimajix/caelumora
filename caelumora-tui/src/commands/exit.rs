@@ -19,7 +19,7 @@ impl ExitCommand {
             name: CommandName::fixed("exit"),
             aliases: vec![CommandName::fixed("quit")],
             description: "Ends the program, the session shut down in order.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         })
     }

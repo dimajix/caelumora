@@ -18,7 +18,7 @@ impl RetryCommand {
             name: CommandName::fixed("agent retry"),
             aliases: vec![CommandName::fixed("retry")],
             description: "Asks for the answer under way, the turn given up, or the last answer of an agent again.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         })
     }

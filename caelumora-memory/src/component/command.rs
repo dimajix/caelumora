@@ -25,7 +25,7 @@ impl MemoryCommand {
             name: CommandName::fixed(MEMORY_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Shows what the agent recalls of its memory here: what it remembered in this and other channels and sessions, as far as it may be told here.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             // Its memory is its owner's (issue 518), as what it saw.
             owners_only: true,
         })

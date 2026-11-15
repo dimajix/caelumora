@@ -465,7 +465,7 @@ mod tests {
             name: CommandName::fixed("x"),
             aliases: Vec::new(),
             description: String::new(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only,
         };
         let (for_everyone, owners) = (command(false), command(true));

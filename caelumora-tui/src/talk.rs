@@ -243,10 +243,10 @@ impl Talk {
     }
 
     /// Does what the user typed, `input`, and answers what it came to: a command of the terminal
-    /// carried out - one that takes no arguments refused with them, one on the sessions of the
-    /// directory asked of them -; while questions are asked, any other line the answer to the
-    /// next, while an approval is, the number of a choice its answer; else the line sent to the
-    /// channel talked in (`send_line`). Then asks what waits next.
+    /// carried out - one refused arguments it does not take, or none where it requires one; one on
+    /// the sessions of the directory asked of them -; while questions are asked, any other line the
+    /// answer to the next, while an approval is, the number of a choice its answer; else the line
+    /// sent to the channel talked in (`send_line`). Then asks what waits next.
     ///
     /// # Errors
     /// As `send_line`.
@@ -842,9 +842,9 @@ mod tests {
         let theirs = all.find("/participant list").expect("the channel's");
         let mine = all.find("Commands of this terminal:").expect("the terminal's");
         assert!(theirs < mine, "after the channel's: {all}");
-        assert!(all.contains("- `/channel switch <channel>` (also `/switch`) — Talks"), "{all}");
+        assert!(all.contains("- `/channel switch [channel]` (also `/switch`) — Talks"), "{all}");
         let one = typed(&mut talk, "/help switch").await.join("\n");
-        assert!(one.starts_with("`/channel switch <channel>` (also `/switch`)"), "{one}");
+        assert!(one.starts_with("`/channel switch [channel]` (also `/switch`)"), "{one}");
         let group = typed(&mut talk, "/help approval").await.join("\n");
         assert!(group.contains("/approval approve") && group.contains("/approval deny"), "{group}");
         assert!(!group.contains("/exit"), "{group}");
@@ -876,6 +876,8 @@ mod tests {
         let switched = typed(&mut talk, "/switch nowhere").await;
         let unknown = "You take part in no channel 'nowhere'";
         assert_eq!(switched.first().map(String::as_str), Some(unknown));
+        let unnamed = typed(&mut talk, "/resume").await;
+        assert_eq!(unnamed, ["Error: /session resume: it takes <id>"], "required (issue 583)");
     }
 
     /// Questions put to the user are asked of the talk's own accord, and answered line by line;

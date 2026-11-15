@@ -28,8 +28,9 @@ itself.
 The client decides whether a line is a command and sends it as one rather than as a message; the
 message API stays plain text. The rule is `caelumora_domain::command::parse_input`, mirrored in the
 web UI: a leading `/` starts a command, and the rest of the line is sent, trimmed; `//` sends a
-literal `/`. Only this lexical rule is repeated per frontend. Which command of the channel a line
-is, what it means, who may run it and what it answers is decided in one place.
+literal `/`. Only this lexical rule is repeated per frontend, and in the web UI how a command's
+parameters are written (`usageOf`, see below). Which command of the channel a line is, what it
+means, who may run it and what it answers is decided in one place.
 
 ### Commands of the terminal
 
@@ -101,11 +102,15 @@ collide are the same whoever runs the commands, and an agent's actor keeps its c
 What a command is given to run with - the session, or an agent's turn - and who asks whether it may
 be seen and run are its kind's: the channel's commands the executor itself (`ShowCommand`,
 `ExecuteCommand`), an agent's the channel's door as it admits the request (`ShowAgentCommand`,
-`ExecuteAgentCommand`, issue 516). A command that names no parameters
-(`CommandDescription::usage`) takes no arguments: whoever runs it - the executor once it may be
-run, an agent's actor before it begins, the terminal - refuses them (`check_arguments`), so that
-no command checks it itself. How a command runs is the command's business, and there is nothing
-about running commands to try out.
+`ExecuteAgentCommand`, issue 516). What a command takes is described by its parameters (issue
+583, `CommandParameter`): each with its name, whether it is required, and the word that introduces
+it, if one does - `as` of `/agent create <personality> [as <name>]` -, the last taking the rest of
+the line. `/help` and the web UI write them from that (`CommandDescription::usage`). A command
+that names no parameters is not run with arguments, and one with a required parameter not without
+any: whoever runs it - the executor once it may be run, an agent's actor before it begins, the
+terminal - refuses it so (`check_arguments`), so that no command checks it itself. What the
+arguments name - whom, which channel - the command reads itself. How a command runs is the
+command's business, and there is nothing about running commands to try out.
 
 ### Seeing and running
 
@@ -276,7 +281,7 @@ external agent alike.
 | `/memory` | - | the agent | `agent_memory` | `@agent` | private | For the agent's owners: shows what it recalls of its memory here, as far as it may be told here ([MEMORY.md](MEMORY.md#agent-memory)). |
 | `/compact` | - | the agent | `compaction` | `@agent` | channel-wide | For the agent's owners: compacts its context now rather than when it is too full, as the agent does on its own ([AGENT-TURN.md](AGENT-TURN.md#compaction)). |
 | `/exit` | `/quit` | the terminal | - | - | - | Ends the program, the session shut down in order. |
-| `/channel switch` | `/switch` | the terminal | - | `<channel>` | - | Talks in another channel of the session the user takes part in. |
+| `/channel switch` | `/switch` | the terminal | - | `[channel]` | - | Talks in another channel of the session the user takes part in; without one, tells where the user could. |
 | `/session list` | - | the terminal | - | - | - | Lists the sessions of the directory, the one spoken in last first, the one talked in marked. |
 | `/session new` | `/new` | the terminal | - | `[template]` | - | Starts a session from the template named, or the program's, and talks in it; the one left is stopped. |
 | `/session resume` | `/resume` | the terminal | - | `<id>` | - | Continues the session of the directory whose id begins so, and talks in it; the one left is stopped. |

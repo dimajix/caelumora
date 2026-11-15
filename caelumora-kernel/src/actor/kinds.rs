@@ -204,7 +204,7 @@ mod tests {
                 name: CommandName::fixed(HELP_COMMAND_NAME),
                 aliases: Vec::new(),
                 description: String::new(),
-                usage: None,
+                parameters: Vec::new(),
                 owners_only: false,
             }]
         }

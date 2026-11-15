@@ -1,6 +1,6 @@
 # 583 — A command has no object of its own, and its parameters are a text
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** medium
 **Area:** Code structure
@@ -92,7 +92,8 @@ In five steps:
     own in the terminal.
 5.  **Typed parameters** in `CommandDescription`, replacing `usage`. Whether the kind of a
     parameter comes now or with 579, which is the first to need it, and how the keyword of
-    `/agent create <personality> [as <name>]` is described, is decided before the step.
+    `/agent create <personality> [as <name>]` is described, is decided before the step: see the
+    history.
 
 Tools follow in an issue of their own, [584](584-a-tool-has-no-object-of-its-own.md), for their
 size: 25 providers in nine crates, each matching names in several methods.
@@ -156,3 +157,22 @@ about - every command, or the name its words make, of one command (`CommandDescr
 or of a group -, for the channel's `/help` and the terminal's, which repeated it; `beginning_with`
 and `NotNamed` lie in a module of their own in `caelumora-tui`, `id_prefix`, no longer among the
 commands, none of which uses them.
+
+**2026-11-15** - Decided with the maintainer before step 5: a parameter is described by its name,
+whether it is required, and the word that introduces it, if one does - `as` of `/agent create` is
+such a keyword, an attribute of the parameter rather than a parameter of its own, since a keyword
+and what it introduces are given together, which a flat list of parameters could not say without
+groups; the kind of a parameter comes with
+[579](579-commands-and-mentions-are-not-completed-in-the-terminal.md), the first to read it. The
+web UI writes the usage from the parameters itself.
+
+**2026-11-15** - Step 5 done: `CommandParameter` in `caelumora-domain` in place of the text
+`usage`, written by `CommandDescription::usage` for `/help` and by `usageOf` in the web UI;
+`check_arguments` refuses a command with a required parameter given none, so the commands that
+checked that themselves no longer do, and the refusal reads alike for all of them
+("it takes <channel>"). `/channel switch` takes its channel as optional (`[channel]`), since
+without one it tells where the user could talk.
+
+**2026-11-15** - Done with step 5. What "Done when" asks beyond it - the kind of a parameter, and
+completing from the description - went to
+[579](579-commands-and-mentions-are-not-completed-in-the-terminal.md), the first to read the kind.

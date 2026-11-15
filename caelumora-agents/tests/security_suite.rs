@@ -3950,7 +3950,7 @@ impl Commanded {
                 name: CommandName::new(name).unwrap(),
                 aliases: Vec::new(),
                 description: String::new(),
-                usage: None,
+                parameters: Vec::new(),
                 owners_only,
             };
             Arc::new(Commanded { description, seen: Arc::clone(seen) }) as Arc<dyn AgentCommand>

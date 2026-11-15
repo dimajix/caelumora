@@ -4,7 +4,7 @@ use crate::channel::ChannelError;
 use crate::command::{command_error, named_one, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 
 const NUDGE_COMMAND_NAME: &str = "participant nudge";
@@ -21,7 +21,7 @@ impl NudgeCommand {
             name: CommandName::fixed(NUDGE_COMMAND_NAME),
             aliases: vec![CommandName::fixed("nudge")],
             description: "Asks the participant named to respond to the conversation as it stands, without a message.".to_string(),
-            usage: Some("<participant>".to_string()),
+            parameters: vec![CommandParameter::required("participant")],
             owners_only: false,
         })
     }
@@ -49,9 +49,6 @@ impl ChannelCommand for NudgeCommand {
             reason: reason.to_string(),
         };
         let wanted = args.trim();
-        if wanted.is_empty() {
-            return Err(invalid("name who is to respond"));
-        }
         let participant = named_one(
             NUDGE_COMMAND_NAME,
             wanted,

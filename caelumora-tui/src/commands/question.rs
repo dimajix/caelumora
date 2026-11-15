@@ -5,7 +5,7 @@ use super::TerminalCommand;
 use crate::talk::{Handled, Talk};
 use async_trait::async_trait;
 use caelumora_api::command::Command;
-use caelumora_domain::command::CommandDescription;
+use caelumora_domain::command::{CommandDescription, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 
 /// `/question answer [id]` (`/answer`): asks questions put to the user, those named or those put
@@ -22,7 +22,7 @@ impl AnswerCommand {
             description:
                 "Asks the questions put to you whose id begins so, or those put aside, one by one."
                     .to_string(),
-            usage: Some("[id]".to_string()),
+            parameters: vec![CommandParameter::optional("id")],
             owners_only: false,
         })
     }
@@ -54,7 +54,7 @@ impl DeclineCommand {
             description:
                 "Declines the questions asked of you, or those put to you whose id begins so."
                     .to_string(),
-            usage: Some("[id]".to_string()),
+            parameters: vec![CommandParameter::optional("id")],
             owners_only: false,
         })
     }

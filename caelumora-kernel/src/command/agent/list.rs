@@ -24,7 +24,7 @@ impl ListCommand {
             description:
                 "Lists the agents of this session: those taking part, and those made here."
                     .to_string(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         })
     }

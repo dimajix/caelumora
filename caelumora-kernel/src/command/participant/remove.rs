@@ -4,8 +4,8 @@ use crate::command::{
     command_error, named_one, named_participants, taking_part, ChannelCommand, CommandContext,
 };
 use async_trait::async_trait;
-use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_api::command::{Command, CommandResult};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 
 const REMOVE_COMMAND_NAME: &str = "participant remove";
@@ -23,7 +23,7 @@ impl RemoveCommand {
             description:
                 "Removes the participant named from this channel; they stay in the session."
                     .to_string(),
-            usage: Some("<participant>".to_string()),
+            parameters: vec![CommandParameter::required("participant")],
             owners_only: false,
         })
     }
@@ -48,12 +48,6 @@ impl ChannelCommand for RemoveCommand {
         context: &CommandContext<'_>,
     ) -> CommandResult<CommandOutput> {
         let wanted = args.trim();
-        if wanted.is_empty() {
-            return Err(CommandError::InvalidArguments {
-                command: REMOVE_COMMAND_NAME.to_string(),
-                reason: "name whom to remove".to_string(),
-            });
-        }
         let participants = named_participants(taking_part(REMOVE_COMMAND_NAME, context).await?);
         let (name, participant) = named_one(
             REMOVE_COMMAND_NAME,

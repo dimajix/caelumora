@@ -31,7 +31,7 @@ use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::{AgentId, HearsDuringTurn, Personality};
 use caelumora_domain::chain::Position;
 use caelumora_domain::channel::{Channel, Participant};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::component::{ComponentConfig, ComponentDescriptor, ComponentFailPolicy};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::config::AppConfig;
@@ -442,7 +442,7 @@ impl Marking {
             name: CommandName::fixed("mark"),
             aliases: vec![CommandName::fixed("mk")],
             description: "Marks.".to_string(),
-            usage: Some("[text]".to_string()),
+            parameters: vec![CommandParameter::optional("text")],
             owners_only: false,
         })
     }

@@ -1001,6 +1001,16 @@ export type RetryTarget = { message: string } | { turn: string };
  */
 export type RetryRefused = 'not_its_answer' | 'not_last' | 'calls_ran' | 'asked_again' | 'elsewhere' | 'ended';
 
+/**
+ * A parameter of a command (issue 583): what it is called, whether it must be given, and the word
+ * that introduces it, if one does.
+ */
+export interface CommandParameter {
+  name: string;
+  required: boolean;
+  keyword?: string;
+}
+
 /** A user command, as `/help` and completion show it (issue 28). */
 export interface CommandDescription {
   /** Its words, from its group to itself (issue 560). */
@@ -1008,7 +1018,8 @@ export interface CommandDescription {
   /** The other names it is found by, its short forms (issue 560). */
   aliases?: string[];
   description: string;
-  usage: string | null;
+  /** What it takes, in the order it takes them (issue 583). */
+  parameters?: CommandParameter[];
   /** Of an agent's command (issue 269): whether it is for the agent's owners alone. */
   owners_only?: boolean;
 }

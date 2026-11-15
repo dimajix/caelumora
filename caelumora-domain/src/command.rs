@@ -37,8 +37,9 @@ pub struct CommandDescription {
     pub aliases: Vec<CommandName>,
     /// What the command does, in one sentence.
     pub description: String,
-    /// The parameters, e.g. `[agent]`, or `None` if it takes none.
-    pub usage: Option<String>,
+    /// What it takes, in the order it takes them (issue 583); none unless named.
+    #[serde(default)]
+    pub parameters: Vec<CommandParameter>,
     /// Of a command an agent carries out itself (issue 269): whether it is
     /// for whoever answers for the agent alone - as approving its calls
     /// is - rather than for everyone who may write in the channel. `false`
@@ -48,6 +49,13 @@ pub struct CommandDescription {
 }
 
 impl CommandDescription {
+    /// Its parameters as they are written in a list of commands - `<personality> [as <name>]`
+    /// (`CommandParameter::written`) -, `None` if it takes none.
+    pub fn usage(&self) -> Option<String> {
+        let written: Vec<String> = self.parameters.iter().map(CommandParameter::written).collect();
+        (!written.is_empty()).then(|| written.join(" "))
+    }
+
     /// The rest of `line` - its arguments, trimmed - if `line` begins with its name or one of its
     /// aliases (`CommandName::strip_from`).
     pub fn strip_from<'a>(&self, line: &'a str) -> Option<&'a str> {
@@ -69,7 +77,8 @@ impl CommandDescription {
     /// How the command is told, `addressee` named after its name where it has one: its signature,
     /// its short forms - " (also `/add`)" - and what it does.
     fn told(&self, addressee: Option<&str>) -> String {
-        let words: Vec<&str> = addressee.into_iter().chain(self.usage.as_deref()).collect();
+        let usage = self.usage();
+        let words: Vec<&str> = addressee.into_iter().chain(usage.as_deref()).collect();
         let signature = match words.is_empty() {
             true => format!("/{}", self.name),
             false => format!("/{} {}", self.name, words.join(" ")),
@@ -112,6 +121,49 @@ pub fn help_topic(args: &str) -> Result<Option<CommandName>, ValueError> {
     match words.is_empty() {
         true => Ok(None),
         false => CommandName::new(words.join(" ")).map(Some),
+    }
+}
+
+/// A parameter of a command (issue 583): what it is called, whether it must be given, and the word
+/// that introduces it, if one does - `as` of `/agent create <personality> [as <name>]`. The last a
+/// command takes is the rest of the line, since what it names may hold spaces. What value it takes
+/// is the command's to read (issue 579 will describe it).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandParameter {
+    /// What it is called, in a list of commands and where it is missing.
+    pub name: String,
+    /// Whether the command cannot do without it.
+    pub required: bool,
+    /// The word it is introduced by, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyword: Option<String>,
+}
+
+impl CommandParameter {
+    /// The parameter `name` a command cannot do without.
+    pub fn required(name: &str) -> Self {
+        Self { name: name.to_string(), required: true, keyword: None }
+    }
+
+    /// The parameter `name` a command does without.
+    pub fn optional(name: &str) -> Self {
+        Self { name: name.to_string(), required: false, keyword: None }
+    }
+
+    /// The parameter, introduced by `keyword`.
+    pub fn introduced_by(self, keyword: &str) -> Self {
+        Self { keyword: Some(keyword.to_string()), ..self }
+    }
+
+    /// How it is written in a list of commands: `<name>` if it is required, `[name]` if not; with
+    /// its keyword before it - `as <name>`, `[as <name>]`.
+    fn written(&self) -> String {
+        match (&self.keyword, self.required) {
+            (None, true) => format!("<{}>", self.name),
+            (None, false) => format!("[{}]", self.name),
+            (Some(keyword), true) => format!("{keyword} <{}>", self.name),
+            (Some(keyword), false) => format!("[{keyword} <{}>]", self.name),
+        }
     }
 }
 
@@ -191,15 +243,15 @@ mod tests {
     /// agent carries out with the agent named.
     #[test]
     fn a_command_is_told_by_its_signature_short_forms_and_description() {
-        let described = |usage: Option<&str>, aliases: &[&str]| CommandDescription {
+        let described = |parameters: Vec<CommandParameter>, aliases: &[&str]| CommandDescription {
             description: "Brings someone in.".to_string(),
-            usage: usage.map(str::to_string),
+            parameters,
             ..named("participant add", aliases)
         };
-        let plain = described(None, &[]);
+        let plain = described(Vec::new(), &[]);
         assert_eq!(plain.help_line(), "`/participant add` — Brings someone in.");
         assert_eq!(plain.agent_help_line(), "`/participant add @agent` — Brings someone in.");
-        let full = described(Some("<name>"), &["add", "in"]);
+        let full = described(vec![CommandParameter::required("name")], &["add", "in"]);
         let also = "(also `/add`, `/in`) — Brings someone in.";
         assert_eq!(full.help_line(), format!("`/participant add <name>` {also}"));
         assert_eq!(full.agent_help_line(), format!("`/participant add @agent <name>` {also}"));
@@ -247,7 +299,7 @@ mod tests {
             name: CommandName::new(name).unwrap(),
             aliases: aliases.iter().map(|a| CommandName::new(a).unwrap()).collect(),
             description: String::new(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         }
     }
@@ -260,6 +312,23 @@ mod tests {
         assert_eq!(topic("  ").ok(), Some(None));
         assert_eq!(topic(" /participant   add ").ok(), Some(Some("participant add".to_string())));
         assert!(topic("Participant").is_err());
+    }
+
+    /// A parameter is written as it is required or not, its keyword before it.
+    #[test]
+    fn parameters_are_written_as_they_are_taken() {
+        let create = CommandDescription {
+            parameters: vec![
+                CommandParameter::required("personality"),
+                CommandParameter::optional("name").introduced_by("as"),
+            ],
+            ..named("agent create", &[])
+        };
+        assert_eq!(create.usage().as_deref(), Some("<personality> [as <name>]"));
+        let written = |parameter: CommandParameter| parameter.written();
+        assert_eq!(written(CommandParameter::optional("agent")), "[agent]");
+        assert_eq!(written(CommandParameter::required("to").introduced_by("as")), "as <to>");
+        assert_eq!(named("help", &[]).usage(), None, "none taken");
     }
 
     #[test]

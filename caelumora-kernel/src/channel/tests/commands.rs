@@ -95,8 +95,12 @@ async fn a_command_is_issued_and_described_by_its_name_or_its_short_form() {
     assert_eq!(answer, ("agent wakeup", Some("No agent was asleep.")));
     let error = actor.execute_command("participant nudge").await.expect_err("nobody named");
     assert!(
-        matches!(as_command_error(&error), CommandError::InvalidArguments { command, .. } if command == "participant nudge"),
-        "{error}"
+        matches!(
+            as_command_error(&error),
+            CommandError::InvalidArguments { command, reason }
+                if command == "participant nudge" && reason == "it takes <participant>"
+        ),
+        "refused by what it takes (issue 583): {error}"
     );
 
     let help = |line: &'static str| {
@@ -343,7 +347,7 @@ async fn only_someone_else_in_the_channel_is_nudged() {
     let Stuck { channel, context, running, .. } = stuck_in_a_turn().await;
     let alice = alice_of(&context);
 
-    for args in ["", "@nobody", "alice"] {
+    for args in ["@nobody", "alice"] {
         let error = nudge(&channel, alice, args).await.expect_err("names nobody else here");
         assert!(matches!(error, CommandError::InvalidArguments { .. }), "{args:?}: {error}");
     }

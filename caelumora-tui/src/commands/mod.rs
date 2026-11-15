@@ -24,11 +24,12 @@ use std::sync::Arc;
 /// of the channel, which a line goes to where it begins none of these.
 #[async_trait]
 pub(crate) trait TerminalCommand: Command {
-    /// Carries out the command with `args`, the rest of the command line after its name, in
-    /// `talk`: what the line came to. A command that names no parameters is never given any
-    /// (`check_arguments`). Unlike a command of the channel or of an agent, it answers no
-    /// `CommandResult`: what failed is printed as what it did, by the method of `Talk` it calls,
-    /// which tells it as the terminal tells every failure (`error_printed`).
+    /// Carries out the command with `args`, the rest of the command line after its name, trimmed,
+    /// in `talk`: what the line came to. A command that names no parameters is never given any,
+    /// one with a required parameter never none (`check_arguments`). Unlike a command of the
+    /// channel or of an agent, it answers no `CommandResult`: what failed is printed as what it
+    /// did, by the method of `Talk` it calls, which tells it as the terminal tells every failure
+    /// (`error_printed`).
     async fn execute(&self, args: &str, talk: &mut Talk) -> Handled;
 }
 

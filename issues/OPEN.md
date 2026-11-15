@@ -76,7 +76,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [556](556-what-an-id-lies-in-is-found-by-searching.md) | open | medium | question | The stores, the state stores and the storages of content are told an entity by its id alone, so a backend whose layout follows what encloses an entity - `home` of issue 554 - has to search for it; the events answered the same question with `Address`, and whether an access path derived from an id should serve both is open. |
-| [583](583-a-command-has-no-object-of-its-own.md) | in progress | medium | refactoring | A command is a record (`Command`) beside a provider that carries out all of its commands by their names, so every group of commands matches the name a second time, keeps a constant to tie the two together and answers a name it does not know though nobody can give it one; and what a command takes is a text shown to people (`Command::usage`), from which nothing but whether it takes anything can be read. |
 
 ## Integrations
 

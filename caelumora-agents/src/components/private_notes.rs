@@ -286,7 +286,7 @@ impl PrivateNotesCommand {
             name: CommandName::fixed(PRIVATE_NOTES_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Shows what the agent noted for itself and recalls here: its private notes of this channel, and of the session's other channels as far as they may be told here.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             // As what it saw (issue 54): its owners'.
             owners_only: true,
         })

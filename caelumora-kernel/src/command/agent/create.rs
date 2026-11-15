@@ -6,7 +6,7 @@ use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_api::reader::ViewError;
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::scope::Scope;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
@@ -30,7 +30,10 @@ impl CreateCommand {
             description:
                 "Makes an agent of the personality named, in this session, named after it unless named."
                     .to_string(),
-            usage: Some("<personality> [as <name>]".to_string()),
+            parameters: vec![
+                CommandParameter::required("personality"),
+                CommandParameter::optional("name").introduced_by("as"),
+            ],
             owners_only: false,
         };
         Self { description, agents }
@@ -66,9 +69,6 @@ impl ChannelCommand for CreateCommand {
             Some((personality, name)) => (personality.trim(), name.trim()),
             None => (args.trim(), args.trim()),
         };
-        if personality.is_empty() || name.is_empty() {
-            return Err(invalid("name the personality, and the agent after 'as'".to_string()));
-        }
         let unusable = |what: &str| invalid(format!("'{what}' is no name"));
         let personality = Name::new(personality).map_err(|_| unusable(personality))?;
         let name = Name::new(name).map_err(|_| unusable(name))?;

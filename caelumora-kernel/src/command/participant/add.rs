@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::channel::HistoryAccess;
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::{Name, NameMatch};
 
@@ -25,7 +25,7 @@ impl AddCommand {
             name: CommandName::fixed(ADD_COMMAND_NAME),
             aliases: vec![CommandName::fixed("add")],
             description: "Brings the user or agent named into this channel, and into the session if not in it yet; they see the whole history.".to_string(),
-            usage: Some("<name>".to_string()),
+            parameters: vec![CommandParameter::required("name")],
             owners_only: false,
         })
     }
@@ -53,9 +53,6 @@ impl ChannelCommand for AddCommand {
             reason,
         };
         let wanted = args.trim();
-        if wanted.is_empty() {
-            return Err(invalid("name whom to add".to_string()));
-        }
         let nobody = || invalid(format!("nobody '{wanted}' to add"));
         let name = Name::new(wanted).map_err(|_| nobody())?;
         let failed = |e: Error| command_error(ADD_COMMAND_NAME, &e);

@@ -36,21 +36,27 @@ pub enum CommandError {
 
 pub type CommandResult<T> = Result<T, CommandError>;
 
-/// Whether `args` may be given to `command` (issue 574): a command that names no parameters
-/// (`CommandDescription::usage`) takes none. Whoever runs a command - the `CommandExecutor`, an
-/// agent's actor, the terminal - checks it once the command may be run, so that no command checks
-/// it itself.
+/// Whether `args` may be given to `command` (issues 574, 583): a command that names no parameters
+/// (`CommandDescription::parameters`) takes no arguments, and one with a required parameter is not
+/// run without any. Whoever runs a command - the `CommandExecutor`, an agent's actor, the
+/// terminal - checks it once the command may be run, so that no command checks it itself; what
+/// the arguments given name is the command's to read.
 ///
 /// # Errors
-/// `CommandError::InvalidArguments` if `command` takes no arguments and `args` holds some.
+/// `CommandError::InvalidArguments` if `command` takes no arguments and `args` holds some, or it
+/// requires one and `args` holds none.
 pub fn check_arguments(command: &CommandDescription, args: &str) -> CommandResult<()> {
-    if command.usage.is_none() && !args.trim().is_empty() {
-        return Err(CommandError::InvalidArguments {
-            command: command.name.to_string(),
-            reason: "it takes no arguments".to_string(),
-        });
+    let invalid = |reason: String| {
+        Err(CommandError::InvalidArguments { command: command.name.to_string(), reason })
+    };
+    let given = !args.trim().is_empty();
+    match command.usage() {
+        None if given => invalid("it takes no arguments".to_string()),
+        Some(usage) if !given && command.parameters.iter().any(|p| p.required) => {
+            invalid(format!("it takes {usage}"))
+        }
+        _ => Ok(()),
     }
-    Ok(())
 }
 
 /// A command that can be carried out (issue 583), of whichever kind: what every command says of
@@ -189,6 +195,7 @@ impl<C: ?Sized + Command> CommandSet<C> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use caelumora_domain::command::CommandParameter;
     use caelumora_domain::component::ComponentFailPolicy;
 
     /// A command of the tests, which does nothing but describe itself.
@@ -216,7 +223,7 @@ mod tests {
             name: CommandName::fixed(name),
             aliases: aliases.iter().map(|alias| CommandName::fixed(alias)).collect(),
             description: String::new(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         }
     }
@@ -240,10 +247,10 @@ mod tests {
         CommandSet::new(providers).expect("no two collide")
     }
 
-    /// A command that names no parameters takes no arguments (issue 574); one that names them
-    /// takes what it is given, and checks it itself.
+    /// A command that names no parameters takes no arguments (issue 574), one with a required
+    /// parameter is not run without any (issue 583); what it is given beside that it reads itself.
     #[test]
-    fn a_command_without_parameters_takes_no_arguments() {
+    fn a_command_takes_the_arguments_its_parameters_allow() {
         let list = command("participant list", &[]);
         assert!(check_arguments(&list, "").is_ok());
         assert!(check_arguments(&list, "  ").is_ok(), "whitespace is none");
@@ -256,10 +263,23 @@ mod tests {
             "refused"
         );
         let add = CommandDescription {
-            usage: Some("<name>".to_string()),
+            parameters: vec![CommandParameter::required("name")],
             ..command("participant add", &[])
         };
         assert!(check_arguments(&add, "Bob Smith").is_ok(), "its own to check");
+        assert!(
+            matches!(
+                check_arguments(&add, " "),
+                Err(CommandError::InvalidArguments { ref reason, .. })
+                    if reason == "it takes <name>"
+            ),
+            "required"
+        );
+        let wakeup = CommandDescription {
+            parameters: vec![CommandParameter::optional("agent")],
+            ..command("agent wakeup", &[])
+        };
+        assert!(check_arguments(&wakeup, "").is_ok(), "not required");
     }
 
     #[test]

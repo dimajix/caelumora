@@ -20,7 +20,7 @@ impl ListCommand {
             name: CommandName::fixed(LIST_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Lists the channels of this session you may read.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         })
     }

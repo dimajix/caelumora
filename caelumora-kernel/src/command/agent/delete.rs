@@ -7,7 +7,7 @@ use crate::view::AgentView;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 use std::sync::Arc;
 
@@ -27,7 +27,7 @@ impl DeleteCommand {
             name: CommandName::fixed(DELETE_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Deletes the agent of this session named; it can be restored.".to_string(),
-            usage: Some("<agent>".to_string()),
+            parameters: vec![CommandParameter::required("agent")],
             owners_only: false,
         };
         Self { description, agents }
@@ -58,9 +58,6 @@ impl ChannelCommand for DeleteCommand {
             reason,
         };
         let wanted = args.trim();
-        if wanted.is_empty() {
-            return Err(invalid("name the agent to delete".to_string()));
-        }
         let (session, found) = session_agents(DELETE_COMMAND_NAME, context).await?;
         let place = "among the agents of this session";
         let agent = named_one(DELETE_COMMAND_NAME, wanted, found, AgentView::name, place)?;

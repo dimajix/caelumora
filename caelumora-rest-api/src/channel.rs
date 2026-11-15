@@ -807,7 +807,7 @@ mod tests {
             name: CommandName::fixed("mark"),
             aliases: Vec::new(),
             description: "Marks.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         };
         let json = serde_json::to_value(

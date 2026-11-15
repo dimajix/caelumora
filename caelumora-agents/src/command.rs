@@ -16,8 +16,8 @@ use caelumora_domain::command::CommandOutput;
 #[async_trait]
 pub trait AgentCommand: Command {
     /// Carries the command out with `args`, the rest of the input line after its name and the
-    /// agent's handle, which it parses itself; a command that names no parameters is never given
-    /// any (`check_arguments`).
+    /// agent's handle, trimmed, which it parses itself; a command that names no parameters is
+    /// never given any, one with a required parameter never none (`check_arguments`).
     ///
     /// # Errors
     /// As `ChannelCommand::execute`.

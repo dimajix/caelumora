@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use caelumora_agents::command::AgentCommand;
 use caelumora_agents::turn::Turn;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
@@ -73,7 +73,7 @@ impl SkillCommand {
             name: CommandName::fixed(SKILL_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Gives the agent a skill to follow: its text goes into the agent's conversation, in your name.".to_string(),
-            usage: Some("<name>".to_string()),
+            parameters: vec![CommandParameter::required("name")],
             owners_only: false,
         };
         Self { description, skills }
@@ -92,12 +92,6 @@ impl AgentCommand for SkillCommand {
         let name = SKILL_COMMAND_NAME;
         let skills = usable_in(name, turn).await?;
         let wanted = args.trim();
-        if wanted.is_empty() {
-            return Err(CommandError::InvalidArguments {
-                command: name.to_string(),
-                reason: "name the skill".to_string(),
-            });
-        }
         let skill = skills.usable_skill_named(wanted).await.map_err(|e| command_error(name, e))?;
         // In the name of who asked, as the channel knows them.
         let issuer = turn.situation().initiator();
@@ -143,7 +137,7 @@ impl SkillsCommand {
             name: CommandName::fixed(SKILLS_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Lists the skills the agent can load here.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         })
     }

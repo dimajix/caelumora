@@ -31,12 +31,14 @@ The UI shows what the server says and repeats no rule of its own:
     what an agent saw (`can_read_context`), approve, retry, cancel, leave or delete is part of the
     responses, decided by the kernel's views (see [SECURITY.md](SECURITY.md#views)). The UI offers
     an action only where it is set, and never works it out itself.
-*   **Only lexical rules are mirrored.** Whether a line is a command (`command.ts`, mirroring
-    `caelumora_domain::command::parse_input`) and how a participant's handle is derived
-    (`mention.ts`, mirroring `caelumora_domain::mention`) are repeated here, because the UI needs
-    them while the user types. A handle is the name's ASCII form, made by the npm package
-    `any-ascii` in the version the server's `any_ascii` crate has - both are pinned, so that their
-    tables agree. What a command means and whom a mention addresses is decided by the server.
+*   **Only rules of what is typed are mirrored.** Whether a line is a command (`command.ts`,
+    mirroring `caelumora_domain::command::parse_input`), how a command's parameters are written
+    (`usageOf`, mirroring `CommandDescription::usage`, issue 583) and how a participant's handle
+    is derived (`mention.ts`, mirroring `caelumora_domain::mention`) are repeated here, because
+    the UI needs them while the user types. A handle is the name's ASCII form, made by the npm
+    package `any-ascii` in the version the server's `any_ascii` crate has - both are pinned, so
+    that their tables agree. What a command means and whom a mention addresses is decided by the
+    server.
 *   **The types mirror the server.** `src/types` holds the request and response types of
     the crate `caelumora-rest-api`; a change to the REST API changes them too. The form serde
     gives an `ActorId` is read and made only in `actor.ts`, so that a change of it is met in one
@@ -59,7 +61,7 @@ The UI shows what the server says and repeats no rule of its own:
 | `src/attachmentDraft.ts` | The attachments of a message being written, uploaded as they are attached |
 | `src/stream.ts` | `openEventStream`, for both event streams |
 | `src/globalEvents.ts` | What the session list does with a global event |
-| `src/command.ts`, `src/mention.ts` | The lexical rules mirrored from the domain |
+| `src/command.ts`, `src/mention.ts` | The rules of what is typed, mirrored from the domain |
 | `src/actor.ts` | Who an `ActorId` names, and the `ActorId` of a user or an agent |
 | `src/shownChannel.ts` | What the messages shown of a channel need of it, as a React context |
 | `src/page.ts`, `src/pageList.ts` | What is shown in the place of a channel, and the lists in the sidebar it is opened from |

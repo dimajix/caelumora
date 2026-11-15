@@ -36,3 +36,8 @@ offers any of it: `line` reads with rustyline without a helper, `full` edits the
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-15** - From [583](583-a-command-has-no-object-of-its-own.md): a command's parameters are
+described (`CommandParameter`: name, whether required, keyword), but not what they take; the kind
+of a parameter - a participant, an agent, a channel, a personality, an id, a text - comes with
+this issue, the first to read it, and completing an argument is done from it.

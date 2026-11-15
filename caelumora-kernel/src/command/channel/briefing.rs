@@ -3,7 +3,7 @@
 use crate::command::{command_error, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::text::Briefing;
 
@@ -23,7 +23,7 @@ impl BriefingCommand {
             description:
                 "Says what an agent should know before it works in this channel; without a text, removes it."
                     .to_string(),
-            usage: Some("[text]".to_string()),
+            parameters: vec![CommandParameter::optional("text")],
             owners_only: false,
         })
     }

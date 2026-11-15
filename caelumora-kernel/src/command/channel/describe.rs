@@ -4,7 +4,7 @@ use super::this_or_named;
 use crate::command::{ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 
 const DESCRIBE_COMMAND_NAME: &str = "channel describe";
@@ -20,7 +20,7 @@ impl DescribeCommand {
             name: CommandName::fixed(DESCRIBE_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Describes this channel, or the one of this session named.".to_string(),
-            usage: Some("[channel]".to_string()),
+            parameters: vec![CommandParameter::optional("channel")],
             owners_only: false,
         })
     }

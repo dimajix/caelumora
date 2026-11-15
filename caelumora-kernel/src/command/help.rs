@@ -5,7 +5,9 @@ use crate::component::ComponentRegistry;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandProvider, CommandResult};
 use caelumora_api::component::{ComponentFacets, ComponentKind};
-use caelumora_domain::command::{help_topic, CommandDescription, CommandOutput, HELP_KIND};
+use caelumora_domain::command::{
+    help_topic, CommandDescription, CommandOutput, CommandParameter, HELP_KIND,
+};
 use caelumora_domain::value::command_name::CommandName;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -26,7 +28,7 @@ impl HelpCommand {
             aliases: Vec::new(),
             description: "Lists the commands you can use, those of a group, or describes one."
                 .to_string(),
-            usage: Some("[group or command]".to_string()),
+            parameters: vec![CommandParameter::optional("group or command")],
             owners_only: false,
         })
     }

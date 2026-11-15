@@ -111,7 +111,7 @@ import {QuestionCard} from './QuestionCard';
 import {approveEverything, approvingEverything, initialChoice, ruleOf, type RuleChoice} from '../approvalRules';
 import {APPROVER_NAME, actorKey, actorUuid, agentIdOf, isApprover, sameActor, userActor, userIdOf} from '../actor';
 import {GROUP_HANDLES, handleOf, mentionQueryAt} from '../mention';
-import {commandQueryAt, completes, parseInput} from '../command';
+import {commandQueryAt, completes, parseInput, usageOf} from '../command';
 import {openEventStream} from '../stream';
 import {loadDraft, saveDraft} from '../session';
 
@@ -1977,7 +1977,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                 >
                   {suggestions.map((suggestion, idx) => {
                     const [label, detail, description] = suggestion.kind === 'command'
-                      ? [`/${suggestion.command.name}`, [suggestion.handle && `@${suggestion.handle}`, suggestion.command.usage].filter(Boolean).join(' '), suggestion.command.description]
+                      ? [`/${suggestion.command.name}`, [suggestion.handle && `@${suggestion.handle}`, usageOf(suggestion.command)].filter(Boolean).join(' '), suggestion.command.description]
                       : suggestion.kind === 'group'
                         ? ['Everyone', `@${suggestion.handle}`, 'Every participant of this channel']
                         : [suggestion.participant.name, `@${suggestion.participant.handle}`, null];

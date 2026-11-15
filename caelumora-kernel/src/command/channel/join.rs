@@ -5,7 +5,7 @@ use crate::command::{command_error, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 
 const JOIN_COMMAND_NAME: &str = "channel join";
@@ -21,7 +21,7 @@ impl JoinCommand {
             name: CommandName::fixed(JOIN_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Joins the channel of this session named, if you may join it.".to_string(),
-            usage: Some("<channel>".to_string()),
+            parameters: vec![CommandParameter::required("channel")],
             owners_only: false,
         })
     }
@@ -52,9 +52,6 @@ impl ChannelCommand for JoinCommand {
             reason,
         };
         let wanted = args.trim();
-        if wanted.is_empty() {
-            return Err(invalid("name the channel to join".to_string()));
-        }
         let nowhere = || invalid(format!("no channel '{wanted}' you may join"));
         let session = context.session_loop(JOIN_COMMAND_NAME)?;
         let channel = session.channel_named(wanted).ok_or_else(nowhere)?;

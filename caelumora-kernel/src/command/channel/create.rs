@@ -4,7 +4,7 @@ use crate::command::{command_error, ChannelCommand, CommandContext};
 use crate::session::ChannelSpec;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
 
@@ -22,7 +22,7 @@ impl CreateCommand {
             aliases: Vec::new(),
             description: "Makes a channel of the name given in this session, with you alone in it."
                 .to_string(),
-            usage: Some("<name>".to_string()),
+            parameters: vec![CommandParameter::required("name")],
             owners_only: false,
         })
     }
@@ -50,9 +50,6 @@ impl ChannelCommand for CreateCommand {
             reason,
         };
         let name = args.trim();
-        if name.is_empty() {
-            return Err(invalid("name the new channel".to_string()));
-        }
         Name::new(name).map_err(|e| invalid(e.to_string()))?;
         let session = context.session_loop(CREATE_COMMAND_NAME)?;
         session

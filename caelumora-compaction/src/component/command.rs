@@ -29,7 +29,7 @@ impl CompactCommand {
             name: CommandName::fixed(COMPACT_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Compacts the agent's context: the older part of its conversation is replaced by a shorter one, the newest is kept. What it saw before stays recorded.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             // Like approving its calls (issue 269): its owners'.
             owners_only: true,
         };

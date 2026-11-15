@@ -22,7 +22,7 @@ impl ListCommand {
             name: CommandName::fixed(LIST_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Lists who takes part in this channel.".to_string(),
-            usage: None,
+            parameters: Vec::new(),
             owners_only: false,
         })
     }

@@ -3,7 +3,7 @@
 use crate::command::{command_error, ChannelCommand, CommandContext};
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
-use caelumora_domain::command::{CommandDescription, CommandOutput};
+use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::value::name::Name;
 
@@ -20,7 +20,7 @@ impl RenameCommand {
             name: CommandName::fixed(RENAME_COMMAND_NAME),
             aliases: Vec::new(),
             description: "Renames this channel.".to_string(),
-            usage: Some("<new name>".to_string()),
+            parameters: vec![CommandParameter::required("new name")],
             owners_only: false,
         })
     }
@@ -47,9 +47,6 @@ impl ChannelCommand for RenameCommand {
             reason,
         };
         let name = args.trim();
-        if name.is_empty() {
-            return Err(invalid("name the channel's new name".to_string()));
-        }
         Name::new(name).map_err(|e| invalid(e.to_string()))?;
         context
             .channel
