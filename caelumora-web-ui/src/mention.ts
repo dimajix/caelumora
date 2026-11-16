@@ -64,13 +64,14 @@ export const GROUP_HANDLES = ['all', 'channel'] as const;
 
 /**
  * The handles of the participants a message mentions, i.e. the mentions to
- * highlight - and the group handles, if the message mentions anyone: the
- * server resolved them to everyone.
+ * highlight - and the group handles, if it mentions anyone taking part: they
+ * address everyone. As `MentionDirectory::mentioned_spans` decides it.
  */
 export function mentionedHandles(message: Message, participants: ChannelParticipant[]): Set<string> {
   const keys = new Set((message.mentions ?? []).map(actorKey));
-  const groups = keys.size > 0 ? GROUP_HANDLES : [];
-  return new Set([...groups, ...participants.flatMap(m => (m.handle && keys.has(actorKey(m.id)) ? [m.handle] : []))]);
+  const mentioned = participants.filter(m => keys.has(actorKey(m.id)));
+  const groups = mentioned.length > 0 ? GROUP_HANDLES : [];
+  return new Set([...groups, ...mentioned.flatMap(m => (m.handle ? [m.handle] : []))]);
 }
 
 /**

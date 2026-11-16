@@ -731,7 +731,7 @@ impl ChannelLoop {
     fn resolve_mentions(&self, mut event: Envelope) -> Envelope {
         let resolve = |m: &mut Message| {
             if let Some(content) = &m.content {
-                m.mentions = self.mentions_in(content);
+                m.mentions = self.mentions().resolve(content);
             }
         };
         match &mut event.event {

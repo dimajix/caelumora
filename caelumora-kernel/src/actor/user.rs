@@ -283,9 +283,10 @@ impl UserActor {
         )?;
         let msg = Message {
             role: MessageRole::User,
+            // Resolved as the channel will, for the actor shows its own message before (issue 220).
             mentions: content
                 .as_deref()
-                .map(|content| channel_loop.mentions_in(content))
+                .map(|content| channel_loop.mentions().resolve(content))
                 .unwrap_or_default(),
             content,
             attachments,
@@ -358,9 +359,10 @@ impl UserActor {
             &original.attachments,
         )?;
         let modified = Message {
+            // Resolved as the channel will, for the actor shows its own message before (issue 220).
             mentions: content
                 .as_deref()
-                .map(|content| channel_loop.mentions_in(content))
+                .map(|content| channel_loop.mentions().resolve(content))
                 .unwrap_or_default(),
             content,
             attachments,

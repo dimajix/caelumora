@@ -8,8 +8,9 @@
 //! and addresses the same participant. The group handles `@all` and
 //! `@channel` address every participant at once (issue 401). Mentions are
 //! resolved to `ActorId`s once, when a message enters the channel, and stored
-//! with the message in `Message::mentions`; nothing downstream re-parses the
-//! text.
+//! with the message in `Message::mentions`; downstream, the text is parsed
+//! again only to find which of its handles to highlight
+//! (`MentionDirectory::mentioned_spans`), never to decide whom it addresses.
 
 use crate::actor::ActorId;
 use std::collections::HashMap;
@@ -59,9 +60,9 @@ pub fn handle_of(name: &str) -> String {
 /// A mention found in a text: the byte range of `@handle` (including the
 /// `@`) and the normalised handle.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MentionSpan {
-    pub range: Range<usize>,
-    pub handle: String,
+struct MentionSpan {
+    range: Range<usize>,
+    handle: String,
 }
 
 /// Finds every mention in `text`, in order of occurrence.
@@ -71,7 +72,7 @@ pub struct MentionSpan {
 /// a `.` — which keeps email addresses like `sassy@example.com` from counting.
 /// Trailing `-` are not part of the mention. Text inside backticks (inline
 /// code and code fences) is ignored.
-pub fn mention_spans(text: &str) -> Vec<MentionSpan> {
+fn mention_spans(text: &str) -> Vec<MentionSpan> {
     let mut spans = Vec::new();
     let mut in_code = false;
     let mut prev: Option<char> = None;
@@ -126,7 +127,7 @@ pub fn handle_typed_at(text: &str, cursor: usize) -> Option<usize> {
 /// Extracts the handles mentioned in `text`, normalised as `handle_of` does,
 /// deduplicated and in order of first occurrence. See `mention_spans` for what counts as a
 /// mention.
-pub fn parse_mentions(text: &str) -> Vec<String> {
+fn parse_mentions(text: &str) -> Vec<String> {
     let mut handles: Vec<String> = Vec::new();
     for span in mention_spans(text) {
         if !handles.contains(&span.handle) {
@@ -137,7 +138,8 @@ pub fn parse_mentions(text: &str) -> Vec<String> {
 }
 
 /// The handles of a channel's participants, used to resolve the mentions in
-/// a message to the actors they address.
+/// a message to the actors they address, and to find which of its handles
+/// address whom it mentions.
 #[derive(Debug, Clone, Default)]
 pub struct MentionDirectory {
     handles: HashMap<String, Vec<ActorId>>,
@@ -204,6 +206,17 @@ impl MentionDirectory {
             }
         }
         result
+    }
+
+    /// The byte ranges of the mentions in `text` (`@` included, in the order they stand, as
+    /// `mention_spans` finds them) whose handles address one of `mentions`, the actors a message
+    /// resolved its mentions to: what is highlighted of its words.
+    pub fn mentioned_spans(&self, text: &str, mentions: &[ActorId]) -> Vec<Range<usize>> {
+        mention_spans(text)
+            .into_iter()
+            .filter(|span| self.lookup(&span.handle).iter().any(|id| mentions.contains(id)))
+            .map(|span| span.range)
+            .collect()
     }
 }
 
@@ -279,6 +292,22 @@ mod tests {
         assert_eq!(directory.resolve("@bob, ask @SASSY and @nobody"), vec![bob, sassy]);
         assert!(directory.resolve("no mentions here").is_empty());
         assert!(directory.ambiguous().is_empty());
+    }
+
+    /// What is highlighted of a message's words are the handles that address someone it resolved
+    /// its mentions to: a group handle where anyone taking part was (issue 401), none where nobody
+    /// was or all have left.
+    #[test]
+    fn the_spans_mentioned_are_those_addressing_whom_a_message_mentions() {
+        let sassy = ActorId::Agent(AgentId::new());
+        let bob = ActorId::User(UserId::new());
+        let directory = MentionDirectory::new(vec![(sassy, "Sassy"), (bob, "Bob")]);
+        let text = "@sassy, @bob and @all, not @nobody";
+        assert_eq!(directory.mentioned_spans(text, &[sassy]), vec![0..6, 17..21]);
+        assert_eq!(directory.mentioned_spans(text, &[sassy, bob]), vec![0..6, 8..12, 17..21]);
+        assert!(directory.mentioned_spans(text, &[]).is_empty(), "nobody mentioned");
+        let gone = ActorId::User(UserId::new());
+        assert!(directory.mentioned_spans(text, &[gone]).is_empty(), "nobody taking part");
     }
 
     #[test]

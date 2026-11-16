@@ -488,7 +488,7 @@ none.
 The participant list is sorted by name and uses the participants' handles for `@` completion and for
 highlighting mentions; participants that cannot be mentioned, such as a deleted user, have none. The
 completion offers `@all` and `@channel` as well, and both are highlighted in a message that
-mentions anyone. Who
+mentions anyone taking part. Who
 answers - the channel's responder policy - is shown above it as its moderator, and for
 `mentions_only_policy` the input says that agents answer only when mentioned. `decision_policy`
 is explained, but not offered for a new channel: it needs a decision model, which a deployment may

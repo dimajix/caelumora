@@ -559,12 +559,11 @@ impl ChannelLoop {
         MentionDirectory::new(names.iter().map(|(id, name)| (*id, name.as_str())))
     }
 
-    /// The participants `text` mentions by their `@`-handles, as the channel
-    /// resolves them when a message enters it (issue 29) - everyone for
-    /// `@all` or `@channel` (issue 401) - for an actor that shows its own
-    /// message before (issue 220).
-    pub(crate) fn mentions_in(&self, text: &str) -> Vec<ActorId> {
-        self.mentions.load().resolve(text)
+    /// The handles of the participants that run in the channel, by which it resolves the
+    /// mentions of a message as it enters (issue 29) - everyone for `@all` or `@channel` (issue
+    /// 401).
+    pub fn mentions(&self) -> Arc<MentionDirectory> {
+        self.mentions.load_full()
     }
 }
 
@@ -630,12 +629,16 @@ mod tests {
 
         for text in ["@all, what do you think?", "@channel?"] {
             assert_eq!(
-                channel.mentions_in(text).into_iter().collect::<HashSet<_>>(),
+                channel.mentions().resolve(text).into_iter().collect::<HashSet<_>>(),
                 everyone,
                 "{text}"
             );
         }
-        assert_eq!(channel.mentions_in("@sassy"), [sleepers[0].id()], "a handle still names one");
+        assert_eq!(
+            channel.mentions().resolve("@sassy"),
+            [sleepers[0].id()],
+            "a handle still names one"
+        );
     }
 
     #[tokio::test]

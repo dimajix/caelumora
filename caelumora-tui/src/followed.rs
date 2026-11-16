@@ -12,7 +12,7 @@ use caelumora_domain::approval::{ApprovalId, ApprovalRequest};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::command::{agents_commands, ParameterKind};
 use caelumora_domain::history::{HistoryEntry, HistoryPage};
-use caelumora_domain::mention::{is_group_handle, mention_spans};
+use caelumora_domain::mention::MentionDirectory;
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::question::{QuestionId, QuestionRequest};
 use caelumora_domain::snapshot::Detail;
@@ -388,7 +388,9 @@ impl Followed {
             }
             // What another changed of what was said (issue 234).
             ActorEvent::MessageModified(message) => {
-                said_printed(message, &self.handles(), Saying::Edited).into_iter().collect()
+                said_printed(message, &self.channel.mentions(), Saying::Edited)
+                    .into_iter()
+                    .collect()
             }
             _ => shown(envelope),
         }
@@ -595,7 +597,7 @@ impl Followed {
     /// them.
     fn message_printed(&mut self, message: &Message, saying: Saying) -> Vec<Printed> {
         let mut printed: Vec<Printed> =
-            said_printed(message, &self.handles(), saying).into_iter().collect();
+            said_printed(message, &self.channel.mentions(), saying).into_iter().collect();
         for call in &message.tool_calls {
             let sender = message.sender_name.clone();
             let called = Printed::ToolCall { sender, call: Box::new(call.clone()) };
@@ -624,16 +626,6 @@ impl Followed {
     /// As `Views::channel`.
     async fn view(&self) -> ViewResult<ChannelView> {
         self.views.channel(self.channel.session_id(), self.channel_id()).await
-    }
-
-    /// The handles of the participants that run in the channel now (`ChannelLoop::participants`),
-    /// by participant: what the mentions of a message printed are highlighted by - those of who
-    /// joined after the channel was followed too, not those of who left. Read from the loop, not
-    /// the views, as what is printed is taken in at once (`take_in`); the web UI reads the
-    /// participants the channel lists, which differ for one whose actor is between two runs.
-    fn handles(&self) -> HashMap<ActorId, String> {
-        let participants = self.channel.participants().into_iter();
-        participants.filter_map(|m| Some((m.id, m.handle?))).collect()
     }
 }
 
@@ -722,44 +714,28 @@ fn questions_printed(request: &QuestionRequest, me: ActorId) -> Printed {
     Printed::Questions { request: Box::new(request.clone()), put_to_user }
 }
 
-/// What `message` says, in a message of the kind `saying`, by the `handles` of the channel's
-/// participants; `None` if it says nothing (`said`).
+/// What `message` says, in a message of the kind `saying`, with where it mentions participants
+/// by the handles of the channel's (`directory`); `None` if it says nothing (`said`).
 fn said_printed(
     message: &Message,
-    handles: &HashMap<ActorId, String>,
+    directory: &MentionDirectory,
     saying: Saying,
 ) -> Option<Printed> {
-    let said = said(message, handles)?;
+    let said = said(message, directory)?;
     Some(Printed::Said { sender: message.sender_name.clone(), said, saying })
 }
 
-/// What `message` says: its words, with where they mention participants by the `handles` of the
-/// channel's, and what it carries (issue 282); `None` if it says neither.
-fn said(message: &Message, handles: &HashMap<ActorId, String>) -> Option<Said> {
-    let words = message
-        .content
-        .as_deref()
-        .filter(|content| !content.is_empty())
-        .map(|content| words(message, content, handles));
+/// What `message` says: its words, with where they mention whom it mentions by the handles of the
+/// channel's participants that run now (`directory`, issue 29) - those of who joined after the
+/// channel was followed too, not those of who left -, and what it carries (issue 282); `None` if
+/// it says neither.
+fn said(message: &Message, directory: &MentionDirectory) -> Option<Said> {
+    let words = message.content.as_deref().filter(|content| !content.is_empty()).map(|content| {
+        let mentions = directory.mentioned_spans(content, &message.mentions);
+        Words { text: content.to_string(), mentions }
+    });
     let attachments = message.attachments.clone();
     (words.is_some() || !attachments.is_empty()).then_some(Said { words, attachments })
-}
-
-/// The words `content` of `message`, with where they mention a participant it mentions, by the
-/// `handles` of the channel's participants.
-fn words(message: &Message, content: &str, handles: &HashMap<ActorId, String>) -> Words {
-    let mentioned: Vec<&String> =
-        message.mentions.iter().filter_map(|id| handles.get(id)).collect();
-    // A group handle addresses everyone (issue 401): resolved if anyone was.
-    let mentions = mention_spans(content)
-        .into_iter()
-        .filter(|span| {
-            mentioned.contains(&&span.handle)
-                || (is_group_handle(&span.handle) && !message.mentions.is_empty())
-        })
-        .map(|span| span.range)
-        .collect();
-    Words { text: content.to_string(), mentions }
 }
 
 #[cfg(test)]
@@ -945,7 +921,7 @@ mod tests {
             ..make_message(MessageId::new())
         };
         let chart = make_content_ref("chart.png", b"chart");
-        let said_by = |message: Message| said(&message, &HashMap::new());
+        let said_by = |message: Message| said(&message, &MentionDirectory::default());
         let words = |text: &str| Some(Words { text: text.to_string(), mentions: Vec::new() });
         let carried = vec![chart.clone()];
         assert_eq!(
@@ -990,31 +966,6 @@ mod tests {
         channel.remove_participant(&ctx, agent).await.expect("the owner may remove it");
         let edited = ActorEvent::MessageModified(mentioning);
         assert!(mentions(edited).is_empty(), "not the handle of who left");
-    }
-
-    /// The words of a message mention the participants it mentions, by their handles in the
-    /// channel; a group handle mentions where anyone was (issue 401), none where nobody was.
-    #[test]
-    fn the_words_of_a_message_mention_by_the_handles() {
-        let owner = ActorId::User(UserId::new());
-        let handles = HashMap::from([(owner, "owner".to_string())]);
-        let mentioning = |content: &str, mentions| Message {
-            content: Some(content.to_string()),
-            mentions,
-            ..make_message(MessageId::new())
-        };
-        let mentions = |message: Message| {
-            said(&message, &handles).and_then(|said| said.words).map(|words| words.mentions)
-        };
-        assert_eq!(
-            mentions(mentioning("@owner look, @all", vec![owner])),
-            Some(vec![0..6, 13..17])
-        );
-        assert_eq!(
-            mentions(mentioning("@owner look, @all", Vec::new())),
-            Some(Vec::new()),
-            "nobody mentioned"
-        );
     }
 
     /// What the channel did not let in of the user's is told to them as rejected, apart from what

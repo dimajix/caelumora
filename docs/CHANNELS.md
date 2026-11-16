@@ -1210,6 +1210,11 @@ mentioned alone by it, and the channel warns of the handle as of one shared by s
 The channel resolves mentions once, as a message enters it, and stores the resolved ids with the
 message - for `@all`, the participants of that moment. Nothing downstream parses the text again, so
 a later rename, or a participant who joins later, cannot change whom a past message addressed.
+Only to show a message do the frontends parse its text again: they highlight the handles in it that
+address someone it mentions, by the participants taking part as it is shown - the terminal by the
+channel's own directory (`ChannelLoop::mentions`, `MentionDirectory::mentioned_spans`), the web UI
+by its participant list ([WEB-UI.md](WEB-UI.md)). The handle of a participant who left is no longer
+highlighted, though the message still addresses them.
 
 A mention changes who is asked to respond, not who receives the message: every participant still
 gets it, but every moderator asks exactly the mentioned agents instead of applying its own policy -
