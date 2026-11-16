@@ -344,9 +344,10 @@ impl Message {
     /// Whether the message carries calls in the role of a user (issue 587): a person's, who called
     /// themselves - an agent's calls are in its own role, its results in a tool's.
     /// `Filter::called_by_a_person` as a condition.
-    fn is_a_persons_call(&self) -> bool {
+    pub fn is_a_persons_call(&self) -> bool {
         self.role == MessageRole::User && !self.tool_calls.is_empty()
     }
+
     /// Modifies the message as it stands by `modified`, the same message as it reads from now on
     /// (issue 234), and returns whether it did: only one not taken back, by the same sender in the
     /// same role. It keeps its place, its id and the time it was said, and takes over what

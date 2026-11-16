@@ -20,7 +20,7 @@ pub mod help;
 pub(crate) mod participant;
 pub(crate) mod workspace;
 
-pub use workspace::SHELL_KIND;
+pub use workspace::{RUN_COMMAND_NAME, SHELL_KIND};
 
 use crate::actor::user::UserActor;
 use crate::channel::ChannelLoop;

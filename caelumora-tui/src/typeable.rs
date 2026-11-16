@@ -1,6 +1,6 @@
-//! What the user can type, and what completes a line from it (issue 579): a snapshot of the
-//! commands, handles, channels, personalities, sessions and templates the talk knew when it was
-//! last read, which both ways of drawing complete what is typed from.
+//! What the user can type, how a line typed is read, and what completes a line from it (issue 579):
+//! a snapshot of the commands, handles, channels, personalities, sessions and templates the talk
+//! knew when it was last read, which both ways of drawing complete what is typed from.
 //!
 //! After `/` a command is completed by its name or a short form, word by word as its group and it
 //! are named (`CommandName::is_begun_by`); after the name of an agent's command, the handle of an
@@ -8,11 +8,16 @@
 //! by its kind (`ParameterKind`), the rest of the line being that argument, until the keyword of a
 //! later parameter is typed. Anywhere else after `@`, the handle of a participant of the channel,
 //! or a group handle (`mention::handle_typed_at`).
+//!
+//! A line is read as `parse_input` reads it, but for one beginning with `!`, the short form of
+//! `/workspace run` in the terminal (issue 587, `read_input`): its shell command is completed by
+//! nothing.
 
 use caelumora_domain::command::{
     addressed, parse_input, CommandDescription, ParameterKind, UserInput,
 };
 use caelumora_domain::mention::{handle_of, handle_typed_at, GROUP_HANDLES};
+use caelumora_kernel::command::RUN_COMMAND_NAME;
 use std::collections::{BTreeSet, HashMap};
 
 /// What the user can type now, as the talk last read it.
@@ -61,8 +66,12 @@ impl Typeable {
 
     /// What completes `line` up to `cursor`, a byte offset: a command, an agent's handle after an
     /// agent's command, a command's first parameter, or a handle after `@` - as the module tells.
+    /// A shell command after `!` completes nothing.
     pub(crate) fn complete(&self, line: &str, cursor: usize) -> Completion {
         let Some(before) = line.get(..cursor) else { return Completion::default() };
+        if shell_command(before).is_some() {
+            return Completion::default();
+        }
         match parse_input(before) {
             UserInput::Command(_) => self.complete_command(&before[1..], 1),
             UserInput::Message(_) => self.complete_handle(before),
@@ -172,6 +181,25 @@ impl Typeable {
         let offered: Vec<String> = participants.chain(group_handles()).collect();
         Completion { start: at, candidates: beginning(&offered, &before[at..]) }
     }
+}
+
+/// What the user typed, `input`, as the terminal reads it (issue 587): a line beginning with `!`
+/// the command `/workspace run` with its shell command (`shell_command`), one beginning with `!!` a
+/// message beginning with `!`, any other as `parse_input` reads it.
+pub(crate) fn read_input(input: &str) -> UserInput {
+    if let Some(command) = shell_command(input) {
+        return UserInput::Command(format!("{RUN_COMMAND_NAME} {command}"));
+    }
+    match input.strip_prefix("!!") {
+        Some(text) => UserInput::Message(format!("!{text}")),
+        None => parse_input(input),
+    }
+}
+
+/// The shell command a line beginning with `!` runs: the rest of it; `None` for any other line,
+/// also one beginning with `!!`, which writes a literal `!`.
+fn shell_command(input: &str) -> Option<&str> {
+    input.strip_prefix('!').filter(|command| !command.starts_with('!'))
 }
 
 /// The group handles, as typed (`@all`, `@channel`).
@@ -338,5 +366,21 @@ mod tests {
         assert!(candidates("mail bob@ex").is_empty(), "not in an address");
         assert_eq!(typeable().complete("@b and more", 2).candidates, ["@bob"], "up to the cursor");
         assert_eq!(typeable().complete("ä", 1), Completion::default(), "not within a character");
+    }
+
+    /// Issue 587: a line beginning with `!` runs the rest of it as `/workspace run`, completed by
+    /// nothing; `!!` writes a literal `!`, completed as a message.
+    #[test]
+    fn a_bang_runs_a_shell_command_and_two_write_one() {
+        let command = |line: &str| UserInput::Command(line.to_string());
+        let message = |text: &str| UserInput::Message(text.to_string());
+        assert_eq!(read_input("!ls -la"), command("workspace run ls -la"));
+        assert_eq!(read_input("!echo \"a   b\""), command("workspace run echo \"a   b\""));
+        assert_eq!(read_input("!!ls"), message("!ls"), "a literal bang");
+        assert_eq!(read_input("!!/ls"), message("!/ls"), "and what follows it as written");
+        assert_eq!(read_input("hi!"), message("hi!"), "a bang anywhere else is plain text");
+        assert_eq!(read_input("/help"), command("help"), "else as `parse_input` reads it");
+        assert!(candidates("!cat @").is_empty(), "a shell command");
+        assert_eq!(candidates("!!hi @b"), ["@bob"], "a message");
     }
 }

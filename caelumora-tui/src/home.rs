@@ -4,7 +4,10 @@
 
 use crate::here::HERE;
 use anyhow::{Context, Result};
+use caelumora_domain::command::default_commands;
+use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::config::{parse_yaml, AppConfig};
+use caelumora_kernel::command::SHELL_KIND;
 use caelumora_store_home::HOME;
 use serde_json::{json, Value};
 use std::env;
@@ -17,6 +20,14 @@ const FIRST_FILES: [(&str, &str, &str); 2] = [
     ("templates", "default.yaml", include_str!("../defaults/default.yaml")),
     ("personalities", "assistant.yaml", include_str!("../defaults/assistant.yaml")),
 ];
+
+/// The commands of a session of the program unless its configuration says otherwise: those every
+/// session has by default, and `/workspace run` besides (issue 587), which `!` stands for.
+pub(crate) fn commands() -> ComponentConfig {
+    let mut commands = default_commands();
+    commands.component_nodes.push(ComponentDescriptor::new("shell", SHELL_KIND));
+    commands
+}
 
 /// The directories of the program, each `caelumora` below the one of XDG: what the person writes,
 /// what the program writes, and its log.
@@ -88,7 +99,8 @@ impl Home {
 
     /// What the program is built with unless told otherwise, for the directory `here` it works in:
     /// everything allowed, the person's own name accepted, its data below the data directory, the
-    /// definitions and the secrets in the configuration directory, the workspace `HERE`.
+    /// definitions and the secrets in the configuration directory, the workspace `HERE`, and its
+    /// `commands`.
     ///
     /// # Errors
     /// If a directory is named by no text.
@@ -129,6 +141,7 @@ impl Home {
                 "spaces": { "attachments": "channel", "artifacts": "project" },
             } } },
             "workspaces": { "storage": { HERE: directory } },
+            "commands": commands(),
         }))
     }
 
@@ -196,6 +209,23 @@ mod tests {
         assert_eq!(here.kind, "directory", "the rest of the default stays");
         assert_eq!(here.params["shell"], json!(false), "what is written wins");
         assert_eq!(config.persistence.entity_store.kind, "home", "and the other sections");
+    }
+
+    /// Issue 587: a session has the commands every session has by default, and `/workspace run`,
+    /// which `!` stands for.
+    #[test]
+    fn a_session_runs_commands_in_the_directory_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = home(dir.path()).config(Path::new("/")).unwrap();
+
+        assert_eq!(config.commands, commands());
+        let kinds: Vec<&str> =
+            config.commands.component_nodes.iter().map(|c| c.kind.as_str()).collect();
+        let defaults = default_commands();
+        let by_default = defaults.component_nodes.iter().map(|c| c.kind.as_str());
+        for kind in by_default.chain([SHELL_KIND]) {
+            assert!(kinds.contains(&kind), "{kind} in {kinds:?}");
+        }
     }
 
     #[test]

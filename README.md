@@ -109,7 +109,10 @@ in `line` with the choices numbered, the number typed. An approval whose tool su
 alike - and which no rule of a place asks a person to decide - offers them from now on, in the
 channel or in the session, as the web UI does. `/help` lists the commands of the channel
 and those the terminal carries out itself: `/session list`, `/session new`, `/session resume` and
-`/session delete` reach the sessions of the directory while the program runs, `/exit` ends it.
+`/session delete` reach the sessions of the directory while the program runs, `/exit` ends it. A
+line beginning with `!` runs the rest of it as a shell command in the directory (issue 587), as
+`/workspace run` does: once it ended, the command with its output goes into the channel as the
+user's, for the agents to see; Ctrl-C ends it before, and `!!` begins a message with `!`.
 Tab completes what is typed (issue 579): a command by its name or short form - the channel's, its
 agents', the terminal's -, after an agent's command the agent, after a command its argument where
 it names someone, a channel, a personality, a command, a session or a template, and a handle after

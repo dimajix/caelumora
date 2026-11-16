@@ -56,6 +56,16 @@ them, or of a group of them, where the channel knows nothing of what is asked or
 talked in. `/exit` (`/quit`) belongs to no group, as `/help` does: ending the program acts on no
 entity of a channel.
 
+A line beginning with `!` is `/workspace run` with the rest of it, in the terminal alone (issue
+[587](../issues/587-a-person-cannot-run-a-command-in-the-workspace.md), `read_input`): the rule
+`parse_input` - which the web UI mirrors - stays as it is, and `!!` writes a literal `!`, as `//`
+writes a `/`. Nothing after `!` is completed. The terminal runs the command beside the channels it
+follows, so that the user talks on until it ends - in another channel too, where how it ended and
+the call are told as of the channel it ran in; one at a time. How it ended may be told before the
+call. Ctrl-C ends the command under way rather than the program, and nothing is sent of it; a
+switch to another session ends it too. `/help` tells of `!` after the terminal's commands, also
+where the channel does not offer `/workspace run`, which `!` then says.
+
 ### Names
 
 A command's name is a `CommandName`: its words, from its group to itself (`channel list`), of lower
@@ -96,7 +106,8 @@ The channel's commands come from two places:
     [CONFIGURATION.md](CONFIGURATION.md)). The group `workspace`, of the component `shell` -
     `workspace` is the kind of the agents' tools on it -, is in no default: a command run with it
     acts wherever the workspace's storage reaches, so the terminal program, one person's on their
-    own machine, adds it to its configuration, and a server only where its operator does;
+    own machine, adds it to the defaults of its configuration, and a server only where its operator
+    does;
 *   `SessionTemplate::commands`, for commands that belong to what a session is for, copied into the
     session, so a running session keeps its set.
 
@@ -300,7 +311,7 @@ external agent alike.
 | `/channel rename` | - | the channel | `channel` | `<new name>` | private | Renames this channel. |
 | `/channel summary` | - | the channel | `channel` | `[text]` | private | Says in a line what this channel is for, its briefing kept; without a text, removes it. |
 | `/channel briefing` | - | the channel | `channel` | `[text]` | private | Says what an agent should know before it works in this channel, its summary kept; without a text, removes it. |
-| `/workspace run` | - | the channel | `shell` | `<command>` | private | Runs a shell command in the session's workspace until it ends, and puts it with its output into the channel as the user's call ([above](#a-command-run-in-the-workspace)). In no deployment by default. |
+| `/workspace run` | `!` in the terminal | the channel | `shell` | `<command>` | private | Runs a shell command in the session's workspace until it ends, and puts it with its output into the channel as the user's call ([above](#a-command-run-in-the-workspace)). In no default but the terminal's. |
 | `/skill` | - | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | - | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
 | `/private-notes` | - | the agent | `private_notes` | `@agent` | private | For the agent's owners: shows the private notes it recalls here - of this channel, and of the session's other channels as far as they may be told here ([MEMORY.md](MEMORY.md#private-notes)). |

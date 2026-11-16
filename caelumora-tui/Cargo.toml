@@ -37,6 +37,7 @@ caelumora-tool-web.workspace = true
 caelumora-compaction.workspace = true
 clap.workspace = true
 tokio = { workspace = true, features = ["full"] }
+tokio-util = { workspace = true, features = ["rt"] }
 rustyline.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true

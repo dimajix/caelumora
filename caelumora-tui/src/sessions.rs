@@ -400,7 +400,10 @@ pub(crate) mod testing {
 
     use super::Sessions;
     use crate::here::{place_of, HERE};
+    use crate::home;
     use caelumora_domain::actor::ActorId;
+    use caelumora_domain::command::default_commands;
+    use caelumora_domain::component::ComponentConfig;
     use caelumora_domain::config::{AppConfig, BackendConfig, WorkspacesConfig};
     use caelumora_domain::project::ProjectId;
     use caelumora_domain::template::testing::{make_channel_template, make_template};
@@ -436,16 +439,28 @@ pub(crate) mod testing {
     /// The sessions of a new directory the program works in: its storage `here` is a `local` one in
     /// it, its project and workspace found or made as the program finds them (`place_of`).
     pub(crate) async fn in_directory() -> InDirectory {
+        in_directory_where(false, default_commands()).await
+    }
+
+    /// The same, its storage running commands, and a session with the program's commands, as it
+    /// has them by default (`home::commands`, issue 587).
+    pub(crate) async fn in_directory_running_commands() -> InDirectory {
+        in_directory_where(true, home::commands()).await
+    }
+
+    /// The sessions of a new directory the program works in, its storage running commands if it
+    /// has a `shell`, a session with `commands`.
+    pub(crate) async fn in_directory_where(shell: bool, commands: ComponentConfig) -> InDirectory {
         let directory = tempfile::tempdir().unwrap();
         let params = json!({
             "root": directory.path(),
-            "shell": false,
+            "shell": shell,
             "destination": { "level": "internal" },
         });
         let workspaces = WorkspacesConfig {
             storage: [(HERE.to_string(), BackendConfig::new("local", params))].into(),
         };
-        let config = AppConfig { workspaces, ..Default::default() };
+        let config = AppConfig { workspaces, commands, ..Default::default() };
         let kernel = TestKernel { config, ..Default::default() }.build();
         let user = make_user("owner");
         record_users(kernel.entity_stores(), &[&user]).await;

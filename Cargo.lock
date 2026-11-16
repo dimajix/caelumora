@@ -1094,6 +1094,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tracing",
  "unicode-width",
  "uuid",

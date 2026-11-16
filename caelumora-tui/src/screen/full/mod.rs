@@ -676,7 +676,8 @@ mod tests {
         assert_eq!(window.take_key(&key(KeyCode::Enter), 5), Some(Typed::Chosen(vec![0, 2])));
     }
 
-    /// Ctrl+C ends the program, Ctrl+D the input where nothing is typed.
+    /// Ctrl+C interrupts - a command under way, else the program -, Ctrl+D ends the input where
+    /// nothing is typed.
     #[test]
     fn control_keys_end_the_program_or_the_input() {
         let mut window = Window::default();

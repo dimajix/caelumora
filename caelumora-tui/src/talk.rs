@@ -2,6 +2,14 @@
 //! line typed does in them - a command of the terminal carried out, what is asked of the user
 //! answered, or what is left sent to the channel talked in -, what they show, what is asked, and
 //! what the user can type there.
+//!
+//! A shell command run in the workspace (`/workspace run`, `!` for short, issue 587) runs until it
+//! ends, which may take long: the talk keeps it under way and follows it beside the channels
+//! (`next`), so that the user talks on meanwhile - in another channel too, where how it ended is
+//! told as of the channel it runs in; one at a time. Ctrl-C ends it (`end_shell_command`), which
+//! aborts it and so kills it - and nothing is told of it in the channel; a switch to another
+//! session ends it alike. How it ended, which the channel answers the user alone, may be told
+//! before the call it made, which the channel tells everyone.
 
 use crate::asking::{Asked, Asking, Offered};
 use crate::channels::{Channels, Happened};
@@ -10,26 +18,31 @@ use crate::followed::Followed;
 use crate::id_prefix::beginning_with;
 use crate::printed::{ErrorKind, Printed};
 use crate::sessions::{listing, Opening, Sessions, SessionsError};
-use crate::typeable::Typeable;
+use crate::typeable::{read_input, Typeable};
 use crate::under_way::UnderWay;
 use anyhow::Result;
 use caelumora_api::command::{check_arguments, CommandError, CommandSet};
 use caelumora_domain::actor::ActorEvent;
 use caelumora_domain::approval::{ApprovalRequest, ApprovalRule, Reach, RuleDecision, ToolMatcher};
-use caelumora_domain::command::{parse_input, UserInput};
+use caelumora_domain::channel::ChannelId;
+use caelumora_domain::command::UserInput;
 use caelumora_domain::question::{Question, QuestionRequest, Response};
 #[cfg(test)]
 use caelumora_domain::session::SessionId;
 use caelumora_domain::value::command_name::CommandName;
+use caelumora_domain::value::name::Name;
 use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::actor::Shown;
 use caelumora_kernel::command::help::HELP_COMMAND_NAME;
+use caelumora_kernel::command::{CommandReply, RUN_COMMAND_NAME};
 use caelumora_kernel::controller::UserController;
 use caelumora_kernel::error::user_message;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::Views;
+use std::future;
 use std::sync::Arc;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::warn;
 
 /// The response `line` gives to `question`: `-` skips it; for one with
@@ -61,6 +74,33 @@ fn response_of(question: &Question, line: &str) -> Response {
     }
 }
 
+/// What happened in the talk: in the channels followed, or to the shell command run in the
+/// workspace.
+pub(crate) enum Occurred {
+    /// What happened in the channels followed - boxed, being much larger.
+    InChannels(Box<Happened>),
+    /// The shell command ended (`/workspace run`), as the channel it runs in answered it.
+    Ran {
+        /// The channel it runs in.
+        channel_id: ChannelId,
+        /// Its name.
+        channel: Name,
+        /// What the channel answered.
+        reply: Result<CommandReply>,
+    },
+}
+
+/// A shell command run in the workspace under way (`/workspace run`, issue 587): the channel it
+/// runs in, and the task that answers once it ended - aborted where it is dropped, which kills it.
+struct ShellCommand {
+    /// The channel it runs in.
+    channel_id: ChannelId,
+    /// Its name.
+    channel: Name,
+    /// The task, which runs `/workspace run` by the user's actor.
+    task: AbortOnDropHandle<Result<CommandReply>>,
+}
+
 /// What a line typed came to.
 pub(crate) enum Handled {
     /// What the terminal prints of it.
@@ -70,8 +110,9 @@ pub(crate) enum Handled {
 }
 
 /// The talk of the user in the terminal (issue 571): the channels of the session it talks in that
-/// it follows, what is asked of the user, the sessions of the directory, and what the user can type
-/// (issue 579) - what a line typed and what a channel shows change.
+/// it follows, what is asked of the user, the sessions of the directory, what the user can type
+/// (issue 579) - what a line typed and what a channel shows change -, and the shell command they
+/// run (issue 587).
 pub(crate) struct Talk {
     /// The channels followed.
     channels: Channels,
@@ -88,6 +129,9 @@ pub(crate) struct Talk {
     commands: CommandSet<dyn TerminalCommand>,
     /// What the user can type, as last read (issue 579): what the screen completes from.
     typeable: Arc<Typeable>,
+    /// The shell command run in the workspace under way, if one is (issue 587), followed by
+    /// `next`.
+    shell_command: Option<ShellCommand>,
 }
 
 impl Talk {
@@ -114,21 +158,70 @@ impl Talk {
         let opening = channels.opening().await;
         let commands = commands()?;
         let typeable = Arc::new(Typeable::default());
-        let mut talk = Talk { channels, asked: None, sessions, user, commands, typeable };
+        let mut talk =
+            Talk { channels, asked: None, sessions, user, commands, typeable, shell_command: None };
         talk.ask_next().await;
         talk.read_typeable().await;
         Ok((talk, opening))
     }
 
-    /// What happens next in the channels followed (`Channels::next`).
-    pub(crate) async fn next(&mut self) -> Happened {
-        self.channels.next().await
+    /// What happens next: in the channels followed (`Channels::next`), or the shell command run in
+    /// the workspace ending. Nothing is lost if it is dropped before it completes.
+    pub(crate) async fn next(&mut self) -> Occurred {
+        let shell_command = &mut self.shell_command;
+        let ended = async {
+            match shell_command.as_mut() {
+                Some(command) => {
+                    let reply = (&mut command.task).await;
+                    let reply = reply.map_err(anyhow::Error::from).and_then(|reply| reply);
+                    let (channel_id, channel) = (command.channel_id, command.channel.clone());
+                    Occurred::Ran { channel_id, channel, reply }
+                }
+                None => future::pending().await,
+            }
+        };
+        let ran = tokio::select! {
+            happened = self.channels.next() => return Occurred::InChannels(Box::new(happened)),
+            ran = ended => ran,
+        };
+        self.shell_command = None;
+        ran
+    }
+
+    /// Takes in what `occurred`, and answers what the terminal prints of it: of the shell command
+    /// run in the workspace, how it ended, as the channel answered the user - told as of its
+    /// channel where the user talks in another (`take_in_channels` for the rest).
+    pub(crate) async fn take_in(&mut self, occurred: Occurred) -> Vec<Printed> {
+        let (channel_id, channel, reply) = match occurred {
+            Occurred::InChannels(happened) => return self.take_in_channels(*happened).await,
+            Occurred::Ran { channel_id, channel, reply } => (channel_id, channel, reply),
+        };
+        let printed = match reply {
+            Ok(reply) => told(reply.output, None),
+            Err(e) => vec![error_printed(&e)],
+        };
+        match self.channels.talked_in().map(Followed::channel_id) == Some(channel_id) {
+            true => printed,
+            false => Printed::elsewhere(&channel, printed),
+        }
+    }
+
+    /// Ends the shell command run in the workspace, if one is under way, by aborting it, which
+    /// kills it (issue 587), and answers what tells so; `None` where none is. Ended in the moment
+    /// it ends by itself, it may have ended already - or have been told in the channel.
+    pub(crate) fn end_shell_command(&mut self) -> Option<Printed> {
+        let ended = self.shell_command.take()?;
+        let told = Printed::Notice("The command is ended".to_string());
+        Some(match self.channels.talked_in().map(Followed::channel_id) == Some(ended.channel_id) {
+            true => told,
+            false => Printed::Elsewhere { channel: ended.channel, printed: Box::new(told) },
+        })
     }
 
     /// Takes in what `happened` in the channels followed, and answers what the terminal prints of
     /// it (`Channels::take_in`) - with that the questions asked closed, where their channel tells
     /// so or is followed no more; then asks what waits next (`ask_next`).
-    pub(crate) async fn take_in(&mut self, happened: Happened) -> Vec<Printed> {
+    async fn take_in_channels(&mut self, happened: Happened) -> Vec<Printed> {
         let changes_typeable = self.changes_typeable(&happened);
         let mut printed = self.channels.take_in(happened).await;
         if changes_typeable {
@@ -244,11 +337,12 @@ impl Talk {
         self.channels.under_way()
     }
 
-    /// Does what the user typed, `input`, and answers what it came to: a command of the terminal
-    /// carried out - one refused arguments it does not take, or none where it requires one; one on
-    /// the sessions of the directory asked of them -; while questions are asked, any other line the
-    /// answer to the next, while an approval is, the number of a choice its answer; else the line
-    /// sent to the channel talked in (`send_line`). Then asks what waits next.
+    /// Does what the user typed, `input`, read as the terminal reads it (`read_input`), and answers
+    /// what it came to: a command of the terminal carried out - one refused arguments it does not
+    /// take, or none where it requires one; one on the sessions of the directory asked of them -;
+    /// while questions are asked, any other message the answer to the next, while an approval is,
+    /// the number of a choice its answer; else the line sent to the channel talked in
+    /// (`send_line`). Then asks what waits next.
     ///
     /// # Errors
     /// As `send_line`.
@@ -256,7 +350,7 @@ impl Talk {
         if input.is_empty() {
             return Ok(Handled::Printed(Vec::new()));
         }
-        let parsed = parse_input(input);
+        let parsed = read_input(input);
         let terminal = match &parsed {
             UserInput::Command(line) => {
                 self.commands.find(line).map(|(command, args)| (Arc::clone(command), args))
@@ -282,7 +376,8 @@ impl Talk {
             None if matches!(self.shown(), Some(Asking::Question { .. }))
                 && matches!(parsed, UserInput::Message(_)) =>
             {
-                self.answer_in_words(input).await
+                let UserInput::Message(text) = &parsed else { unreachable!("a message") };
+                self.answer_in_words(text).await
             }
             None if chosen.is_some() => self.choose(chosen.as_slice()).await,
             None => self.send_line(&parsed).await?,
@@ -372,10 +467,11 @@ impl Talk {
 
     /// Talks in the session of the directory that `opening` asks for from now on, its channels
     /// followed in place of those of the session left (`Channels::of_session`), what was asked
-    /// there asked no more, and the session left stopped; answers what tells so, as the terminal
-    /// opens with. Where the session cannot be opened, or the user takes part in none of its
-    /// channels, or it is the one talked in already, the talk stays where it is, and the user is
-    /// told why.
+    /// there asked no more, a shell command run there ended (`end_shell_command`), and the session
+    /// left stopped;
+    /// answers what tells so, as the terminal opens with. Where the session cannot be opened, or
+    /// the user takes part in none of its channels, or it is the one talked in already, the talk
+    /// stays where it is, and the user is told why.
     pub(crate) async fn switch_session(&mut self, opening: &Opening) -> Vec<Printed> {
         let left = self.channels.session_id();
         let (session, told) = match self.sessions.open(opening).await {
@@ -396,7 +492,9 @@ impl Talk {
             let message = format!("You take part in no channel of the session {id}");
             return vec![Printed::Error { kind: ErrorKind::Failed, message }];
         };
-        let mut printed: Vec<Printed> = told.into_iter().collect();
+        // Ended first, told of the channel it ran in as the one talked in.
+        let mut printed: Vec<Printed> = self.end_shell_command().into_iter().collect();
+        printed.extend(told);
         printed.push(Printed::Notice(format!("Talking in the session {id} now")));
         printed.extend(followed.opening().await);
         self.channels = followed;
@@ -597,11 +695,12 @@ impl Talk {
     /// Sends what the user typed, `input`, to the channel talked in as a command or a message, and
     /// answers what the terminal prints of it - of `/help`, what the terminal tells of its own
     /// commands (`terminal_help`) after what the channel answers, or in its place where the channel
-    /// knows nothing of what was asked or no channel is talked in.
+    /// knows nothing of what was asked or no channel is talked in; of `/workspace run`, that it
+    /// runs (`run_shell_command`).
     ///
     /// # Errors
     /// If a message cannot be sent into the channel.
-    async fn send_line(&self, input: &UserInput) -> Result<Vec<Printed>> {
+    async fn send_line(&mut self, input: &UserInput) -> Result<Vec<Printed>> {
         let help = match input {
             UserInput::Command(line) => CommandName::fixed(HELP_COMMAND_NAME)
                 .strip_from(line)
@@ -612,7 +711,11 @@ impl Talk {
             Ok((_, actor)) => actor,
             Err(printed) => return Ok(vec![help.map_or(printed, Printed::Plain)]),
         };
+        let run = CommandName::fixed(RUN_COMMAND_NAME);
         match input {
+            UserInput::Command(line) if run.strip_from(line).is_some() => {
+                Ok(vec![self.run_shell_command(&run, line).await])
+            }
             UserInput::Command(line) => Ok(match actor.execute_command(line).await {
                 // Also for an answer to the whole channel: its announcement is not routed back to
                 // its sender.
@@ -628,6 +731,35 @@ impl Talk {
                 Ok(Vec::new())
             }
         }
+    }
+
+    /// Runs the command line `line`, `/workspace run` - named `run` -, by the user's actor in the
+    /// channel talked in, under way until it ends (`next`), and answers what tells that it runs -
+    /// or why not: one runs already, the channel offers the user no `/workspace run`, which a
+    /// configuration of the program may leave out and which they may have typed as `!`, or it is
+    /// given no shell command (`check_arguments`); as `talking` where there is no run of the actor.
+    async fn run_shell_command(&mut self, run: &CommandName, line: &str) -> Printed {
+        let failed = |message: String| Printed::Error { kind: ErrorKind::Failed, message };
+        if self.shell_command.is_some() {
+            return Printed::Notice("A command runs already: Ctrl-C ends it".to_string());
+        }
+        let (channel_id, channel, actor) = match self.talking() {
+            Ok((followed, actor)) => (followed.channel_id(), followed.name(), actor),
+            Err(printed) => return printed,
+        };
+        let offered = actor.visible_commands().await;
+        let Some(description) = offered.iter().find(|command| command.is_named(run)) else {
+            return failed(format!("The channel offers you no /{run}, which `!` stands for"));
+        };
+        let args = run.strip_from(line).unwrap_or_default();
+        if let Err(e) = check_arguments(description, args) {
+            return failed(e.to_string());
+        }
+        let line = line.to_string();
+        let task =
+            AbortOnDropHandle::new(tokio::spawn(async move { actor.execute_command(&line).await }));
+        self.shell_command = Some(ShellCommand { channel_id, channel, task });
+        Printed::Notice("The command runs: Ctrl-C ends it".to_string())
     }
 }
 
@@ -711,12 +843,16 @@ fn error_printed(error: &anyhow::Error) -> Printed {
 mod tests {
     use super::*;
     use crate::followed::testing::{an_agent_in, approval, from};
+    use crate::home;
     use crate::screen::testing::lines;
     use crate::sessions::shown_id;
-    use crate::sessions::testing::{in_directory, InDirectory};
+    use crate::sessions::testing::{
+        in_directory, in_directory_running_commands, in_directory_where, InDirectory,
+    };
     use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::MAX_PERSONAL_RULES;
+    use caelumora_domain::history::HistoryEntry;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::Choice;
     use caelumora_kernel::actor::Shown;
@@ -726,6 +862,7 @@ mod tests {
     use caelumora_kernel::session::{SessionError, SessionLoop};
     use caelumora_kernel::view::Viewer;
     use caelumora_security::SecurityContext;
+    use std::fs::File;
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::time;
@@ -778,7 +915,12 @@ mod tests {
     /// The talk of the owner of a directory in a session of theirs started from its template, the
     /// first channel of it talked in, with the session and what the talk runs in.
     async fn talking() -> (Talk, Arc<SessionLoop>, Running) {
-        let InDirectory { sessions, manager, kernel, owner, directory } = in_directory().await;
+        talking_in(in_directory().await).await
+    }
+
+    /// The same, in the directory given.
+    async fn talking_in(in_directory: InDirectory) -> (Talk, Arc<SessionLoop>, Running) {
+        let InDirectory { sessions, manager, kernel, owner, directory } = in_directory;
         let start = Opening::Start { template: None };
         let (session_loop, _) = sessions.open(&start).await.expect("started");
         let views = manager.views(Viewer::new(owner.clone()));
@@ -828,8 +970,8 @@ mod tests {
         let asked = Asking::questions(request.clone());
         let until = async {
             while talk.asking() != Some(&asked) {
-                let happened = talk.next().await;
-                talk.take_in(happened).await;
+                let occurred = talk.next().await;
+                talk.take_in(occurred).await;
             }
         };
         time::timeout(Duration::from_secs(5), until).await.expect("asked");
@@ -899,8 +1041,8 @@ mod tests {
         an_agent_in(&running.kernel, &session_loop, &running.owner, channel.id()).await;
         let until = async {
             while offered(&talk).is_empty() {
-                let happened = talk.next().await;
-                talk.take_in(happened).await;
+                let occurred = talk.next().await;
+                talk.take_in(occurred).await;
             }
         };
         time::timeout(Duration::from_secs(5), until).await.expect("offered once it joined");
@@ -921,8 +1063,8 @@ mod tests {
         assert!(typed(&mut talk, "exit").await.is_empty(), "said");
     }
 
-    /// `/help` tells the terminal's commands after the channel's; of one named, or of a group of
-    /// the terminal alone, what the terminal tells.
+    /// `/help` tells the terminal's commands after the channel's, and `!` (issue 587); of one
+    /// named, or of a group of the terminal alone, what the terminal tells.
     #[tokio::test]
     async fn help_tells_the_terminal_s_commands() {
         let (mut talk, _, _running) = talking().await;
@@ -931,6 +1073,7 @@ mod tests {
         let mine = all.find("Commands of this terminal:").expect("the terminal's");
         assert!(theirs < mine, "after the channel's: {all}");
         assert!(all.contains("- `/channel switch [channel]` (also `/switch`) — Talks"), "{all}");
+        assert!(all.contains("- `!<command>` — Short for `/workspace run <command>`"), "{all}");
         let one = typed(&mut talk, "/help switch").await.join("\n");
         assert!(one.starts_with("`/channel switch [channel]` (also `/switch`)"), "{one}");
         let group = typed(&mut talk, "/help approval").await.join("\n");
@@ -994,6 +1137,29 @@ mod tests {
         assert!(talk.asking().is_none(), "answered, not asked again");
     }
 
+    /// An answer in words is read as a message is: `!!` writes a literal `!` (issue 587), `//` a
+    /// literal `/`.
+    #[tokio::test]
+    async fn an_answer_in_words_is_read_as_a_message() {
+        for (line, answer) in [("!!yes", "!yes"), ("//etc", "/etc")] {
+            let (mut talk, session_loop, running) = talking().await;
+            put_to_the_owner(&mut talk, &session_loop, &running, &[]).await;
+            let channel = session_loop.channels().into_iter().next().expect("its first channel");
+            let mut observed = channel.observe();
+            typed(&mut talk, line).await;
+            let answered = async {
+                loop {
+                    let envelope = observed.recv().await.expect("observed");
+                    if let ActorEvent::QuestionAnswered { responses, .. } = envelope.event {
+                        break responses;
+                    }
+                }
+            };
+            let responses = time::timeout(Duration::from_secs(5), answered).await.expect(line);
+            assert_eq!(responses, [Response::Text { text: answer.to_string() }], "{line}");
+        }
+    }
+
     /// A question with choices is answered by the choices taken, and asked no more.
     #[tokio::test]
     async fn a_question_is_answered_by_its_choices() {
@@ -1013,15 +1179,15 @@ mod tests {
     }
 
     /// What the channel shows as agent `agent` asks for approval in `channel`.
-    fn approval_requested(channel: &ChannelLoop, agent: AgentId) -> Happened {
+    fn approval_requested(channel: &ChannelLoop, agent: AgentId) -> Occurred {
         requested(channel, approval(channel, agent))
     }
 
     /// What the channel shows as `request` is asked for approval in `channel`.
-    fn requested(channel: &ChannelLoop, request: ApprovalRequest) -> Happened {
+    fn requested(channel: &ChannelLoop, request: ApprovalRequest) -> Occurred {
         let agent = ActorId::Agent(request.agent_id);
         let shown = Shown::Envelope(from(channel, agent, ActorEvent::ApprovalRequested(request)));
-        Happened::Shown(channel.id(), Ok(shown))
+        Occurred::InChannels(Box::new(Happened::Shown(channel.id(), Ok(shown))))
     }
 
     /// An approval pending in the channel talked in is asked of the talk's own accord, where the
@@ -1118,8 +1284,8 @@ mod tests {
         let side = session_loop.create_channel(&running.owner, side).await.expect("created");
         let followed = async {
             while talk.channels.followed(side.id()).is_none() {
-                let happened = talk.next().await;
-                talk.take_in(happened).await;
+                let occurred = talk.next().await;
+                talk.take_in(occurred).await;
             }
         };
         time::timeout(Duration::from_secs(5), followed).await.expect("followed");
@@ -1223,8 +1389,8 @@ mod tests {
         actor.take_in_as_routed(from(&channel, ActorId::Agent(request.agent_id), closed)).await;
         let told = async {
             loop {
-                let happened = talk.next().await;
-                let printed = lines(&talk.take_in(happened).await).join("\n");
+                let occurred = talk.next().await;
+                let printed = lines(&talk.take_in(occurred).await).join("\n");
                 if printed.contains("closed before you answered") {
                     break;
                 }
@@ -1232,5 +1398,140 @@ mod tests {
         };
         time::timeout(Duration::from_secs(5), told).await.expect("told");
         assert!(talk.asking().is_none(), "no longer asked");
+    }
+
+    /// What the terminal prints as `talk` goes on, until each of `until` is contained in a line of
+    /// it.
+    async fn printed_until(talk: &mut Talk, until: &[&str]) -> Vec<String> {
+        let mut printed: Vec<String> = Vec::new();
+        let told = async {
+            while !until.iter().all(|text| printed.iter().any(|line| line.contains(text))) {
+                let occurred = talk.next().await;
+                printed.extend(lines(&talk.take_in(occurred).await));
+            }
+        };
+        time::timeout(Duration::from_secs(10), told).await.expect("told");
+        printed
+    }
+
+    /// Whether the history of `channel` holds a call the user made.
+    async fn holds_a_call(channel: &ChannelLoop) -> bool {
+        let entries = channel.history_entries().await;
+        let message = |entry: &HistoryEntry| match entry {
+            HistoryEntry::Said { message } => message.is_a_persons_call(),
+            _ => false,
+        };
+        entries.iter().any(message)
+    }
+
+    /// Issue 587: a line beginning with `!` runs its command in the workspace, while the talk goes
+    /// on; once it ended, the user sees the call they made, as the channel tells it, and how it
+    /// ended.
+    #[tokio::test]
+    async fn a_bang_runs_a_command_and_the_user_sees_their_call() {
+        let (mut talk, session_loop, _running) =
+            talking_in(in_directory_running_commands().await).await;
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+
+        assert_eq!(typed(&mut talk, "!echo hello").await, ["The command runs: Ctrl-C ends it"]);
+        let until = ["exited with 0", "calls run_command", "run_command answered"];
+        let printed = printed_until(&mut talk, &until).await;
+
+        let call = printed.iter().find(|line| line.contains("calls run_command"));
+        assert!(call.is_some_and(|line| line.contains("echo hello")), "{printed:?}");
+        assert!(holds_a_call(&channel).await, "recorded");
+    }
+
+    /// Issue 587: one command runs at a time, and the user talks on meanwhile; Ctrl-C ends it,
+    /// which kills it, and nothing is told of it in the channel.
+    #[tokio::test]
+    async fn a_command_runs_alone_until_it_is_ended() {
+        let (mut talk, session_loop, _running) =
+            talking_in(in_directory_running_commands().await).await;
+        let channel = session_loop.channels().into_iter().next().expect("its first channel");
+        let elsewhere = tempfile::tempdir().unwrap();
+        let (started, ended) = (elsewhere.path().join("started"), elsewhere.path().join("ended"));
+
+        let line = format!("!touch {} && sleep 1 && touch {}", started.display(), ended.display());
+        assert_eq!(typed(&mut talk, &line).await, ["The command runs: Ctrl-C ends it"]);
+        assert_eq!(typed(&mut talk, "!ls").await, ["A command runs already: Ctrl-C ends it"]);
+        assert!(typed(&mut talk, "/channel list").await.concat().contains("main"), "talks on");
+        let starting = async {
+            while !started.exists() {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        time::timeout(Duration::from_secs(5), starting).await.expect("started");
+        let told = talk.end_shell_command().map(|ended| lines(&[ended]));
+        assert_eq!(told, Some(vec!["The command is ended".to_string()]));
+        assert!(talk.end_shell_command().is_none(), "none under way any more");
+
+        time::sleep(Duration::from_secs(2)).await;
+        assert!(!ended.exists(), "the command was killed");
+        assert!(!holds_a_call(&channel).await, "nothing told");
+    }
+
+    /// Issue 587: the user talks on in another channel while a shell command runs; how it ended,
+    /// and the call they made, are told as of the channel it ran in.
+    #[tokio::test]
+    async fn a_command_ended_is_told_of_its_channel_where_another_is_talked_in() {
+        let (mut talk, _session_loop, _running) =
+            talking_in(in_directory_running_commands().await).await;
+        // Runs until the test lets it end, once it talks in the other channel.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let go = elsewhere.path().join("go");
+        let line = format!("!until [ -e {} ]; do sleep 0.05; done", go.display());
+        assert_eq!(typed(&mut talk, &line).await, ["The command runs: Ctrl-C ends it"]);
+        typed(&mut talk, "/channel create side").await;
+        // Followed once the talk learns that the user joined it.
+        let mut printed = Vec::new();
+        let switching = async {
+            while !typed(&mut talk, "/switch side").await.concat().contains("Talking in side") {
+                let occurred = talk.next().await;
+                printed.extend(lines(&talk.take_in(occurred).await));
+            }
+        };
+        time::timeout(Duration::from_secs(5), switching).await.expect("switched");
+        assert!(!printed.concat().contains("exited"), "ended before: {printed:?}");
+        File::create(&go).unwrap();
+
+        let until = ["In main: The command exited with 0", "In main: owner calls run_command"];
+        printed_until(&mut talk, &until).await;
+    }
+
+    /// Issue 587: a switch to another session ends the shell command run in the one left.
+    #[tokio::test]
+    async fn a_switch_to_another_session_ends_the_command() {
+        let (mut talk, _session_loop, _running) =
+            talking_in(in_directory_running_commands().await).await;
+        assert_eq!(typed(&mut talk, "!sleep 30").await, ["The command runs: Ctrl-C ends it"]);
+        let printed = lines(&talk.switch_session(&Opening::Start { template: None }).await);
+        assert!(printed.contains(&"The command is ended".to_string()), "{printed:?}");
+        assert!(talk.end_shell_command().is_none(), "none under way any more");
+    }
+
+    /// Issue 587: a shell command refused or failing is told as an error - given none, as it is
+    /// typed; the storage running none, once the channel answers so.
+    #[tokio::test]
+    async fn a_command_that_cannot_run_is_told() {
+        let in_directory = in_directory_where(false, home::commands()).await;
+        let (mut talk, _session_loop, _running) = talking_in(in_directory).await;
+        let told = typed(&mut talk, "!").await;
+        assert_eq!(told, ["Error: /workspace run: it takes <command>"]);
+        assert!(talk.end_shell_command().is_none(), "nothing under way");
+
+        assert_eq!(typed(&mut talk, "!ls").await, ["The command runs: Ctrl-C ends it"]);
+        let printed = printed_until(&mut talk, &["runs no commands"]).await;
+        assert!(printed.iter().any(|line| line.starts_with("Error: ")), "{printed:?}");
+    }
+
+    /// Issue 587: where the channel offers no `/workspace run` - a configuration that leaves it
+    /// out -, `!` tells so, and runs nothing.
+    #[tokio::test]
+    async fn a_bang_tells_where_no_command_can_be_run() {
+        let (mut talk, _session_loop, _running) = talking().await;
+        let told = typed(&mut talk, "!ls").await;
+        assert_eq!(told, ["Error: The channel offers you no /workspace run, which `!` stands for"]);
+        assert!(talk.end_shell_command().is_none(), "nothing under way");
     }
 }

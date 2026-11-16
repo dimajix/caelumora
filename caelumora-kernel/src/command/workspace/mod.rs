@@ -6,6 +6,8 @@
 
 mod run;
 
+pub use run::RUN_COMMAND_NAME;
+
 use crate::command::ChannelCommand;
 use crate::component::ComponentRegistry;
 use caelumora_api::command::CommandProvider;

@@ -217,3 +217,19 @@ person's calls are heard with their results (`Message::as_heard`) and given to a
 a channel from outside never saw a person's command that the agents in it heard. It reads a
 person's calls now in the words the resolver gives them (`calls_in_words`), classified with what
 they answered (`Message::classification_with_results`, which `Work::see_message` uses too).
+
+2026-11-16: The maintainer decided that `read_history`, which searches the words of a message,
+is to search a person's calls by their description once issue
+[586](586-the-terminal-shows-a-tool-call-by-its-raw-arguments.md) is done and merged: a call has
+no description yet, only its arguments. The finding that a person's call is released without its
+result became issue [588](588-a-person-s-call-is-released-without-its-result.md).
+
+2026-11-16: Step 3 - the terminal's part. A line beginning with `!` is `/workspace run` with the
+rest of it, `!!` a message beginning with `!` (`read_input` in `caelumora-tui/src/typeable.rs`);
+the terminal's defaults add the component `shell`. The run is a task the talk follows beside the
+channels, one at a time; Ctrl-C aborts it, which kills the command, and a switch to another
+session does the same, while in another channel of the session how it ended is told as of the
+channel it ran in. A call the user made is printed as the channel tells it, wherever they talk,
+though what is sent in their name is not printed otherwise. Where the channel offers no
+`/workspace run`, `!` says so. Until issue 586 the terminal shows the result of the call by its
+first line only.

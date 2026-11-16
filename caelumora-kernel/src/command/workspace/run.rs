@@ -19,7 +19,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
-const RUN_COMMAND_NAME: &str = "workspace run";
+/// The name of `/workspace run`, which the terminal gives the short form `!` (issue 587).
+pub const RUN_COMMAND_NAME: &str = "workspace run";
 
 /// How long one wait for a command's output lasts before it is asked for again.
 const FOLLOW_FOR: Duration = Duration::from_secs(30);
