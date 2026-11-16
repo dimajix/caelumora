@@ -1,6 +1,6 @@
 # 587 — A person cannot run a command in the workspace
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -233,3 +233,6 @@ channel it ran in. A call the user made is printed as the channel tells it, wher
 though what is sent in their name is not printed otherwise. Where the channel offers no
 `/workspace run`, `!` says so. Until issue 586 the terminal shows the result of the call by its
 first line only.
+
+2026-11-16: Steps 1 to 3 merged into `main`; in progress until `read_history` searches a person's
+calls by their description, after issue 586.
