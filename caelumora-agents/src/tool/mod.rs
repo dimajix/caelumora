@@ -367,10 +367,10 @@ pub(crate) fn result_text(
 /// what to do next - the call is answered all the same.
 fn unsuccessful_result(status: ToolResultStatus, message: Result<String, PromptError>) -> String {
     match message {
-        Ok(message) => serde_json::json!({ "status": status, "message": message }).to_string(),
+        Ok(message) => status.as_content(Some(&message)),
         Err(e) => {
             error!("The model is told only the status '{status:?}' of a tool call: {e}");
-            serde_json::json!({ "status": status }).to_string()
+            status.as_content(None)
         }
     }
 }
@@ -2102,7 +2102,6 @@ mod tests {
         assert_eq!(read.status, ToolResultStatus::Ok, "{}", read.content);
         let kept: Vec<_> = read.knowledge.iter().map(|k| k.source.clone()).collect();
         assert_eq!(kept, vec![history.clone()], "on the result, for the transcript");
-        assert!(read.for_the_model().knowledge.is_empty(), "never given to the model");
 
         drop(turn);
         let recorded = &agent_channel_state.turn.as_ref().unwrap().work.context.frame.knowledge;

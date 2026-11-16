@@ -249,7 +249,8 @@ impl Message {
     }
 
     /// What a model is given of the message where what it said may not be given (issue 258): which
-    /// tools it called and how they ended, without its content, reasoning, attachments, arguments
+    /// tools it called and how they ended - a result's status as its content
+    /// (`ToolResultStatus::as_content`) -, without its content, reasoning, attachments, arguments
     /// and the descriptions made of them, what the calls returned or what they read, classified
     /// `classification`. For a turn given up
     /// because its channel was lowered below it (issue 141), whose content its owner never
@@ -271,7 +272,7 @@ impl Message {
             call.withhold_arguments();
         }
         for result in &mut message.tool_results {
-            result.content.clear();
+            result.content = result.status.as_content(None);
             result.answers = None;
             result.files.clear();
             result.shown.clear();
@@ -672,11 +673,6 @@ pub(crate) mod tests {
             given.tool_results.iter().all(|r| r.files.is_empty() && r.shown.is_empty()),
             "how the calls ended, not what they gave"
         );
-        let for_the_model = results.tool_results[0].for_the_model();
-        assert!(
-            for_the_model.files.is_empty() && for_the_model.shown.is_empty(),
-            "a model is given them as what they are, not as text"
-        );
     }
 
     #[test]
@@ -822,11 +818,6 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(contents, [("secret", true), ("", false), ("", false)], "the hidden result is gone, the call-only one and the one without its result empty, the record of its answers with it");
         assert!(published.tool_results.iter().all(|r| r.approval.len() == 1), "who approved the call stays with it, its result withheld or not: every user was told (issue 419)");
-        let for_the_model = results.tool_results[0].for_the_model();
-        assert!(
-            for_the_model.answers.is_none() && for_the_model.approval.is_empty(),
-            "a model is never given the record"
-        );
         let ran = |r: &ToolCallResult| (r.started_at, r.finished_at);
         assert_eq!(
             ran(&published.tool_results[1]),
@@ -931,7 +922,7 @@ pub(crate) mod tests {
         let given = answered.names_only(&Classification::PUBLIC).expect("a result");
         assert_eq!(
             (given.tool_results[0].status, given.tool_results[0].content.as_str()),
-            (ToolResultStatus::Ok, ""),
+            (ToolResultStatus::Ok, r#"{"status":"ok"}"#),
             "how it ended, not what it returned"
         );
         assert_eq!(given.tool_results[0].classification, Classification::PUBLIC);

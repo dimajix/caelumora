@@ -95,12 +95,29 @@ impl ToolResultStatus {
     pub fn is_ok(&self) -> bool {
         *self == ToolResultStatus::Ok
     }
+
+    /// The status as the content of a result the tool did not give, with the `message` that says
+    /// what happened and what to do next where there is one: `{"status": …, "message": …}`, else
+    /// `{"status": …}`.
+    pub fn as_content(self, message: Option<&str>) -> String {
+        let mut content = serde_json::json!({ "status": self });
+        if let Some(message) = message {
+            content["message"] = message.into();
+        }
+        content.to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallResult {
     pub id: Option<String>,
     pub tool_name: String,
+    /// What the model is given of the result in words (issue 586), beside its tool and its call's
+    /// id and what it gave and showed (`files`, `shown`): the tool's output, or for any other
+    /// status a JSON object of the `status` and, where it can be had, a `message`; the status
+    /// alone where only how the call ended is given (`ToolResultStatus::as_content`,
+    /// `Message::names_only`), and empty where the result is not published
+    /// (`Message::published`).
     pub content: String,
     /// Omitted when `Ok`.
     #[serde(default, skip_serializing_if = "ToolResultStatus::is_ok")]
@@ -183,22 +200,6 @@ impl ToolCallResult {
             files: Vec::new(),
             shown: Vec::new(),
             knowledge: Vec::new(),
-        }
-    }
-
-    /// The result as a model is given it in words: without the record of the answers to the call's
-    /// questions, of who approved it and of what the tool read, and without how it is presented,
-    /// which are not the model's, and without what it gave and showed, which a model is given as
-    /// what it is, not as text.
-    pub fn for_the_model(&self) -> ToolCallResult {
-        ToolCallResult {
-            presentation: ToolPresentation::DEFAULT,
-            answers: None,
-            approval: Vec::new(),
-            files: Vec::new(),
-            shown: Vec::new(),
-            knowledge: Vec::new(),
-            ..self.clone()
         }
     }
 }
@@ -381,8 +382,20 @@ mod tests {
         assert!(matches!(ready.status, ToolCallStatus::Ready { answers: None }));
     }
 
+    /// A status is written as the content of a result the tool did not give, with its message
+    /// where there is one.
+    #[test]
+    fn a_status_is_written_as_a_result_s_content() {
+        let denied = ToolResultStatus::Denied;
+        assert_eq!(
+            denied.as_content(Some("declined")),
+            r#"{"message":"declined","status":"denied"}"#
+        );
+        assert_eq!(denied.as_content(None), r#"{"status":"denied"}"#);
+    }
+
     /// Issue 586: a result is presented as its call, written with the presentation unless it is
-    /// `default`, and given to a model without it.
+    /// `default`.
     #[test]
     fn a_result_is_presented_as_its_call() {
         let ended = |call: &ToolCall| {
@@ -392,7 +405,6 @@ mod tests {
         let result = ended(&ToolCall { presentation: shell, ..make_tool_call("run_command") });
         assert_eq!(result.presentation, shell);
         assert_eq!(serde_json::to_value(&result).unwrap()["presentation"], "shell");
-        assert_eq!(result.for_the_model().presentation, ToolPresentation::DEFAULT);
         let plain = serde_json::to_value(ended(&make_tool_call("look"))).unwrap();
         assert!(plain.get("presentation").is_none(), "`default` is not written");
         let read: ToolCallResult = serde_json::from_value(plain).unwrap();

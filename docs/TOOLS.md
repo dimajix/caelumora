@@ -162,7 +162,9 @@ and whether the remote side stops depends on it, unless the tool ends it as abov
 
 ### Results
 
-Every call ends with a result the model can act on.
+Every call ends with a result the model can act on: its `content`, which is all the model is given
+of the `ToolCallResult` in words, by its tool and its call - besides what the tool gave and showed
+it, given as what it is.
 
 *   A successful call's result is the tool's output.
 *   Every other outcome is `{"status": ..., "message": ...}`, whose message says what happened and

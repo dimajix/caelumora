@@ -227,3 +227,11 @@ message already. `ToolCallResult::for_the_model`, which the Ollama client wrote 
 with the classification, the times and whatever field a result gains, left out one by one -, is
 gone. A `serde_json::Value` or a type of its own in its place were weighed: the one decides for
 every model's API that a result is JSON, the other bundles two fields a client reads directly.
+
+2026-11-16: Step 7 done as decided: the Ollama client gives a tool message the result's `content`,
+and `ToolCallResult::for_the_model` is gone, with the assertions of tests on what it left out.
+What the model is given of a result says the doc of `content`, and TOOLS.md.
+Of a turn given up as `Lowered`, `Message::names_only` gives a result its status as its content
+(`ToolResultStatus::as_content`, by which the executor writes every result its tool did not give,
+with a message where one can be had), so that the model is told how each call ended, which the
+client found in the whole result before.

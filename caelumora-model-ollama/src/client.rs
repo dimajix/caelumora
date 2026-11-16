@@ -295,7 +295,7 @@ impl OllamaChatMessage {
         for r in &value.tool_results {
             messages.push(Self {
                 role: "tool".to_string(),
-                content: serde_json::to_string(&r.for_the_model()).unwrap_or_default(),
+                content: r.content.clone(),
                 thinking: None,
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,
@@ -1006,9 +1006,10 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
-    use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolPresentation, ToolResultStatus};
     use futures::stream as futures_stream;
     use serde_json::json;
     use std::io::Error;
@@ -1328,8 +1329,6 @@ mod tests {
     /// Issue 282: what the model is given along is sent as Ollama's `images`, base64.
     #[tokio::test]
     async fn an_image_given_along_is_sent_with_its_message() {
-        use caelumora_domain::content::testing::make_content_ref;
-        use caelumora_domain::tool::ToolCallResult;
         let fake = FakeOllama::default();
         let client = client(&serve(fake.clone()).await);
         let attachment = make_content_ref("a.png", b"png");
@@ -1376,6 +1375,42 @@ mod tests {
             sent[0]["messages"][2]["images"],
             json!(["Z2lm", "cG5n"]),
             "what a tool gave and showed, with its result (issues 512, 282)"
+        );
+    }
+
+    /// Issue 586: a model is given a tool's result in words as its content alone, by its tool and
+    /// call - not its classification, its times or its presentation.
+    #[tokio::test]
+    async fn a_tool_result_is_given_as_its_content_alone() {
+        let fake = FakeOllama::default();
+        let client = client(&serve(fake.clone()).await);
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            presentation: ToolPresentation::new("shell"),
+            ..make_tool_call("run_command")
+        };
+        let refused = r#"{"message":"no such command","status":"failed"}"#;
+        let context = vec![Message {
+            role: MessageRole::Tool,
+            tool_results: vec![ToolCallResult {
+                started_at: Some(Utc::now()),
+                finished_at: Some(Utc::now()),
+                ..ToolCallResult::of(
+                    &call,
+                    ToolResultStatus::Failed,
+                    refused.to_string(),
+                    Classification::CHANNEL_DEFAULT,
+                )
+            }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }];
+        let _: Vec<_> = client.chat_completion(&context, &[]).await.collect().await;
+        let sent = fake.sent.lock().unwrap();
+        let given = &sent[0]["messages"][0];
+        assert_eq!(given["content"], refused);
+        assert_eq!(
+            (&given["tool_name"], &given["tool_call_id"]),
+            (&json!("run_command"), &json!("1"))
         );
     }
 

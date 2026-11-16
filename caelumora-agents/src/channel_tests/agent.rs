@@ -2092,9 +2092,10 @@ async fn lowering_the_channel_gives_up_a_running_turn() {
         ("calculate", &Value::Null)
     );
     assert_eq!(call.classification, public);
+    let results: Vec<_> = given.iter().flat_map(|m| &m.tool_results).collect();
     assert!(
-        given.iter().flat_map(|m| &m.tool_results).all(|r| r.content.is_empty()),
-        "nothing of what it returned"
+        !results.is_empty() && results.iter().all(|r| r.content == r.status.as_content(None)),
+        "how it ended, nothing of what it returned: {results:?}"
     );
     let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
     assert!(told.contains("lowered") && told.contains("withheld"), "{told}");
