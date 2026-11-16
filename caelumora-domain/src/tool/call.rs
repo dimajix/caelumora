@@ -27,17 +27,20 @@ pub struct ToolCall {
     #[serde(default, skip_serializing_if = "ToolPresentation::is_default")]
     pub presentation: ToolPresentation,
     /// What its tool says the call does, in words for a person - put to whoever decides on it,
-    /// and shown with it -, stamped by the agent as it admits the call (issue 586), and by the
-    /// kernel's `/workspace run` on the call a person makes (`run_description`, issue 587). `None`
-    /// where the tool says nothing of a call beyond its arguments, where it was answered before it
-    /// was described, and where the arguments it is made from are withheld (`withhold_arguments`).
+    /// and shown with it -, stamped by the agent as it admits the call (issue 586), and on a
+    /// person's call by the command they make it with (`run_description` of `/workspace run`,
+    /// issue 587). `None` where the tool says nothing of a call beyond its arguments, where it was
+    /// answered before it was described, and where the arguments it is made from are withheld
+    /// (`withhold_arguments`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 
 impl ToolCall {
     /// A call of `function_name` with `arguments`, under `id` if it has one: shown and presented
-    /// as by default until the agent stamps it with what its tool declares.
+    /// as by default until it is stamped by what it is made with - an agent's call as the agent
+    /// admits it, with what its tool declares; a person's by the command they make it with
+    /// (`/workspace run`).
     pub fn new(id: Option<String>, function_name: impl Into<String>, arguments: Value) -> Self {
         Self {
             id,
