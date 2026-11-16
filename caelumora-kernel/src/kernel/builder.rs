@@ -3,6 +3,7 @@
 //! what the plugins keep behind an agent, and the members of a scope.
 
 use super::extension::Extensions;
+use super::places::WorkPlaces;
 use super::Kernel;
 use crate::actor::ActorManager;
 use crate::actor::AgentKinds;
@@ -29,6 +30,7 @@ use anyhow::{bail, Context, Result};
 use caelumora_api::component::Face;
 use caelumora_api::component::{ComponentResult, Services};
 use caelumora_api::library::Library;
+use caelumora_api::places::StorePlacesReader;
 use caelumora_api::staging::Committing;
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_domain::approval::ApprovalRule;
@@ -44,6 +46,7 @@ use caelumora_security::confidentiality::ConfidentialityPolicy;
 use caelumora_security::secret::{SecretManager, SecretProvider};
 use caelumora_security::{AccessPolicy, Policies};
 use caelumora_store::memberships::StoreMemberships;
+use caelumora_store::places::StorePlaces;
 use caelumora_store::{EntityStore, EntityStores, Persistence, PersistenceBackend};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -288,7 +291,7 @@ impl KernelBuilder {
         prompts.add(KERNEL, KERNEL_PROMPTS)?;
         let component_registry =
             ComponentRegistry::built_in(Arc::clone(&entity_stores.component_bundles));
-        let extensions = Self::kernel_extensions()?;
+        let extensions = Self::kernel_extensions(persistence.places())?;
         Ok(Self {
             persistence,
             entity_stores,
@@ -324,9 +327,18 @@ impl KernelBuilder {
     }
 
     /// The kernel's own extensions (issue 516): the workspace a work may use in its channel, as a
-    /// reader and a writer.
-    fn kernel_extensions() -> Result<Extensions> {
+    /// reader and a writer, and where `places`, those of the backend of the entities, keep the
+    /// work's session and channel on the host (issue 577) - a reader bound also where the backend
+    /// keeps them nowhere there, which is offered nowhere then.
+    fn kernel_extensions(places: Option<Arc<dyn StorePlaces>>) -> Result<Extensions> {
         let mut extensions = Extensions::default();
+        extensions.insert::<dyn StorePlacesReader, _, _>(Face::Reader, move |session| {
+            let places = places.clone();
+            async move {
+                let found = WorkPlaces::of_work(places?.as_ref(), &session).await?;
+                Some(Arc::new(found) as Arc<dyn StorePlacesReader>)
+            }
+        })?;
         extensions.insert::<dyn WorkspaceReader, _, _>(Face::Reader, |session| async move {
             let usable = UsableWorkspace::of_work(&session).await?;
             Some(Arc::new(usable) as Arc<dyn WorkspaceReader>)

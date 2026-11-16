@@ -51,7 +51,8 @@ drawn in [CRATES.md](CRATES.md):
     the facets its components serve (tools, prompt parts, message stages, its commands, what it does
     of its own accord) with their built-in kinds. It joins the kernel as a library of
     the agent side (see [Principles](#principles)), `AgentsLibrary`, an essential one: without it,
-    the program is a chat between users.
+    the program is a chat between users. What the program tells its agents of itself is a library
+    of its own, `ProgramLibrary`, which the program builds with the file it logs to.
 *   **`caelumora-rest-api`** - the wire of the REST API: the requests and responses, as `serde`
     reads and writes them, made from the domain's entities and snapshots. It depends on the domain
     alone, so that a client reads the API without the server (issue 323).

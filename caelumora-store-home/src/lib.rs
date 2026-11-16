@@ -16,10 +16,13 @@ pub use definitions::{DefinitionFiles, FileFormat, Identity};
 /// (`HomeContent`), as a configuration names them.
 pub const HOME: &str = "home";
 
+use async_trait::async_trait;
+use caelumora_domain::scope::Scope;
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{EntityKind, StoreResult};
 use caelumora_store::documents::{DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
+use caelumora_store::places::StorePlaces;
 use caelumora_store::sessions::{SessionHold, SessionLocks};
 use caelumora_store::transcript::TranscriptStore;
 use caelumora_store::{PersistenceBackend, StateStore};
@@ -151,6 +154,23 @@ impl PersistenceBackend for HomeStore {
 
     fn session_locks(self: Arc<Self>) -> Option<Arc<dyn SessionLocks>> {
         Some(self)
+    }
+
+    fn places(self: Arc<Self>) -> Option<Arc<dyn StorePlaces>> {
+        Some(self)
+    }
+}
+
+/// Everything lies below the data directory, what lies in a scope in that scope's directory
+/// (`Places`), which an agent may be told (issue 577).
+#[async_trait]
+impl StorePlaces for HomeStore {
+    fn data_dir(&self) -> &Path {
+        self.places.data_dir()
+    }
+
+    async fn directory_of(&self, scope: &Scope) -> StoreResult<PathBuf> {
+        self.places.directory_of(scope).await
     }
 }
 
@@ -434,6 +454,32 @@ mod tests {
         stores.sessions.delete(&system, id, &removal()).await.unwrap();
         assert!(stores.sessions.purge(&system, id).await.unwrap());
         assert!(!session_dir.exists(), "and its session");
+    }
+
+    /// The places the store tells (issue 577) are where it keeps a session and its channel: the
+    /// directories of their documents, a channel's with its states.
+    #[tokio::test]
+    async fn where_a_session_and_its_channel_lie_is_told() {
+        let dir = tempdir().unwrap();
+        let store = store(dir.path());
+        let stores = opened(&store);
+        let states = Arc::clone(&store).state_store().unwrap();
+        let system = SecurityContext::system();
+        let session = SessionId::new();
+        stores.sessions.create(&system, &mut bare_session(session)).await.unwrap();
+        let mut channel: Channel = make_channel(session, "main");
+        stores.channels.create(&system, &mut channel).await.unwrap();
+        states.put_channel_state(channel.id, &mut ChannelState::new(channel.id)).await.unwrap();
+
+        let places = Arc::clone(&store).places().expect("it keeps its data in files");
+        assert_eq!(places.data_dir(), dir.path());
+        let in_session = Scope::SessionScope { session_id: session };
+        let session_dir = places.directory_of(&in_session).await.unwrap();
+        assert!(session_dir.join("session.json").is_file(), "{}", session_dir.display());
+        let in_channel = Scope::ChannelScope { session_id: session, channel_id: channel.id };
+        let channel_dir = places.directory_of(&in_channel).await.unwrap();
+        assert!(channel_dir.join("channel.json").is_file(), "{}", channel_dir.display());
+        assert!(channel_dir.join("state/channel.json").is_file(), "with its states");
     }
 
     /// What is in a document's directory and did not go before it stays: only what is empty goes.

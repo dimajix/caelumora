@@ -18,15 +18,16 @@ titled: |-
   {{ text }}{{ "\n" if text is not endingwith "\n" }}
 
 # `channel_briefing`: the session and the channel, each `place`
-# by its `name` and, where it has them, its `summary` and `briefing` as its
-# owner describes it (`kind` "session" or "channel"), the session's first.
+# by its `name` and its `id` and, where it has them, its `summary` and
+# `briefing` as its owner describes it (`kind` "session" or "channel"), the
+# session's first.
 channel_briefing: |
   {% for place in places %}
   {% if not loop.first %}
 
   {% endif %}
   [About this {{ place.kind }}]
-  This {{ place.kind }} is called "{{ place.name }}".
+  This {{ place.kind }} is called "{{ place.name }}" and has the id {{ place.id }}.
   {% if place.summary or place.briefing %}
   What this {{ place.kind }} is for, as its owner describes it.
   {% endif %}
@@ -38,6 +39,13 @@ channel_briefing: |
   {{ place.briefing }}
   {% endif %}
   {% endfor %}
+
+# `store_places`: the directory the program keeps its data below
+# (`data_dir`), and those of this session (`session_dir`) and this channel
+# (`channel_dir`).
+store_places: |
+  [Where the program keeps its data]
+  The program you run in keeps its data in files below the directory {{ data_dir }}: that of every session, user and channel of the program, not only this one's. What it keeps of this session lies in {{ session_dir }}, of this channel in {{ channel_dir }}. Look there when you are asked how something was kept, with a terminal that reaches them. The files are the program's, which writes them while it runs: read them, never change them.
 
 # `channel_language`: the language of the channel by its
 # BCP 47 `tag`, and by its `english` and `native` names where they are known.

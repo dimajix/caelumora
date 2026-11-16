@@ -865,10 +865,32 @@ Within a turn it stays as it was read when the turn began, also through a long p
 ### The session and channel
 
 `channel_briefing` names the session and the channel, so that the agent can refer to the channel it
-talks in and tell it from the others, and gives their summaries and briefings (see
-[CHANNELS.md](CHANNELS.md#what-it-is-for)). It steers what the agent says, never what it may do:
-permissions and approvals are untouched by it. The channel's name is part of the channel, so the
-part is classified as the channel is.
+talks in and tell it from the others, and gives their ids - what the log carries and a session is
+resumed by - and their summaries and briefings (see [CHANNELS.md](CHANNELS.md#what-it-is-for)). It
+steers what the agent says, never what it may do: permissions and approvals are untouched by it.
+The channel's name is part of the channel, so the part is classified as the channel is.
+
+### The program's log
+
+`program_log` tells the agent the file the program writes its log to, and that what it writes about
+its session and its channel carries their ids, so that an agent asked what went wrong can search
+for them there with a terminal that reaches the file. Where the log lies only the program knows -
+its `logging.file`, or its own default ([CONFIGURATION.md](CONFIGURATION.md)) -, so the kind is not
+the agents' library's but `ProgramLibrary`'s, which the program builds with the file it logs to:
+the terminal lists it, the REST server none. The log holds every session, user and channel of the
+program, so the part comes only where a personality wires it, and says so.
+
+### Where the program keeps its data
+
+`store_places` tells the agent the directory the program keeps its data below, and those of its
+session and its channel, so that an agent asked how something was kept can look there with a
+terminal that reaches them. The layout is the store's: its backend tells where it keeps what lies in
+a scope ([STORAGE.md](STORAGE.md#in-a-home-directory)), and the kernel binds what the work is told
+of it as a reader of its own, as it binds the workspace's
+([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Where the backend tells no
+such places - `json`, `postgres`, the stores in memory -, the part is empty. Below
+the data directory lies every session, user and channel of the program, so the part comes only
+where a personality wires it, says so, and says that the files are the program's to write.
 
 ### Its workspace
 

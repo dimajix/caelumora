@@ -135,7 +135,10 @@ plugin is, but trusted for nothing, and links the kernel's API
 for `caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`
 checks, run by the pre-commit hook. It implements `caelumora_api::library::Library` - a name for
 messages and `register` -, and the programs list it in `libraries()`, the agents' library first, and
-register each with `KernelBuilder::library` once their plugins registered. A library registers with
+register each with `KernelBuilder::library` once their plugins registered. A library may be built
+with what only the program knows: `ProgramLibrary` of `caelumora-agents` with the file the program
+logs to, which a program lists only where it logs to a file (see
+[AGENT-TURN.md](AGENT-TURN.md#the-programs-log)). A library registers with
 a `LibraryBuilder`, a trait of the API the kernel implements, which offers what a library registers
 and nothing of the kernel - no store, no policy, no secret, no controller:
 
@@ -185,16 +188,18 @@ does with its kind it offers as **extensions**, by one pattern:
     workspace's terminal is read through the situation and changed through the turn. Whether there
     is a writer, without being given it, the situation answers (`has_writer`) - for a tool provider
     that offers what acts by it.
-*   **Bound by the plugin, per work.** The plugin - the kernel for its own, the workspace - binds
-    each face to every piece of work (`KernelBuilder::extend_readers`, `extend_writers`), once: a
-    type bound already is refused, so that none replaces what another binds. A binding is given the
-    work's session as the work reads it (`SessionView`), reached by the kernel asking `GetSession`,
-    makes the face from its views - as the plugin's own views are built - so that it acts in the
-    work's context, may make it asynchronously, and may answer none where it is not offered - the
-    artifacts' writer where no storage of content is configured, the workspace's reader where the
-    work may use none. No method of a face takes a context or an identity, and what it hands out is
-    data, not an object of the kernel - but for a handle, named as one, that carries a right beyond
-    the call: the workspace's terminal and shell.
+*   **Bound by the plugin, per work.** The plugin - the kernel for its own, the workspace and where
+    the stores keep the work's session and channel (`StorePlacesReader`) - binds each face to every
+    piece of work (`KernelBuilder::extend_readers`, `extend_writers`), once: a type bound already is
+    refused, so that none replaces what another binds. A binding is given the work's session as the
+    work reads it (`SessionView`), reached by the kernel asking `GetSession`, makes the face from
+    its views - as the plugin's own views are built - so that it acts in the work's context, may
+    make it asynchronously, and may answer none where it is not offered - the artifacts' writer
+    where no storage of content is configured, the workspace's reader where the work may use none,
+    the places of the stores where their backend tells none. No method of a face
+    takes a context or an identity, and what it hands out is data, not an object of the kernel - but
+    for a handle, named as one, that carries a right beyond the call: the workspace's terminal and
+    shell.
 *   **Asked for where it is used, never kept.** A face acts in the context of the call that asked
     for it - the rights as they are at each call -, so a component asks for it again each time.
 *   **Staged, then committed.** What a turn changes of a service that keeps what a turn changes

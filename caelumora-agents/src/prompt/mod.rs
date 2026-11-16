@@ -17,6 +17,7 @@ pub mod channel_participants;
 pub mod current_time;
 pub mod external_context;
 pub mod request_reason;
+pub mod store_places;
 pub mod system_prompt;
 pub mod tool_sets;
 pub mod turn_context;
@@ -279,6 +280,7 @@ pub fn register_all(registry: &mut LibraryComponents<'_>) {
     current_time::register(registry);
     external_context::register(registry);
     request_reason::register(registry);
+    store_places::register(registry);
     system_prompt::register(registry);
     tool_sets::register(registry);
     turn_context::register(registry);

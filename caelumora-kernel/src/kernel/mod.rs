@@ -12,7 +12,8 @@
 //! - An `ActorRuntime` (`agent`) is what the actor of an agent runs with, on the agent side: the
 //!   one interface its kind is given, which the kernel's `AgentRuntime` serves (issue 516).
 //! - What the plugins and the kernel bind to the views of an agent's work is kept as its extensions
-//!   (`extension`, issue 516).
+//!   (`extension`, issue 516); where the stores keep the work's session and channel on the host is
+//!   one of the kernel's (`places`, issue 577).
 //! - In whose name an actor acts or a graph of components is built is an `Acting` (`acting`, issues
 //!   516, 520): what the kernel builds the context of each call from.
 
@@ -22,6 +23,7 @@ mod agent;
 mod builder;
 mod channel;
 mod extension;
+mod places;
 
 pub use acting::Acting;
 pub(crate) use acting::ActingKind;

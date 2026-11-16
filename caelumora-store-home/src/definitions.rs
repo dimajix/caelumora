@@ -443,7 +443,7 @@ impl DocumentLayout for Definitions {
         let Some(name) = &document.name else {
             return Err(StoreError::Validation(format!("a {} has a name", self.kind)));
         };
-        let dir = self.places.holder_of_definitions(&name.scope).await?.join(&self.dir);
+        let dir = self.places.directory_of_definitions(&name.scope).await?.join(&self.dir);
         self.free(self.path_of(&dir, name)?).await
     }
 

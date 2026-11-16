@@ -1,6 +1,6 @@
 # 577 — An agent is not told where it runs: its session's and channel's ids, the program's log
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** low
 **Area:** Context and knowledge
@@ -42,3 +42,29 @@ if it knew where it is.
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-16** - The ids and the log, as the first step. `channel_briefing` gives the ids of the
+session and the channel beside their names. Where the log lies is the program's to know, so the
+kind `program_log` is not the agents' library's but a library's of its own, `ProgramLibrary` in
+`caelumora-agents`, which the program builds with the file it logs to - what
+`caelumora_logging::init` now answers, so that the program does not work out the file again; the
+terminal lists it, the REST server none. The part names the file and says that it holds every
+session, user and channel of the program; it comes only where a personality wires it, as the
+maintainer decided. The default assistant of the terminal wires both. Open: telling an agent where
+the program keeps the data of its session and its channel - the maintainer's addition -, which the
+home store lays out (`Places`); how a part of the agent side reaches that is to be decided.
+
+**2026-11-16** - Where the program keeps the data of an agent's session and channel. The home store
+lays it out (`Places`), but a component kind of it could reach neither the store it is made of nor
+the agents' `PromptProvider`, which no plugin links (a library kind sees no service of the kernel).
+Of three ways - the kernel binding a reader of its own, as it binds the workspace's; the store's
+crate cut into a plugin and a library, as `caelumora-skills` is; the plugin linking the agents -
+the maintainer chose the first: a backend tells where it keeps what lies in a scope
+(`PersistenceBackend::places`, a `StorePlaces`, as it offers `session_locks`), which the home store
+does; the kernel binds `StorePlacesReader` of the API to every piece of work from the backend of
+the entities, none where it tells no places; and the kind `store_places` of the agents tells
+the data directory and those of the session and the channel, where a personality wires it. The
+default assistant of the terminal wires it. The reader hands out the directories as data, found as
+it is bound, instead of asking for them - as the maintainer agreed; and the home store's `Places`
+names the directory of a scope `directory_of` as the trait does, that of a document
+`directory_of_document`.
