@@ -12,10 +12,6 @@ pub mod plugin;
 pub use content::{HomeContent, HomeContentConfig};
 pub use definitions::{DefinitionFiles, FileFormat, Identity};
 
-/// The name of the backends of this crate, of the stores (`HomeStore`) and of the content
-/// (`HomeContent`), as a configuration names them.
-pub const HOME: &str = "home";
-
 use async_trait::async_trait;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::session::SessionId;
@@ -38,6 +34,10 @@ use std::fs::{self, TryLockError};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, PoisonError, RwLock};
+
+/// The name of the backends of this crate, of the stores (`HomeStore`) and of the content
+/// (`HomeContent`), as a configuration names them.
+pub const HOME: &str = "home";
 
 /// The parameters of the backend `home`.
 #[derive(Debug, Deserialize)]

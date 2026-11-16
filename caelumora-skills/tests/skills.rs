@@ -326,8 +326,8 @@ async fn an_approver_is_shown_the_skill_whole() {
 
 #[tokio::test]
 async fn load_skill_shows_the_channel_which_skill_it_loaded_not_what_it_gave() {
-    let world = world().await;
     use caelumora_skills::component::{SKILL_LIST_PRESENTATION, SKILL_PRESENTATION};
+    let world = world().await;
     let tools = described_tools(skills::<dyn ToolProvider>(&world, json!({})).await.as_ref());
     let load = tools.iter().find(|t| t.name == LOAD_SKILL_TOOL_NAME).unwrap();
     assert_eq!(

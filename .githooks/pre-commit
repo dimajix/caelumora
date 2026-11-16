@@ -19,9 +19,10 @@
 #   `scripts/tuple-bindings.sh` must find none longer than 100 characters or across lines in the
 #   Rust files a commit adds or changes, read whole from the working tree.
 # - A module's `mod` declarations, re-exports and imports stand in this order, the imports in one
-#   block (docs/CODING-GUIDELINES.md, "Imports"): `scripts/import-blocks.sh` must find none out of
-#   order and no split block in the Rust files a commit adds or changes, read whole from the
-#   working tree.
+#   block, and a function's or a block's imports in one block at its start
+#   (docs/CODING-GUIDELINES.md, "Imports"): `scripts/import-blocks.sh` must find none out of order,
+#   no split block and no import after code in the Rust files a commit adds or changes, read whole
+#   from the working tree.
 # - A library links nothing that decides (issues 516, 517): whenever a Cargo manifest or
 #   `scripts/crates.sh` is part of a commit, `scripts/library-deps.sh` must find neither a library
 #   nor the library side of a crate that stands on both levels with `caelumora-kernel`,

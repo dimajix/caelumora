@@ -114,3 +114,10 @@ own presentation; `quiet_calls` serves to print the call of one that did not.
 2026-11-16: Step 3 done: the web UI shows a call by `presentationOf(call, result)`, in
 `ToolCallView` and `withoutQuietCalls`, and `commandState` reads a result presented `shell` alone,
 as `command_state` does - `endedCommands` reads the results, not the calls.
+
+2026-11-16: Step 4 done, option B: CODING-GUIDELINES.md says that what only one function or block
+uses - a closure, an `async` block - may be imported at its start, in one block, and
+`scripts/import-blocks.sh` reports an import after code, in a module, a function or a block: it
+tells levels of indentation, not functions, so a block is held as a function is. It found nine
+places, which now import before their code: eight functions, most of them tests, imported after
+their first statements, and `caelumora-store-home` declared a constant before its imports.

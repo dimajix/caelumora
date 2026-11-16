@@ -631,6 +631,7 @@ impl AgentActor {
         rx: &mut Box<dyn EventReceiver>,
         output: &dyn EventSender,
     ) -> Result<ActorState> {
+        use futures::stream::TryStreamExt;
         let agent_name = self.body.scoped_name();
 
         if !self.turn_under_way(state)?.may_call_model() {
@@ -667,7 +668,6 @@ impl AgentActor {
         let (messages, tools) = turn.full_context().await?;
         let initiator = turn.situation().initiator();
         let mut response = self.model_client.chat_completion(initiator, &messages, &tools).await;
-        use futures::stream::TryStreamExt;
         loop {
             // A cancel wins over the next chunk, and returning drops the
             // stream - and with it the request to the model.
