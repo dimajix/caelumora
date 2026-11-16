@@ -36,7 +36,7 @@ display only - what a call does, and whether it waits for anyone, does not depen
 result carries it too (`ToolCallResult::presentation`, issue 586), stamped from the call as its
 visibility is, so that a frontend shows a result it has not joined to its call, as the terminal's
 line-wise view does. A call is shown by its own presentation until its result comes, and then by
-the result's; so far no tool gives its result another, and the web UI reads the call's alone.
+the result's - so far no tool gives its result another.
 Approval and classification are decided per tool by its provider, not by the personality.
 
 What a tool, its parameters and its tool set say to the model are texts of the prompt catalogue
@@ -171,7 +171,9 @@ it, given as what it is.
 *   Every other outcome is `{"status": ..., "message": ...}`, whose message says what happened and
     what to do next: `denied`, `forbidden` (without the reason, which stays in the log),
     `timed_out`, `declined`, `invalid_arguments`, `failed`, `not_executed` (the tool never ran),
-    `interrupted` (it ran, but was broken off) and `unknown_tool` (with the tools that do exist).
+    `interrupted` (it ran, but was broken off), `unknown_tool` (with the tools that do exist) and
+    `withheld` (its result may not flow into the channel, see
+    [Classified results](#classified-results)).
     The status is stored with the result, so that refusals and failures can be told from results.
     The wording is the prompt catalogue's (`agents.results`, issue 57); what went wrong, the
     error's own text. A message that cannot be had is logged, and the model is given the status

@@ -12,14 +12,15 @@ The rules most often missed, each with the section that gives its reasons. Every
 against this list, rule by rule, before it is reported (the self-review of
 [AGENTS.md](../AGENTS.md#workflow)).
 
-*   Import what you use with `use` at the top of the module and write it by its name: `impl
-    Stored for Skill`, `Skill::KIND` - never `impl crate::store::Stored for Skill` or
-    `caelumora_domain::skill::Skill::KIND`, also not for a single use or in a test. A function may
-    be called by its module (`time::sleep` after `use tokio::time;`), never by a longer path. A
-    path is written out only where an import cannot serve ([Imports](#imports); clippy checks
-    it).
+*   Import what you use with `use` at the top of the module, or of the one function or block that
+    uses it, and write it by its name: `impl Stored for Skill`, `Skill::KIND` - never
+    `impl crate::store::Stored for Skill` or `caelumora_domain::skill::Skill::KIND`, also not for a
+    single use or in a test. A function may be called by its module (`time::sleep` after
+    `use tokio::time;`), never by a longer path. A path is written out only where an import cannot
+    serve ([Imports](#imports); clippy checks it).
 *   A module begins with its `mod` declarations, then its re-exports (`pub use`) as a block of
-    their own, then its private imports in one block, without blank lines ([Imports](#imports);
+    their own, then its private imports in one block, without blank lines; a function's or a
+    block's imports stand in one block at its start ([Imports](#imports);
     `scripts/import-blocks.sh` checks it).
 *   One `let` binds several values by a tuple only where they belong together and the line stays
     within 100 characters; values that merely begin at the same place get a `let` each
@@ -176,7 +177,9 @@ document states is moved, not dropped, when the document is shortened.
 
 A type, trait or function used by name is imported with `use` at the top of the module and written
 by its name, not by its path (`impl Scoped for Agent`, not `impl crate::scope::Scoped for
-Agent`) - also when adding the import means touching the import block for a single use.
+Agent`) - also when adding the import means touching the import block for a single use. What only
+one function or block uses - a test above all - may be imported there instead, so that it stands
+with what needs it (issue 589).
 
 A path of two segments is written where its first says where something comes from:
 
@@ -204,9 +207,13 @@ rustfmt keeps groups only as they are written, the option that would keep them (
 is unstable, and an import added by a script or by an editor lands in its place only where there
 is one block for `cargo fmt` to sort (issue 507).
 
-`scripts/import-blocks.sh` checks the order and the one block - of a function's imports too -, in
-every Rust file or in those it is given; the pre-commit hook gives it the Rust files a commit adds
-or changes.
+A function's or a block's imports - a closure's, an `async` block's - stand in one block at its
+start, before its first statement; an import after code, in a module, a function or a block, is out
+of its place.
+
+`scripts/import-blocks.sh` checks the order and the one block - of a function's imports too -, and
+that no import follows code, in every Rust file or in those it is given; the pre-commit hook gives
+it the Rust files a commit adds or changes.
 
 ## Crates and interfaces
 

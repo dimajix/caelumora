@@ -1438,6 +1438,7 @@ mod tests {
 
     #[test]
     fn a_system_message_stays_where_it_is_only_where_the_model_keeps_it() {
+        use MessageRole::{System, User};
         let mut state = AgentChannelState::default();
         state.transcript.push(Message { role: MessageRole::User, ..text("question") });
         state.transcript.push(Message { role: MessageRole::System, ..text("an old instruction") });
@@ -1463,7 +1464,6 @@ mod tests {
                 .map(ContextItem::role)
                 .collect::<Vec<_>>()
         };
-        use MessageRole::{System, User};
         assert_eq!(
             roles(SystemMessages::OnlyAtStart),
             [System, User, User, User],
@@ -1479,6 +1479,7 @@ mod tests {
     /// its instructions.
     #[test]
     fn what_begins_the_transcript_is_no_part_of_the_system_prompt() {
+        use MessageRole::{System, User};
         let agent = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
         state.transcript.record(TranscriptEntry::ParticipantJoined {
@@ -1505,7 +1506,6 @@ mod tests {
             let items = resolver.resolve(&next, TurnId::new(), agent).unwrap().expect("resolved");
             items.items.iter().map(ContextItem::role).collect::<Vec<_>>()
         };
-        use MessageRole::{System, User};
         assert_eq!(
             roles(SystemMessages::OnlyAtStart),
             [System, User, User, User],
@@ -1519,6 +1519,7 @@ mod tests {
     /// the start.
     #[test]
     fn the_conversation_alone_has_no_system_prompt() {
+        use MessageRole::{Assistant, System, User};
         let agent = ActorId::Agent(AgentId::new());
         let mut state = AgentChannelState::default();
         state.transcript.give(text("[Summary of the conversation so far]\nAsked."), None);
@@ -1537,7 +1538,6 @@ mod tests {
                 .expect("the transcript holds it");
             items.iter().map(ContextItem::role).collect::<Vec<_>>()
         };
-        use MessageRole::{Assistant, System, User};
         assert_eq!(roles(SystemMessages::OnlyAtStart), [User, Assistant], "no system prompt");
         assert_eq!(roles(SystemMessages::Anywhere), [System, Assistant]);
     }

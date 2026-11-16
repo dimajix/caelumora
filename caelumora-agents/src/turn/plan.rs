@@ -400,6 +400,7 @@ mod tests {
     #[tokio::test]
     async fn plan_instructions_are_given_where_they_were_placed_and_not_kept_for_later_turns() {
         use caelumora_domain::context::SystemMessages;
+        use MessageRole::{Assistant, System, User};
         let agent = AgentId::new();
         let text = |role: MessageRole, content: &str| Message {
             id: MessageId::new(),
@@ -446,7 +447,6 @@ mod tests {
             turn.push_message(internal);
             turn.advance_plan(1).unwrap();
             let roles = given(&mut turn).into_iter().map(|(role, _)| role).collect::<Vec<_>>();
-            use MessageRole::{Assistant, System, User};
             assert_eq!(
                 roles,
                 [System, User, System, Assistant, System],

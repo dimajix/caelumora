@@ -1,6 +1,6 @@
 # 589 — Loose ends of how frontends show a tool call and its result
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -97,3 +97,31 @@ to look. The maintainer decides; the decision is written into CODING-GUIDELINES.
 2026-11-16: Opened at the maintainer's request from the findings of issue 586 left open: the web
 UI and `Followed` go by the call's presentation, TOOLS.md leaves out `withheld`, and the rule on
 imports inside a function reads two ways.
+
+2026-11-16: Planned with the maintainer, a step per finding: TOOLS.md lists `withheld`; `Followed`
+leaves out a successful result by its own presentation; the web UI shows a call by
+`presentationOf(call, result)` - the result's once it came, a result without one as `default` -,
+and `commandState` reads a result of `shell` alone; a function may import for itself, in one block
+at its start, which CODING-GUIDELINES.md says and a check holds (option B). Results stored before
+issue 586 carry no presentation and are shown as `default`; no code reads them otherwise.
+
+2026-11-16: Step 1 done: TOOLS.md lists `withheld` under "Results", pointing to where a classified
+result is described, not repeating it.
+
+2026-11-16: Step 2 done: `Followed` leaves out a result presented `quiet` that succeeded by its
+own presentation; `quiet_calls` serves to print the call of one that did not.
+
+2026-11-16: Step 3 done: the web UI shows a call by `presentationOf(call, result)`, in
+`ToolCallView` and `withoutQuietCalls`, and `commandState` reads a result presented `shell` alone,
+as `command_state` does - `endedCommands` reads the results, not the calls.
+
+2026-11-16: Step 4 done, option B: CODING-GUIDELINES.md says that what only one function or block
+uses - a closure, an `async` block - may be imported at its start, in one block, and
+`scripts/import-blocks.sh` reports an import after code, in a module, a function or a block: it
+tells levels of indentation, not functions, so a block is held as a function is. It found nine
+places, which now import before their code: eight functions, most of them tests, imported after
+their first statements, and `caelumora-store-home` declared a constant before its imports.
+
+2026-11-16: Done. Both frontends show a call by its result's presentation once it came, TOOLS.md
+lists `withheld`, and a function or a block may import for itself, at its start, which
+`scripts/import-blocks.sh` holds.

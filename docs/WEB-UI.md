@@ -310,8 +310,10 @@ it is fetched anew as it starts.
     goes on with the group of its turn. Turns of agents
     answering at once interleave, each part a group of its own; pointing at a message of a turn of
     more than one shades every part of it. A user's message belongs to no turn and stands alone.
-*   **Tool calls** are shown by their presentation, which the tool declares and the agent stamps on
-    each call, never by the tool's name. `ToolCallView` draws the frame every call has - the tool,
+*   **Tool calls** are shown by their presentation, which the tool declares and each call carries,
+    its result the call's, never by the tool's name: the call's until its result came, then the
+    result's (`presentationOf`, see [TOOLS.md](TOOLS.md)).
+    `ToolCallView` draws the frame every call has - the tool,
     who sees it, its status and duration, the record of questions it asked - and leaves what is
     inside to the handler of the presentation (`PRESENTATIONS`); a call without one, or with one
     this client does not know, shows what its tool says it does (`description`), its arguments and

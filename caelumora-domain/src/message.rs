@@ -826,6 +826,8 @@ pub(crate) mod tests {
 
     #[test]
     fn a_message_is_published_without_what_only_its_owner_sees() {
+        use crate::approval::ApprovalDecision;
+        use crate::question::{Addressee, Answers, Question, Questions};
         let message = Message {
             content: None,
             tool_calls: vec![
@@ -852,8 +854,6 @@ pub(crate) mod tests {
         );
         assert_eq!(published.id, message.id, "the same message, for the context panel to find");
 
-        use crate::approval::ApprovalDecision;
-        use crate::question::{Addressee, Answers, Question, Questions};
         let answered = |result: ToolCallResult| {
             let questions = Questions {
                 questions: vec![Question {

@@ -395,10 +395,10 @@ pub async fn queries_reach_parts(folders: &dyn EntityStore<Folder>) {
 /// A store answers a query by the fields of the kernel's kinds: by scope, by the session of a
 /// channel, by a participant, by a member.
 pub async fn queries_behave(stores: &EntityStores) {
+    use caelumora_domain::channel::{ChannelField, Participant};
     let ctx = SecurityContext::system();
     let (alice, bob) = (UserId::new(), UserId::new());
     // By scope, by the session of a channel, by a participant.
-    use caelumora_domain::channel::{ChannelField, Participant};
     let session_id = SessionId(Uuid::new_v4());
     let mut in_session = Personality {
         name: ScopedName::new("in-session", Scope::SessionScope { session_id }).unwrap(),
