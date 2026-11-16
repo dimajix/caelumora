@@ -11,31 +11,43 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::IsTerminal;
+use std::path;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::EnvFilter;
 
-/// Where a binary logs when the configuration names no file.
+/// Where a binary logs.
 #[derive(Debug, Clone)]
 pub enum LogTarget {
     Stderr,
     File(PathBuf),
 }
 
-/// Installs the global subscriber.
+/// Installs the global subscriber, and answers where it writes: the file `config.file` names, else
+/// `default_target` - a file by its absolute path, as it is found from wherever the program runs.
 ///
 /// `default_target` applies unless `config.file` is set; `default_filter` is
 /// used when `RUST_LOG` is not set.
 ///
 /// # Errors
 /// If the log file cannot be opened or a subscriber is already installed.
-pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &str) -> Result<()> {
+pub fn init(
+    config: &LoggingConfig,
+    default_target: LogTarget,
+    default_filter: &str,
+) -> Result<LogTarget> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
-    let target = config.file.clone().map(LogTarget::File).unwrap_or(default_target);
+    let target =
+        match config.file.clone().map(LogTarget::File).unwrap_or(default_target) {
+            LogTarget::File(path) => LogTarget::File(path::absolute(&path).with_context(|| {
+                format!("cannot tell where the log file {} lies", path.display())
+            })?),
+            LogTarget::Stderr => LogTarget::Stderr,
+        };
 
-    let (writer, ansi) = match target {
+    let (writer, ansi) = match &target {
         LogTarget::Stderr => (BoxMakeWriter::new(io::stderr), io::stderr().is_terminal()),
         LogTarget::File(path) => {
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -45,7 +57,7 @@ pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &
             let file = OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&path)
+                .open(path)
                 .with_context(|| format!("cannot open log file {}", path.display()))?;
             (BoxMakeWriter::new(Mutex::new(file)), false)
         }
@@ -56,7 +68,8 @@ pub fn init(config: &LoggingConfig, default_target: LogTarget, default_filter: &
         LogFormat::Text => builder.with_ansi(ansi).try_init(),
         LogFormat::Json => builder.json().with_current_span(true).with_span_list(true).try_init(),
     };
-    result.map_err(|e| anyhow::anyhow!("cannot install log subscriber: {}", e))
+    result.map_err(|e| anyhow::anyhow!("cannot install log subscriber: {}", e))?;
+    Ok(target)
 }
 
 #[cfg(test)]
@@ -75,7 +88,11 @@ mod tests {
         let dir = env::temp_dir().join(format!("caelumora-log-test-{}", Uuid::new_v4()));
         let path = dir.join("nested").join("test.log");
         let config = LoggingConfig { format: LogFormat::Json, file: Some(path.clone()) };
-        init(&config, LogTarget::Stderr, "info").expect("subscriber installs");
+        let target = init(&config, LogTarget::Stderr, "info").expect("subscriber installs");
+        assert!(
+            matches!(&target, LogTarget::File(file) if *file == path),
+            "where it writes: the file configured, not the default: {target:?}"
+        );
 
         let context = EventContext::new(
             Default::default(),

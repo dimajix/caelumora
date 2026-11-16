@@ -20,6 +20,7 @@ use anyhow::Context;
 use anyhow::Result;
 use caelumora_a2a::library::A2aLibrary;
 use caelumora_agents::library::AgentsLibrary;
+use caelumora_agents::program::ProgramLibrary;
 use caelumora_api::component::Params;
 use caelumora_api::library::Library;
 use caelumora_artifacts::library::ArtifactsLibrary;
@@ -190,9 +191,10 @@ fn plugins() -> Vec<Box<dyn Plugin>> {
 }
 
 /// The libraries the terminal builds its kernel with, of the agent side (issue 516) - first the
-/// essential one, the agents' (issue 370).
-fn libraries() -> Vec<Box<dyn Library>> {
-    vec![
+/// essential one, the agents' (issue 370) -, the last telling the agents where `log` lies, if it is
+/// a file (issue 577).
+fn libraries(log: LogTarget) -> Vec<Box<dyn Library>> {
+    let mut libraries: Vec<Box<dyn Library>> = vec![
         Box::new(AgentsLibrary),
         Box::new(CompactionLibrary),
         Box::new(McpToolLibrary),
@@ -204,7 +206,11 @@ fn libraries() -> Vec<Box<dyn Library>> {
         Box::new(SkillsLibrary),
         Box::new(ArtifactsLibrary),
         Box::new(MemoryLibrary),
-    ]
+    ];
+    if let LogTarget::File(log) = log {
+        libraries.push(Box::new(ProgramLibrary::new(log)));
+    }
+    libraries
 }
 
 #[expect(clippy::print_stdout, reason = "the TUI writes the conversation to the terminal")]
@@ -229,12 +235,12 @@ async fn main() -> Result<()> {
     }
 
     // Into a file by default: log lines on the terminal would break the prompt.
-    init(&config.logging, LogTarget::File(home.log()), "info")?;
+    let log = init(&config.logging, LogTarget::File(home.log()), "info")?;
 
     let plugins = plugins();
     let plugins: Vec<&dyn Plugin> = plugins.iter().map(Box::as_ref).collect();
     let mut builder = KernelBuilder::from_config(&config, &plugins).await?;
-    for library in libraries() {
+    for library in libraries(log) {
         builder.library(library.as_ref())?;
     }
     let kernel = Arc::new(builder.build()?);

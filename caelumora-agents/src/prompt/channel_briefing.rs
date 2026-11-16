@@ -1,6 +1,7 @@
 //! The `channel_briefing` component (issue 245): tells the agent where it works - its session and
-//! its channel by their names (issue 575) and what they are for, their summaries and briefings as
-//! whoever may change them wrote them -, so that it need not be told again in every request.
+//! its channel by their names (issue 575) and their ids (issue 577), and what they are for, their
+//! summaries and briefings as whoever may change them wrote them -, so that it need not be told
+//! again in every request.
 //!
 //! Both are read afresh at the start of every turn through the agent's views, so that a change -
 //! a new name too - reaches it with its next turn; the session's come first. Each part names its
@@ -8,8 +9,9 @@
 //! with -, and comes where the personality wires the component in, after its own instructions. In
 //! the system prompt by default (parameter `position`): it changes rarely.
 //!
-//! A session's name and descriptions are public; a channel's are part of the channel, so the part
-//! is classified as the channel is.
+//! The ids are what the program's log carries and what a session is resumed by, so that an agent
+//! can look for them there. A session's name, id and descriptions are public; a channel's are part
+//! of the channel, so the part is classified as the channel is.
 
 use crate::prompt::{
     texts_of, writing_for_the_model, ContextError, PositionParams, Prompt, PromptPosition,
@@ -23,6 +25,7 @@ use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::value::text::{Briefing, Summary};
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub const CHANNEL_BRIEFING_KIND: &str = "channel_briefing";
 
@@ -57,12 +60,14 @@ impl PromptProvider for ChannelBriefingComponent {
         let places = [
             PlaceTold {
                 kind: "session",
+                id: session.id().into(),
                 name: session.name(),
                 summary: session.summary(),
                 briefing: session.briefing(),
             },
             PlaceTold {
                 kind: "channel",
+                id: channel.id().into(),
                 name: channel.name(),
                 summary: channel.summary(),
                 briefing: channel.briefing(),
@@ -78,19 +83,21 @@ impl PromptProvider for ChannelBriefingComponent {
 struct PlaceTold<'a> {
     /// "session" or "channel".
     kind: &'a str,
+    id: Uuid,
     name: &'a Name,
     summary: Option<&'a Summary>,
     briefing: Option<&'a Briefing>,
 }
 
-/// The parts of `prompts` naming each of `places` and describing it by its summary and briefing,
-/// where it has them.
+/// The parts of `prompts` naming each of `places`, with its id, and describing it by its summary
+/// and briefing, where it has them.
 fn render(prompts: &PromptTexts, places: &[PlaceTold<'_>]) -> Result<String, PromptError> {
     let places: Vec<_> = places
         .iter()
         .map(|place| {
             context! {
                 kind => place.kind,
+                id => place.id.to_string(),
                 name => place.name.as_str(),
                 summary => place.summary.map(Summary::as_str),
                 briefing => place.briefing.map(Briefing::as_str),
@@ -148,35 +155,57 @@ mod tests {
         let main = Name::new("main").unwrap();
         let planning = Summary::new("Planning the release.").unwrap();
         let utc = Briefing::new("Dates are in UTC.\nBe brief.").unwrap();
-        let session =
-            |summary| PlaceTold { kind: "session", name: &release, summary, briefing: None };
-        let channel =
-            |briefing| PlaceTold { kind: "channel", name: &main, summary: None, briefing };
+        let session_id = Uuid::from_u128(1);
+        let channel_id = Uuid::from_u128(2);
+        let session = |summary| PlaceTold {
+            kind: "session",
+            id: session_id,
+            name: &release,
+            summary,
+            briefing: None,
+        };
+        let channel = |briefing| PlaceTold {
+            kind: "channel",
+            id: channel_id,
+            name: &main,
+            summary: None,
+            briefing,
+        };
+
+        let ours = format!("This session is called \"release\" and has the id {session_id}.\n");
+        let its = format!("This channel is called \"main\" and has the id {channel_id}.\n");
 
         let described = PlaceTold { summary: Some(&planning), ..channel(Some(&utc)) };
         assert_eq!(
             render(&prompts, &[described]).unwrap(),
-            "[About this channel]\nThis channel is called \"main\".\n\
-             What this channel is for, as its owner describes it.\nIn short: Planning the release.\n\n\
-             Dates are in UTC.\nBe brief.\n",
-            "a place named and described"
+            format!(
+                "[About this channel]\n{its}\
+                 What this channel is for, as its owner describes it.\n\
+                 In short: Planning the release.\n\nDates are in UTC.\nBe brief.\n"
+            ),
+            "a place named, with its id, and described"
         );
         assert_eq!(
             render(&prompts, &[session(Some(&planning))]).unwrap(),
-            "[About this session]\nThis session is called \"release\".\n\
-             What this session is for, as its owner describes it.\nIn short: Planning the release.\n",
+            format!(
+                "[About this session]\n{ours}\
+                 What this session is for, as its owner describes it.\n\
+                 In short: Planning the release.\n"
+            ),
             "a place described in short alone"
         );
         assert_eq!(
             render(&prompts, &[session(None)]).unwrap(),
-            "[About this session]\nThis session is called \"release\".\n",
+            format!("[About this session]\n{ours}"),
             "a place that says nothing of itself is named all the same"
         );
         assert_eq!(
             render(&prompts, &[session(None), channel(Some(&utc))]).unwrap(),
-            "[About this session]\nThis session is called \"release\".\n\n\
-             [About this channel]\nThis channel is called \"main\".\n\
-             What this channel is for, as its owner describes it.\n\nDates are in UTC.\nBe brief.\n",
+            format!(
+                "[About this session]\n{ours}\n[About this channel]\n{its}\
+                 What this channel is for, as its owner describes it.\n\n\
+                 Dates are in UTC.\nBe brief.\n"
+            ),
             "the parts a line apart"
         );
     }
@@ -228,10 +257,10 @@ mod tests {
         let provider = ChannelBriefingComponent::new(PromptPosition::Start, testing::prompts());
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(
-            prompt.text.contains("This session is called \"s\".")
+            prompt.text.contains(&format!("called \"s\" and has the id {}.", session.id))
                 && prompt.text.contains("In short: Release 2.0")
-                && prompt.text.contains("This channel is called \"main\"."),
-            "both named, the session described: {}",
+                && prompt.text.contains(&format!("called \"main\" and has the id {}.", channel.id)),
+            "both named, with their ids, the session described: {}",
             prompt.text
         );
         assert_eq!(
@@ -251,7 +280,7 @@ mod tests {
         let its = prompt.text.find("[About this channel]").unwrap();
         assert!(ours < its, "the session's first: {}", prompt.text);
         assert!(
-            prompt.text.contains("This channel is called \"planning\".")
+            prompt.text.contains("This channel is called \"planning\" and has the id")
                 && prompt.text.contains("Dates are in UTC."),
             "the channel as it is now: {}",
             prompt.text
@@ -261,7 +290,7 @@ mod tests {
         session_loop.update_name(&system, "release").await.unwrap();
         let prompt = told(&provider, agent.id, &session_loop, &mut state).await;
         assert!(
-            prompt.text.contains("This session is called \"release\".")
+            prompt.text.contains("This session is called \"release\" and has the id")
                 && !prompt.text.contains("In short: Release 2.0"),
             "a session that says nothing of itself any more, by its name now: {}",
             prompt.text

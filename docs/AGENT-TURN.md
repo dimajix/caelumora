@@ -865,10 +865,20 @@ Within a turn it stays as it was read when the turn began, also through a long p
 ### The session and channel
 
 `channel_briefing` names the session and the channel, so that the agent can refer to the channel it
-talks in and tell it from the others, and gives their summaries and briefings (see
-[CHANNELS.md](CHANNELS.md#what-it-is-for)). It steers what the agent says, never what it may do:
-permissions and approvals are untouched by it. The channel's name is part of the channel, so the
-part is classified as the channel is.
+talks in and tell it from the others, and gives their ids - what the log carries and a session is
+resumed by - and their summaries and briefings (see [CHANNELS.md](CHANNELS.md#what-it-is-for)). It
+steers what the agent says, never what it may do: permissions and approvals are untouched by it.
+The channel's name is part of the channel, so the part is classified as the channel is.
+
+### The program's log
+
+`program_log` tells the agent the file the program writes its log to, and that what it writes about
+its session and its channel carries their ids, so that an agent asked what went wrong can search
+for them there with a terminal that reaches the file. Where the log lies only the program knows -
+its `logging.file`, or its own default ([CONFIGURATION.md](CONFIGURATION.md)) -, so the kind is not
+the agents' library's but `ProgramLibrary`'s, which the program builds with the file it logs to:
+the terminal lists it, the REST server none. The log holds every session, user and channel of the
+program, so the part comes only where a personality wires it, and says so.
 
 ### Its workspace
 

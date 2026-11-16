@@ -14,6 +14,12 @@ components:
       directory they started you in, and run commands there where that helps. Say what you are
       about to change before you change it, and keep to what was asked.
   fail_policy: FailClosed
+- id: channel-briefing
+  kind: channel_briefing
+  fail_policy: FailClosed
+- id: program-log
+  kind: program_log
+  fail_policy: FailClosed
 - id: turn-end
   kind: turn_end
   fail_policy: FailClosed

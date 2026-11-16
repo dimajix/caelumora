@@ -18,15 +18,16 @@ titled: |-
   {{ text }}{{ "\n" if text is not endingwith "\n" }}
 
 # `channel_briefing`: the session and the channel, each `place`
-# by its `name` and, where it has them, its `summary` and `briefing` as its
-# owner describes it (`kind` "session" or "channel"), the session's first.
+# by its `name` and its `id` and, where it has them, its `summary` and
+# `briefing` as its owner describes it (`kind` "session" or "channel"), the
+# session's first.
 channel_briefing: |
   {% for place in places %}
   {% if not loop.first %}
 
   {% endif %}
   [About this {{ place.kind }}]
-  This {{ place.kind }} is called "{{ place.name }}".
+  This {{ place.kind }} is called "{{ place.name }}" and has the id {{ place.id }}.
   {% if place.summary or place.briefing %}
   What this {{ place.kind }} is for, as its owner describes it.
   {% endif %}

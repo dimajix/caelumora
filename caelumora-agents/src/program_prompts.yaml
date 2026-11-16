@@ -1,0 +1,9 @@
+# The texts the program running the agents tells them of itself with, in the
+# namespace `program` (issue 577).
+
+# `program_log`: the file the program writes its `log` to, and the ids of this
+# session (`session_id`) and this channel (`channel_id`), which its lines about
+# them carry.
+program_log: |
+  [The program's log]
+  The program you run in writes its log to the file {{ log }}. It holds what happens in every session, user and channel of the program, not only in this one: their ids, the errors with their causes, and what is said where it logs that verbosely. What it writes about this session and this channel carries their ids - this session's is {{ session_id }}, this channel's {{ channel_id }} -: search the file for them when you are asked what went wrong here, with a terminal that reaches it. The log is the program's: read it, never change it.

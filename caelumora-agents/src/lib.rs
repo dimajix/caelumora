@@ -8,7 +8,9 @@
 //! the built-in kinds (`components`); the model's facet is the API's (`caelumora_api::model`). It
 //! runs on the kernel, which knows agents only as a kind of participant, and joins it through its
 //! API (`caelumora-api`) as a library of the agent side (`library::AgentsLibrary`, issue 516) - an
-//! essential one: without it, the program is a chat between users.
+//! essential one: without it, the program is a chat between users. What the program running the
+//! agents tells them of itself is a library of its own (`program::ProgramLibrary`, issue 577),
+//! which the program builds with what only it knows.
 
 pub mod activity;
 pub(crate) mod actor;
@@ -21,6 +23,7 @@ pub mod external;
 pub mod library;
 pub mod message;
 pub(crate) mod notes;
+pub mod program;
 pub mod prompt;
 pub mod situation;
 #[cfg(any(test, feature = "test-support"))]

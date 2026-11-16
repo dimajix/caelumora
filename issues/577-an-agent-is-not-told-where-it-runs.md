@@ -1,6 +1,6 @@
 # 577 — An agent is not told where it runs: its session's and channel's ids, the program's log
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** low
 **Area:** Context and knowledge
@@ -42,3 +42,14 @@ if it knew where it is.
 ## History
 
 **2026-11-14** - Opened from the maintainer's use of the terminal.
+
+**2026-11-16** - The ids and the log, as the first step. `channel_briefing` gives the ids of the
+session and the channel beside their names. Where the log lies is the program's to know, so the
+kind `program_log` is not the agents' library's but a library's of its own, `ProgramLibrary` in
+`caelumora-agents`, which the program builds with the file it logs to - what
+`caelumora_logging::init` now answers, so that the program does not work out the file again; the
+terminal lists it, the REST server none. The part names the file and says that it holds every
+session, user and channel of the program; it comes only where a personality wires it, as the
+maintainer decided. The default assistant of the terminal wires both. Open: telling an agent where
+the program keeps the data of its session and its channel - the maintainer's addition -, which the
+home store lays out (`Places`); how a part of the agent side reaches that is to be decided.

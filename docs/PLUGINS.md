@@ -135,7 +135,10 @@ plugin is, but trusted for nothing, and links the kernel's API
 for `caelumora-agents` its `testing` too, under `test-support` -, which `scripts/library-deps.sh`
 checks, run by the pre-commit hook. It implements `caelumora_api::library::Library` - a name for
 messages and `register` -, and the programs list it in `libraries()`, the agents' library first, and
-register each with `KernelBuilder::library` once their plugins registered. A library registers with
+register each with `KernelBuilder::library` once their plugins registered. A library may be built
+with what only the program knows: `ProgramLibrary` of `caelumora-agents` with the file the program
+logs to, which a program lists only where it logs to a file (see
+[AGENT-TURN.md](AGENT-TURN.md#the-programs-log)). A library registers with
 a `LibraryBuilder`, a trait of the API the kernel implements, which offers what a library registers
 and nothing of the kernel - no store, no policy, no secret, no controller:
 
