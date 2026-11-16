@@ -1425,8 +1425,8 @@ mod tests {
     }
 
     /// Issue 587: a line beginning with `!` runs its command in the workspace, while the talk goes
-    /// on; once it ended, the user sees the call they made, as the channel tells it, and how it
-    /// ended.
+    /// on; once it ended, the user sees the call they made, as the channel tells it - by its
+    /// description -, and how it ended.
     #[tokio::test]
     async fn a_bang_runs_a_command_and_the_user_sees_their_call() {
         let (mut talk, session_loop, _running) =
@@ -1438,7 +1438,8 @@ mod tests {
         let printed = printed_until(&mut talk, &until).await;
 
         let call = printed.iter().find(|line| line.contains("calls run_command"));
-        assert!(call.is_some_and(|line| line.contains("echo hello")), "{printed:?}");
+        let described = "Run in the workspace:⏎echo hello";
+        assert!(call.is_some_and(|line| line.contains(described)), "{printed:?}");
         assert!(holds_a_call(&channel).await, "recorded");
     }
 

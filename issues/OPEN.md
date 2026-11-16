@@ -50,7 +50,6 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [208](208-generated-artifacts.md) | open | high | feature | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
-| [587](587-a-person-cannot-run-a-command-in-the-workspace.md) | in progress | medium | feature | Only agents start commands in a session's workspace, so whoever wants the agents of a channel to see what `cargo test` or `git status` says has to run it outside `caelumora-tui` and paste its output, or ask an agent to run it - a turn and an approval for what the person could have typed. |
 
 ## Context and knowledge
 

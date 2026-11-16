@@ -3,9 +3,10 @@
 //! answered, and the paths inside it (`WorkspacePath`); how they are served is the kernel's
 //! (`caelumora_kernel::terminal`).
 //!
-//! A command is run by a call of `RUN_COMMAND`, shown as `SHELL_PRESENTATION`, answered by its
-//! `CommandState` with the end of its output (`CommandState::keeping_last`), and killed if the call
-//! is dropped while it waits (`kill_on_drop`).
+//! A command is run by a call of `RUN_COMMAND`, described by `run_description`, shown as
+//! `SHELL_PRESENTATION`, answered by its `CommandState` with the end of its output
+//! (`CommandState::keeping_last`), and killed if the call is dropped while it waits
+//! (`kill_on_drop`).
 
 use crate::guard::EndOnDrop;
 use async_trait::async_trait;
@@ -27,6 +28,12 @@ pub const RUN_COMMAND: &str = "run_command";
 /// How a shell command is shown (issue 251): its `command` as a line of code, its `output` as a
 /// terminal shows it, and its exit code.
 pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+
+/// What a call of `RUN_COMMAND` does, in words for a person - an approver, a frontend, whoever
+/// searches a history (issues 586, 587): the command, whole.
+pub fn run_description(command: &str) -> String {
+    format!("Run in the workspace:\n{command}")
+}
 
 /// Where the command `result` tells of stands, as a frontend reads it back to show it (issue 586):
 /// of a call presented `shell` that answered, its `CommandState`; none for a call presented

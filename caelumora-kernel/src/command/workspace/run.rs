@@ -6,7 +6,8 @@ use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_api::terminal::{
-    kill_on_drop, Shell, TerminalResult, MAX_OUTPUT_BYTES, RUN_COMMAND, SHELL_PRESENTATION,
+    kill_on_drop, run_description, Shell, TerminalResult, MAX_OUTPUT_BYTES, RUN_COMMAND,
+    SHELL_PRESENTATION,
 };
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
@@ -56,9 +57,10 @@ impl ChannelCommand for RunCommand {
     /// channel, which asks what an agent's command asks, in the issuer's name
     /// (`WorkspaceController::shell_in`) - the workspace usable here, its files theirs to change.
     /// It follows the command until it ends; dropped before, it kills the command, and nothing is
-    /// told. Then it sends the call, `run_command` with the end of the command's output, as the
-    /// issuer's (`UserActor::send_call`), classified as the workspace, and answers the issuer
-    /// alone how the command ended.
+    /// told. Then it sends the call, `run_command` described as the workspace's tool describes it
+    /// (`run_description`) with the end of the command's output, as the issuer's
+    /// (`UserActor::send_call`), classified as the workspace, and answers the issuer alone how the
+    /// command ended.
     async fn execute(
         &self,
         args: &str,
@@ -88,6 +90,7 @@ impl ChannelCommand for RunCommand {
         let ended = ended(&state);
         let call = ToolCall {
             presentation: SHELL_PRESENTATION,
+            description: Some(run_description(args)),
             ..ToolCall::new(
                 Some(Uuid::new_v4().to_string()),
                 RUN_COMMAND,
@@ -180,6 +183,11 @@ mod tests {
                 &json!({ "command": "echo draft > notes.md; cat notes.md" }),
                 SHELL_PRESENTATION
             )
+        );
+        assert_eq!(
+            call.description.as_deref(),
+            Some("Run in the workspace:\necho draft > notes.md; cat notes.md"),
+            "described as the workspace's tool describes it"
         );
         let result = &message.tool_results[0];
         assert_eq!(result.id, call.id, "the call's result");

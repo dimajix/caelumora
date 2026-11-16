@@ -224,8 +224,9 @@ Bob`.
 the channel it is issued in (issue 587) - as an agent's `run_command` runs, so the command is the
 channel's, bounded and ended as every command there ([WORKSPACE.md](WORKSPACE.md#commands)). It
 follows the command until it ends, and sends it as a call the issuer made (`UserActor::send_call`):
-their message without words, carrying the call of `run_command` - its presentation `shell` - and its
-result, the end of the command's output as the tool gives it, classified as the workspace. The
+their message without words, carrying the call of `run_command` - its presentation `shell`, its
+description the tool's (`run_description`) - and its result, the end of the command's output as the
+tool gives it, classified as the workspace. The
 others hear it, the agents too, and nobody is asked to respond (see
 [CHANNELS.md](CHANNELS.md#acting-in-a-channel)). It answers the issuer alone how the command ended.
 Dropped before, it kills the command, and nothing is sent.

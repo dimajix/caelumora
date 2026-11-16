@@ -184,7 +184,8 @@ channels.
     `channel_history` reads another channel's conversation: the last messages, or those containing
     a text, read from the store back from the end only as far as they lie (issue 379). A person's
     calls - a command they ran - are read as an agent in the channel hears them, in the same words
-    (`calls_in_words`, issue 587), and classified with what they answered
+    (`calls_in_words`, issue 587), found by a text in their description
+    (`Filter::with_a_call_containing`), and classified with what they answered
     (`Message::classification_with_results`).
 
 ## Recording what was read

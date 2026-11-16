@@ -13,7 +13,7 @@ use crate::component::WorkspaceParams;
 use async_trait::async_trait;
 use caelumora_agents::tool::{arguments, Tool, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_api::terminal::{kill_on_drop, RUN_COMMAND, SHELL_PRESENTATION};
+use caelumora_api::terminal::{kill_on_drop, run_description, RUN_COMMAND, SHELL_PRESENTATION};
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
@@ -190,7 +190,7 @@ impl Tool for RunCommandTool {
     /// What the call does, as an approver reads it and its channel shows it: the command, whole.
     fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Run { command, .. } = arguments(params)?;
-        Ok(Some(format!("Run in the workspace:\n{command}")))
+        Ok(Some(run_description(&command)))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {

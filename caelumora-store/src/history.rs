@@ -427,6 +427,7 @@ mod tests {
     use caelumora_domain::message::testing::{id, make_generated, make_message};
     use caelumora_domain::message::{Message, MessageRole};
     use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::ToolCall;
     use caelumora_domain::user::UserId;
     use chrono::Utc;
 
@@ -567,6 +568,26 @@ mod tests {
     fn keeps(filter: &Filter<HistoryField>, entry: HistoryEntry) -> bool {
         let item = (Position::START, Recorded::new(entry, ActorId::System, Audience::Everybody));
         seen(&Reader::Channel, &[], Some(filter), &item).unwrap().is_some()
+    }
+
+    /// Issue 587: a call is found by what its description says, as words are compared.
+    #[test]
+    fn a_call_is_found_by_its_description() {
+        let said = |message: Message| HistoryEntry::Said { message };
+        let call = make_tool_call("run_command");
+        let called =
+            Message { content: None, tool_calls: vec![call.clone()], ..make_message(id(1)) };
+        let described =
+            ToolCall { description: Some("Run in the workspace:\nls -la".into()), ..call };
+        let described = Message { tool_calls: vec![described], ..called.clone() };
+        assert!(
+            keeps(&Filter::with_a_call_containing("LS -la"), said(described.clone()))
+                && !keeps(&Filter::with_a_call_containing("coffee"), said(described))
+        );
+        assert!(
+            !keeps(&Filter::with_a_call_containing("run_command"), said(called)),
+            "none without one"
+        );
     }
 
     /// Issue 421: what a page keeps is a condition over the message as it
