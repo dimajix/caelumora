@@ -9,6 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
+| [585](585-a-renamed-participant-is-mentioned-by-its-old-handle.md) | open | low | bug | A channel resolves `@`-mentions by a directory of its participants' handles (`MentionDirectory`) that it builds only as someone joins or leaves, so after an agent or a user taking part is renamed, `@old` still addresses them, `@new` addresses nobody, and the terminal highlights accordingly - until the next join or leave. |
 
 ## Sessions and channels
 
