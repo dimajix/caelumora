@@ -1,11 +1,12 @@
 //! The `channel_history` component (issue 17): an agent reads the history of another channel of its
-//! session - the latest messages, or those that contain a text -, each with what it says and the
-//! attachments it carries (issue 282), and the calls a person made in it, in the words a model is
-//! given them in its own channel (`calls_in_words`, issue 587). Only channels the agent's channel
-//! may read by their classifications can be read - as the turn's views answer
-//! (`Situation::session`, issues 133, 163); every read is recorded as a `KnowledgeRef` with the
-//! turn's messages. When a message was said is written as the model is given the times of its own
-//! channel's (issue 424): in the turn's time zone, in the same form.
+//! session - the latest messages, or those that contain a text, in their words or in the
+//! description of a call a person made -, each with what it says and the attachments it carries
+//! (issue 282), and the calls a person made in it, in the words a model is given them in its own
+//! channel (`calls_in_words`, issue 587). Only channels the agent's channel may read by their
+//! classifications can be read - as the turn's views answer (`Situation::session`, issues 133,
+//! 163); every read is recorded as a `KnowledgeRef` with the turn's messages. When a message was
+//! said is written as the model is given the times of its own channel's (issue 424): in the turn's
+//! time zone, in the same form.
 
 use crate::components::notes::READ_NOTES_TOOL_NAME;
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
@@ -166,11 +167,15 @@ impl Tool for ReadHistoryTool {
 }
 
 /// Which messages the tool returns: those that say something - words or attachments (issue 282) -
-/// or carry the calls a person made (issue 587), or those whose words contain `query` if given - as
-/// names are compared (`Filter::Contains`).
+/// or carry the calls a person made (issue 587); if `query` is given, those whose words contain it,
+/// or that carry a call of a person whose description does - as names are compared
+/// (`Filter::Contains`).
 fn wanted(query: Option<&str>) -> Filter<HistoryField> {
     match query {
-        Some(query) => Filter::all_of([Filter::written(), Filter::containing(query)]),
+        Some(query) => Filter::any_of([
+            Filter::all_of([Filter::written(), Filter::containing(query)]),
+            Filter::all_of([Filter::called_by_a_person(), Filter::with_a_call_containing(query)]),
+        ]),
         None => Filter::any_of([Filter::saying(), Filter::called_by_a_person()]),
     }
 }
@@ -203,6 +208,7 @@ mod tests {
     use caelumora_domain::message::{MessageId, MessageRole};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::ToolCall;
     use caelumora_kernel::command::SHELL_KIND;
     use caelumora_kernel::testing::World;
     use caelumora_kernel::workspace::WorkspaceSpec;
@@ -250,12 +256,25 @@ mod tests {
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
         assert!(wanted(None).matches(&recorded(called.clone())), "a person's call (issue 587)");
-        let of_an_agent = Message { role: MessageRole::Assistant, ..called };
+        let of_an_agent = Message { role: MessageRole::Assistant, ..called.clone() };
         assert!(!wanted(None).matches(&recorded(of_an_agent)), "not an agent's, its own work");
+        let described = ToolCall {
+            description: Some("Run in the workspace:\nls -la".to_string()),
+            ..make_tool_call("run_command")
+        };
+        let described = Message { tool_calls: vec![described], ..called.clone() };
+        assert!(
+            wanted(Some("LS -la")).matches(&recorded(described.clone()))
+                && !wanted(Some("tea")).matches(&recorded(described.clone())),
+            "a person's call by its description"
+        );
+        assert!(!wanted(Some("run_command")).matches(&recorded(called)), "none without one");
+        let of_an_agent = Message { role: MessageRole::Assistant, ..described };
+        assert!(!wanted(Some("ls")).matches(&recorded(of_an_agent)), "nor an agent's call");
     }
 
     /// Issue 587: a person's call - a command they ran - is read in the words a model is given it
-    /// in its own channel, classified with what it answered.
+    /// in its own channel, classified with what it answered, and found by its description.
     #[tokio::test]
     async fn a_person_s_call_is_read_in_words_and_classified_with_its_result() {
         let with_shell = |config: &mut AppConfig| {
@@ -294,6 +313,11 @@ mod tests {
             Classification::join_all([&main.classification(), &docs.classification]),
             "as what it answered"
         );
+        let sought = |query| serde_json::json!({ "channel": main.name(), "query": query });
+        let found = tool.execute(&sought("ECHO notes"), None, &mut turn).await.unwrap();
+        assert_eq!(found.value["messages"].as_array().map(Vec::len), Some(1), "by its description");
+        let found = tool.execute(&sought("coffee"), None, &mut turn).await.unwrap();
+        assert_eq!(found.value["messages"].as_array().map(Vec::len), Some(0), "or not at all");
         drop(turn);
         world.manager.stop(&alice, session.id()).await.unwrap();
     }

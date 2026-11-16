@@ -1311,9 +1311,15 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     for n in 1..=300 {
         state.history.push(make_message(id(n)));
     }
+    // A message carrying a call described (issue 587), as a person's call is.
+    let described = ToolCall {
+        description: Some("Run in the workspace:\nls -la".to_string()),
+        ..make_tool_call("run_command")
+    };
+    state.history.push(Message { tool_calls: vec![described], ..make_message(id(301)) });
     states.put_channel_state(channel, &mut state).await.expect("put");
     assert!(state.history.changes().is_none(), "the history is marked stored");
-    for n in 301..=600 {
+    for n in 302..=600 {
         state.history.push(make_message(id(n)));
     }
     state.history.modify(Message { content: Some("changed".to_string()), ..make_message(id(1)) });
@@ -1385,6 +1391,16 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         (kept.items.len(), kept.earlier),
         (2, None),
         "a page of those kept, read back as far as there are any"
+    );
+    let called = Filter::with_a_call_containing("LS -la");
+    let kept = histories
+        .page(key, &Reader::Channel, Position::START, None, 5, Some(&called))
+        .await
+        .unwrap();
+    assert_eq!(
+        kept.entries().map(|entry| entry.said().map(|m| m.id)).collect::<Vec<_>>(),
+        [Some(id(301))],
+        "a call by what its description says, as words are compared"
     );
 
     histories.rebuild(key).await.expect("rebuild");

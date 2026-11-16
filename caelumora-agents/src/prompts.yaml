@@ -228,7 +228,8 @@ tools:
       channels there are.
     read_history.channel: The name of the channel
     read_history.last: How many of the latest messages to return
-    read_history.query: Only messages containing this text, ignoring case
+    read_history.query: >-
+      Only messages containing this text, or commands a person ran that contain it, ignoring case
 
   # `max_steps`: the most steps a plan has.
   planning:

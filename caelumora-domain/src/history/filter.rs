@@ -32,6 +32,8 @@ pub enum HistoryField {
     Attachments,
     /// The calls the message carries (issue 587); absent where it carries none.
     ToolCalls,
+    /// What a call says it does (`ToolCall::description`), inside `Filter::Any` over `ToolCalls`.
+    CallDescription,
     Mentions,
     Level,
     Compartments,
@@ -64,6 +66,7 @@ impl Field for HistoryField {
             HistoryField::Content => &["entry", "said", "message", "content"],
             HistoryField::Attachments => &["entry", "said", "message", "attachments"],
             HistoryField::ToolCalls => &["entry", "said", "message", "tool_calls"],
+            HistoryField::CallDescription => &["description"],
             HistoryField::Mentions => &["entry", "said", "message", "mentions"],
             HistoryField::Level => &["entry", "said", "message", "classification", "level"],
             HistoryField::Compartments => {
@@ -136,6 +139,12 @@ impl Filter<HistoryField> {
             Filter::eq(HistoryField::Role, MessageRole::User),
             Filter::negated(Filter::IsNull(HistoryField::ToolCalls)),
         ])
+    }
+
+    /// A message carrying a call whose description contains `words` (`Filter::Contains`, issue
+    /// 587): what a call says it does, in words for a person.
+    pub fn with_a_call_containing(words: &str) -> Self {
+        Filter::any(HistoryField::ToolCalls, Filter::contains(HistoryField::CallDescription, words))
     }
 
     /// A message mentioning `actor`.

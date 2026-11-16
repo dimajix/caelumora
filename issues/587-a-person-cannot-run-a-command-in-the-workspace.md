@@ -1,6 +1,6 @@
 # 587 — A person cannot run a command in the workspace
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -242,3 +242,12 @@ description, which only the agent's `ToolExecutor::admit` stamps, from its tool.
 describes its call as the workspace's tool describes one, by one function of
 `caelumora_api::terminal`, `run_description`; the terminal tells a person's call by it, as an
 agent's.
+
+2026-11-16: Step 5 - `read_history` searches a person's calls by their description: a query finds
+the messages whose words contain it, or that carry a call of a person whose description does
+(`Filter::with_a_call_containing`, over `HistoryField::CallDescription` within `ToolCalls`). A
+call stored before step 4 has no description, and no query finds it. What the model reads of a
+call found stays its name and arguments (`kernel.calls_made`), so that a hit on the fixed words of
+the description - "workspace" - shows none of them; left so, as decided with the maintainer.
+
+2026-11-16: Done.
