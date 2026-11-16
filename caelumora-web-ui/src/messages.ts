@@ -1,6 +1,6 @@
 // Helpers for showing messages, shared by the chat and the context panel.
 
-import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, Rejection, RetryRefused, TokenUsage, ToolResult, ToolVisibility} from './types';
+import type {ActorId, GivenUpReason, HistoryItem, Message, PlanStep, Rejection, RetryRefused, TokenUsage, ToolCall, ToolPresentation, ToolResult, ToolVisibility} from './types';
 import {classificationLabel} from './confidentiality';
 import {actorKey, isSystem, sameActor} from './actor';
 import {handleOf} from './mention';
@@ -38,6 +38,14 @@ export function mergeToolResults(messages: Message[]): Message[] {
 }
 
 /**
+ * How a call is shown (issue 589): by its own presentation until its result came, then by the
+ * result's; one that has none is presented `default`.
+ */
+export function presentationOf(call: ToolCall, result?: ToolResult): ToolPresentation {
+  return (result ? result.presentation : call.presentation) ?? 'default';
+}
+
+/**
  * `messages` as the chat shows them: without the calls presented `quiet` that did not fail - while
  * they run, or done -, their results with them, and without a message that held nothing else. What
  * they did shows elsewhere; one that failed, or was abandoned, is shown as any other.
@@ -48,7 +56,7 @@ export function withoutQuietCalls(messages: Message[]): Message[] {
     const quiet = calls.filter(call => {
       const result = msg.tool_results?.find(r => r.id === call.id);
       const failed = result ? !!result.status && result.status !== 'ok' : msg.abandoned;
-      return call.presentation === 'quiet' && !failed;
+      return presentationOf(call, result) === 'quiet' && !failed;
     });
     if (quiet.length === 0) return [msg];
     const tool_calls = calls.filter(call => !quiet.includes(call));
@@ -108,9 +116,12 @@ export interface CommandState {
   exit_code?: number;
 }
 
-/** The result of a successful call of a shell tool, or `null` for any other. */
+/**
+ * Where the command `result` tells of stands: of a call presented `shell` that answered, the state
+ * its tool gave its model; `null` for any other, as `command_state` of `caelumora_api::terminal`.
+ */
 export function commandState(result: ToolResult): CommandState | null {
-  if (result.status && result.status !== 'ok') return null;
+  if (result.presentation !== 'shell' || (result.status && result.status !== 'ok')) return null;
   try {
     const parsed = JSON.parse(result.content);
     return typeof parsed?.id === 'string' && typeof parsed?.status === 'string' && typeof parsed?.output === 'string' ? parsed : null;
@@ -120,15 +131,14 @@ export function commandState(result: ToolResult): CommandState | null {
 }
 
 /**
- * The commands that results among `messages` show ended (issue 294): those of a shell tool's result
- * not `running`.
+ * The commands that results among `messages` show ended (issue 294): those of a result presented
+ * `shell` (`commandState`) not `running`.
  */
 export function endedCommands(messages: Message[]): Set<string> {
   const ended = new Set<string>();
   for (const msg of messages) {
-    for (const call of msg.tool_calls ?? []) {
-      const result = call.presentation === 'shell' ? msg.tool_results?.find(r => r.id === call.id) : undefined;
-      const command = result && commandState(result);
+    for (const result of msg.tool_results ?? []) {
+      const command = commandState(result);
       if (command && command.status !== 'running') ended.add(command.id);
     }
   }

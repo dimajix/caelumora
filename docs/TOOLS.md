@@ -36,7 +36,7 @@ display only - what a call does, and whether it waits for anyone, does not depen
 result carries it too (`ToolCallResult::presentation`, issue 586), stamped from the call as its
 visibility is, so that a frontend shows a result it has not joined to its call, as the terminal's
 line-wise view does. A call is shown by its own presentation until its result comes, and then by
-the result's; so far no tool gives its result another, and the web UI reads the call's alone.
+the result's - so far no tool gives its result another.
 Approval and classification are decided per tool by its provider, not by the personality.
 
 What a tool, its parameters and its tool set say to the model are texts of the prompt catalogue

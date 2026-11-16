@@ -110,3 +110,7 @@ result is described, not repeating it.
 
 2026-11-16: Step 2 done: `Followed` leaves out a result presented `quiet` that succeeded by its
 own presentation; `quiet_calls` serves to print the call of one that did not.
+
+2026-11-16: Step 3 done: the web UI shows a call by `presentationOf(call, result)`, in
+`ToolCallView` and `withoutQuietCalls`, and `commandState` reads a result presented `shell` alone,
+as `command_state` does - `endedCommands` reads the results, not the calls.

@@ -1,6 +1,7 @@
 // One tool call as the chat shows it - its tool, who sees it, its status, and its content as its
 // presentation says (issue 165). The frame is the same for every call; what is inside it is the
-// handler's of the call's presentation, the default one for every call that declares none. The
+// handler's of its presentation (`presentationOf`) - the call's until its result came, then the
+// result's -, the default one where it has none. The
 // frame also shows the questions a call asked and how they were answered, where its result keeps
 // their record (`AnswersRecord`, issue 268), and what its result showed its model (issue 282) but
 // what a message of its turn carries, which is shown there (issue 535).
@@ -10,7 +11,7 @@ import {BookOpen, CheckCircle2, Download, EyeOff, Globe, ImageIcon, Package, Pap
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type WorkspaceFiles} from '../api';
 import {ApiRequestError} from '../errors';
-import {commandState, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandState} from '../messages';
+import {commandState, formatArguments, formatSize, formatTimestamp, ownerOnly, presentationOf, type CommandState} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 import {MarkdownMessage} from './MarkdownMessage';
 import {AttachmentList} from './AttachmentList';
@@ -1096,7 +1097,7 @@ interface ToolCallViewProps {
 export const ToolCallView: React.FC<ToolCallViewProps> = ({call, result, messageId, turnId, abandoned, onInterrupt}) => {
   const {attachments, digestsByTurn} = useShownChannel();
   const attachedInTurn = turnId ? digestsByTurn?.get(turnId) : undefined;
-  const Content = PRESENTATIONS[call.presentation ?? 'default'] ?? DefaultToolCallContent;
+  const Content = PRESENTATIONS[presentationOf(call, result)] ?? DefaultToolCallContent;
   // What the call gave and showed its model, as a message shows what it carries - but what its
   // turn attached, which only its message shows.
   const seen = [...(result?.files ?? []), ...(result?.shown ?? [])];
