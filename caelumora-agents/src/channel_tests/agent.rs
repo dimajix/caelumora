@@ -3009,6 +3009,49 @@ async fn an_agent_that_starts_hears_another_agents_answer_as_its_words_without_t
     assert_eq!(kept, [(answer.id, MessageRole::Assistant)], "the channel's history gives it what it heard as it was said; the tool traffic, which it would not have heard live, is not its (issues 258, 417)");
 }
 
+/// Issue 587: a person's call - a command they ran in the workspace - is what they did in the
+/// channel, and heard with its result, though it says nothing in words.
+#[tokio::test]
+async fn an_agent_hears_a_person_s_call_with_its_result() {
+    use caelumora_domain::message::MessageId;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult};
+    let (channel, context, agent, _) =
+        agent_channel(Arc::new(AllowAllPolicy::new()), Arc::new(NeverAnswers), Default::default())
+            .await;
+    let call = ToolCall {
+        id: Some("1".to_string()),
+        function_name: "run_command".to_string(),
+        arguments: serde_json::json!({ "command": "ls" }),
+        visibility: Default::default(),
+        presentation: Default::default(),
+    };
+    let result = ToolCallResult::of(
+        &call,
+        Default::default(),
+        r#"{"output":"notes.md\n"}"#.to_string(),
+        Classification::CHANNEL_DEFAULT,
+    );
+    let made = Message {
+        id: MessageId::new(),
+        sender_id: context.initiator_id,
+        role: MessageRole::User,
+        tool_calls: vec![call],
+        tool_results: vec![result],
+        ..Message::new(Classification::CHANNEL_DEFAULT)
+    };
+
+    channel.record_said(vec![made.clone()]).await;
+    let state = channel.run_until(agent, |state| state.last_message == Some(made.id)).await;
+
+    let heard = state.transcript.messages();
+    assert_eq!(heard.len(), 1, "{heard:?}");
+    assert_eq!(
+        (heard[0].id, heard[0].tool_calls.len(), heard[0].tool_results.len()),
+        (made.id, 1, 1),
+        "the call with its result, as the person's"
+    );
+}
+
 #[tokio::test]
 async fn an_agent_that_starts_takes_in_what_it_missed_as_what_it_hears() {
     use caelumora_domain::message::MessageId;

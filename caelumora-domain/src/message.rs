@@ -299,28 +299,44 @@ impl Message {
         )
     }
 
+    /// Whether the message says anything in words or attachments (issue 282): what may ask someone
+    /// to respond - a person's call alone asks nobody (issue 587). `Filter::saying` as a condition.
+    pub fn says_something(&self) -> bool {
+        self.content.as_deref().is_some_and(|c| !c.is_empty()) || !self.attachments.is_empty()
+    }
+
     /// Whether a participant hears anything of the message when someone else said it (issue 224):
-    /// whether it was said or answered in words or attachments (issue 282) - not a tool message,
-    /// not an inner step of a plan, not a message without either. That nobody hears their own
-    /// message is the channel's to see to: it delivers nothing back to its sender.
+    /// whether it was said or answered in words or attachments (issue 282), or a person made calls
+    /// in it themselves (`is_a_persons_call`, issue 587) - not a tool message, not an inner step of
+    /// a plan, not a message without any of them. That nobody hears their own message is the
+    /// channel's to see to: it delivers nothing back to its sender. `Filter::heard` as a condition.
     pub fn is_heard(&self) -> bool {
         matches!(self.role, MessageRole::User | MessageRole::Assistant)
             && !self.internal
-            && (self.content.as_deref().is_some_and(|c| !c.is_empty())
-                || !self.attachments.is_empty())
+            && (self.says_something() || self.is_a_persons_call())
     }
 
     /// What a participant hears of the message when someone else said it (`is_heard`), the same
-    /// live and on catching up, for every kind of agent: its words and attachments, as a `user`
-    /// message without its tool calls and results, which were the sender's. `None` if there is
+    /// live and on catching up, for every kind of agent: as a `user` message, its words and
+    /// attachments - and a person's calls with their results, which are what they did in the
+    /// channel (issue 587), where an agent's are the work its answer tells of. `None` if there is
     /// nothing to hear.
     pub fn as_heard(&self) -> Option<Message> {
-        self.is_heard().then(|| Message {
-            role: MessageRole::User,
-            tool_calls: Vec::new(),
-            tool_results: Vec::new(),
-            ..self.clone()
-        })
+        if !self.is_heard() {
+            return None;
+        }
+        let mut heard = Message { role: MessageRole::User, ..self.clone() };
+        if !self.is_a_persons_call() {
+            heard.tool_calls.clear();
+            heard.tool_results.clear();
+        }
+        Some(heard)
+    }
+
+    /// Whether the message carries calls in the role of a user (issue 587): a person's, who called
+    /// themselves - an agent's calls are in its own role, its results in a tool's.
+    fn is_a_persons_call(&self) -> bool {
+        self.role == MessageRole::User && !self.tool_calls.is_empty()
     }
     /// Modifies the message as it stands by `modified`, the same message as it reads from now on
     /// (issue 234), and returns whether it did: only one not taken back, by the same sender in the
@@ -536,6 +552,7 @@ pub mod testing {
 pub(crate) mod tests {
     use super::testing::{id, make_message};
     use super::*;
+    use crate::agent::AgentId;
     use crate::channel::ChannelId;
     use crate::confidentiality::Confidentiality;
     use crate::content::testing::make_content_ref;
@@ -543,6 +560,7 @@ pub(crate) mod tests {
     use crate::query::testing::meets_exactly_its_equals;
     use crate::session::SessionId;
     use crate::tool::ToolVisibility;
+    use crate::user::UserId;
     use chrono::Duration;
 
     #[test]
@@ -726,6 +744,32 @@ pub(crate) mod tests {
                 unheard.role
             );
         }
+    }
+
+    /// Issue 587: a person's calls are what they did in the channel - heard by the others with
+    /// their results, though they say nothing, and so ask nobody to respond.
+    #[test]
+    fn a_person_s_call_is_heard_with_its_result_but_says_nothing() {
+        let made = Message {
+            sender_id: ActorId::User(UserId::new()),
+            content: None,
+            tool_calls: vec![call("1", ToolVisibility::SHOWN)],
+            tool_results: vec![result("1", ToolVisibility::SHOWN)],
+            ..make_message(MessageId::new())
+        };
+        assert!(!made.says_something(), "no words, no attachments");
+        let heard = made.as_heard().expect("a person's call is heard");
+        assert_eq!(
+            (heard.tool_calls.len(), heard.tool_results.len()),
+            (1, 1),
+            "with the call and its result"
+        );
+        let of_an_agent = Message {
+            sender_id: ActorId::Agent(AgentId::new()),
+            role: MessageRole::Assistant,
+            ..made
+        };
+        assert!(of_an_agent.as_heard().is_none(), "an agent's call alone is its own work");
     }
 
     /// Issue 538: what a message's tools read or wrote is no part of what anyone else is given of

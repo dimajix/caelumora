@@ -14,13 +14,14 @@ use caelumora_api::command::CommandError;
 use caelumora_api::reader::ViewError;
 use caelumora_api::terminal::{CommandState, TerminalError, WorkspacePath};
 use caelumora_api::workspace::WorkspaceError;
-use caelumora_domain::actor::{ActorId, Rejection};
+use caelumora_domain::actor::{ActorEvent, ActorId, Rejection};
 use caelumora_domain::agent::{Agent, AgentId, Personality};
 use caelumora_domain::approval::{ApprovalRule, Reach, RuleDecision, ToolMatcher};
 use caelumora_domain::channel::{Channel, ChannelId, HistoryAccess, Participant, LEFT};
 use caelumora_domain::command::CommandVisibility;
 use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
+use caelumora_domain::config::AppConfig;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::event::GlobalEvent;
 use caelumora_domain::group::{Group, GroupId, GroupUpdateEvent};
@@ -44,6 +45,7 @@ use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::agent::{AgentError, AgentSpec};
 use caelumora_kernel::channel::testing::as_command_error;
 use caelumora_kernel::channel::{ChannelError, ChannelLoop};
+use caelumora_kernel::command::SHELL_KIND;
 use caelumora_kernel::component::BUNDLE_REF_KIND;
 use caelumora_kernel::event::{EventSubscription, SubscriptionTopic};
 use caelumora_kernel::group::{GroupError, GroupSpec};
@@ -3984,6 +3986,83 @@ async fn a_command_is_ended_in_its_channel_by_who_may_change_the_workspace_there
         "not one of another channel: {unknown:?}"
     );
     other.kill(&elsewhere, 0).await.unwrap();
+    world.manager.stop(&alice, session.id()).await.unwrap();
+}
+
+/// Issue 587: `/workspace run` runs a command in the session's workspace as an agent's command runs
+/// there - by whoever may change its files in the channel, asked as the views ask it, after whether
+/// they may see and run the command -, and refuses who only reads them, before anything runs.
+#[tokio::test]
+async fn a_person_runs_a_command_in_the_workspace_if_they_may_change_its_files_there() {
+    let with_workspace = |config: &mut AppConfig| {
+        let group = ComponentDescriptor::new("shell", SHELL_KIND);
+        config.commands.component_nodes.push(group);
+    };
+    let world = World::configured(&[], &[], |_| {}, with_workspace).await;
+    let alice = World::as_user(world.alice);
+    let docs = world
+        .kernel
+        .workspace_manager()
+        .create(
+            &alice,
+            WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell"),
+        )
+        .await
+        .unwrap();
+    let session = world.shared_session(&[], &[]).await;
+    session.update_workspace(&alice, Some(docs.id), Some(Grant::Read)).await.unwrap();
+    let main = Arc::clone(&session.channels()[0]);
+    world.manager.open(&World::as_user(world.bob), session.id()).await.expect("he opens it");
+    let bob = main.user_actor(world.bob).unwrap();
+
+    let (refused, asked) = world.asked(bob.execute_command("workspace run touch his")).await;
+    let refused = refused.expect_err("not by who only reads its files");
+    assert!(
+        matches!(as_command_error(&refused), CommandError::Forbidden { .. }),
+        "refused as such: {refused:?}"
+    );
+    let reached = [
+        "bob: ShowCommand(alice's) yes",
+        "bob: ExecuteCommand(alice's) yes",
+        "bob: GetSession(alice's) yes",
+        "bob: GetChannel(alice's) yes",
+        "bob: Cleared(bob) yes",
+        "bob: GetWorkspace(alice's) yes",
+        "bob: Publish yes",
+        "bob: Publish yes",
+    ];
+    assert_eq!(asked, checks(&[&reached[..], &["bob: WriteWorkspace(alice's) no"]].concat()));
+    workspace(&world, docs.id)
+        .await
+        .share(&alice, Subject::Group(GroupId::of_session(session.id())), Grant::Write)
+        .await
+        .unwrap();
+    let mut admitted = main.observe();
+    let (ran, asked) = world
+        .asked(async {
+            let ran = bob.execute_command("workspace run touch his").await;
+            // Until the channel let his call in.
+            while !matches!(
+                admitted.recv().await.unwrap().event,
+                ActorEvent::CompleteMessageGenerated(_)
+            ) {}
+            ran
+        })
+        .await;
+    assert_eq!(
+        ran.expect("by who may change them").output.as_deref(),
+        Some("The command exited with 0.")
+    );
+    let admitting = [
+        // His call, as every message of his: the message and its result may enter the channel.
+        "bob: Publish yes",
+        "bob: Publish yes",
+    ];
+    assert_eq!(
+        asked,
+        checks(&[&reached[..], &["bob: WriteWorkspace(alice's) yes"], &admitting].concat()),
+        "{asked:#?}"
+    );
     world.manager.stop(&alice, session.id()).await.unwrap();
 }
 

@@ -18,7 +18,7 @@ use caelumora_agents::prompt::{texts_of, writing_for_the_model, PromptPosition, 
 use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};
 use caelumora_api::component::{ComponentError, ComponentResult, Params};
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
-use caelumora_api::terminal::WorkspacePath;
+use caelumora_api::terminal::{WorkspacePath, MAX_OUTPUT_BYTES};
 use caelumora_api::workspace::{WorkspaceReader, WorkspaceWriter};
 use caelumora_compaction::KnowledgeRestorer;
 use caelumora_domain::prompt_catalogue::{PromptError, PromptTexts};
@@ -33,7 +33,7 @@ fn default_wait_secs() -> u64 {
 }
 
 fn default_output_bytes() -> usize {
-    64 * 1024
+    MAX_OUTPUT_BYTES
 }
 
 fn default_instruction_files() -> Vec<String> {

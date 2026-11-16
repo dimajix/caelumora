@@ -50,7 +50,9 @@ session that was purged is dropped as the workspace is next stored (issue
 [347](../issues/347-entries-naming-purged-groups.md)).
 
 A person reaches the files by the workspace, wherever they act - never through a channel: as its
-list lets them, and cleared for its classification. An agent uses it through a channel, acting with
+list lets them, and cleared for its classification. A command they run (`/workspace run`, issue
+587) is the exception: it runs in a channel's shell, as an agent's does, and asks what an agent's
+asks there, since what it prints enters the channel. An agent uses it through a channel, acting with
 its owner's rights for whoever asked it, as the list lets the agent, and only where the channel uses
 it (see [CHANNELS.md](CHANNELS.md#its-workspace)). A channel uses it where
 
@@ -144,7 +146,8 @@ A storage may have a `Shell`, which its provider hands out, not its terminal: co
 the workspace, followed by what they print and killed with everything they started. A shell is made
 for one scope - for the kernel, the channel - and sees only the commands started under it. A storage
 knows the commands it started, so that none is started past it, and ends one when told, without
-asking anything.
+asking anything. Agents start commands with their tool, people with `/workspace run` (see
+[COMMANDS.md](COMMANDS.md#a-command-run-in-the-workspace)), both through the channel's shell.
 
 **Commands live with the storage**, not with a call or a turn: a command handed back to an agent as
 running outlives the call that started it. A command is its channel's, not its starter's: it runs on

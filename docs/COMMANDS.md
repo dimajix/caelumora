@@ -10,9 +10,10 @@ the commands that come with Caelumora. How components are built is in
 
 A line that starts with `/` addresses the system rather than the agents: `/help`, `/agent wakeup
 [agent]`, `/participant nudge <participant>`, `/participant add <name>`. A command is not a message:
-it never reaches an agent's context as something said. Commands of the channel never enter the
-history; what an agent carried out on someone's word does (see [Commands of an
-agent](#commands-of-an-agent)).
+it never reaches an agent's context as something said. Of the commands of the channel, the history
+keeps a channel-wide answer, and what one sends in the issuer's name as theirs - the call of
+`/workspace run` ([below](#a-command-run-in-the-workspace)); what an agent carried out on someone's
+word it keeps too (see [Commands of an agent](#commands-of-an-agent)).
 
 Commands are for people; agents act through tools. A command is always issued on behalf of a
 particular person, by that person's actor (`UserActor::execute_command`), as messages and approvals
@@ -92,7 +93,10 @@ The channel's commands come from two places:
 
 *   `AppConfig::commands`, the global set - by default `/help` and the groups `participant`,
     `agent` and `channel`, a component each; an empty list switches them off (see
-    [CONFIGURATION.md](CONFIGURATION.md));
+    [CONFIGURATION.md](CONFIGURATION.md)). The group `workspace`, of the component `shell` -
+    `workspace` is the kind of the agents' tools on it -, is in no default: a command run with it
+    acts wherever the workspace's storage reaches, so the terminal program, one person's on their
+    own machine, adds it to its configuration, and a server only where its operator does;
 *   `SessionTemplate::commands`, for commands that belong to what a session is for, copied into the
     session, so a running session keeps its set.
 
@@ -150,13 +154,15 @@ they are issued in asks (`UpdateChannel`).
 deleting it ask (`SessionLoop::delete_channel`: `DeleteChannel`, `UpdateSession`), and
 `/channel join` what joining it asks (`ChannelLoop::join`: `JoinChannel`). `/channel leave` asks
 what leaving asks (`ChannelLoop::leave`: `LeaveChannel`), and with an agent named what reading the
-channel asks besides.
+channel asks besides. `/workspace run` asks what an agent's command asks in the workspace, in the
+issuer's name (`WorkspaceController::shell_in`): reading the session and the channel, the workspace
+usable there, `WriteWorkspace`; and its call what every message asks as the channel admits it.
 
 ### Private or channel-wide answers
 
 A command answers the issuer alone (`/help`, `/participant list`, `/participant nudge`,
 `/participant add`, `/participant remove`, `/agent list`, `/agent create`, `/agent delete`,
-`/agent usage`, the group `channel`) or the whole channel (`/agent wakeup`): that
+`/agent usage`, the group `channel`, `/workspace run`) or the whole channel (`/agent wakeup`): that
 `/participant add` brought someone in or `/participant remove` took someone out, the channel tells
 everyone anyway. A channel-wide answer
 is announced by the issuer's actor as `CommandExecuted`, forwarded to the users only, shown but
@@ -200,6 +206,18 @@ name the issuer may not read is answered like one that does not exist. `/agent c
 personality the same way from the channel (`Views::personality_named`), the innermost first. A
 command that takes two names takes the last `as` as what separates them: `/agent create Reviewer as
 Bob`.
+
+### A command run in the workspace
+
+`/workspace run <command>` runs a shell command in the session's workspace, through the shell of
+the channel it is issued in (issue 587) - as an agent's `run_command` runs, so the command is the
+channel's, bounded and ended as every command there ([WORKSPACE.md](WORKSPACE.md#commands)). It
+follows the command until it ends, and sends it as a call the issuer made (`UserActor::send_call`):
+their message without words, carrying the call of `run_command` - its presentation `shell` - and its
+result, the end of the command's output as the tool gives it, classified as the workspace. The
+others hear it, the agents too, and nobody is asked to respond (see
+[CHANNELS.md](CHANNELS.md#acting-in-a-channel)). It answers the issuer alone how the command ended.
+Dropped before, it kills the command, and nothing is sent.
 
 ## Commands of an agent
 
@@ -282,6 +300,7 @@ external agent alike.
 | `/channel rename` | - | the channel | `channel` | `<new name>` | private | Renames this channel. |
 | `/channel summary` | - | the channel | `channel` | `[text]` | private | Says in a line what this channel is for, its briefing kept; without a text, removes it. |
 | `/channel briefing` | - | the channel | `channel` | `[text]` | private | Says what an agent should know before it works in this channel, its summary kept; without a text, removes it. |
+| `/workspace run` | - | the channel | `shell` | `<command>` | private | Runs a shell command in the session's workspace until it ends, and puts it with its output into the channel as the user's call ([above](#a-command-run-in-the-workspace)). In no deployment by default. |
 | `/skill` | - | the agent | `skills` | `@agent <name>` | private | Gives the agent a skill: its text goes into the agent's transcript in the issuer's name ([SKILLS.md](SKILLS.md)). |
 | `/skills` | - | the agent | `skills` | `@agent` | private | Lists the skills the agent may load here. |
 | `/private-notes` | - | the agent | `private_notes` | `@agent` | private | For the agent's owners: shows the private notes it recalls here - of this channel, and of the session's other channels as far as they may be told here ([MEMORY.md](MEMORY.md#private-notes)). |

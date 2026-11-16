@@ -214,7 +214,9 @@ impl DecisionPolicy {
     }
 
     /// What the model judges, and how what it holds is classified: the conversation `messages`,
-    /// each message heard as a model is given one of another participant, one after another.
+    /// each message heard as a model is given one of another participant, one after another - in
+    /// its words alone: a person's call (issue 587), which says nothing and asks nobody, tells
+    /// nothing of whom to ask, and what it answered is not sent to the model.
     /// What was said before is left out if it may not reach the model, asked for `initiator`, and
     /// beyond `MAX_STATE_TOKENS` the oldest first.
     ///

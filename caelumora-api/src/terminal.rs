@@ -29,6 +29,10 @@ pub const RUN_COMMAND: &str = "run_command";
 /// terminal shows it, and its exit code.
 pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
 
+/// How much of a command's output a call's result holds, its end, unless configured otherwise:
+/// what the workspace's tool gives its model, and what a person's call keeps (issue 587).
+pub const MAX_OUTPUT_BYTES: usize = 64 * 1024;
+
 /// How long the kill of a dropped call's command may take.
 const KILL_WITHIN: Duration = Duration::from_secs(5);
 

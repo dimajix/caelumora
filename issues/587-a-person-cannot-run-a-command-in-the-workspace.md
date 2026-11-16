@@ -204,3 +204,10 @@ the workspace's shell tool and the command share into `caelumora_api::terminal`.
 2026-11-16: A step 1b added at the maintainer's request, from a finding of the review of step 1:
 the guard that kills a dropped call's command and the one that ends a dropped call's prompt in
 ComfyUI were one mechanism written twice; both are `caelumora_api::guard::EndOnDrop` now.
+
+2026-11-16: Step 2 - the kernel's part. `/workspace run` is a command of the channel, of a
+component of the kind `shell`: `workspace`, the name of its group, is the kind of the agents' tools
+on the workspace already. It sends the run as the issuer's call (`UserActor::send_call`); a
+person's calls are heard with their results (`Message::as_heard`) and given to a model in words
+(`kernel.calls_made`); a message that says nothing in words or attachments asks nobody to respond
+(`Message::says_something`).

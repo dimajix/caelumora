@@ -426,6 +426,7 @@ mod tests {
     use caelumora_domain::history::{Audience, History};
     use caelumora_domain::message::testing::{id, make_generated, make_message};
     use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::user::UserId;
     use chrono::Utc;
 
@@ -634,19 +635,35 @@ mod tests {
                 && !keeps(&Filter::with_attachments(), said(given)),
             "what a message carries as attachments, not what its tool results gave"
         );
+        // A person's call (issue 587), and an agent's in its own role.
+        let called = Message {
+            content: None,
+            tool_calls: vec![make_tool_call("run_command")],
+            ..by_alice.clone()
+        };
         for message in [
             by_alice.clone(),
             attached,
             Message { role: MessageRole::Assistant, ..by_alice.clone() },
             Message { role: MessageRole::Tool, ..by_alice.clone() },
             Message { internal: true, ..by_alice.clone() },
+            called.clone(),
+            Message { role: MessageRole::Assistant, ..called },
         ] {
             assert_eq!(
                 keeps(&Filter::heard(), said(message.clone())),
                 message.is_heard(),
-                "heard as {:?}, internal {}",
+                "heard as {:?}, internal {}, calls {}",
                 message.role,
-                message.internal
+                message.internal,
+                message.tool_calls.len()
+            );
+            assert_eq!(
+                keeps(&Filter::saying(), said(message.clone())),
+                message.says_something(),
+                "saying as {:?}, calls {}",
+                message.role,
+                message.tool_calls.len()
             );
         }
     }
