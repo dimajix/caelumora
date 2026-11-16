@@ -358,15 +358,14 @@ mod tests {
     use super::*;
     use caelumora_domain::session::Session;
     use caelumora_domain::store::Stored;
+    use caelumora_domain::tool::testing::make_tool_call;
 
     #[test]
     fn an_action_is_described_without_its_content() {
         let call = ToolCall {
             id: None,
-            function_name: "web_search".to_string(),
             arguments: serde_json::json!({ "query": "secret plans" }),
-            visibility: Default::default(),
-            presentation: Default::default(),
+            ..make_tool_call("web_search")
         };
         let described = ActionType::CallTool(&call).describe();
         assert_eq!(described, "CallTool(web_search)");

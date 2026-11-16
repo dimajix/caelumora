@@ -467,17 +467,12 @@ impl ApprovalRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::testing::make_tool_call;
     use chrono::Duration;
     use serde_json::json;
 
     fn call(tool: &str, arguments: Value) -> ToolCall {
-        ToolCall {
-            id: None,
-            function_name: tool.to_string(),
-            arguments,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        }
+        ToolCall { id: None, arguments, ..make_tool_call(tool) }
     }
 
     fn matcher(tool: &str, arguments: &[(&str, &str)]) -> ToolMatcher {

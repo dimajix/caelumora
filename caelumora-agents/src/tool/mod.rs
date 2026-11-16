@@ -699,13 +699,7 @@ pub async fn workspace_writer(turn: &Turn<'_>) -> WorkspaceResult<Arc<dyn Worksp
 /// What a rule derived from a call of `tool` with `params` is offered with, as the tool's
 /// parameters tell (`ToolMatcher::proposed`, issue 247).
 pub fn proposed_matcher(tool: &ToolDescription, params: &Value) -> ToolMatcher {
-    let call = ToolCall {
-        id: None,
-        function_name: tool.name.clone(),
-        arguments: params.clone(),
-        visibility: ToolVisibility::SHOWN,
-        presentation: Default::default(),
-    };
+    let call = ToolCall::new(None, tool.name.clone(), params.clone());
     ToolMatcher::proposed(&call, &tool.parameters)
 }
 
@@ -1187,6 +1181,7 @@ mod tests {
     use caelumora_domain::note::NoteId;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_domain::turn::TurnState;
     use caelumora_domain::value::name::Name;
@@ -1410,13 +1405,7 @@ mod tests {
     }
 
     fn call(name: &str) -> ToolCall {
-        ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: name.to_string(),
-            arguments: json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        }
+        ToolCall { arguments: json!({}), ..make_tool_call(name) }
     }
 
     fn parse(result: &str) -> Value {

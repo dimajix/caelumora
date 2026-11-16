@@ -483,7 +483,8 @@ pub fn executed_calls<'a>(
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
     use super::*;
-    use crate::tool::{ToolResultStatus, ToolVisibility};
+    use crate::tool::testing::make_tool_call;
+    use crate::tool::ToolResultStatus;
     use uuid::Uuid;
 
     /// A message from a user with id `id`.
@@ -502,13 +503,7 @@ pub mod testing {
     /// A message with id `id` of the result of a call of `generate_image`, shown to the channel,
     /// that gave its model `files` (issue 512): seen, not said - no attachment of the message.
     pub fn make_generated(id: MessageId, files: Vec<ContentRef>) -> Message {
-        let call = ToolCall {
-            id: Some("1".to_string()),
-            function_name: "generate_image".to_string(),
-            arguments: Value::Null,
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: Some("1".to_string()), ..make_tool_call("generate_image") };
         let result = ToolCallResult {
             files,
             ..ToolCallResult::of(
@@ -542,6 +537,7 @@ pub(crate) mod tests {
     use crate::context::{KnowledgeRef, KnowledgeSource};
     use crate::query::testing::meets_exactly_its_equals;
     use crate::session::SessionId;
+    use crate::tool::testing::make_tool_call;
     use crate::tool::ToolVisibility;
     use chrono::Duration;
 
@@ -573,10 +569,9 @@ pub(crate) mod tests {
     fn call(id: &str, visibility: ToolVisibility) -> ToolCall {
         ToolCall {
             id: Some(id.to_string()),
-            function_name: "f".to_string(),
             arguments: serde_json::json!({"text": "secret"}),
             visibility,
-            presentation: Default::default(),
+            ..make_tool_call("f")
         }
     }
 
@@ -893,10 +888,8 @@ pub(crate) mod tests {
         let secret = Classification::general(Confidentiality::Confidential);
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "read".to_string(),
             arguments: serde_json::json!({ "file": "plans" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("read")
         };
         let calling = Message {
             content: Some("let me look".to_string()),

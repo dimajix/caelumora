@@ -908,6 +908,7 @@ mod tests {
     use crate::note::NoteId;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::store::testing::{replayed, stored};
+    use crate::tool::testing::make_tool_call;
     use crate::tool::{ToolCall, ToolCallState, ToolDescription, ToolParameters, ToolVisibility};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
@@ -916,13 +917,8 @@ mod tests {
     fn a_resumed_turn_answers_unfinished_tool_calls_as_not_executed_instead_of_running_them() {
         use crate::approval::ToolMatcher;
         use crate::tool::{ToolCall, ToolCallState};
-        let tool_call = ToolCall {
-            id: None,
-            function_name: "write_note".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
-        };
+        let tool_call =
+            ToolCall { id: None, arguments: serde_json::json!({}), ..make_tool_call("write_note") };
         let ready = ToolCallState::approved(tool_call.clone());
         let done = ToolCallState::answered(
             tool_call.clone(),
@@ -1161,10 +1157,8 @@ mod tests {
             .enumerate()
             .map(|(at, name)| ToolCall {
                 id: Some((at + 1).to_string()),
-                function_name: name.to_string(),
                 arguments: serde_json::json!({}),
-                visibility: ToolVisibility::SHOWN,
-                presentation: Default::default(),
+                ..make_tool_call(name)
             })
             .collect();
         state.said(Message {
@@ -2480,10 +2474,8 @@ mod tests {
         );
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "f".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("f")
         };
         let mut result = ToolCallResult::of(
             &call,

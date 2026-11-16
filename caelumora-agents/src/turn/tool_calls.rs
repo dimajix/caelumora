@@ -358,16 +358,14 @@ mod tests {
     use caelumora_domain::approval::ToolMatcher;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::question::{Addressee, Question, Questions};
-    use caelumora_domain::tool::ToolVisibility;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::user::UserId;
 
     fn call(name: &str) -> ToolCall {
         ToolCall {
             id: Some(name.to_string()),
-            function_name: name.to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(name)
         }
     }
 

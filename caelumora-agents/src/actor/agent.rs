@@ -1277,6 +1277,7 @@ mod tests {
     use caelumora_domain::confidentiality::Confidentiality;
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
     use caelumora_domain::message::MessageId;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolSet, ToolVisibility};
 
     fn tool(name: &str, visibility: ToolVisibility) -> ToolDescription {
@@ -1298,10 +1299,9 @@ mod tests {
         // Labelled as the model can never label a call: `label` must set it.
         ToolCall {
             id: None,
-            function_name: name.to_string(),
             arguments: serde_json::json!({}),
             visibility: ToolVisibility::HIDDEN,
-            presentation: Default::default(),
+            ..make_tool_call(name)
         }
     }
 

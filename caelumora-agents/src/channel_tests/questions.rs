@@ -4,6 +4,7 @@ use super::*;
 use crate::tool::ask_user::ASK_USER_KIND;
 use caelumora_domain::component::ComponentConfig;
 use caelumora_domain::question::{QuestionError, QuestionRequest};
+use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolCallResult, ToolResultStatus};
 use caelumora_domain::transcript::TranscriptEntry;
 use std::sync::Mutex;
@@ -14,16 +15,14 @@ use tokio::time;
 fn a_call_asking(sensitive: bool) -> (Message, Message, ComponentConfig) {
     use caelumora_domain::component::ComponentDescriptor;
     use caelumora_domain::message::MessageRole;
-    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::ToolCall;
 
     let call = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
-            function_name: "asking".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("asking")
         }],
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };
@@ -209,16 +208,14 @@ async fn ask_user_asks_whom_it_names_and_gives_the_model_the_answers() {
     use caelumora_domain::component::ComponentDescriptor;
     use caelumora_domain::message::MessageRole;
     use caelumora_domain::question::Response;
-    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::ToolCall;
 
     let ask = |id: &str, whom: &str| Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some(id.to_string()),
-            function_name: "ask_user".to_string(),
             arguments: serde_json::json!({ "questions": [{ "header": "Name", "question": "What should it be called?" }], "ask": [whom] }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("ask_user")
         }],
         ..Message::new(Classification::CHANNEL_DEFAULT)
     };

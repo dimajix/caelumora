@@ -361,13 +361,7 @@ pub mod testing {
 
     /// A call of the tool `function_name`, without arguments, shown as the tool's are.
     pub fn make_tool_call(function_name: &str) -> ToolCall {
-        ToolCall {
-            id: Some("call_1".to_string()),
-            function_name: function_name.to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        }
+        ToolCall::new(Some("call_1".to_string()), function_name, Value::Null)
     }
 }
 

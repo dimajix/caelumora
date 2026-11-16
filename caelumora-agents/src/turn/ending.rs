@@ -159,6 +159,7 @@ mod tests {
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::message::MessageRole;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult};
     use caelumora_kernel::testing::Discard;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
@@ -171,14 +172,12 @@ mod tests {
     /// the call ran if `ran`, and a note was staged.
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
         use caelumora_domain::note::{NoteChange, NoteId};
-        use caelumora_domain::tool::{ToolResultStatus, ToolVisibility};
+        use caelumora_domain::tool::ToolResultStatus;
         let mut turn = Turn::begun(AgentId::default(), state);
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: tool.to_string(),
             arguments: serde_json::json!({ "to": "bob" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(tool)
         };
         let mut result = ToolCallResult::of(
             &call,
@@ -291,14 +290,12 @@ mod tests {
     /// in one step: `send_mail` ran, `delete` waits for its approval.
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
         use caelumora_domain::approval::ToolMatcher;
-        use caelumora_domain::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
+        use caelumora_domain::tool::{ToolCallState, ToolResultStatus};
         let mut turn = Turn::begun(AgentId::default(), state);
         let call = |id: &str, name: &str| ToolCall {
             id: Some(id.to_string()),
-            function_name: name.to_string(),
             arguments: serde_json::json!({ "to": "bob" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(name)
         };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message {

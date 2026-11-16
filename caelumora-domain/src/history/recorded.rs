@@ -248,6 +248,7 @@ mod tests {
     use crate::message::testing::{id, make_message};
     use crate::message::{Message, MessageRole};
     use crate::question::{QuestionId, QuestionRequest};
+    use crate::tool::testing::make_tool_call;
     use crate::turn::GivenUpReason;
     use crate::user::UserId;
     use crate::work::TurnId;
@@ -268,10 +269,9 @@ mod tests {
         let approver = ActorId::Approver(Default::default());
         let hidden = ToolCall {
             id: Some("1".to_string()),
-            function_name: "look".to_string(),
             arguments: serde_json::json!({}),
             visibility: ToolVisibility::HIDDEN,
-            presentation: Default::default(),
+            ..make_tool_call("look")
         };
         let answer = Message {
             sender_id: agent,
@@ -400,13 +400,8 @@ mod tests {
         let transcript = message_chain(None, &heard);
         let ActorId::Agent(agent_id) = agent else { panic!("{agent} is no agent") };
         let approver = ActorId::Approver(ApproverId::new());
-        let call = ToolCall {
-            id: None,
-            function_name: "noop".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call =
+            ToolCall { id: None, arguments: serde_json::json!({}), ..make_tool_call("noop") };
         let approval = ApprovalRequest {
             suggested: None,
             explicit: false,

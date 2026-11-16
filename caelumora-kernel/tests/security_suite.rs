@@ -35,6 +35,7 @@ use caelumora_domain::session::testing::make_session;
 use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::snapshot::Detail;
 use caelumora_domain::store::{EntityKind, StoreError, Stored};
+use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::user::testing::make_user;
 use caelumora_domain::user::{UserId, UserProfile};
 use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
@@ -1262,7 +1263,6 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     use caelumora_domain::message::{Message, MessageId, MessageRole};
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolVisibility};
     use futures::StreamExt;
-    use serde_json::Value;
     use std::slice;
     let world = World::new().await;
     let session = world.shared_session(&[], &[]).await;
@@ -1347,13 +1347,8 @@ async fn a_file_is_attached_by_a_participant_and_read_with_its_message() {
     );
 
     let seeing = |visibility: ToolVisibility, files: Vec<ContentRef>, shown: Vec<ContentRef>| {
-        let call = ToolCall {
-            id: Some("1".to_string()),
-            function_name: "view_attachment".to_string(),
-            arguments: Value::Null,
-            visibility,
-            presentation: Default::default(),
-        };
+        let call =
+            ToolCall { id: Some("1".to_string()), visibility, ..make_tool_call("view_attachment") };
         let result = ToolCallResult {
             files,
             shown,

@@ -669,6 +669,7 @@ pub enum Rejection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::testing::make_tool_call;
 
     #[test]
     fn published_events_carry_redacted_messages() {
@@ -676,10 +677,9 @@ mod tests {
         let hidden = Message {
             tool_calls: vec![ToolCall {
                 id: None,
-                function_name: "f".to_string(),
                 arguments: serde_json::json!({}),
                 visibility: ToolVisibility::HIDDEN,
-                presentation: Default::default(),
+                ..make_tool_call("f")
             }],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };

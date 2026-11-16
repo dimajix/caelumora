@@ -49,7 +49,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 |---|---|---|---|---|
 | [208](208-generated-artifacts.md) | open | high | feature | The images and resources of an MCP tool's result and the file parts of an external agent's answer are dropped; only their text is kept, and an MCP result without text is put into the context as JSON, base64 and all. |
 | [298](298-pick-users-and-roles-to-share-with.md) | open | medium | feature | The web UI shares a workspace or an artifact only with the members of a session or channel, not with a user or a role by name, since the REST API lists neither. |
-| [586](586-the-terminal-shows-a-tool-call-by-its-raw-arguments.md) | open | medium | feature | `caelumora-tui` shows a tool call as its tool's name with its arguments as one shortened line of JSON, and its result by the first line of what it answered, so a shell command's output, a file read or written is never seen in the terminal - though the call has a description in words, put to the user when it is to be approved, and a presentation the web UI shows it by. |
+| [586](586-the-terminal-shows-a-tool-call-by-its-raw-arguments.md) | in progress | medium | feature | `caelumora-tui` shows a tool call as its tool's name with its arguments as one shortened line of JSON, and its result by the first line of what it answered, so a shell command's output, a file read or written is never seen in the terminal - though the call has a description in words, put to the user when it is to be approved, and a presentation the web UI shows it by. |
 
 ## Context and knowledge
 

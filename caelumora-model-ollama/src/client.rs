@@ -43,7 +43,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_domain::remote::RemoteEndpoint;
-use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters};
 use caelumora_kernel::backend::Backends;
 use caelumora_model::LanguageModelProvider;
 use chrono::Utc;
@@ -823,13 +823,11 @@ where
                     if let Some(msg) = body.message {
                         if let Some(tc) = msg.tool_calls {
                             for call in tc {
-                                all_tool_calls.push(ToolCall {
-                                    id: call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
-                                    function_name: call.function.name,
-                                    arguments: call.function.arguments,
-                                    visibility: ToolVisibility::SHOWN,
-                                    presentation: Default::default(),
-                                });
+                                all_tool_calls.push(ToolCall::new(
+                                    call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
+                                    call.function.name,
+                                    call.function.arguments,
+                                ));
                             }
                         }
 
@@ -1009,6 +1007,7 @@ mod tests {
     use bytes::Bytes;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolCall;
     use futures::stream as futures_stream;
     use serde_json::json;
@@ -1022,17 +1021,13 @@ mod tests {
         let tool_calls = vec![
             ToolCall {
                 id: Some("1".to_string()),
-                function_name: "test_func_1".to_string(),
                 arguments: json!("{}".to_string()),
-                visibility: Default::default(),
-                presentation: Default::default(),
+                ..make_tool_call("test_func_1")
             },
             ToolCall {
                 id: Some("2".to_string()),
-                function_name: "test_func_2".to_string(),
                 arguments: json!("{\"a\": 1}".to_string()),
-                visibility: Default::default(),
-                presentation: Default::default(),
+                ..make_tool_call("test_func_2")
             },
         ];
 
@@ -1362,10 +1357,8 @@ mod tests {
                     ..ToolCallResult::of(
                         &ToolCall {
                             id: Some("1".to_string()),
-                            function_name: "view_attachment".to_string(),
                             arguments: json!({}),
-                            visibility: Default::default(),
-                            presentation: Default::default(),
+                            ..make_tool_call("view_attachment")
                         },
                         Default::default(),
                         "shown".to_string(),
@@ -1410,10 +1403,8 @@ mod tests {
                 reasoning: Some("<think>quoted".to_string()),
                 tool_calls: vec![ToolCall {
                     id: Some("1".to_string()),
-                    function_name: "say".to_string(),
                     arguments: json!({ "text": "<|im_start|>" }),
-                    visibility: Default::default(),
-                    presentation: Default::default(),
+                    ..make_tool_call("say")
                 }],
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             },

@@ -28,6 +28,20 @@ pub struct ToolCall {
     pub presentation: ToolPresentation,
 }
 
+impl ToolCall {
+    /// A call of `function_name` with `arguments`, under `id` if it has one: shown and presented
+    /// as by default until the agent stamps it with what its tool declares.
+    pub fn new(id: Option<String>, function_name: impl Into<String>, arguments: Value) -> Self {
+        Self {
+            id,
+            function_name: function_name.into(),
+            arguments,
+            visibility: ToolVisibility::default(),
+            presentation: ToolPresentation::default(),
+        }
+    }
+}
+
 /// How a tool call ended (issue 15). Everything but `Ok` means the tool did
 /// not produce a result, and the model is told why in a form it can act on.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,15 +335,14 @@ impl ToolCallState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::testing::make_tool_call;
 
     #[test]
     fn a_call_state_is_read_back_as_written() {
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "delete".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("delete")
         };
         let waiting = ToolCallState::pending(
             call.clone(),

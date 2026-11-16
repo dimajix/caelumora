@@ -281,6 +281,7 @@ mod tests {
     use caelumora_domain::digest;
     use caelumora_domain::digest::Digest;
     use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolPresentation;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_kernel::workspace::testing::session_with_workspace;
@@ -454,13 +455,7 @@ mod tests {
     /// What `output` knows, kept on the transcript of `turn` with a result of its call, as the
     /// executor keeps it (issue 538).
     fn kept(turn: &mut Turn<'_>, output: ToolOutput) {
-        let call = ToolCall {
-            id: Some("1".to_string()),
-            function_name: "tool".to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: Some("1".to_string()), ..make_tool_call("tool") };
         let result =
             ToolCallResult::of(&call, ToolResultStatus::Ok, String::new(), Classification::PUBLIC);
         turn.record_said(Message {

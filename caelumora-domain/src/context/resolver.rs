@@ -528,11 +528,11 @@ mod tests {
     use crate::message::TokenUsage;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
+    use crate::tool::testing::make_tool_call;
     use crate::tool::{ToolCall, ToolCallResult, ToolDescription};
     use crate::turn::TurnState;
     use crate::user::UserId;
     use crate::work::Work;
-    use serde_json::Value;
     use std::fs;
 
     fn contents(items: &[ContextItem]) -> Vec<String> {
@@ -606,13 +606,7 @@ mod tests {
             attachments,
             ..text("look")
         };
-        let call = ToolCall {
-            id: None,
-            function_name: "draw".to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, ..make_tool_call("draw") };
         let lowered = TurnId::new();
         let mut state = AgentChannelState::default();
         state.transcript.push(said(vec![image("first.png")]));
@@ -701,13 +695,7 @@ mod tests {
             attachments: vec![attachment.clone()],
             ..text("look")
         };
-        let call = ToolCall {
-            id: None,
-            function_name: "view_attachment".to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, ..make_tool_call("view_attachment") };
         let mut state = AgentChannelState::default();
         state.transcript.push(said(&old));
         state.transcript.push(said(&later));

@@ -1,6 +1,6 @@
 # 586 — The terminal shows a tool call by its raw arguments
 
-**Status:** open
+**Status:** in progress
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -116,3 +116,29 @@ entry stands with its head alone until its result comes, joined by the call's id
 2026-11-16: Opened at the maintainer's request: the description shown for an approval should
 show at every call, the presentations of the web UI - a command's shell output above all -
 should be supported, and the output folded and unfolded with the mouse, folded by default.
+
+2026-11-16: Planned with the maintainer, in four steps, each reviewed and committed alone:
+
+1.  A `ToolCall` is made in one place: `ToolCall::new(id, function_name, arguments)` where a model
+    made it, `..make_tool_call(name)` in tests - so that a field of its own changes one place.
+2.  The result of a shell tool is written by a type, `CommandResult` of
+    `caelumora-tool-workspace` - named as `CommandState` and `CommandStatus` are, after the
+    command run in the shell, not the shell -, which the terminal reads it back with;
+    `SHELL_PRESENTATION` is made public.
+3.  The description stands at the call (option A). `Tool::describe` answers
+    `ToolResult<Option<String>>`, by default `None`: 32 of 48 tools did not describe a call and
+    answered their tool's text for the model, which says nothing of the call - where a call has
+    no description, its arguments are shown. `ToolExecutor::admit` stamps it, the one place that
+    holds the tool; a call answered at once, and a partial message, has none.
+    `ToolCall::withhold_arguments` withholds both, in `Message::published` and `names_only`.
+    `ApprovalRequest`, `ToolCallStatus::WaitingApproval`, `ToolCallState::pending` and
+    `Admission::Ask` lose their description and read the call's: approval requests are not
+    redacted (CONFIDENTIALITY.md), so nobody sees more or less than before. Both views of the
+    terminal head a call by its description in one line; the web UI shows it on the approval
+    card - which showed only the arguments - and in its `default` presentation.
+4.  The full-screen view shows a call and its result as one entry, folded by default, unfolded
+    and folded by a click on its head, all of them at once by Ctrl-O. A result joins the newest
+    call of its id that waits for one in its channel: call ids may repeat (APPROVALS.md). The
+    terminal knows `shell` and a `default` that shows the arguments and the result whole; the
+    file presentations are left to an issue of their own. The line-wise view prints no output
+    in full.

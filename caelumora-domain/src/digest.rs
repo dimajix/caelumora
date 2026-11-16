@@ -717,6 +717,7 @@ mod tests {
     use crate::content::testing::make_content_ref;
     use crate::message::MessageId;
     use crate::message::MessageRole;
+    use crate::tool::testing::make_tool_call;
     use crate::tool::{ToolCall, ToolResultStatus};
     use chrono::{Duration, Utc};
     use serde_json::json;
@@ -825,13 +826,7 @@ mod tests {
             tool_results: vec![ToolCallResult {
                 files: vec![file],
                 ..ToolCallResult::of(
-                    &ToolCall {
-                        id: Some("1".to_string()),
-                        function_name: "f".to_string(),
-                        arguments: Value::Null,
-                        visibility: Default::default(),
-                        presentation: Default::default(),
-                    },
+                    &ToolCall { id: Some("1".to_string()), ..make_tool_call("f") },
                     ToolResultStatus::Ok,
                     String::new(),
                     Classification::CHANNEL_DEFAULT,
@@ -864,10 +859,8 @@ mod tests {
         let with = |arguments: Value| Message {
             tool_calls: vec![ToolCall {
                 id: Some("1".to_string()),
-                function_name: "f".to_string(),
                 arguments,
-                visibility: Default::default(),
-                presentation: Default::default(),
+                ..make_tool_call("f")
             }],
             ..message("")
         };

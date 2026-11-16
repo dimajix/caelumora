@@ -237,6 +237,7 @@ mod tests {
     use caelumora_domain::message::testing::make_message;
     use caelumora_domain::message::MessageId;
     use caelumora_domain::session::SessionId;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_domain::transcript::GivenSource;
     use caelumora_domain::turn::GivenUpReason;
@@ -613,13 +614,7 @@ mod tests {
                     private: false,
                 })
                 .collect();
-            let call = ToolCall {
-                id: Some("1".to_string()),
-                function_name: "read_file".to_string(),
-                arguments: serde_json::Value::Null,
-                visibility: Default::default(),
-                presentation: Default::default(),
-            };
+            let call = ToolCall { id: Some("1".to_string()), ..make_tool_call("read_file") };
             let result = ToolCallResult::of(
                 &call,
                 ToolResultStatus::Ok,

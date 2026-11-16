@@ -199,6 +199,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
     use caelumora_domain::approval::Coverage;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolResultStatus};
     use caelumora_domain::work::Work;
     use caelumora_kernel::testing::World;
@@ -530,10 +531,8 @@ mod tests {
         let matcher = tool.matcher(&json!({ "url": "https://docs.rs/tokio" }));
         let call = |url: &str| ToolCall {
             id: None,
-            function_name: FETCH_PAGE.to_string(),
             arguments: json!({ "url": url }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(FETCH_PAGE)
         };
         for url in ["https://docs.rs/serde", "http://docs.rs:8080/?q=1", "https://docs.rs"] {
             assert_eq!(matcher.matches(&call(url)).unwrap(), Coverage::Whole, "{url}");

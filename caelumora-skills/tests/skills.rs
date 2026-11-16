@@ -36,6 +36,7 @@ use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
 use caelumora_domain::session::SessionId;
 use caelumora_domain::store::{StoreError, Stored};
+use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolCall, ToolVisibility};
 use caelumora_domain::transcript::{GivenSource, TranscriptEntry};
 use caelumora_domain::value::name::ScopedName;
@@ -873,10 +874,8 @@ async fn with_a_writing_agent(
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
-            function_name: function.to_string(),
             arguments,
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(function)
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
