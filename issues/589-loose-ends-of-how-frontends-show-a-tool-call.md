@@ -1,6 +1,6 @@
 # 589 — Loose ends of how frontends show a tool call and its result
 
-**Status:** open
+**Status:** in progress
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -97,3 +97,13 @@ to look. The maintainer decides; the decision is written into CODING-GUIDELINES.
 2026-11-16: Opened at the maintainer's request from the findings of issue 586 left open: the web
 UI and `Followed` go by the call's presentation, TOOLS.md leaves out `withheld`, and the rule on
 imports inside a function reads two ways.
+
+2026-11-16: Planned with the maintainer, a step per finding: TOOLS.md lists `withheld`; `Followed`
+leaves out a successful result by its own presentation; the web UI shows a call by
+`presentationOf(call, result)` - the result's once it came, a result without one as `default` -,
+and `commandState` reads a result of `shell` alone; a function may import for itself, in one block
+at its start, which CODING-GUIDELINES.md says and a check holds (option B). Results stored before
+issue 586 carry no presentation and are shown as `default`; no code reads them otherwise.
+
+2026-11-16: Step 1 done: TOOLS.md lists `withheld` under "Results", pointing to where a classified
+result is described, not repeating it.
