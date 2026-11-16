@@ -584,6 +584,7 @@ pub(crate) mod tests {
             content: "secret".to_string(),
             status: Default::default(),
             visibility,
+            presentation: Default::default(),
             classification: Classification::CHANNEL_DEFAULT,
             started_at: Some(started_at),
             finished_at: Some(started_at + Duration::milliseconds(250)),

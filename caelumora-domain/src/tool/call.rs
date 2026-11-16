@@ -109,6 +109,9 @@ pub struct ToolCallResult {
     /// published without its result.
     #[serde(default, skip_serializing_if = "ToolVisibility::is_shown")]
     pub visibility: ToolVisibility,
+    /// How the result is presented (issue 586): its call's, stamped by `of` as `visibility` is.
+    #[serde(default, skip_serializing_if = "ToolPresentation::is_default")]
+    pub presentation: ToolPresentation,
     /// How sensitive `content` is and for whom (issue 133): as the tool
     /// classified its result, else as the tool is configured, else as the
     /// channel. Never above the channel: what may not flow into it is
@@ -157,8 +160,8 @@ pub struct ToolCallResult {
 
 impl ToolCallResult {
     /// How `call` ended: `status`, and `content` for the model, classified
-    /// `classification`. Carries the call's id, tool and flags, so that the
-    /// result is published by what applied to the call.
+    /// `classification`. Carries the call's id, tool, flags and presentation, so that the
+    /// result is published by what applied to the call, and shown as it was.
     pub fn of(
         call: &ToolCall,
         status: ToolResultStatus,
@@ -171,6 +174,7 @@ impl ToolCallResult {
             content,
             status,
             visibility: call.visibility,
+            presentation: call.presentation,
             classification,
             started_at: None,
             finished_at: None,
@@ -183,10 +187,12 @@ impl ToolCallResult {
     }
 
     /// The result as a model is given it in words: without the record of the answers to the call's
-    /// questions, of who approved it and of what the tool read, which are not the model's, and
-    /// without what it gave and showed, which a model is given as what it is, not as text.
+    /// questions, of who approved it and of what the tool read, and without how it is presented,
+    /// which are not the model's, and without what it gave and showed, which a model is given as
+    /// what it is, not as text.
     pub fn for_the_model(&self) -> ToolCallResult {
         ToolCallResult {
+            presentation: ToolPresentation::DEFAULT,
             answers: None,
             approval: Vec::new(),
             files: Vec::new(),
@@ -373,5 +379,23 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(ready.status, ToolCallStatus::Ready { answers: None }));
+    }
+
+    /// Issue 586: a result is presented as its call, written with the presentation unless it is
+    /// `default`, and given to a model without it.
+    #[test]
+    fn a_result_is_presented_as_its_call() {
+        let ended = |call: &ToolCall| {
+            ToolCallResult::of(call, ToolResultStatus::Ok, "{}".to_string(), Default::default())
+        };
+        let shell = ToolPresentation::new("shell");
+        let result = ended(&ToolCall { presentation: shell, ..make_tool_call("run_command") });
+        assert_eq!(result.presentation, shell);
+        assert_eq!(serde_json::to_value(&result).unwrap()["presentation"], "shell");
+        assert_eq!(result.for_the_model().presentation, ToolPresentation::DEFAULT);
+        let plain = serde_json::to_value(ended(&make_tool_call("look"))).unwrap();
+        assert!(plain.get("presentation").is_none(), "`default` is not written");
+        let read: ToolCallResult = serde_json::from_value(plain).unwrap();
+        assert_eq!(read.presentation, ToolPresentation::DEFAULT);
     }
 }

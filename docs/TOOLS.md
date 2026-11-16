@@ -32,8 +32,12 @@ is withheld with them (`ToolCall::withhold_arguments`).
 A `ToolDescription` declares a tool's name, description and parameters, whether it requires
 approval, its visibility, optionally the classification of its results, and its presentation: how
 frontends show its calls, so that they need not recognise a tool by its name. The presentation is
-display only - what a call does, and whether it waits for anyone, does not depend on it. Approval
-and classification are decided per tool by its provider, not by the personality.
+display only - what a call does, and whether it waits for anyone, does not depend on it. A call's
+result carries it too (`ToolCallResult::presentation`, issue 586), stamped from the call as its
+visibility is, so that a frontend shows a result it has not joined to its call, as the terminal's
+line-wise view does. A call is shown by its own presentation until its result comes, and then by
+the result's; so far no tool gives its result another, and the web UI reads the call's alone.
+Approval and classification are decided per tool by its provider, not by the personality.
 
 What a tool, its parameters and its tool set say to the model are texts of the prompt catalogue
 (issue 57, see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), kept apart from the tool's

@@ -248,7 +248,8 @@ fn call_line(sender: &str, call: &ToolCall) -> String {
 
 /// The line that tells how a call of the tool of `result` ended.
 fn result_line(result: &ToolCallResult) -> String {
-    format!("{} {}", result.tool_name, outcome(result))
+    let (told, _) = outcome(result);
+    format!("{} {told}", result.tool_name)
 }
 
 /// The lines that show `request` for approval, and how to answer it.
@@ -326,6 +327,9 @@ mod tests {
     use caelumora_domain::tool::{ToolResultStatus, ToolVisibility};
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::name::Name;
+    use caelumora_domain::workspace::testing::make_command_state;
+    use caelumora_domain::workspace::{CommandState, CommandStatus};
+    use caelumora_tool_workspace::component::SHELL_PRESENTATION;
     use serde_json::json;
     use serde_json::Value;
 
@@ -481,6 +485,34 @@ mod tests {
             "terminal failed: no such file"
         );
         assert_eq!(ended(ToolResultStatus::Denied, "denied by a user"), "terminal was denied");
+    }
+
+    /// A result presented `shell` ends by where its command stands and how much it printed; one
+    /// that failed, or is no command's state, as any other.
+    #[test]
+    fn a_shell_result_ends_by_where_its_command_stands() {
+        let call = ToolCall { presentation: SHELL_PRESENTATION, ..make_tool_call("run_command") };
+        let ended = |status, content: &str| {
+            let classification = Default::default();
+            result_line(&ToolCallResult::of(&call, status, content.to_string(), classification))
+        };
+        let written = |state: &CommandState| serde_json::to_string(state).unwrap();
+        let completed =
+            CommandState { exit_code: Some(1), ..make_command_state(CommandStatus::Completed) };
+        assert_eq!(
+            ended(ToolResultStatus::Ok, &written(&completed)),
+            "run_command exit code 1, 2 lines"
+        );
+        let running = written(&make_command_state(CommandStatus::Running));
+        assert_eq!(
+            ended(ToolResultStatus::Ok, &running),
+            "run_command still running as c1, 2 lines"
+        );
+        assert_eq!(
+            ended(ToolResultStatus::Failed, "no shell here"),
+            "run_command failed: no shell here"
+        );
+        assert_eq!(ended(ToolResultStatus::Ok, "plain"), "run_command answered: plain");
     }
 
     /// A result not shown in the channel is told as such, not as an empty one.

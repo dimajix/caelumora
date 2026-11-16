@@ -324,6 +324,8 @@ export interface ToolResult {
   status?: ToolResultStatus;
   /** Empty `content` where the call was published without its result. */
   visibility?: ToolVisibility;
+  /** How the result is presented: its call's (issue 586); absent means `default`. */
+  presentation?: ToolPresentation;
   /** How sensitive `content` is and for whom (issue 133). */
   classification: Classification;
   /** When the tool started and finished running; absent for a call that did not run. */

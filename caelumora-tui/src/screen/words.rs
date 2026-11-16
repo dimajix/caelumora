@@ -7,6 +7,8 @@ use caelumora_domain::approval::{ApprovalRequest, ArgumentMatcher, Reach, ToolMa
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::question::{Choice, Question, QuestionRequest};
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
+use caelumora_domain::workspace::{CommandState, CommandStatus};
+use caelumora_tool_workspace::component::SHELL_PRESENTATION;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -67,7 +69,7 @@ pub(super) fn arguments(call: &ToolCall) -> Option<&Value> {
 }
 
 /// `count` lines, in words.
-pub(super) fn lines_counted(count: usize) -> String {
+fn lines_counted(count: usize) -> String {
     match count {
         1 => "1 line".to_string(),
         count => format!("{count} lines"),
@@ -86,9 +88,37 @@ pub(super) fn to_decide(call: &ToolCall) -> String {
     }
 }
 
-/// How the call of `result` ended, in words that follow the tool's name: what it answered,
-/// shortened to its first line - or that it is not shown -, or why it did not.
-pub(super) fn outcome(result: &ToolCallResult) -> String {
+/// How the call of `result` ended, in words that follow the tool's name, and whether it failed -
+/// the call, or the command it ran: of a command (`command_state`), where it stands and how much
+/// it printed; else what it answered, shortened to its first line - or that it is not shown -, or
+/// why it did not.
+pub(super) fn outcome(result: &ToolCallResult) -> (String, bool) {
+    if let Some(state) = command_state(result) {
+        let stands = match (state.status, state.exit_code) {
+            (CommandStatus::Running, _) => format!("still running as {}", state.id),
+            (CommandStatus::Completed, Some(code)) => format!("exit code {code}"),
+            (CommandStatus::Completed, None) => "completed".to_string(),
+            (CommandStatus::Killed, _) => "killed".to_string(),
+            (CommandStatus::Failed, _) => "failed".to_string(),
+        };
+        let printed = lines_counted(state.output.lines().count());
+        let failed =
+            state.status == CommandStatus::Failed || state.exit_code.is_some_and(|code| code != 0);
+        return (format!("{stands}, {printed}"), failed);
+    }
+    (answered(result), !result.status.is_ok())
+}
+
+/// Where the command `result` tells of stands: of a call presented `shell` that answered, the
+/// `CommandState` its tool gave its model.
+pub(super) fn command_state(result: &ToolCallResult) -> Option<CommandState> {
+    let of_a_command = result.presentation == SHELL_PRESENTATION && result.status.is_ok();
+    of_a_command.then(|| serde_json::from_str(&result.content).ok()).flatten()
+}
+
+/// What the call of `result` answered, in words that follow the tool's name: shortened to its first
+/// line - or that it is not shown -, or why it did not answer.
+fn answered(result: &ToolCallResult) -> String {
     let not_shown = !result.visibility.result.is_channel() && result.content.is_empty();
     if not_shown && result.status.is_ok() {
         return "answered, its result not shown".to_string();
@@ -256,5 +286,34 @@ fn shortened(text: &str) -> String {
     match text.char_indices().nth(SHORTENED) {
         Some((cut, _)) => format!("{}…", &text[..cut]),
         None => text.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::workspace::testing::make_command_state;
+
+    /// A command failed where it could not run or ended by another exit code than 0, a call
+    /// where it did not answer.
+    #[test]
+    fn a_call_failed_by_its_command_or_by_how_it_ended() {
+        let call = ToolCall { presentation: SHELL_PRESENTATION, ..make_tool_call("run_command") };
+        let failed = |status, content: String| {
+            let (_, failed) =
+                outcome(&ToolCallResult::of(&call, status, content, Default::default()));
+            failed
+        };
+        let command = |status, exit_code| {
+            let state = CommandState { exit_code, ..make_command_state(status) };
+            failed(ToolResultStatus::Ok, serde_json::to_string(&state).unwrap())
+        };
+        assert!(!command(CommandStatus::Completed, Some(0)));
+        assert!(command(CommandStatus::Completed, Some(2)));
+        assert!(!command(CommandStatus::Running, None));
+        assert!(command(CommandStatus::Failed, None));
+        assert!(!failed(ToolResultStatus::Ok, "plain".to_string()));
+        assert!(failed(ToolResultStatus::Failed, "no shell here".to_string()));
     }
 }

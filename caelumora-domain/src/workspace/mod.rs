@@ -246,6 +246,25 @@ pub enum WorkspaceChoice {
     New { storage: String, classification: Classification },
 }
 
+/// Commands of a workspace's shell for the tests of this crate and of others.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::{CommandState, CommandStatus};
+
+    /// The command `c1`, standing as `status` without an exit code, having printed two lines, none
+    /// dropped.
+    pub fn make_command_state(status: CommandStatus) -> CommandState {
+        CommandState {
+            id: "c1".to_string(),
+            status,
+            exit_code: None,
+            output: "a\nb\n".to_string(),
+            next_offset: 4,
+            truncated: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

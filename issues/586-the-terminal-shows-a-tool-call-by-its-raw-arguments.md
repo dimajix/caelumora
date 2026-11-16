@@ -203,3 +203,16 @@ a command's end. Lines are counted in words by one function of `words`, for both
 2026-11-16: One more step, from the review of step 4: the line-wise view tells how a `shell` call
 ended as the full-screen view does - by where the command stands and how much it printed -, not
 by the first line of its result's JSON.
+
+2026-11-16: Step 5 done, as decided with the maintainer: a result carries the presentation of its
+call (`ToolCallResult::presentation`), stamped by `ToolCallResult::of` as its visibility is - which
+leaves room for a tool to choose how its result is shown, not built while no tool needs it; a
+result stored before reads as `default`, and a model is given none (`for_the_model`). How a call
+ended is told in one place, `words::outcome`, for both views: a result of `shell` that answered
+by where its command stands and how much it printed, with whether it failed. The full-screen view
+draws every ending by it, and its presentations, chosen by the result's, show only what a call
+unfolds to. The web UI reads the call's presentation as before: it shows a command while it runs.
+
+2026-11-16: One more step, from the review of step 5: where a `shell` result is read back as the
+`CommandState` its tool wrote moves from the terminal's words to the owner of the format, beside
+`SHELL_PRESENTATION` in `caelumora_tool_workspace::component`.
