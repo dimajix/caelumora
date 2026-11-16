@@ -310,7 +310,7 @@ mod tests {
                 calls[1].clone(),
                 String::new(),
                 false,
-                Some(ToolMatcher::exact(&calls[1])),
+                Some(ToolMatcher::exact(&calls[1].function_name, &calls[1].arguments)),
                 None,
             ),
         ];

@@ -14,9 +14,7 @@
 use super::{next, of_workspace, shell, tool, Use, UsingTool};
 use crate::component::WorkspaceParams;
 use async_trait::async_trait;
-use caelumora_agents::tool::{
-    arguments, proposed_matcher, Tool, ToolError, ToolOutput, ToolResult,
-};
+use caelumora_agents::tool::{arguments, Tool, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::terminal::{CommandState, Shell};
 use caelumora_domain::approval::ToolMatcher;
@@ -194,10 +192,10 @@ pub(super) fn tools(
 }
 
 /// The calls like one of the shell tool `tool` with `params`, as its parameters tell
-/// (`proposed_matcher`): for a command, those beginning with its first words, however long a call
-/// waits for it.
+/// (`ToolMatcher::proposed`): for a command, those beginning with its first words, however long a
+/// call waits for it.
 fn followed_alike(tool: &ToolDescription, params: &Value) -> ToolMatcher {
-    let mut matcher = proposed_matcher(tool, params);
+    let mut matcher = ToolMatcher::proposed(tool, params);
     matcher.arguments.remove("wait_secs");
     matcher
 }

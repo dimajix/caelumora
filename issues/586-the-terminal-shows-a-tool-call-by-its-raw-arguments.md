@@ -142,3 +142,9 @@ should be supported, and the output folded and unfolded with the mouse, folded b
     terminal knows `shell` and a `default` that shows the arguments and the result whole; the
     file presentations are left to an issue of their own. The line-wise view prints no output
     in full.
+
+2026-11-16: A step before step 3, from the review of step 1: `ToolMatcher::exact` and
+`ToolMatcher::proposed` took a `ToolCall` but read only its tool and arguments, so that
+`proposed_matcher` built a call no model made only to hand it on. They take what they read -
+`exact(tool, arguments)`, `proposed(tool: &ToolDescription, arguments)` -, and
+`proposed_matcher`, left a mere wrapper, is gone: the tools call `ToolMatcher::proposed`.

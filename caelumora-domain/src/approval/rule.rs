@@ -5,7 +5,7 @@
 use super::shell;
 use crate::channel::ChannelId;
 use crate::session::SessionId;
-use crate::tool::{ArgumentLanguage, ToolCall, ToolParameters};
+use crate::tool::{ArgumentLanguage, ToolCall, ToolDescription};
 use chrono::{DateTime, Utc};
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
@@ -179,14 +179,12 @@ impl ToolMatcher {
         Self { tool: "*".to_string(), arguments: BTreeMap::new() }
     }
 
-    /// The calls exactly like `call`: its tool, and every argument as it is -
-    /// what a rule derived from a call is offered with unless its tool
-    /// knows better, for the person to widen. An argument is an escaped
-    /// pattern where that fits `MAX_PATTERN_CHARS`, and compared by equality
-    /// where it would not (issue 400) - which a value longer than
-    /// `MAX_EQUALS_CHARS` fails to `check`.
-    pub fn exact(call: &ToolCall) -> Self {
-        let arguments = match &call.arguments {
+    /// The calls of `tool` exactly with `arguments`, every argument as it is - what `proposed`
+    /// starts from, and the person widens. An argument is an escaped pattern where that fits
+    /// `MAX_PATTERN_CHARS`, and compared by equality where it would not (issue 400) - which a
+    /// value longer than `MAX_EQUALS_CHARS` fails to `check`.
+    pub fn exact(tool: &str, arguments: &Value) -> Self {
+        let arguments = match arguments {
             Value::Object(arguments) => arguments
                 .iter()
                 .map(|(name, value)| {
@@ -202,26 +200,24 @@ impl ToolMatcher {
                 .collect(),
             _ => BTreeMap::new(),
         };
-        Self { tool: call.function_name.clone(), arguments }
+        Self { tool: tool.to_string(), arguments }
     }
 
-    /// The calls like `call` as the parameters `parameters` of its tool tell (issue 247): every
+    /// The calls like one of `tool` with `arguments`, as its parameters tell (issue 247): every
     /// argument as `exact` takes it, but a shell line of one simple command by its first
     /// `PROPOSED_SHELL_WORDS` words, as far as they do not expand - a rule the call itself
     /// matches. A chain of commands, or a line that cannot be judged, keeps its exact pattern: a
     /// rule for that line alone.
-    pub fn proposed(call: &ToolCall, parameters: &ToolParameters) -> Self {
-        let mut matcher = Self::exact(call);
+    pub fn proposed(tool: &ToolDescription, arguments: &Value) -> Self {
+        let mut matcher = Self::exact(&tool.name, arguments);
         for (argument, proposed) in &mut matcher.arguments {
-            let shell = match (parameters.language_of(argument), call.arguments.get(argument)) {
+            let shell = match (tool.parameters.language_of(argument), arguments.get(argument)) {
                 (Some(ArgumentLanguage::Shell), Some(Value::String(line))) => {
                     ArgumentMatcher::first_words(line)
                 }
                 _ => None,
             };
-            if let Some(shell) =
-                shell.filter(|shell| shell.check(argument, &call.function_name).is_ok())
-            {
+            if let Some(shell) = shell.filter(|shell| shell.check(argument, &tool.name).is_ok()) {
                 *proposed = shell;
             }
         }
@@ -468,11 +464,30 @@ impl ApprovalRule {
 mod tests {
     use super::*;
     use crate::tool::testing::make_tool_call;
+    use crate::tool::ToolParameters;
     use chrono::Duration;
     use serde_json::json;
 
     fn call(tool: &str, arguments: Value) -> ToolCall {
         ToolCall { id: None, arguments, ..make_tool_call(tool) }
+    }
+
+    /// The matcher of the calls exactly like `call`.
+    fn exactly(call: &ToolCall) -> ToolMatcher {
+        ToolMatcher::exact(&call.function_name, &call.arguments)
+    }
+
+    /// The tool `name`, with the parameters `parameters`.
+    fn tool(name: &str, parameters: ToolParameters) -> ToolDescription {
+        ToolDescription {
+            name: name.to_string(),
+            description: String::new(),
+            parameters,
+            requires_approval: false,
+            visibility: Default::default(),
+            classification: None,
+            presentation: Default::default(),
+        }
     }
 
     fn matcher(tool: &str, arguments: &[(&str, &str)]) -> ToolMatcher {
@@ -821,7 +836,7 @@ mod tests {
     #[test]
     fn a_call_proposes_the_rule_for_the_calls_exactly_like_it() {
         let ls = call("shell", json!({ "command": "ls -l *.rs", "depth": 2 }));
-        let exact = ToolMatcher::exact(&ls);
+        let exact = exactly(&ls);
         assert!(exact.check().is_ok());
         assert_eq!(exact.matches(&ls).unwrap(), Coverage::Whole, "itself");
         assert_eq!(
@@ -837,7 +852,7 @@ mod tests {
             "every argument counts"
         );
         assert_eq!(
-            ToolMatcher::exact(&call("stop", Value::Null)),
+            exactly(&call("stop", Value::Null)),
             matcher("stop", &[]),
             "a call without arguments: its tool"
         );
@@ -855,7 +870,9 @@ mod tests {
         );
         let running =
             |command: &str| call("run_command", json!({ "command": command, "cwd": "main" }));
-        let proposed = |command: &str| ToolMatcher::proposed(&running(command), &parameters);
+        let run_command = tool("run_command", parameters);
+        let proposed =
+            |command: &str| ToolMatcher::proposed(&run_command, &running(command).arguments);
         let shell = |words: &[&str]| ArgumentMatcher::Shell {
             shell: words.iter().map(|word| word.to_string()).collect(),
         };
@@ -892,8 +909,8 @@ mod tests {
             ["command"],
         );
         assert_eq!(
-            ToolMatcher::proposed(&running("ls"), &plain),
-            ToolMatcher::exact(&running("ls")),
+            ToolMatcher::proposed(&tool("run_command", plain), &running("ls").arguments),
+            exactly(&running("ls")),
             "a string in no language"
         );
     }
@@ -902,7 +919,7 @@ mod tests {
     fn a_value_too_long_for_a_pattern_is_compared_by_equality() {
         let sending = |text: &str| call("send", json!({ "text": text, "to": "bob" }));
         let long = "x".repeat(MAX_PATTERN_CHARS + 1);
-        let exact = ToolMatcher::exact(&sending(&long));
+        let exact = exactly(&sending(&long));
         assert_eq!(exact.arguments["text"], ArgumentMatcher::Equals { equals: long.clone() });
         assert_eq!(
             exact.arguments["to"],
@@ -915,10 +932,7 @@ mod tests {
 
         let dots = ".".repeat(MAX_PATTERN_CHARS / 2 + 1);
         assert!(
-            matches!(
-                ToolMatcher::exact(&sending(&dots)).arguments["text"],
-                ArgumentMatcher::Equals { .. }
-            ),
+            matches!(exactly(&sending(&dots)).arguments["text"], ArgumentMatcher::Equals { .. }),
             "escaping lengthens a value"
         );
         let equals = |value: &str| ToolMatcher {
@@ -939,7 +953,7 @@ mod tests {
             "an argument the call lacks"
         );
 
-        let too_long = ToolMatcher::exact(&sending(&"x".repeat(MAX_EQUALS_CHARS + 1)));
+        let too_long = exactly(&sending(&"x".repeat(MAX_EQUALS_CHARS + 1)));
         assert_eq!(too_long.check(), Err(RuleError::ValueTooLong("text".to_string())));
     }
 

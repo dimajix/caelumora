@@ -11,8 +11,8 @@ use super::WEB_FETCH_KIND;
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::tool::{
-    arguments, described, page_of, page_parameters, proposed_matcher, KeepWholeAbove, TextPosition,
-    Tool, ToolError, ToolOutput, ToolResult,
+    arguments, described, page_of, page_parameters, KeepWholeAbove, TextPosition, Tool, ToolError,
+    ToolOutput, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
@@ -176,7 +176,7 @@ impl Tool for FetchPageTool {
         let url = params.get("url").and_then(Value::as_str);
         match url.and_then(same_host) {
             Some(matcher) => matcher,
-            None => proposed_matcher(&self.description, params),
+            None => ToolMatcher::proposed(&self.description, params),
         }
     }
 }
@@ -548,7 +548,7 @@ mod tests {
         assert_eq!(matcher.matches(&call(written)).unwrap(), Coverage::Whole, "in any case");
         assert_eq!(
             tool.matcher(&json!({ "url": "no url" })),
-            proposed_matcher(tool.description(), &json!({ "url": "no url" })),
+            ToolMatcher::proposed(tool.description(), &json!({ "url": "no url" })),
             "as the parameters tell where there is no host"
         );
     }

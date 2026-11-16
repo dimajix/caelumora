@@ -348,7 +348,7 @@ mod tests {
             call.clone(),
             "Delete it?".to_string(),
             true,
-            Some(ToolMatcher::exact(&call)),
+            Some(ToolMatcher::exact(&call.function_name, &call.arguments)),
             None,
         );
         let read: ToolCallState =

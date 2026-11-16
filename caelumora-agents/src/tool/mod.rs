@@ -596,11 +596,11 @@ pub trait Tool: Send + Sync + Debug {
     }
 
     /// What other calls are like a call with `params` (issue 13): the matcher a rule derived from
-    /// it is offered with. By default as the tool's parameters tell (`proposed_matcher`): every
-    /// argument exactly, one written in a language by its meaning; a tool that knows more of what
-    /// makes two calls alike says better.
+    /// it is offered with. By default as the tool's parameters tell (`ToolMatcher::proposed`):
+    /// every argument exactly, one written in a language by its meaning; a tool that knows more of
+    /// what makes two calls alike says better.
     fn matcher(&self, params: &Value) -> ToolMatcher {
-        proposed_matcher(self.description(), params)
+        ToolMatcher::proposed(self.description(), params)
     }
 
     /// What a person deciding on a call with `params` is shown; by default what the tool does.
@@ -694,13 +694,6 @@ pub async fn workspace_reader(
 /// `NotUsableInChannel` where the work may use none.
 pub async fn workspace_writer(turn: &Turn<'_>) -> WorkspaceResult<Arc<dyn WorkspaceWriter>> {
     turn.writer::<dyn WorkspaceWriter>().await.ok_or(WorkspaceError::NotUsableInChannel)
-}
-
-/// What a rule derived from a call of `tool` with `params` is offered with, as the tool's
-/// parameters tell (`ToolMatcher::proposed`, issue 247).
-pub fn proposed_matcher(tool: &ToolDescription, params: &Value) -> ToolMatcher {
-    let call = ToolCall::new(None, tool.name.clone(), params.clone());
-    ToolMatcher::proposed(&call, &tool.parameters)
 }
 
 /// How a tool call of the model is admitted, before anything runs

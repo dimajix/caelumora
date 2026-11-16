@@ -403,7 +403,7 @@ mod tests {
                 call("ask"),
                 String::new(),
                 false,
-                Some(ToolMatcher::exact(&call("ask"))),
+                Some(ToolMatcher::exact("ask", &call("ask").arguments)),
                 None,
             ),
         ]);
@@ -474,7 +474,7 @@ mod tests {
                 call("approved"),
                 String::new(),
                 false,
-                Some(ToolMatcher::exact(&call("approved"))),
+                Some(ToolMatcher::exact("approved", &call("approved").arguments)),
                 Some(questions_of(alice)),
             ),
             ToolCallState::asking(call("asking"), questions_of(alice)),
