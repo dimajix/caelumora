@@ -103,7 +103,8 @@ what it keeps (issue 502) - a loss between instances will be the rule, not the e
 
 *   the `ControllerManager` reads every live agent, user, workspace and project controller again as
     stored (see [STORAGE.md](STORAGE.md#following-changes));
-*   a running session follows every agent taking part, and looks at all of them again (see
+*   a running session follows every participant, looks at all its agents again, and has its
+    channels build the handles of their participants anew from their actors (see
     [CHANNELS.md](CHANNELS.md)); its own document it does not read again, since a session runs in
     one instance and its controller is the one writer of it there, which holds every change of it
     live already;

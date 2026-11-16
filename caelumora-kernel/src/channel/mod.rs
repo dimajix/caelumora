@@ -241,6 +241,9 @@ pub struct ChannelLoop {
     changing: LocksById<ActorId>,
     moderator: ComponentImpl<dyn Moderator>,
     mentions: ArcSwap<MentionDirectory>,
+    /// Held while `mentions` is built and stored, so that a build from older actors - a join and
+    /// a rename at once - does not replace a newer one (issue 585).
+    building_mentions: sync::Mutex<()>,
     /// Actors for `run` to start or stop; `run` takes the receiver.
     changes_tx: mpsc::UnboundedSender<ActorChange>,
     changes_rx: Mutex<mpsc::UnboundedReceiver<ActorChange>>,
@@ -322,6 +325,7 @@ impl ChannelLoop {
             changing: LocksById::new(),
             moderator,
             mentions: ArcSwap::from_pointee(MentionDirectory::default()),
+            building_mentions: sync::Mutex::new(()),
             changes_tx,
             changes_rx: Mutex::new(changes_rx),
             state,

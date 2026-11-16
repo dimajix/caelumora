@@ -793,7 +793,8 @@ A missing record is `StoreError::NotFound`, which a lookup that expects it may b
 ### Following changes
 
 Neither the actors nor the sessions subscribe to changes of themselves - a running session follows
-only whether its agents are deleted or restored, which decides which actors run in its channels (see
+only whether its agents are deleted or restored, which decides which actors run in its channels, and
+whether its participants are renamed, which decides whom a mention addresses (see
 [CHANNELS.md](CHANNELS.md)). The `ControllerManager` takes every announced change to an agent, a
 user, a workspace or a project into its live controller, once per instance - the place where changes
 made in other instances will arrive (see [Several instances](#several-instances)). An event carries

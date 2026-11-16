@@ -27,8 +27,8 @@ use arc_swap::ArcSwapOption;
 use caelumora_api::component::ComponentError;
 use caelumora_api::workspace::{WorkspaceError, WorkspaceResult};
 use caelumora_domain::actor::ActorId;
-use caelumora_domain::agent::{Agent, AgentId};
-use caelumora_domain::channel::{self, Channel, ChannelId, Participant};
+use caelumora_domain::agent::{Agent, AgentUpdateEvent};
+use caelumora_domain::channel::{self, Channel, ChannelId};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::EntityChange;
 use caelumora_domain::event::{Announcing, GlobalEvent};
@@ -40,6 +40,7 @@ use caelumora_domain::scope::Scope;
 use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
 use caelumora_domain::store::{StoreResult, StoreResultExt};
 use caelumora_domain::template::SessionTemplateId;
+use caelumora_domain::user::{User, UserUpdateEvent};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::workspace::WorkspaceId;
 use caelumora_security::confidentiality::{ConfidentialityPolicy, ConfidentialityQuestions};
@@ -401,23 +402,22 @@ impl SessionLoop {
         self.workspace.load_full().ok_or(WorkspaceError::NotUsableInChannel)
     }
 
-    /// Runs the session's channels, those it has and those created while it
-    /// runs, until the session is stopped - which aborts this, and with it
-    /// every channel.
+    /// Runs the session's channels, those it has and those created while it runs, until the session
+    /// is stopped - which aborts this, and with it every channel.
     ///
-    /// Its channels follow whether its agents exist (issue 314): told of an
-    /// agent deleted or restored, and of every agent as it starts and after
-    /// it lost events - so that nothing that happened meanwhile is missed.
+    /// Its channels follow whether its agents exist (issue 314): told of an agent deleted or
+    /// restored, and of every agent as it starts and after it lost events - so that nothing that
+    /// happened meanwhile is missed. They follow the names of its participants alike: told of a
+    /// participant renamed, and after it lost events.
     pub async fn run(&self) -> Result<()> {
         let mut start_rx = self.start_rx.try_lock().map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        // The session's own events, and those about its agents' lifecycle;
-        // the rest about its users and agents is the `ControllerManager`'s to
-        // take in (issue 121). An agent taken in later is followed once that
-        // is announced (issue 221).
+        // The session's own events, and those about its agents' lifecycle and its participants'
+        // names; taking them into their controllers is the `ControllerManager`'s (issue 121). A
+        // participant taken in later is followed once that is announced (issue 221).
         let mut topics = vec![SubscriptionTopic::Session(self.id())];
-        topics.extend(self.agent_topics());
+        topics.extend(self.participant_topics());
         let mut subscription = self.events.subscribe(SecurityContext::system(), topics);
         let mut following = true;
         self.follow_agents(None).await;
@@ -452,18 +452,20 @@ impl SessionLoop {
                 received = subscription.receiver().recv(), if following => {
                     match received {
                         Ok(global_event) => {
-                            if let Some(agent) = self.agent_taken_in(&global_event) {
-                                self.events.follow(&subscription, SubscriptionTopic::Agent(agent));
+                            if let Some(topic) = self.participant_taken_in(&global_event) {
+                                self.events.follow(&subscription, topic);
                             }
                             self.handle_global_event(&global_event).await
                         }
                         Err(RecvError::Lagged(lost)) => {
-                            tracing::warn!("Session {} lost {} events and looks at its agents again", self.id, lost);
-                            // An agent taken in meanwhile is followed from now on (issue 502).
-                            for topic in self.agent_topics() {
+                            tracing::warn!("Session {} lost {} events and looks at its participants again", self.id, lost);
+                            // A participant taken in meanwhile is followed from now on (issue
+                            // 502), and one renamed meanwhile is mentioned by its name (issue 585).
+                            for topic in self.participant_topics() {
                                 self.events.follow(&subscription, topic);
                             }
                             self.follow_agents(None).await;
+                            self.rebuild_mentions();
                         }
                         // Not while the session holds the bus.
                         Err(RecvError::Closed) => following = false,
@@ -473,34 +475,28 @@ impl SessionLoop {
         }
     }
 
-    /// The topics of the agents taking part in the session, whose deletion
-    /// and restoring its channels follow.
-    fn agent_topics(&self) -> Vec<SubscriptionTopic> {
-        self.session()
-            .participants
-            .iter()
-            .filter_map(|p| match p {
-                Participant::Agent(id) => Some(SubscriptionTopic::Agent(*id)),
-                _ => None,
-            })
-            .collect()
+    /// The topics of the participants of the session: of its agents, whose deletion and restoring
+    /// its channels follow, and of its agents and users, whose names they follow.
+    fn participant_topics(&self) -> Vec<SubscriptionTopic> {
+        self.session().participants.iter().map(SubscriptionTopic::of_participant).collect()
     }
 
-    /// The agent taken into this session, if `global_event` announces one
+    /// The topic of the participant taken into this session, if `global_event` announces one
     /// (issue 221).
-    fn agent_taken_in(&self, global_event: &GlobalEvent) -> Option<AgentId> {
+    fn participant_taken_in(&self, global_event: &GlobalEvent) -> Option<SubscriptionTopic> {
         let (id, change) = global_event.about::<Session>()?;
         match change.update::<SessionUpdateEvent>() {
-            Some(SessionUpdateEvent::ParticipantJoined(Participant::Agent(agent)))
-                if id == self.id =>
-            {
-                Some(agent)
+            Some(SessionUpdateEvent::ParticipantJoined(participant)) if id == self.id => {
+                Some(SubscriptionTopic::of_participant(&participant))
             }
             _ => None,
         }
     }
 
     async fn handle_global_event(&self, global_event: &GlobalEvent) {
+        if let Some((participant, name)) = renamed(global_event) {
+            self.participant_renamed(participant, &name);
+        }
         match global_event.about::<Agent>() {
             Some((id, EntityChange::Deleted | EntityChange::Restored)) => {
                 self.follow_agents(Some(id)).await
@@ -527,25 +523,63 @@ impl SessionLoop {
     }
 }
 
+/// The participant `global_event` announces renamed, with its new name (issue 585); `None` if it
+/// announces no rename, or one to a name that is none.
+fn renamed(global_event: &GlobalEvent) -> Option<(ActorId, Name)> {
+    let (participant, name) = if let Some((id, change)) = global_event.about::<Agent>() {
+        let AgentUpdateEvent::NameChanged(name) = change.update::<AgentUpdateEvent>()?;
+        (ActorId::Agent(id), name)
+    } else {
+        let (id, change) = global_event.about::<User>()?;
+        let Some(UserUpdateEvent::NameChanged(name)) = change.update::<UserUpdateEvent>() else {
+            return None;
+        };
+        (ActorId::User(id), name)
+    };
+    Some((participant, Name::new(name).ok()?))
+}
+
 #[cfg(test)]
 mod tests {
 
+    use crate::kernel::Kernel;
     use crate::session::testing::*;
     use crate::session::SessionManager;
+    use caelumora_api::actor::Actor;
+    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::agent::testing::make_personality;
+    use caelumora_domain::agent::{Agent, AgentUpdateEvent};
+    use caelumora_domain::channel::{self, Channel, HistoryAccess};
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::security::SecurityAttributes;
-    use caelumora_domain::user::User;
+    use caelumora_domain::user::{User, UserUpdateEvent};
     use caelumora_security::SecurityContext;
+    use caelumora_store::testing::stored_agent;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time;
 
+    /// Announces `event` in `kernel`, as whoever renames a participant does, until `done`; whether
+    /// it is done within two seconds.
+    async fn done_once_renamed(
+        kernel: &Kernel,
+        event: GlobalEvent,
+        done: impl Fn() -> bool,
+    ) -> bool {
+        let renamed = async {
+            loop {
+                kernel.event_bus().publish(event.clone(), SecurityAttributes::systems());
+                if done() {
+                    break;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        time::timeout(Duration::from_secs(2), renamed).await.is_ok()
+    }
+
     #[tokio::test]
     async fn a_renamed_user_is_renamed_in_every_channel_of_the_session() {
-        use caelumora_api::actor::Actor;
-        use caelumora_domain::actor::ActorId;
-        use caelumora_domain::user::UserUpdateEvent;
-
         let kernel = test_kernel();
         let manager = SessionManager::new(Arc::clone(&kernel));
         let (session, ctx, other) = running_session_of_a_user(&manager).await;
@@ -553,35 +587,93 @@ mod tests {
         let first = session.create_channel(&ctx, spec("first", vec![other])).await.unwrap();
         let second = session.create_channel(&ctx, spec("second", vec![other])).await.unwrap();
 
-        // Announced about the user, as whoever changes users will: the
-        // session takes it into the one controller both actors share.
-        let renamed = async {
-            loop {
-                kernel.event_bus().publish(
-                    GlobalEvent::updated::<User>(
-                        &owner,
-                        &UserUpdateEvent::NameChanged("renamed".to_string()),
-                    ),
-                    SecurityAttributes::systems(),
-                );
-                let names: Vec<String> = [&first, &second]
-                    .iter()
-                    .map(|c| c.user_actor(owner).expect("takes part").name().to_string())
-                    .collect();
-                if names.iter().all(|n| n == "renamed") {
-                    break;
-                }
-                time::sleep(Duration::from_millis(10)).await;
-            }
+        // Announced about the user, as whoever changes users will: the `ControllerManager` takes it
+        // into the one controller both actors share.
+        let event = UserUpdateEvent::NameChanged("renamed".to_string());
+        let event = GlobalEvent::updated::<User>(&owner, &event);
+        let renamed = || {
+            [&first, &second]
+                .iter()
+                .all(|c| c.user_actor(owner).expect("takes part").name() == "renamed")
         };
-        time::timeout(Duration::from_secs(2), renamed)
-            .await
-            .expect("both channels show the new name");
+        assert!(
+            done_once_renamed(&kernel, event, renamed).await,
+            "both channels show the new name"
+        );
         assert_eq!(
             first.user_actor(other.as_user_id().unwrap()).unwrap().name(),
             "other",
             "nobody else is renamed"
         );
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    /// Issue 585: a participant renamed while it takes part is mentioned by the handle of its new
+    /// name, and no longer by its old one, in every channel of the session it takes part in - an
+    /// agent and a user alike, without anyone joining or leaving.
+    #[tokio::test]
+    async fn a_renamed_participant_is_mentioned_by_its_new_name_in_every_channel() {
+        let kernel = test_kernel();
+        let manager = SessionManager::new(Arc::clone(&kernel));
+        let (session, ctx, other) = running_session_of_a_user(&manager).await;
+        let ActorId::User(other_id) = other else { unreachable!() };
+        let stores = kernel.entity_stores();
+        let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;
+        let agent = ActorId::Agent(helper.id);
+        let main = Arc::clone(&session.channels()[0]);
+        let into = Some((main.id(), HistoryAccess::All));
+        session.add_participant(&ctx, agent, into).await.expect("taken in");
+        let side = session.create_channel(&ctx, spec("side", vec![other, agent])).await.unwrap();
+        let channels = [&*main, &*side];
+        assert!(channels.iter().all(|c| c.mentions().resolve("@helper") == [agent]), "as named");
+
+        let mentioned =
+            |handle: &str, actor| channels.iter().all(|c| c.mentions().resolve(handle) == [actor]);
+
+        let event = AgentUpdateEvent::NameChanged("Assistant".to_string());
+        let event = GlobalEvent::updated::<Agent>(&helper.id, &event);
+        let by_new_name = || mentioned("@assistant", agent);
+        assert!(done_once_renamed(&kernel, event, by_new_name).await, "the agent by its new name");
+        let event = UserUpdateEvent::NameChanged("Bea".to_string());
+        let event = GlobalEvent::updated::<User>(&other_id, &event);
+        let by_new_name = || mentioned("@bea", other);
+        assert!(done_once_renamed(&kernel, event, by_new_name).await, "the user by their new name");
+        for old in ["@helper", "@other"] {
+            assert!(channels.iter().all(|c| c.mentions().resolve(old).is_empty()), "{old}");
+        }
+        manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
+    }
+
+    /// Issue 585: a participant renamed among more events than the session's subscription holds is
+    /// mentioned by its new name all the same, its announcement lost.
+    #[tokio::test]
+    async fn a_participant_renamed_while_events_were_lost_is_mentioned_by_its_new_name() {
+        let kernel = test_kernel();
+        let manager = SessionManager::new(Arc::clone(&kernel));
+        let (session, ctx, _) = running_session_of_a_user(&manager).await;
+        let stores = kernel.entity_stores();
+        let helper = stored_agent(stores, "helper", make_personality("plain"), ctx.caller_id).await;
+        let agent = ActorId::Agent(helper.id);
+        let main = Arc::clone(&session.channels()[0]);
+        let into = Some((main.id(), HistoryAccess::All));
+        session.add_participant(&ctx, agent, into).await.expect("taken in");
+        time::sleep(Duration::from_millis(50)).await;
+
+        let controller = kernel.controller_manager().agent_controller(helper.id).await.unwrap();
+        controller.update_name(&ctx, "Assistant").await.expect("renamed");
+        // More than a subscription holds, published before the session runs again: the
+        // announcement of the rename is lost.
+        kernel.event_bus().publish_past_capacity(&GlobalEvent::custom::<Channel>(
+            &(session.id(), main.id()),
+            channel::AGENT_STATE_CHANGED,
+            &helper.id,
+        ));
+        let mentioned = async {
+            while main.mentions().resolve("@assistant") != [agent] {
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        };
+        assert!(time::timeout(Duration::from_secs(2), mentioned).await.is_ok(), "by its new name");
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 }

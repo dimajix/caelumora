@@ -628,7 +628,8 @@ channel it takes part in until it is restored. The channels follow its mark inst
 
 A running session subscribes to the events of its agents, and looks at all of them again as it
 starts and after it lost events, so that a deletion or a restore it did not hear of is not missed;
-after a loss it follows every agent taking part, also one taken in whose announcement was lost.
+after a loss it follows every agent taking part, also one taken in whose announcement was lost. It
+follows its users alike, for their renames (see [`@`-Mentions](#-mentions)).
 
 Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
 takes part again in every channel it rested in: a running session builds its actor anew, gives it
@@ -1210,11 +1211,17 @@ mentioned alone by it, and the channel warns of the handle as of one shared by s
 The channel resolves mentions once, as a message enters it, and stores the resolved ids with the
 message - for `@all`, the participants of that moment. Nothing downstream parses the text again, so
 a later rename, or a participant who joins later, cannot change whom a past message addressed.
+It resolves them by the handles of its participants as they are named now (`ChannelLoop::mentions`),
+built anew as one joins or leaves, and as one is renamed: the session follows the announcements of
+its participants' renames and tells its channels the new name - and after it lost events, has them
+build the handles anew from their actors. A channel takes the new name from the announcement, not
+from the actor: a rename made elsewhere reaches the controller the actor reads in a task of its own,
+perhaps later (issue 585).
 Only to show a message do the frontends parse its text again: they highlight the handles in it that
 address someone it mentions, by the participants taking part as it is shown - the terminal by the
 channel's own directory (`ChannelLoop::mentions`, `MentionDirectory::mentioned_spans`), the web UI
-by its participant list ([WEB-UI.md](WEB-UI.md)). The handle of a participant who left is no longer
-highlighted, though the message still addresses them.
+by its participant list ([WEB-UI.md](WEB-UI.md)). The handle of a participant who left, or the old
+one of a participant renamed, is no longer highlighted, though the message still addresses them.
 
 A mention changes who is asked to respond, not who receives the message: every participant still
 gets it, but every moderator asks exactly the mentioned agents instead of applying its own policy -

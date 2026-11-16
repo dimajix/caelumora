@@ -70,7 +70,6 @@ enum Interrupt {
 #[derive(Debug)]
 pub struct ScriptedAgent {
     id: ActorId,
-    name: Name,
     runtime: Arc<dyn ActorRuntime>,
     script: Script,
     state: Mutex<ActorState>,
@@ -88,10 +87,8 @@ pub struct ScriptedAgent {
 
 impl ScriptedAgent {
     fn new(runtime: Arc<dyn ActorRuntime>, script: Script) -> Self {
-        let agent = runtime.agent();
         Self {
-            id: ActorId::Agent(agent.id),
-            name: agent.name.name.clone(),
+            id: ActorId::Agent(runtime.agent().id),
             runtime,
             script,
             state: Mutex::new(ActorState::Idle),
@@ -117,7 +114,7 @@ impl ScriptedAgent {
     /// stop or leave meanwhile. Stopped, it keeps its turn as an agent
     /// does, and says nothing more of it (issue 377).
     async fn respond(&self, request: &Envelope, output: &dyn EventSender) -> bool {
-        let answering = Answering::to(request, self.id, self.name.clone());
+        let answering = Answering::to(request, self.id, self.name());
         let turn_id = TurnId::new();
         self.set_turn(Some(turn_id));
         self.go_to(ActorState::Planning, output).await;
@@ -161,7 +158,7 @@ impl ScriptedAgent {
             content: Some(text.to_string()),
             id: MessageId(Uuid::new_v4()),
             sender_id: self.id,
-            sender_name: self.name.to_string(),
+            sender_name: self.name().to_string(),
             timestamp: Utc::now(),
             turn_id: Some(turn_id),
             ..Message::new(self.runtime.channel_classification())
@@ -200,7 +197,7 @@ impl ScriptedAgent {
             *current = state;
         }
         let (session, channel) = (self.runtime.session_id(), self.runtime.channel_id());
-        Answering::own(session, channel, self.id, self.name.clone())
+        Answering::own(session, channel, self.id, self.name())
             .send_all(vec![ActorEvent::StateChanged(state)], output)
             .await;
     }
@@ -212,8 +209,9 @@ impl Actor for ScriptedAgent {
         self.id
     }
 
+    /// Its name as it is now, as an agent's actor tells it.
     fn name(&self) -> Name {
-        self.name.clone()
+        self.runtime.agent().name.name.clone()
     }
 
     fn event_filter(&self) -> fn(&Envelope) -> bool {

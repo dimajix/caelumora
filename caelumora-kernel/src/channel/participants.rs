@@ -433,8 +433,32 @@ impl ChannelLoop {
         Ok(())
     }
 
-    pub(super) fn rebuild_mentions(&self) {
-        let mentions = Self::mention_directory(&self.actors.load(), &self.channel());
+    /// Builds the handles of the participants anew from the names of the actors that run in the
+    /// channel: as one joins or leaves, and for a session that lost the announcements of renames
+    /// (issue 585).
+    pub(crate) fn rebuild_mentions(&self) {
+        self.store_mentions(None);
+    }
+
+    /// Takes in that `participant` is called `name` now, as announced: mentions resolve by the
+    /// handle of its new name from now on. The name is the announcement's, as its actor may not
+    /// tell it yet - the controller the actor reads takes over a rename made elsewhere in a task of
+    /// its own (issue 585). The next rebuild reads the actors again: one before that controller
+    /// took the rename over - as another participant joins or leaves meanwhile - brings the old
+    /// handle back, until the rebuild after. Changes nothing where it takes no part.
+    pub(crate) fn participant_renamed(&self, participant: ActorId, name: &Name) {
+        if self.actors.load().contains_key(&participant) {
+            self.store_mentions(Some((participant, name)));
+        }
+    }
+
+    /// Builds the handles of the participants from the names of the actors that run in the
+    /// channel - `renamed` called by the name given - and keeps them, warning of a handle that is
+    /// not one participant's.
+    fn store_mentions(&self, renamed: Option<(ActorId, &Name)>) {
+        let _building =
+            self.building_mentions.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mentions = Self::mention_directory(&self.actors.load(), &self.channel(), renamed);
         for handle in mentions.ambiguous() {
             warn!("Channel {}: handle @{} is not a single participant's; mentioning it addresses more than one", self.id, handle);
         }
@@ -548,13 +572,21 @@ impl ChannelLoop {
         questions.resolve(&self.mentions.load(), &users, context.owner_id, context.initiator_id)
     }
 
-    /// Whom of `actors`, those of `channel`, a mention can name: its
-    /// participants, not its internal actors (issue 420).
-    fn mention_directory(actors: &Actors, channel: &Channel) -> MentionDirectory {
+    /// Whom of `actors`, those of `channel`, a mention can name: its participants, not its
+    /// internal actors (issue 420), by their names - that of `renamed` the one given.
+    fn mention_directory(
+        actors: &Actors,
+        channel: &Channel,
+        renamed: Option<(ActorId, &Name)>,
+    ) -> MentionDirectory {
+        let name_of = |running: &ChannelActor| match renamed {
+            Some((participant, name)) if participant == running.actor.id() => name.clone(),
+            _ => running.actor.name(),
+        };
         let names: Vec<(ActorId, Name)> = actors
             .values()
             .filter(|running| !channel.is_internal(running.actor.id()))
-            .map(|running| (running.actor.id(), running.actor.name()))
+            .map(|running| (running.actor.id(), name_of(running)))
             .collect();
         MentionDirectory::new(names.iter().map(|(id, name)| (*id, name.as_str())))
     }
@@ -591,6 +623,7 @@ mod tests {
     use caelumora_domain::session::testing::make_session;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::Name;
     use caelumora_security::{ActionType, SecurityContext};
     use caelumora_store::testing::record_users;
     use std::collections::HashSet;
@@ -639,6 +672,23 @@ mod tests {
             [sleepers[0].id()],
             "a handle still names one"
         );
+    }
+
+    /// Issue 585: a participant renamed, as announced, is mentioned by the handle of its new name -
+    /// before its actor tells it -, until the handles are built anew from the actors; one that
+    /// takes no part changes nothing.
+    #[tokio::test]
+    async fn a_participant_renamed_is_mentioned_by_the_name_announced() {
+        let (channel, _, sleepers) = channel_with_sleepers(&["Sassy"]).await;
+        let sassy = sleepers[0].id();
+        channel.participant_renamed(sassy, &Name::new("Saucy").unwrap());
+        assert_eq!(channel.mentions().resolve("@saucy"), [sassy], "by the name announced");
+        assert!(channel.mentions().resolve("@sassy").is_empty(), "not by the old one");
+
+        channel.participant_renamed(ActorId::User(UserId::new()), &Name::new("Sassy").unwrap());
+        assert_eq!(channel.mentions().resolve("@saucy"), [sassy], "nobody taking part");
+        channel.rebuild_mentions();
+        assert_eq!(channel.mentions().resolve("@sassy"), [sassy], "by what its actor tells");
     }
 
     #[tokio::test]

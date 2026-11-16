@@ -10,6 +10,7 @@ use crate::scoped::ScopeNotEmpty;
 use crate::view::{channel_reading, ReadingBasis};
 use anyhow::{Error, Result};
 use caelumora_api::component::ComponentError;
+use caelumora_domain::actor::ActorId;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::channel::{self, Channel, ChannelId, Participant};
 use caelumora_domain::confidentiality::Place;
@@ -64,6 +65,23 @@ impl SessionLoop {
     pub(crate) async fn follow_agents(&self, only: Option<AgentId>) {
         for channel in self.channels() {
             channel.follow_agents(only).await;
+        }
+    }
+
+    /// Has every channel of the session take in that `participant` is called `name` now, as
+    /// announced (`ChannelLoop::participant_renamed`, issue 585).
+    pub(super) fn participant_renamed(&self, participant: ActorId, name: &Name) {
+        for channel in self.channels() {
+            channel.participant_renamed(participant, name);
+        }
+    }
+
+    /// Has every channel of the session build the handles of its participants anew from the names
+    /// of its actors (`ChannelLoop::rebuild_mentions`): for renames whose announcements were lost
+    /// (issue 585).
+    pub(super) fn rebuild_mentions(&self) {
+        for channel in self.channels() {
+            channel.rebuild_mentions();
         }
     }
 

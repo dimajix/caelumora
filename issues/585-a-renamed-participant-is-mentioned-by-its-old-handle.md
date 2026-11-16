@@ -1,6 +1,6 @@
 # 585 — A renamed participant is mentioned by its old handle
 
-**Status:** open
+**Status:** done
 **Type:** bug
 **Priority:** low
 **Area:** Sessions and channels
@@ -82,3 +82,21 @@ an agent and for a user.
 **2026-11-16** - Opened with the maintainer from a finding of the review of the work on 579's
 findings (`ChannelLoop::mentions`): the terminal now highlights by the channel's directory, and
 with it by the channel's stale handles after a rename. Options 1 to 5 weighed; option 1 chosen.
+
+**2026-11-16** - Done by option 1. The session follows the topics of its users beside those of its
+agents, a participant taken in later too (`participant_topics`, `participant_taken_in`), and tells
+its channels of a participant renamed as announced (`ChannelLoop::participant_renamed`), which
+build their handles anew with the announced name for it; after it lost events, they build them anew
+from their actors (`rebuild_mentions`). The scripted agent of the kernel's tests read its name once,
+as it was built; it reads it as it is now, as an agent's actor does - else a channel building its
+handles anew after the rename of another participant took the agent's old name again. A channel
+builds and stores its handles under a lock (`building_mentions`), so that a build from older
+actors - a join and a rename at once - does not replace a newer one.
+Two rare cases remain, both of a rename made elsewhere - by the user provider, later by another
+instance -, which the `ControllerManager` takes into the live controller in a task of its own: a
+participant joining or leaving the same channel before it did builds the handles anew from the
+actors and brings the old handle back, until the next join or leave; and where the session and the
+`ControllerManager` both lose events in one burst, the session's rebuild after the loss may come
+before the `ControllerManager` read its controllers again - what the decision says of the rebuild
+after a loss holds only once they have. A rename made here changes the live controller before it is
+announced, and is free of both.

@@ -2,8 +2,8 @@
 //! follows it and may read it, in the order it was published.
 
 use caelumora_domain::agent::{Agent, AgentId};
-use caelumora_domain::channel::Channel;
 use caelumora_domain::channel::ChannelId;
+use caelumora_domain::channel::{Channel, Participant};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::event::{EntityChange, EventPublisher, GlobalEvent};
 use caelumora_domain::security::SecurityAttributes;
@@ -51,6 +51,14 @@ impl SubscriptionTopic {
             topics.push(Self::User(uid));
         }
         topics
+    }
+
+    /// The topic of the events about `participant`.
+    pub(crate) fn of_participant(participant: &Participant) -> Self {
+        match participant {
+            Participant::Agent(id) => Self::Agent(*id),
+            Participant::User(id) => Self::User(*id),
+        }
     }
 }
 
