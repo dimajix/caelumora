@@ -528,7 +528,7 @@ mod tests {
     use crate::message::TokenUsage;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
-    use crate::tool::testing::make_tool_call;
+    use crate::tool::testing::{make_tool_call, make_tool_description};
     use crate::tool::{ToolCall, ToolCallResult, ToolDescription};
     use crate::turn::TurnState;
     use crate::user::UserId;
@@ -1313,16 +1313,13 @@ mod tests {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
         let echo = ToolDescription {
-            name: "echo".to_string(),
             description: "echoes".to_string(),
             parameters: ToolParameters::object(
                 [("text", ToolParameters::string().described("what"))],
                 ["text"],
             ),
             requires_approval: true,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("echo")
         };
         let offered = vec![ToolSet::new("echo", "echoes", vec![echo])];
         let digest = digest::tool_sets(&offered);

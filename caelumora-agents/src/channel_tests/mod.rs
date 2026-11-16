@@ -39,7 +39,8 @@ use caelumora_domain::context::ModelProfile;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::{Message, MessageEvent, MessageId};
 use caelumora_domain::question::{Answers, Questions};
-use caelumora_domain::tool::{ToolDescription, ToolParameters};
+use caelumora_domain::tool::testing::make_tool_description;
+use caelumora_domain::tool::ToolDescription;
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::command_name::CommandName;
 use caelumora_domain::work::TurnId;
@@ -387,16 +388,8 @@ impl Asking {
     /// The tool `asking`, in a set of its own.
     fn tools(sensitive: bool) -> FixedTools {
         let description = ToolDescription {
-            name: "asking".to_string(),
             description: "asks first".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("asking")
         };
         FixedTools::new("asks first".to_string(), vec![Arc::new(Self { description, sensitive })])
     }

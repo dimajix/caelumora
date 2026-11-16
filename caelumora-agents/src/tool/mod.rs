@@ -1174,7 +1174,7 @@ mod tests {
     use caelumora_domain::note::NoteId;
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
-    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_domain::turn::TurnState;
     use caelumora_domain::value::name::Name;
@@ -1323,16 +1323,10 @@ mod tests {
         classification: Option<Classification>,
     ) -> ToolDescription {
         ToolDescription {
-            name: name.to_string(),
             description: "desc".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
             requires_approval,
-            visibility: Default::default(),
             classification,
-            presentation: Default::default(),
+            ..make_tool_description(name)
         }
     }
 

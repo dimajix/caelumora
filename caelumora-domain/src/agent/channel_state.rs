@@ -908,8 +908,8 @@ mod tests {
     use crate::note::NoteId;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::store::testing::{replayed, stored};
-    use crate::tool::testing::make_tool_call;
-    use crate::tool::{ToolCall, ToolCallState, ToolDescription, ToolParameters, ToolVisibility};
+    use crate::tool::testing::{make_tool_call, make_tool_description};
+    use crate::tool::{ToolCall, ToolCallState, ToolDescription};
     use crate::user::UserId;
     use crate::workspace::{Workspace, WorkspaceId};
 
@@ -1176,16 +1176,8 @@ mod tests {
         let internal = Classification::general(Confidentiality::Internal);
         let mut state = a_state_that_heard("hello", internal.clone());
         let tool = ToolDescription {
-            name: "calc".to_string(),
             description: "calculates".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: ToolVisibility::SHOWN,
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("calc")
         };
         begin(&mut state, vec![tool.clone()]);
         begin(&mut state, vec![tool]);

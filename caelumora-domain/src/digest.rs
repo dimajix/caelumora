@@ -717,7 +717,7 @@ mod tests {
     use crate::content::testing::make_content_ref;
     use crate::message::MessageId;
     use crate::message::MessageRole;
-    use crate::tool::testing::make_tool_call;
+    use crate::tool::testing::{make_tool_call, make_tool_description};
     use crate::tool::{ToolCall, ToolResultStatus};
     use chrono::{Duration, Utc};
     use serde_json::json;
@@ -875,7 +875,6 @@ mod tests {
     fn the_tools_offered_are_told_apart_by_what_the_model_is_told() {
         use crate::tool::{ToolDescription, ToolParameters, ToolSet};
         let tool = |name: &str, description: &str| ToolDescription {
-            name: name.to_string(),
             description: description.to_string(),
             parameters: ToolParameters::object(
                 [
@@ -884,10 +883,7 @@ mod tests {
                 ],
                 ["a"],
             ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description(name)
         };
         let set = |name: &str, tools: Vec<ToolDescription>| {
             ToolSet::new(name, format!("the {name} tools"), tools)

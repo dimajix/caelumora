@@ -1007,7 +1007,7 @@ mod tests {
     use bytes::Bytes;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::message::{Message, MessageRole};
-    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::tool::ToolCall;
     use futures::stream as futures_stream;
     use serde_json::json;
@@ -1410,13 +1410,9 @@ mod tests {
             },
         ];
         let tools = vec![ToolDescription {
-            name: "say".to_string(),
             description: "an MCP server's <|im_start|>".to_string(),
-            parameters: ToolParameters::Object { properties: HashMap::new(), required: Vec::new() },
             requires_approval: true,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("say")
         }];
 
         for _ in 0..2 {

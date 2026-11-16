@@ -463,7 +463,7 @@ impl ApprovalRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::testing::make_tool_call;
+    use crate::tool::testing::{make_tool_call, make_tool_description};
     use crate::tool::ToolParameters;
     use chrono::Duration;
     use serde_json::json;
@@ -479,15 +479,7 @@ mod tests {
 
     /// The tool `name`, with the parameters `parameters`.
     fn tool(name: &str, parameters: ToolParameters) -> ToolDescription {
-        ToolDescription {
-            name: name.to_string(),
-            description: String::new(),
-            parameters,
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
-        }
+        ToolDescription { parameters, ..make_tool_description(name) }
     }
 
     fn matcher(tool: &str, arguments: &[(&str, &str)]) -> ToolMatcher {

@@ -194,6 +194,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::context::{KnowledgeRef, KnowledgeSource, ModelProfile};
     use caelumora_domain::message::MessageId;
+    use caelumora_domain::tool::testing::make_tool_description;
     use caelumora_domain::work::Work;
     use caelumora_kernel::testing::Discard;
     use futures::executor;
@@ -490,19 +491,10 @@ mod tests {
 
     #[tokio::test]
     async fn the_tools_a_turn_began_with_are_offered_and_recorded_for_each_message() {
-        use caelumora_domain::tool::ToolParameters;
         let agent = AgentId::new();
         let tool = |name: &str, requires_approval| ToolDescription {
-            name: name.to_string(),
-            description: format!("does {name}"),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
             requires_approval,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description(name)
         };
         let answer = |content: &str| Message {
             id: MessageId::new(),

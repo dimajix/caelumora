@@ -148,3 +148,8 @@ should be supported, and the output folded and unfolded with the mouse, folded b
 `proposed_matcher` built a call no model made only to hand it on. They take what they read -
 `exact(tool, arguments)`, `proposed(tool: &ToolDescription, arguments)` -, and
 `proposed_matcher`, left a mere wrapper, is gone: the tools call `ToolMatcher::proposed`.
+
+2026-11-16: Two more steps before step 3, from the review of the last: the tests describe a tool
+from `make_tool_description` of `caelumora_domain::tool::testing`, naming only what they differ
+in, as they make a call from `make_tool_call`; and `ToolMatcher::exact`, which outside its module
+only tests call, is the module's own.

@@ -353,15 +353,32 @@ impl ToolSet {
     }
 }
 
-/// Tool calls for the tests of this crate and of others.
+/// Tools and their calls for the tests of this crate and of others.
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
-    use super::ToolCall;
+    use super::{ToolCall, ToolDescription, ToolParameters};
     use serde_json::Value;
 
     /// A call of the tool `function_name`, without arguments, shown as the tool's are.
     pub fn make_tool_call(function_name: &str) -> ToolCall {
         ToolCall::new(Some("call_1".to_string()), function_name, Value::Null)
+    }
+
+    /// The tool `name`, which does what its name says and takes no parameters: asking nobody,
+    /// shown, classified as its channel and presented as by default.
+    pub fn make_tool_description(name: &str) -> ToolDescription {
+        ToolDescription {
+            name: name.to_string(),
+            description: format!("does {name}"),
+            parameters: ToolParameters::object(
+                Vec::<(String, ToolParameters)>::new(),
+                Vec::<String>::new(),
+            ),
+            requires_approval: false,
+            visibility: Default::default(),
+            classification: None,
+            presentation: Default::default(),
+        }
     }
 }
 

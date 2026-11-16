@@ -89,7 +89,8 @@ mod tests {
     use crate::testing;
     use crate::testing::detached_actor_runtime;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
-    use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolSet, ToolVisibility};
+    use caelumora_domain::tool::testing::make_tool_description;
+    use caelumora_domain::tool::ToolSet;
     use caelumora_domain::work::Work;
 
     /// What the provider tells in work asked for as `asked`, offered the
@@ -102,21 +103,7 @@ mod tests {
             Classification::CHANNEL_DEFAULT,
             Default::default(),
         ));
-        let tools = tools
-            .iter()
-            .map(|name| ToolDescription {
-                name: name.to_string(),
-                description: String::new(),
-                parameters: ToolParameters::object(
-                    Vec::<(String, ToolParameters)>::new(),
-                    Vec::<String>::new(),
-                ),
-                requires_approval: false,
-                visibility: ToolVisibility::SHOWN,
-                classification: None,
-                presentation: Default::default(),
-            })
-            .collect();
+        let tools = tools.iter().map(|name| make_tool_description(name)).collect();
         state.offer_tools(vec![ToolSet::new("stop", "", tools)]);
         let work: Work = state.turn.as_ref().map(|turn| turn.work.clone()).expect("begun");
         let provider = RequestReasonComponent {

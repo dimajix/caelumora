@@ -67,7 +67,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::PersonalitySnapshot;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
-use caelumora_domain::tool::testing::make_tool_call;
+use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
 use caelumora_domain::tool::{ToolDescription, ToolParameters};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
@@ -1224,16 +1224,8 @@ impl Asking {
     /// The tool, in a set of its own.
     fn tools(ask: Addressee, sensitive: bool) -> FixedTools {
         let description = ToolDescription {
-            name: "asking".to_string(),
             description: "asks before it runs".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("asking")
         };
         FixedTools::new(
             "asks before it runs".to_string(),
@@ -1554,16 +1546,13 @@ impl Commands {
     /// The tool, in a set of its own.
     fn tools() -> FixedTools {
         let description = ToolDescription {
-            name: "run".to_string(),
             description: "runs a command".to_string(),
             parameters: ToolParameters::object(
                 [("command", ToolParameters::shell().described("The command line"))],
                 ["command"],
             ),
             requires_approval: true,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("run")
         };
         FixedTools::new("runs commands".to_string(), vec![Arc::new(Self { description })])
     }
@@ -1972,16 +1961,8 @@ impl Outward {
     /// The tool, in a set of its own.
     fn tools() -> FixedTools {
         let description = ToolDescription {
-            name: "send_out".to_string(),
             description: "sends out".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("send_out")
         };
         FixedTools {
             destination: Some(Classification::PUBLIC),
