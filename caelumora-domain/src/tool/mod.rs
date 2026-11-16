@@ -83,6 +83,11 @@ impl ToolParameters {
         Self::Array { items: Box::new(items), description: None }
     }
 
+    /// No parameters: an object without properties, as a tool that takes nothing declares.
+    pub fn none() -> Self {
+        Self::Object { properties: HashMap::new(), required: Vec::new() }
+    }
+
     pub fn object(
         properties: impl IntoIterator<Item = (impl Into<String>, ToolParameters)>,
         required: impl IntoIterator<Item = impl Into<String>>,
@@ -370,10 +375,7 @@ pub mod testing {
         ToolDescription {
             name: name.to_string(),
             description: format!("does {name}"),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
+            parameters: ToolParameters::none(),
             requires_approval: false,
             visibility: Default::default(),
             classification: None,

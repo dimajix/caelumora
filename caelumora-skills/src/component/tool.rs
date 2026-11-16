@@ -82,7 +82,7 @@ pub(super) fn tools(
         Arc::new(ListSkillsTool {
             description: tool(
                 LIST_SKILLS_TOOL_NAME,
-                ToolParameters::object(Vec::<(&str, ToolParameters)>::new(), Vec::<&str>::new()),
+                ToolParameters::none(),
                 false,
                 SKILL_LIST_PRESENTATION,
             )?,

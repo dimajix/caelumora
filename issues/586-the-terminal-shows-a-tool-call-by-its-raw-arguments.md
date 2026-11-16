@@ -153,3 +153,7 @@ should be supported, and the output folded and unfolded with the mouse, folded b
 from `make_tool_description` of `caelumora_domain::tool::testing`, naming only what they differ
 in, as they make a call from `make_tool_call`; and `ToolMatcher::exact`, which outside its module
 only tests call, is the module's own.
+
+2026-11-16: One more step before step 3, from the review of the last: `ToolParameters::none()`
+names the parameters of a tool that takes nothing, which `turn_end`, `list_skills` and
+`make_tool_description` wrote out as an object of empty lists.
