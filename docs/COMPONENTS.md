@@ -417,8 +417,8 @@ Components follow one convention:
     `Component` (`PolicyModerator`, `RoundRobinPolicy`, `SummaryCompaction`, `A2aAgent`,
     `TurnContextProvider`), even where it contributes beside it. A kind that gives nothing but
     commands has no struct: it contributes the list of them (`help`, `participant`, `agent`,
-    `channel`); one that gives nothing but tools neither: it contributes them as `FixedTools`
-    (`calculator`, `web_fetch`).
+    `channel`, `shell`); one that gives nothing but tools neither: it contributes them as
+    `FixedTools` (`calculator`, `web_fetch`).
 *   **Commands:** each command is a type of its own (issue 583), named after it with `Command`
     (`CompactCommand`, `NotesCommand`), which holds its `CommandDescription`, made in its `new`,
     and what it needs to be carried out - the `…Component` it belongs to, a service
@@ -545,6 +545,7 @@ query or fragment. A component that reaches paths below the endpoint's URL build
 | `participant` | `CommandProvider<dyn ChannelCommand>` | - | The command group `participant`: `/participant list`, `add`, `remove` and `nudge` ([COMMANDS.md](COMMANDS.md#built-in-commands)). |
 | `agent` | `CommandProvider<dyn ChannelCommand>` | - | The command group `agent`: `/agent list`, `create`, `delete` and `wakeup`. Uses the `AgentManager`. |
 | `channel` | `CommandProvider<dyn ChannelCommand>` | - | The command group `channel`: `/channel list`, `describe`, `create`, `delete`, `join`, `rename`, `summary` and `briefing`. |
+| `shell` | `CommandProvider<dyn ChannelCommand>` | - | The command group `workspace`: `/workspace run`, a shell command a person runs in the session's workspace ([COMMANDS.md](COMMANDS.md#a-command-run-in-the-workspace)). In no default set of commands. |
 
 `position` is `start`, `before_turn_input`, `end` or `given`
 ([AGENT-TURN.md](AGENT-TURN.md#parts-and-their-position)); the default is given in parentheses.

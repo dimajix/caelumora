@@ -20,6 +20,18 @@ given_by: |-
   {{ by }} gave you this to read:
   {{ text }}
 
+# What a person did themselves in the channel (issue 587) - a command they ran in the workspace -,
+# as the others are given it in words: what they said with it, `text`, if anything, then each of
+# their `calls`, by its tool's `name`, its `arguments` as JSON, and what it answered, `result`, if
+# it did. Marked as the person's message, as what they say is.
+calls_made: |-
+  {% if text %}{{ text }}
+
+  {% endif %}{% for call in calls %}{% if not loop.first %}
+
+  {% endif %}I called `{{ call.name }}` with {{ call.arguments }}{% if call.result is not none %}, and it answered:
+  {{ call.result }}{% else %}.{% endif %}{% endfor %}
+
 # Where a turn given up ended (issue 258): why - `cause`, one of
 # `given_up_cause` -, whether what it read and said is withheld because the
 # channel was `lowered`, and that what its tools did stays done.

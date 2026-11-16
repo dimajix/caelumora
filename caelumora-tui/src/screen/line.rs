@@ -142,6 +142,12 @@ fn spawn_rustyline_input(
                         break;
                     }
                 }
+                // Ctrl-C may end a command and not the program (issue 587): read on.
+                Err(ReadlineError::Interrupted) => {
+                    if input_tx.send(Err(ReadlineError::Interrupted)).is_err() {
+                        break;
+                    }
+                }
                 Err(err) => {
                     let _ = input_tx.send(Err(err));
                     break;

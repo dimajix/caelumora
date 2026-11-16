@@ -140,9 +140,10 @@ at, and what the future holds is released. A tool therefore:
     `JoinHandle` only detaches it), a child process is killed on drop, and work on a thread of its
     own cannot be interrupted at all;
 *   ends on drop what it started outside the process and that would go on without it, in a task
-    of its own, bounded and logged, which the drop does not await: the commands of
-    `workspace`, which live with the storage, and the prompts an image model of the backend
-    `comfyui` runs for `image_generation`, which hold its server;
+    of its own, bounded and logged, which the drop does not await
+    (`caelumora_api::guard::EndOnDrop`): the commands of `workspace`, which live with the storage,
+    and the prompts an image model of the backend `comfyui` runs for `image_generation`, which hold
+    its server;
 *   does not block: code that never reaches an `await` cannot be interrupted, and holds up the
     agent's whole task, which even the abort after the stop's grace does not end.
 
@@ -397,9 +398,10 @@ The tools that come with Caelumora are listed with the components that offer the
 and their approval defaults in [COMPONENTS.md](COMPONENTS.md#the-components); what the model is told
 of each - its description and arguments - is the tool's own, in the code. How frontends show the
 calls of a tool is said by its `ToolPresentation`: a name, defined as a constant next to the tools
-shown so (`SHELL_PRESENTATION`, `SKILL_PRESENTATION`, …) with what it shows of their arguments and
-results; a frontend shows those it knows, and every other as `default` (issue 323). Two are any
-tool's, the type's own: `default`, and `quiet`, for a call that ends at once and whose effect shows
+shown so (`SKILL_PRESENTATION`, …) with what it shows of their arguments and results - the shell's,
+`SHELL_PRESENTATION`, with how a command is called and answered in `caelumora_api::terminal`; a
+frontend shows those it knows, and every other as `default` (issue 323). Two are any tool's, the
+type's own: `default`, and `quiet`, for a call that ends at once and whose effect shows
 elsewhere - not shown while it runs and where it succeeded, as `default` where it did not. Notes,
 private notes and agent memory are described in [MEMORY.md](MEMORY.md), skills in
 [SKILLS.md](SKILLS.md).

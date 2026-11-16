@@ -8,6 +8,7 @@ pub mod command;
 pub mod component;
 pub mod decision;
 pub mod error;
+pub mod guard;
 pub mod image;
 pub mod library;
 pub mod logging;

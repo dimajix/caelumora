@@ -6,7 +6,9 @@
 //!
 //! Commands are for people - agents act through tools. They are issued
 //! through `UserActor::execute_command`, on behalf of the user the actor
-//! stands for, and never enter the conversation.
+//! stands for, and never enter the conversation as something said; what one
+//! sends in their name - a call they made, `/workspace run` (issue 587) -
+//! does, as theirs.
 //!
 //! The built-in command components live here too, one file per command, each its type. What every
 //! command is made of - `Command`, `CommandProvider`, the `CommandSet`, the `CommandError` - is the
@@ -16,6 +18,9 @@ pub(crate) mod agent;
 pub(crate) mod channel;
 pub mod help;
 pub(crate) mod participant;
+pub(crate) mod workspace;
+
+pub use workspace::{RUN_COMMAND_NAME, SHELL_KIND};
 
 use crate::actor::user::UserActor;
 use crate::channel::ChannelLoop;
@@ -338,6 +343,7 @@ pub fn register_all(registry: &mut ComponentRegistry) {
     channel::register(registry);
     help::register(registry);
     participant::register(registry);
+    workspace::register(registry);
 }
 
 #[cfg(test)]

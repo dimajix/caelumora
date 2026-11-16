@@ -8,12 +8,14 @@ The TUI, a program of one person (issue 554), has defaults of its own where it i
 everything allowed (`allow_all`), the user of the system accepted (`accept_any`), the backends
 `home` for the stores and the content below `~/.local/share/caelumora`, its definitions and
 `secrets.json` in `~/.config/caelumora`, and the storage of workspaces `here` of type `directory`
-on the directory it was started in, with a shell and the person's environment. In that storage it
-finds or makes the project and the workspace of the directory, by the directory's name and a part
-of an id of its path, in the user's scope, and puts every session of the directory there.
-`~/.config/caelumora/config.yaml` lies over these defaults: a mapping key by key, at every depth,
-but a backend of another `type` whole; a list and anything else whole; what says nothing (`null`)
-changes nothing. `--config` replaces them.
+on the directory it was started in, with a shell and the person's environment; and the commands
+every session has by default, with `/workspace run` besides (the component `shell`, issue 587),
+which its `!` stands for. In that storage it finds or makes the project and the workspace of the
+directory, by the directory's name and a part of an id of its path, in the user's scope, and puts
+every session of the directory there. `~/.config/caelumora/config.yaml` lies over these defaults: a
+mapping key by key, at every depth, but a backend of another `type` whole; a list and anything else
+whole - a list of `commands` of its own has no `shell` unless it names it -; what says nothing
+(`null`) changes nothing. `--config` replaces them.
 
 Every section may be left out and then takes its default. A key the configuration does not know is
 an error when it is read, at the top as within a section. The sections of the plugins lie under
@@ -60,7 +62,7 @@ naming the backend: `the storage of workspaces 'files' (local)`, or for a chain 
 | `compartments` | The compartments a classification may name, each with a `name` and the compartments it `reads`; the read relation is closed transitively. See [CONFIDENTIALITY.md](CONFIDENTIALITY.md). | none - every classification is general |
 | `server` | Where the REST server listens (`address`). | `127.0.0.1:3000` - this machine only, as long as `accept_any` may be enabled |
 | `logging` | The log `format` (`text` or `json`) and an optional `file`. What is logged is selected with `RUST_LOG`. The terminal tells its agents the file where a personality wires `program_log` ([AGENT-TURN.md](AGENT-TURN.md#the-programs-log)). See [CODING-GUIDELINES.md](CODING-GUIDELINES.md#logging). | `text`; stderr (REST server) or `tui.log` of the state directory (TUI) |
-| `commands` | The user commands every session has, as a list of components; a session template can add its own. An empty list switches them off. See [COMMANDS.md](COMMANDS.md). | `help`, `participant`, `agent` and `channel` |
+| `commands` | The user commands every session has, as a list of components; a session template can add its own. An empty list switches them off; the kind `shell` adds `/workspace run`, in no default. See [COMMANDS.md](COMMANDS.md). | `help`, `participant`, `agent` and `channel` |
 | `approvals` | What the system restricts of tool calls everywhere: `rules`, each with a `matcher` (`tool`, `*` for every one, and optionally `arguments`, per argument a regular expression, `{ "shell": [words] }` for a command line, or `{ "equals": value }` for the whole value), a `decision` (`ask` or `deny` - the system never allows) and optionally `expires_at`. See [APPROVALS.md](APPROVALS.md#rules-of-a-place). | none |
 | `workspaces` | Where the files of workspaces lie: `storage`, the storages by name, each a [backend](#backends) - see [Workspace storages](#workspace-storages). A workspace names its storage when it is made. | no storage - no workspace can be made |
 | `content` | Where binary content lies - the versions of artifacts, the attachments of messages (issue 282): `storage`, the storages by name, each a [backend](#backends) - `type: local`, a file per key under `root`, or `type: home`, a key with what it names below `data_dir` where its key space is named in `spaces`, each with `destination` (the most what lies there may be classified; no bound unless given). See [STORAGE.md](STORAGE.md#content). | no storage - nothing can be kept |

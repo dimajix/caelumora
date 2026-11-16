@@ -354,7 +354,8 @@ classification: below the channel's, it is released.
 
 The channel admits a message only if its tool results may enter it too. Another channel reads a
 message by the message's classification; a released result in a message it may not read stays
-unread.
+unread. A message it may read is given with the results of a person's calls in it (issue 587), and
+what is read is classified with them.
 
 ### What leaves through tools
 
@@ -442,7 +443,8 @@ it starts at `public` and rises with
     something confidential into a personality's prompt classifies it; a part that does not say
     counts as the channel,
 *   every piece of knowledge read: notes, private notes and memory by the join of the entries read,
-    another channel's history by the join of the messages given,
+    another channel's history by the join of the messages given, with the results of a person's
+    calls in them (`Message::classification_with_results`),
 *   every tool result, once the model is given it. A built-in tool whose answer is derived only from
     what the model asked - `calculate`, `echo`, `write_note`, `remember`, ... - classifies it as the
     turn,

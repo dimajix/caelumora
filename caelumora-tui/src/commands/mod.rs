@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandSet};
 use caelumora_api::component::ComponentResult;
 use caelumora_domain::command::{help_topic, CommandDescription};
+use caelumora_kernel::command::RUN_COMMAND_NAME;
 use std::sync::Arc;
 
 /// A command the terminal carries out itself (issues 570, 583), in the user's talk: named by the
@@ -54,8 +55,9 @@ pub(crate) fn commands() -> ComponentResult<CommandSet<dyn TerminalCommand>> {
     CommandSet::of("the terminal", commands)
 }
 
-/// What `/help` with `args` tells of `commands`, the terminal's: all of them without one, the one
-/// named by its name or a short form, or those of the group named; `None` if it names none of them.
+/// What `/help` with `args` tells of `commands`, the terminal's: all of them without one - and
+/// `!`, its short form of `/workspace run` (issue 587) -, the one named by its name or a short
+/// form, or those of the group named; `None` if it names none of them.
 pub(crate) fn terminal_help(
     commands: &CommandSet<dyn TerminalCommand>,
     args: &str,
@@ -69,18 +71,22 @@ pub(crate) fn terminal_help(
     }
     let in_group =
         |command: &&CommandDescription| topic.as_ref().is_none_or(|g| g.begins(&command.name));
-    let listed: Vec<String> = commands
+    let mut listed: Vec<String> = commands
         .iter()
         .filter(in_group)
         .map(|command| format!("- {}", command.help_line()))
         .collect();
+    if topic.is_none() {
+        let bang = "`!!` begins a message with `!`";
+        listed.push(format!("- `!<command>` — Short for `/{RUN_COMMAND_NAME} <command>`; {bang}."));
+    }
     (!listed.is_empty()).then(|| format!("Commands of this terminal:\n\n{}", listed.join("\n")))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sessions::testing::in_directory;
+    use crate::sessions::testing::in_directory_running_commands;
     use crate::sessions::Opening;
     use caelumora_domain::actor::ActorId;
 
@@ -105,7 +111,7 @@ mod tests {
     #[tokio::test]
     async fn the_terminal_s_commands_collide_with_none() {
         let commands = commands().expect("none of them collide").descriptions();
-        let directory = in_directory().await;
+        let directory = in_directory_running_commands().await;
         let start = Opening::Start { template: None };
         let (session_loop, _) = directory.sessions.open(&start).await.expect("started");
         let channel = session_loop.channels().into_iter().next().expect("its channel");

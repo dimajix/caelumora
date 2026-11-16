@@ -27,6 +27,7 @@ use caelumora_domain::mention::{handle_of, is_group_handle};
 use caelumora_domain::message::{Message, MessageId, MessageRole};
 use caelumora_domain::question::{QuestionError, QuestionId, QuestionRequest, Response};
 use caelumora_domain::session::SessionId;
+use caelumora_domain::tool::{ToolCall, ToolCallResult};
 use caelumora_domain::value::name::Name;
 use caelumora_domain::work::TurnId;
 use caelumora_security::{AccessPolicy, AccessQuestions, ActionType, SecurityContext};
@@ -314,6 +315,31 @@ impl UserActor {
         self.send(self.envelope(ActorEvent::WakeupRequested, span_id)).await?;
         self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), span_id)).await?;
         Ok(span_id)
+    }
+
+    /// Sends `call`, a call this user made themselves - a command they ran in the workspace
+    /// (issue 587) -, with its `result` as their message, classified as the channel: the others
+    /// hear the call with its result, as what the user did, and it asks nobody to respond, saying
+    /// nothing in words (`Message::says_something`); nor does it wake anyone. Whether the result
+    /// may enter the channel is the channel's to decide as it admits the message. The kernel's
+    /// alone: what a frontend hands over as a result would be its word for what came out.
+    ///
+    /// # Errors
+    /// An error if the channel is gone.
+    pub(crate) async fn send_call(&self, call: ToolCall, result: ToolCallResult) -> Result<()> {
+        let channel_loop = self.channel_loop()?;
+        let msg = Message {
+            role: MessageRole::User,
+            content: None,
+            tool_calls: vec![call],
+            tool_results: vec![result],
+            id: MessageId(Uuid::new_v4()),
+            sender_id: self.id(),
+            sender_name: self.name().to_string(),
+            timestamp: Utc::now(),
+            ..Message::new(channel_loop.classification())
+        };
+        self.send(self.envelope(ActorEvent::CompleteMessageGenerated(msg), Uuid::new_v4())).await
     }
 
     /// Modifies this user's message `message` to read `content` from now on (issue 234), with the
@@ -627,8 +653,9 @@ impl UserActor {
     /// whole channel; in the latter case this actor announces it as a `CommandExecuted`, in its own
     /// name, by the command's name, whichever it was issued by. The answer is returned in both
     /// cases. A line no command of the session's set begins, as this user sees them, is looked for
-    /// among the agents of the channel (`request_command`, issue 269). Commands never enter the
-    /// history; what an agent carried out does.
+    /// among the agents of the channel (`request_command`, issue 269). A channel-wide answer enters
+    /// the history with its announcement (issue 417), a private one does not; what a command sends
+    /// in the issuer's name - a call they made (`send_call`, issue 587) - enters it as theirs.
     ///
     /// # Errors
     /// A `CommandError` if the line is empty, or the command is unknown, refused or fails; an error

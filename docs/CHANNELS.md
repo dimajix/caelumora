@@ -417,6 +417,13 @@ User commands (`/help`, `/agent wakeup`, `/participant nudge`) are run by the us
 same way; a command an agent carries out itself is sent to that agent, which carries it out in a
 turn of its own. See [COMMANDS.md](COMMANDS.md).
 
+A person can make a call themselves, as an agent calls a tool: `/workspace run` runs a command in
+the workspace and sends it as theirs (`UserActor::send_call`, issue 587) - a message of the person
+without words, carrying the call of `run_command` and its result. It is admitted as every message,
+its result as a tool's (`may_publish`), wakes nobody and asks nobody to respond (see
+[Moderators](#moderators)). Unlike an agent's calls, which are the work its answer tells of, the
+others hear a person's call with its result: it is what the person did in the channel.
+
 ## What a message carries
 
 A message says what it says in text, and may carry attachments besides - or alone (issue 282):
@@ -1055,7 +1062,8 @@ Every channel delivers by one rule, the channel's and not a moderator's (`Envelo
 which for what the history records is the rule its entry is read by (`HistoryEntry::recipients`):
 
 *   every message said goes, as it was said, to every other participant: to the users always, to the
-    agents if there is something to hear in it - each agent takes in its words itself;
+    agents if there is something to hear in it - its words, or the calls a person made in it (issue
+    587) -, each agent takes it in itself;
 *   a change of a message, and who joined or left, go to every user and agent;
 *   how an answer comes about - its start, partial and intermediate messages, plan steps - where an
     agent stands, how a turn ended and what an agent does of its own accord go to the users, not to
@@ -1077,7 +1085,9 @@ it, and decides:
 
 *   whom to ask to respond, when an answer is complete: for a message said outside of any turn as it
     is said, for the messages of a turn at its end. The decision follows from the messages - whether
-    a turn is theirs - never from the kind of their sender;
+    a turn is theirs - never from the kind of their sender. A message that says nothing in words or
+    attachments asks nobody (`Message::says_something`): a person's call alone - a command they ran
+    in the workspace (issue 587) - is taken in with what is said next, as a command in a shell is;
 *   every agent a message `@`-mentions is asked to respond, and nobody else: a message that mentions
     anyone is addressed to them, so one to people alone asks no agent (`mentions_replace_policy:
     anyone`, the default, issue 437). With `agents`, only a mention of an agent replaces the policy,

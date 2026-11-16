@@ -30,6 +30,8 @@ pub enum HistoryField {
     /// What the message carries besides its words (issue 282); absent
     /// where it carries nothing.
     Attachments,
+    /// The calls the message carries (issue 587); absent where it carries none.
+    ToolCalls,
     Mentions,
     Level,
     Compartments,
@@ -61,6 +63,7 @@ impl Field for HistoryField {
             HistoryField::Internal => &["entry", "said", "message", "internal"],
             HistoryField::Content => &["entry", "said", "message", "content"],
             HistoryField::Attachments => &["entry", "said", "message", "attachments"],
+            HistoryField::ToolCalls => &["entry", "said", "message", "tool_calls"],
             HistoryField::Mentions => &["entry", "said", "message", "mentions"],
             HistoryField::Level => &["entry", "said", "message", "classification", "level"],
             HistoryField::Compartments => {
@@ -98,7 +101,8 @@ impl Filter<HistoryField> {
         ])
     }
 
-    /// A message that says something: words, or attachments (issue 282).
+    /// A message that says something: words, or attachments (issue 282) -
+    /// `Message::says_something`.
     pub fn saying() -> Self {
         Filter::any_of([Filter::written(), Filter::with_attachments()])
     }
@@ -115,13 +119,22 @@ impl Filter<HistoryField> {
     }
 
     /// A message the other participants hear (`Message::is_heard`): words
-    /// or attachments of a person or an agent, not a step of a plan under
-    /// way.
+    /// or attachments of a person or an agent, or the calls a person made
+    /// (issue 587), not a step of a plan under way.
     pub fn heard() -> Self {
         Filter::all_of([
             Filter::is_in(HistoryField::Role, [MessageRole::User, MessageRole::Assistant]),
             Filter::eq(HistoryField::Internal, false),
-            Filter::saying(),
+            Filter::any_of([Filter::saying(), Filter::called_by_a_person()]),
+        ])
+    }
+
+    /// A message carrying calls a person made themselves (issue 587): calls in the role of a user -
+    /// `Message::is_a_persons_call`, which `Message::is_heard` counts.
+    pub fn called_by_a_person() -> Self {
+        Filter::all_of([
+            Filter::eq(HistoryField::Role, MessageRole::User),
+            Filter::negated(Filter::IsNull(HistoryField::ToolCalls)),
         ])
     }
 

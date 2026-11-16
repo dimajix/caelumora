@@ -3,6 +3,7 @@
 //! and shell in a channel, as a frontend reaches them.
 #![expect(clippy::unwrap_used, reason = "test code: what fails here fails the test that runs it")]
 
+use crate::command::SHELL_KIND;
 use crate::kernel::Kernel;
 use crate::session::{SessionLoop, SessionManager};
 use crate::testing::TestKernel;
@@ -14,6 +15,8 @@ use caelumora_domain::agent::testing::make_personality;
 use caelumora_domain::agent::AgentId;
 use caelumora_domain::approval::{ApprovalStrategy, Approver};
 use caelumora_domain::channel::{Channel, ChannelId, InternalActor, Participant};
+use caelumora_domain::command::default_commands;
+use caelumora_domain::component::ComponentDescriptor;
 use caelumora_domain::confidentiality::{Classification, Confidentiality};
 use caelumora_domain::config::AppConfig;
 use caelumora_domain::config::{BackendConfig, WorkspacesConfig};
@@ -56,7 +59,8 @@ impl WithWorkspace {
 
 /// A session of a stored user with the channel "main" of the user and an agent, the workspace
 /// "docs" of the user attached, made as the kernel makes a session (`SessionManager::create`, issue
-/// 486) and running.
+/// 486) and running, with the commands run in the workspace (`/workspace run`) beside those of
+/// every deployment.
 pub async fn session_with_workspace() -> WithWorkspace {
     let files = tempfile::tempdir().unwrap();
     let internal = Classification::general(Confidentiality::Internal);
@@ -65,9 +69,11 @@ pub async fn session_with_workspace() -> WithWorkspace {
         json!({ "root": files.path(), "shell": true, "destination": { "level": "internal" }, "max_file_bytes": MAX_FILE_BYTES }),
     );
     let workspaces = WorkspacesConfig { storage: [("dev".to_string(), storage)].into() };
-    let kernel =
-        TestKernel { config: AppConfig { workspaces, ..Default::default() }, ..Default::default() }
-            .build();
+    // The commands of every deployment, and those run in the workspace (issue 587).
+    let mut commands = default_commands();
+    commands.component_nodes.push(ComponentDescriptor::new("shell", SHELL_KIND));
+    let config = AppConfig { workspaces, commands, ..Default::default() };
+    let kernel = TestKernel { config, ..Default::default() }.build();
 
     let owner = make_user("owner");
     record_users(kernel.entity_stores(), &[&owner]).await;

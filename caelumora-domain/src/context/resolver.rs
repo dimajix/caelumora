@@ -19,6 +19,7 @@ use crate::value::time_zone::TimeZone;
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
 /// A context resolved (issues 06, 47): what the model of an agent was given
@@ -429,7 +430,7 @@ impl<'a> ContextResolver<'a> {
 /// `message`, which `entry` records, as `profile` gives it to the model of `agent` in `time_zone`,
 /// `in_turn` if the turn under way produced it: what was given to read as such
 /// (`ModelProfile::given_to_read`, worded by `texts`, issue 539), what was said as said
-/// (`ModelProfile::as_said`).
+/// (`ModelProfile::as_said`) - a person's calls in words first (`calls_in_words`, issue 587).
 ///
 /// # Errors
 /// `PromptError` if a text cannot be had.
@@ -444,8 +445,38 @@ fn framed(
 ) -> Result<Message, PromptError> {
     match entry {
         TranscriptEntry::Given { .. } => profile.given_to_read(message, agent, in_turn, texts),
-        _ => Ok(profile.as_said(message, agent, in_turn, time_zone)),
+        _ => Ok(profile.as_said(calls_in_words(texts, message)?, agent, in_turn, time_zone)),
     }
+}
+
+/// `message` with the calls it carries as a `user` message - a person's, heard with their results
+/// (`Message::as_heard`, issue 587) - told in its words instead, worded by `texts`
+/// (`kernel.calls_made`): a model takes calls only from itself, and results only of its own calls.
+/// Any other message as it is. The one wording of a person's calls, wherever a model reads them -
+/// in its context, and in what it reads of another channel.
+///
+/// # Errors
+/// `PromptError` if the text cannot be had.
+pub fn calls_in_words(texts: &PromptTexts, mut message: Message) -> Result<Message, PromptError> {
+    if message.role != MessageRole::User || message.tool_calls.is_empty() {
+        return Ok(message);
+    }
+    let results = mem::take(&mut message.tool_results);
+    let calls: Vec<_> = mem::take(&mut message.tool_calls)
+        .into_iter()
+        .map(|call| {
+            let result = results.iter().find(|r| r.id.is_some() && r.id == call.id);
+            context! {
+                name => call.function_name,
+                arguments => call.arguments.to_string(),
+                result => result.map(|r| r.content.clone()),
+            }
+        })
+        .collect();
+    let text = message.content.take();
+    message.content =
+        Some(texts.render(&format!("{KERNEL}.calls_made"), context! { text, calls })?);
+    Ok(message)
 }
 
 /// What the model is told of the turn `turn`, given up at `at` for `reason` (issue 258), where its
@@ -528,7 +559,7 @@ mod tests {
     use crate::message::TokenUsage;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
-    use crate::tool::{ToolCall, ToolCallResult, ToolDescription};
+    use crate::tool::{ToolCall, ToolCallResult, ToolDescription, ToolResultStatus};
     use crate::turn::TurnState;
     use crate::user::UserId;
     use crate::work::Work;
@@ -824,6 +855,60 @@ mod tests {
         );
         let again = resolver.resolve(&reference, TurnId::new(), agent).unwrap().expect("resolved");
         assert_eq!(ids(&seen.items), ids(&again.items), "the same each time it is resolved");
+    }
+
+    /// Issue 587: a person's call, heard with its result, is given in their words, marked as
+    /// theirs - a model takes calls and results only of its own.
+    #[test]
+    fn a_person_s_call_is_given_in_words_as_their_message() {
+        let agent = ActorId::Agent(AgentId::new());
+        let alice = ActorId::User(UserId::new());
+        let call = ToolCall {
+            id: Some("c1".to_string()),
+            function_name: "run_command".to_string(),
+            arguments: serde_json::json!({ "command": "ls" }),
+            visibility: Default::default(),
+            presentation: Default::default(),
+        };
+        let result = ToolCallResult::of(
+            &call,
+            ToolResultStatus::Ok,
+            r#"{"output":"notes.md\n"}"#.to_string(),
+            Classification::PUBLIC,
+        );
+        let mut state = AgentChannelState::default();
+        state.transcript.push(Message {
+            sender_id: alice,
+            sender_name: "Alice".to_string(),
+            role: MessageRole::User,
+            content: None,
+            tool_calls: vec![call],
+            tool_results: vec![result],
+            ..text("")
+        });
+        let reference = ContextRef {
+            transcript: state.transcript.digest(),
+            frame: FrameRef {
+                profile: ModelProfile {
+                    sender_format: SenderFormat::Prefix,
+                    ..ModelProfile::default()
+                },
+                ..FrameRef::default()
+            },
+        };
+        let seen = ContextResolver::of(&state, kernel_catalogue())
+            .resolve(&reference, TurnId::new(), agent)
+            .unwrap()
+            .expect("resolved");
+        assert_eq!(
+            contents(&seen.items),
+            [concat!(
+                "@alice: I called `run_command` with {\"command\":\"ls\"}, and it answered:\n",
+                r#"{"output":"notes.md\n"}"#
+            )]
+        );
+        let ContextItem::Conversation { message } = &seen.items[0] else { panic!("a message") };
+        assert!(message.tool_calls.is_empty() && message.tool_results.is_empty(), "in words alone");
     }
 
     #[test]

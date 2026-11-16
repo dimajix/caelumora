@@ -241,10 +241,11 @@ impl PolicyModerator {
         context: &SecurityContext,
         messages: &[Message],
     ) -> Routing {
-        // What there is to hear of it, by the rule every agent hears by
-        // (issue 224): nothing, e.g. of a response of tool calls only or of
-        // a turn cancelled before it said anything.
-        let heard = messages.iter().any(Message::is_heard);
+        // What there is to answer of it: what is heard, by the rule every
+        // agent hears by (issue 224), and says something - nothing, e.g. of
+        // a response of tool calls only, of a turn cancelled before it said
+        // anything, or of a person's call alone (issue 587).
+        let heard = messages.iter().any(|m| m.is_heard() && m.says_something());
         let (mentioned, candidates, users) = {
             let actors = self.actors();
             (
@@ -1009,6 +1010,39 @@ mod tests {
                 moderator
             );
             assert_eq!(to_her.reason, RequestReason::Chosen);
+        }
+    }
+
+    /// Issue 587: a person's call alone - a command they ran - says nothing to anyone, and asks
+    /// nobody, though it is delivered as every message is; what they say asks as before.
+    #[tokio::test]
+    async fn a_person_s_call_alone_asks_nobody() {
+        for moderator in answering_moderators() {
+            add_agents(&moderator);
+            let user = ActorId::User(UserId::new());
+            let call = ToolCall {
+                id: Some("c1".to_string()),
+                function_name: "run_command".to_string(),
+                arguments: Value::Null,
+                visibility: Default::default(),
+                presentation: Default::default(),
+            };
+            let made = Message {
+                content: None,
+                tool_calls: vec![call],
+                ..text_from(user, "", Vec::new())
+            };
+            let routing = moderator
+                .route(
+                    &envelope(user, ActorEvent::CompleteMessageGenerated(made)),
+                    &SecurityContext::default(),
+                )
+                .await;
+            assert!(as_every_channel(&routing), "{moderator:?} must ask nobody for a call alone");
+            let said = moderator
+                .route(&said_from(user, "and now?", Vec::new()), &SecurityContext::default())
+                .await;
+            assert!(!said.ask.is_empty(), "{moderator:?} must answer what is said");
         }
     }
 

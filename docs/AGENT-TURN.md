@@ -21,7 +21,8 @@ the agent stands into its state with it (`AgentBody::take_in`, issue 223):
 *   **Perceive.** A complete message of another participant - all that was offered to it, live or
     read from the history, which records it as gone to it (issue 417) - is heard as the sender's
     words (`Message::as_heard`): a `user` or `assistant` message with text or attachments, as a
-    `user` message without its tool calls and results, which were the sender's; nothing of a tool
+    `user` message without its tool calls and results, which were the sender's - but a person's
+    calls, with their results, which are what they did in the channel (issue 587); nothing of a tool
     message, an empty one or a `system` one. That is offered to the agent's `PerceiveInProcessor`s,
     which may drop, change or add messages; what passes is appended to the transcript. A failing
     stage is logged; what was heard stays in the channel's history and is not offered again.
@@ -533,6 +534,12 @@ answers with one of its own. Without the times, a model takes a message of days 
 (`work/message_times/RESULTS.md`). The time zone is fixed when the turn begins and recorded with the
 context beside the profile (`FrameRef::time_zone`), so that what the model was given is told the
 same after the session's changed. `read_history` writes the times of what it reads alike.
+
+A person's calls, heard with their results (a command they ran, issue 587), are given in their
+words, marked as their message is: a model takes calls only from itself, and results only of its
+own calls. The `ContextResolver` writes each call - its tool, its arguments, what it answered -
+after what the person said with it, as the profile's variant words it (`kernel.calls_made`); the
+transcript keeps the calls as heard.
 
 A marker is a claim like any text: a participant can write another's into their own message, and
 models believe it. Nothing with consequences may rest on whom the model believes said something.

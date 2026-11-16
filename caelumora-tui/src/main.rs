@@ -355,7 +355,7 @@ async fn talk(
                 screen.print(vec![Printed::Notice("Ending".to_string())]);
                 break;
             }
-            happened = talk.next() => talk.take_in(happened).await,
+            occurred = talk.next() => talk.take_in(occurred).await,
             typed = screen.next_input() => match typed {
                 Typed::Line(line) => match talk.take_line(line.trim()).await? {
                     Handled::Printed(printed) => printed,
@@ -370,10 +370,15 @@ async fn talk(
                     talk.take_up();
                     Vec::new()
                 }
-                Typed::Interrupted => {
-                    screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
-                    break;
-                }
+                // Ctrl-C ends the command run in the workspace, where one is under way (issue 587),
+                // else the program.
+                Typed::Interrupted => match talk.end_shell_command() {
+                    Some(ended) => vec![ended],
+                    None => {
+                        screen.print(vec![Printed::Plain("CTRL-C".to_string())]);
+                        break;
+                    }
+                },
                 Typed::Failed(message) => {
                     screen.print(vec![Printed::Error { kind: ErrorKind::Failed, message }]);
                     break;

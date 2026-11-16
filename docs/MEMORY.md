@@ -182,7 +182,10 @@ channels.
 *   **Tools.** `read_notes(channel?)` in `notes` reads the notes of another channel, or without a
     channel of every channel readable as a whole. `read_history(channel, last?, query?)` in
     `channel_history` reads another channel's conversation: the last messages, or those containing
-    a text, read from the store back from the end only as far as they lie (issue 379).
+    a text, read from the store back from the end only as far as they lie (issue 379). A person's
+    calls - a command they ran - are read as an agent in the channel hears them, in the same words
+    (`calls_in_words`, issue 587), and classified with what they answered
+    (`Message::classification_with_results`).
 
 ## Recording what was read
 

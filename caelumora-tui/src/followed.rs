@@ -268,16 +268,43 @@ impl Followed {
     }
 
     /// Whether `envelope` concerns the user wherever they talk: it asks something of them - an
-    /// approval, questions put to them, a message that mentions them -, or ends an approval for
-    /// them - withdrawn, or answered by them (issue 566). Of the end of an approval, `take_in`
-    /// tells what concerns them: a withdrawal of one pending, an answer given by a rule of theirs.
+    /// approval, questions put to them, a message that mentions them -, ends an approval for
+    /// them - withdrawn, or answered by them (issue 566) -, or is a call they made (issue 587). Of
+    /// the end of an approval, `take_in` tells what concerns them: a withdrawal of one pending, an
+    /// answer given by a rule of theirs.
     pub(crate) fn concerns_user(&self, envelope: &Envelope) -> bool {
         match &envelope.event {
             ActorEvent::ApprovalRequested(_) | ActorEvent::ApprovalRequestWithdrawn { .. } => true,
             ActorEvent::ApprovalAnswered { .. } => envelope.context.sender_id == self.me(),
             ActorEvent::QuestionRequested(request) => request.questions.is_asked(self.me()),
-            ActorEvent::CompleteMessageGenerated(message) => message.mentions.contains(&self.me()),
+            ActorEvent::CompleteMessageGenerated(message) => {
+                message.mentions.contains(&self.me())
+                    || (message.sender_id == self.me() && message.is_a_persons_call())
+            }
             _ => false,
+        }
+    }
+
+    /// Takes in `event`, sent in the user's name, and answers what the terminal prints of it:
+    /// nothing, since what they typed is on the screen already, as typed - but for an answer of
+    /// theirs to an approval, after which it is theirs to give no longer, as on the web UI, and
+    /// which is told where a rule of theirs gave it (issue 13); and for a call they made
+    /// (`Message::is_a_persons_call`, issue 587), which they typed as a command and whose result
+    /// they see only now.
+    fn take_in_own(&mut self, event: &ActorEvent) -> Vec<Printed> {
+        match event {
+            ActorEvent::ApprovalAnswered { id, decision, .. } => {
+                self.mark_answered(*id);
+                decision
+                    .by_rule
+                    .map(|_| Printed::Notice(format!("Approval {} answered by your rule", id.0)))
+                    .into_iter()
+                    .collect()
+            }
+            ActorEvent::CompleteMessageGenerated(message) if message.is_a_persons_call() => {
+                self.shown_message(message, Saying::Complete)
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -292,22 +319,12 @@ impl Followed {
     }
 
     /// Takes in what the channel showed: keeps what the user's commands and what is printed later
-    /// need of it, and answers what the terminal prints of it. What was sent in the user's name is
-    /// passed over and printed not at all, since what they typed is on the screen already, as
-    /// typed - but for an answer of theirs to an approval, after which it is theirs to give no
-    /// longer, as on the web UI, and which is told where a rule of theirs gave it (issue 13).
+    /// need of it, and answers what the terminal prints of it - of what was sent in the user's
+    /// name, what `take_in_own` prints.
     pub(crate) fn take_in(&mut self, envelope: &Envelope) -> Vec<Printed> {
         let sender_id = envelope.context.sender_id;
         if sender_id == self.me() {
-            let ActorEvent::ApprovalAnswered { id, decision, .. } = &envelope.event else {
-                return Vec::new();
-            };
-            self.mark_answered(*id);
-            return decision
-                .by_rule
-                .map(|_| Printed::Notice(format!("Approval {} answered by your rule", id.0)))
-                .into_iter()
-                .collect();
+            return self.take_in_own(&envelope.event);
         }
         let is_agent = matches!(sender_id, ActorId::Agent(_));
         match &envelope.event {
@@ -913,6 +930,7 @@ mod tests {
     use caelumora_domain::channel::HistoryAccess;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::testing::make_message;
+    use caelumora_domain::message::MessageRole;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
@@ -1061,6 +1079,28 @@ mod tests {
         let said = |sender| ActorEvent::CompleteMessageGenerated(message(sender, "hello"));
         assert!(followed.take_in(&from(&channel, me, said(me))).is_empty());
         assert_eq!(lines(&followed.take_in(&from(&channel, other, said(other)))), ["other: hello"]);
+    }
+
+    /// Issue 587: a call the user made, which they typed as a command, is printed with its result
+    /// as the channel tells it - wherever they talk.
+    #[tokio::test]
+    async fn a_call_the_user_made_is_printed_with_its_result() {
+        let (mut followed, channel, me) = followed().await;
+        let call = make_tool_call("run_command");
+        let result =
+            ToolCallResult::of(&call, ToolResultStatus::Ok, "hi".to_string(), Default::default());
+        let called = Message {
+            role: MessageRole::User,
+            content: None,
+            tool_calls: vec![call],
+            tool_results: vec![result],
+            ..message(me, "")
+        };
+        let event = from(&channel, me, ActorEvent::CompleteMessageGenerated(called));
+        assert!(followed.concerns_user(&event), "wherever they talk");
+        let told = lines(&followed.take_in(&event));
+        assert_eq!(told.len(), 2, "{told:?}");
+        assert!(told[0].contains("calls run_command") && told[1].contains("answered"), "{told:?}");
     }
 
     /// An approval shown waits until the approver ends it - decided, timed out or withdrawn -, or

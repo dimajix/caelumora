@@ -125,13 +125,11 @@ impl Work {
         self.see(classification.unwrap_or(&channel));
     }
 
-    /// Records that it has seen `message`: its classification and that of
-    /// every tool result in it.
+    /// Records that it has seen `message`: its classification and that of every tool result in it
+    /// (`Message::classification_with_results`) - as the channel where they have no compartment in
+    /// common.
     pub fn see_message(&mut self, message: &Message) {
-        self.see(&message.classification);
-        for result in &message.tool_results {
-            self.see(&result.classification);
-        }
+        self.see_classified(message.classification_with_results().as_ref());
     }
 
     /// Records that it read `reference` (issue 17): it counts for the
