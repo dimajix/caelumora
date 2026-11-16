@@ -71,7 +71,9 @@ pub struct UserActor {
     run: sync::Mutex<Run>,
     /// The questions shown to this user that are open (issue 165), as the agents asked them and
     /// until they close them, in the order they were first asked: those put to the user are what
-    /// they may answer, and what a message of theirs declines.
+    /// they may answer, and what a message of theirs declines. Those the user answered or declined
+    /// are forgotten as the answer is sent, so that they are not offered again until they close,
+    /// and come back only where an agent asks them anew (issue 580).
     open_questions: sync::Mutex<Vec<QuestionRequest>>,
 }
 
@@ -204,8 +206,8 @@ impl UserActor {
         asked.into_iter().map(|request| (request.id, request.agent_id)).collect()
     }
 
-    /// The open questions put to this user, the oldest first: what they may answer, and what a
-    /// message of theirs declines.
+    /// The open questions put to this user that they have not answered or declined yet, the oldest
+    /// first: what they may answer, and what a message of theirs declines.
     pub fn questions_to_answer(&self) -> Vec<QuestionRequest> {
         let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
         open.iter().filter(|request| request.questions.is_asked(self.id())).cloned().collect()
@@ -214,10 +216,12 @@ impl UserActor {
     /// Answers the questions `id` put to this user with `responses`, one per question (issue 165) -
     /// or, with `None`, declines them. Looked at here, so that the user learns at once if the
     /// answer cannot be given: whether the questions are open and put to them, and whether
-    /// `responses` answer them as asked. Whether they may answer in the channel at all
-    /// (`AnswerQuestion`) is the channel's to decide as it admits the answer, which tells them of a
-    /// rejection (`EventRejected`, issue 304); the agent asking checks again what it takes. Returns
-    /// the `span_id`, as `send_message` does.
+    /// `responses` answer them as asked. Once the answer is sent, the questions are the user's to
+    /// answer no more, as those a message declines (issue 580). Whether they may answer in the
+    /// channel at all (`AnswerQuestion`) is the channel's to decide as it admits the answer, which
+    /// tells them of a rejection (`EventRejected`, issue 304); the questions stay forgotten then,
+    /// since the reason is a standing one, and asking them again would only be rejected again. The
+    /// agent asking checks again what it takes. Returns the `span_id`, as `send_message` does.
     ///
     /// # Errors
     /// `ChannelError::Question` with why the answer cannot be given; an
@@ -231,18 +235,18 @@ impl UserActor {
         let refused =
             |reason| ChannelError::Question { question: id, channel: self.channel_id, reason };
         let agent_id = {
-            let open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
-            let request = open
+            let mut open = self.open_questions.lock().unwrap_or_else(PoisonError::into_inner);
+            let at = open
                 .iter()
-                .find(|request| request.id == id)
+                .position(|request| request.id == id)
                 .ok_or_else(|| refused(QuestionError::NotOpen))?;
-            if !request.questions.is_asked(self.id()) {
+            if !open[at].questions.is_asked(self.id()) {
                 return Err(refused(QuestionError::NotAsked).into());
             }
             if let Some(responses) = &responses {
-                request.questions.check_responses(responses).map_err(refused)?;
+                open[at].questions.check_responses(responses).map_err(refused)?;
             }
-            request.agent_id
+            open.remove(at).agent_id
         };
         let event = match responses {
             Some(responses) => ActorEvent::QuestionAnswered { id, agent_id, responses },
@@ -976,7 +980,7 @@ mod tests {
     use crate::kernel::ChannelRuntime;
     use crate::session::testing::test_kernel;
     use crate::transport::memory::{InMemoryEventReceiver, InMemoryEventSender};
-    use caelumora_domain::actor::EventContext;
+    use caelumora_domain::actor::{EventContext, Rejection};
     use caelumora_domain::channel::testing::make_channel;
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::session::testing::bare_session;
@@ -1190,6 +1194,40 @@ mod tests {
         closed.event = ActorEvent::QuestionClosed { id: first.id, shown_to: None };
         assert!(!actor.handle_actor_envelope(Some(closed), &nowhere()).await);
         assert_eq!(ids(&actor), [second.id], "until it closes");
+    }
+
+    /// Questions the user answered are theirs to answer no more as the answer is sent (issue 580),
+    /// also where the channel rejects it - for a standing reason, so that asking them again would
+    /// only be rejected again -, until an agent asks them anew.
+    #[tokio::test]
+    async fn questions_answered_are_to_answer_no_more_until_asked_anew() {
+        let (actor, _channel) = user_actor().await;
+        let (request, asked) = asked_of(actor.id());
+        assert!(!actor.handle_actor_envelope(Some(asked.clone()), &nowhere()).await);
+        let responses = vec![Response::Text { text: "Kaya".to_string() }];
+        actor.answer_questions(request.id, Some(responses.clone())).await.expect("answered");
+        assert!(actor.questions_to_answer().is_empty(), "answered");
+        let again = actor.answer_questions(request.id, Some(responses)).await;
+        assert!(
+            matches!(
+                again.expect_err("answered once").downcast_ref::<ChannelError>(),
+                Some(ChannelError::Question { reason: QuestionError::NotOpen, .. })
+            ),
+            "not to be answered twice"
+        );
+
+        let mut rejected = envelope_from(ActorId::System);
+        rejected.event = ActorEvent::EventRejected {
+            rejected: "QuestionAnswered".to_string(),
+            message: None,
+            reason: Rejection::Forbidden,
+        };
+        assert!(!actor.handle_actor_envelope(Some(rejected), &nowhere()).await);
+        assert!(actor.questions_to_answer().is_empty(), "not given back by a rejection");
+
+        assert!(!actor.handle_actor_envelope(Some(asked), &nowhere()).await);
+        let ids: Vec<QuestionId> = actor.questions_to_answer().iter().map(|q| q.id).collect();
+        assert_eq!(ids, [request.id], "asked anew");
     }
 
     #[tokio::test]

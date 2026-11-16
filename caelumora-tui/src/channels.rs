@@ -140,6 +140,11 @@ impl Channels {
         self.followed.iter().find(|followed| followed.is_pending(id))
     }
 
+    /// The channel in which approval `id` is pending, to change.
+    pub(crate) fn awaiting_mut(&mut self, id: ApprovalId) -> Option<&mut Followed> {
+        self.followed.iter_mut().find(|followed| followed.is_pending(id))
+    }
+
     /// The approvals pending in the channels followed (`Followed::pending_approvals`).
     pub(crate) fn pending_approvals(&self) -> impl Iterator<Item = &ApprovalRequest> {
         self.followed.iter().flat_map(Followed::pending_approvals)

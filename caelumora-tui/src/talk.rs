@@ -29,10 +29,8 @@ use caelumora_kernel::error::user_message;
 use caelumora_kernel::event::EventBus;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::view::Views;
-use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::warn;
-use uuid::Uuid;
 
 /// The response `line` gives to `question`: `-` skips it; for one with
 /// choices, numbers of choices - separated by commas, several only with
@@ -81,9 +79,6 @@ pub(crate) struct Talk {
     /// every line but a command answers the next; while an approval is, the number of a choice
     /// answers it.
     asked: Option<Asked>,
-    /// The approvals and questions the user answered, by id, whose end their channel has yet to
-    /// show: not asked again meanwhile. Kept for the run of the program, ids being given once.
-    answered: HashSet<Uuid>,
     /// The sessions of the directory, which the commands on sessions reach.
     sessions: Sessions,
     /// The user's controller, which keeps their rules (`approve_from_now_on`), and their
@@ -117,10 +112,9 @@ impl Talk {
                 anyhow::anyhow!("The user takes part in no channel of the session {session_id}")
             })?;
         let opening = channels.opening().await;
-        let answered = HashSet::new();
         let commands = commands()?;
         let typeable = Arc::new(Typeable::default());
-        let mut talk = Talk { channels, asked: None, answered, sessions, user, commands, typeable };
+        let mut talk = Talk { channels, asked: None, sessions, user, commands, typeable };
         talk.ask_next().await;
         talk.read_typeable().await;
         Ok((talk, opening))
@@ -221,33 +215,28 @@ impl Talk {
         }
     }
 
-    /// What waits for the user in the channel talked in, none they answered already: the oldest
-    /// approval pending there of an agent whose calls they may approve (`Followed::may_approve`),
-    /// else the oldest questions put to them there.
+    /// What waits for the user in the channel talked in, as `Followed` tells it: the oldest
+    /// approval pending for them there of an agent whose calls they may approve
+    /// (`Followed::may_approve`), else the oldest questions still theirs to answer there.
     async fn next_to_ask(&mut self) -> Option<Asking> {
-        let answered = &self.answered;
         let talked_in = self.channels.talked_in_mut()?;
-        let pending = talked_in.pending_approvals().iter().filter(|r| !answered.contains(&r.id.0));
-        for request in pending.cloned().collect::<Vec<_>>() {
+        for request in talked_in.pending_approvals().to_vec() {
             if talked_in.may_approve(request.agent_id).await {
                 return Some(Asking::Approval(request));
             }
         }
-        let to_answer = talked_in.questions_to_answer().into_iter();
-        to_answer.into_iter().find(|q| !answered.contains(&q.id.0)).map(Asking::questions)
+        talked_in.questions_to_answer().into_iter().next().map(Asking::questions)
     }
 
-    /// Whether the approval `request` is still pending, and not answered by the user.
+    /// Whether the approval `request` is still pending for the user.
     fn is_pending(&self, request: &ApprovalRequest) -> bool {
-        self.channels.awaiting(request.id).is_some() && !self.answered.contains(&request.id.0)
+        self.channels.awaiting(request.id).is_some()
     }
 
-    /// Whether the questions `request` are still open for the user in their channel, and not
-    /// answered by them.
+    /// Whether the questions `request` are still the user's to answer in their channel.
     fn is_open(&self, request: &QuestionRequest) -> bool {
         let channel = self.channels.followed(request.channel_id);
         channel.is_some_and(|f| f.is_to_answer(request.id))
-            && !self.answered.contains(&request.id.0)
     }
 
     /// The answers under way in the channel talked in (`Channels::under_way`).
@@ -446,19 +435,17 @@ impl Talk {
     }
 
     /// Answers the approval `request` - `approved` or not - in the channel followed where it is
-    /// pending; once answered, it is asked no more.
+    /// pending (`Followed::approve`); once answered, it is asked no more.
     ///
     /// # Errors
     /// What the terminal prints where it is pending no more, the user's actor there is between two
     /// runs, or the answer cannot be sent.
     async fn approve(&mut self, request: &ApprovalRequest, approved: bool) -> Result<(), Printed> {
-        let Some(followed) = self.channels.awaiting(request.id) else {
+        let Some(followed) = self.channels.awaiting_mut(request.id) else {
             return Err(Printed::Plain(format!("No pending approval with id {}", request.id.0)));
         };
         let actor = acting(followed)?;
-        actor.send_approval(request.id, approved).await.map_err(|e| error_printed(&e))?;
-        self.answered.insert(request.id.0);
-        Ok(())
+        followed.approve(&actor, request.id, approved).await.map_err(|e| error_printed(&e))
     }
 
     /// Approves the call of `request`, then adds the user's rule that approves the calls `matcher`
@@ -527,16 +514,13 @@ impl Talk {
 
     /// Declines the questions `id` names (`questions_named`) - without one, those asked -, and
     /// answers what the terminal prints of it; once declined, they are asked no more.
-    pub(crate) async fn decline_questions(&mut self, id: &str) -> Vec<Printed> {
+    pub(crate) async fn decline_questions(&self, id: &str) -> Vec<Printed> {
         let (request, actor) = match self.questions_named(id) {
             Ok(named) => named,
             Err(printed) => return vec![printed],
         };
         match actor.answer_questions(request.id, None).await {
-            Ok(_) => {
-                self.answered.insert(request.id.0);
-                Vec::new()
-            }
+            Ok(_) => Vec::new(),
             Err(e) => vec![error_printed(&e)],
         }
     }
@@ -591,10 +575,7 @@ impl Talk {
         };
         match acting(followed) {
             Ok(actor) => match actor.answer_questions(request.id, Some(responses)).await {
-                Ok(_) => {
-                    self.answered.insert(request.id.0);
-                    Vec::new()
-                }
+                Ok(_) => Vec::new(),
                 Err(e) => vec![error_printed(&e)],
             },
             // The last answer is given again once the user's actor runs.
@@ -748,6 +729,7 @@ mod tests {
     use std::time::Duration;
     use tempfile::TempDir;
     use tokio::time;
+    use uuid::Uuid;
 
     fn question(choices: &[&str], multi_select: bool) -> Question {
         Question {

@@ -1,6 +1,6 @@
 # 580 — The terminal remembers what the user answered beside the owners of approvals and questions
 
-**Status:** open
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -43,3 +43,19 @@ they are not asked again meanwhile, `Talk` keeps the ids answered in a set besid
 
 **2026-11-14** - Opened from the review of step 2 of issue 571, where the maintainer decided it as
 an issue of its own.
+
+**2026-11-16** - Decided by the maintainer for the first consideration, with the second point of
+"Done when" changed: an answer that is rejected is not asked again, which is documented with its
+reason and held by a test. The rejections an answer meets are standing ones but for one - the
+channel admits a user's answer to questions only with `AnswerQuestion`, and a well-formed answer
+to an approval always; the approver refuses what it does not hold and the answer of one who may
+not approve -, so that asking again would only be rejected again, in the terminal line after
+line. The exception: the approver also refuses an answer where it cannot read the agent that
+asked, a store failure that may pass; the terminal then waits for the approval to end, where the
+web UI offers it again. The maintainer decided that this difference stays, documented at
+`Followed::answered_approvals`.
+Done: `UserActor::answer_questions` forgets the questions as the answer is sent, as a message
+declining them did already, so that `questions_to_answer` tells only those still to be answered;
+`Followed` keeps the approvals the user answered - by hand as the answer is sent
+(`Followed::approve`), by a rule as the channel shows it - until the approver ends them, also
+across `catch_up`; `Talk::answered` is gone, and with it the exception in `docs/APPROVALS.md`.

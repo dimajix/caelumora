@@ -192,8 +192,8 @@ it also in someone else's channel. No agent is the system's (issue
     asked in the context the channel admits what they send in (`ChannelLoop::context_of`). Any
     other answer it refuses and tells its sender (`EventRefused`, as an actor tells whom an event
     went to that it does not take): `Invalid` for a request it does not hold - never asked, decided
-    or withdrawn -, `Forbidden` for one who may not approve. A decision - granted, denied, timed
-    out - enters the channel only from an approver.
+    or withdrawn - or of an agent it cannot read, `Forbidden` for one who may not approve. A
+    decision - granted, denied, timed out - enters the channel only from an approver.
 *   The strategies count only those taking part who may approve, now. An answer of someone who left
     or may no longer approve does not count, either way. With nobody left who may approve, the
     request is denied.
@@ -236,14 +236,16 @@ the record of the answers, nothing raw.
 3.  **Answers.** The user's actor refuses what cannot count - questions not open or not put to them,
     responses not as the questions ask - before anything is sent; whether the user may answer in the
     channel at all (`AnswerQuestion`) the channel decides as it admits the answer. Which questions
-    are open and put to the user is the actor's to tell (`UserActor::questions_to_answer`): a
-    frontend in the kernel's process, as the terminal is, offers those to be answered, rather than
-    keeping a list beside it - the terminal remembers only which it answered, until the channel
-    tells that they closed (issue 571); a client of the REST API learns them from the channel's
-    snapshot and stream. The answer goes
-    to the asking agent alone, which takes it only if its sender was asked and the questions are
-    still open, and checks the responses again; who answered it takes from the envelope, never from
-    what was said. The first answer that counts settles the call.
+    are still the user's to answer - open, put to them, and not answered or declined by them yet -
+    is the actor's to tell (`UserActor::questions_to_answer`): it forgets those answered as the
+    answer is sent, so that they are not offered again until they close. An answer the channel
+    rejects does not bring them back: it is rejected for a standing reason, the user's right to
+    answer there, and asking again would only be rejected again (issue 580). A frontend in the
+    kernel's process, as the terminal is, offers those to be answered, rather than keeping a list
+    beside it; a client of the REST API learns them from the channel's snapshot and stream. The
+    answer goes to the asking agent alone, which takes it only if its sender was asked and the
+    questions are still open, and checks the responses again; who answered it takes from the
+    envelope, never from what was said. The first answer that counts settles the call.
 4.  **Declining.** A user may decline, and a message of theirs written while questions put to them
     are open declines them all: the declines are sent before the message, so that the turn goes on
     and the message is heard after it. A declined call is answered `declined` without running.
