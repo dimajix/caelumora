@@ -1,6 +1,6 @@
 # 586 — The terminal shows a tool call by its raw arguments
 
-**Status:** in progress
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -235,3 +235,10 @@ Of a turn given up as `Lowered`, `Message::names_only` gives a result its status
 (`ToolResultStatus::as_content`, by which the executor writes every result its tool did not give,
 with a message where one can be had), so that the model is told how each call ended, which the
 client found in the whole result before.
+
+2026-11-16: Done. Both views of the terminal tell a call by its description, the full-screen view
+folds a call with its result and shows a command's output, and what the model is given of a
+result is its content alone. Left as findings for the maintainer: the web UI reads the call's
+presentation alone, until a tool gives its result another; `Followed` could tell a quiet result
+by its own presentation, not by finding its call; and the list of statuses in TOOLS.md lacks
+`withheld`.
