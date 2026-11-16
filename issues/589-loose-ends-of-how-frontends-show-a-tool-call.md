@@ -1,6 +1,6 @@
 # 589 — Loose ends of how frontends show a tool call and its result
 
-**Status:** in progress
+**Status:** done
 **Type:** refactoring
 **Priority:** low
 **Area:** User interaction
@@ -121,3 +121,7 @@ uses - a closure, an `async` block - may be imported at its start, in one block,
 tells levels of indentation, not functions, so a block is held as a function is. It found nine
 places, which now import before their code: eight functions, most of them tests, imported after
 their first statements, and `caelumora-store-home` declared a constant before its imports.
+
+2026-11-16: Done. Both frontends show a call by its result's presentation once it came, TOOLS.md
+lists `withheld`, and a function or a block may import for itself, at its start, which
+`scripts/import-blocks.sh` holds.
