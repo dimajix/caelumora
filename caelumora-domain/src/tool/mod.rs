@@ -228,8 +228,9 @@ impl Default for ToolVisibility {
 /// waits for anyone, does not depend on it.
 ///
 /// Open (issue 323): a name, defined as a constant next to the tools that
-/// are shown so (`SHELL_PRESENTATION`, `SKILL_PRESENTATION`, …), with what
-/// it shows of their arguments and results; those of any tool, `DEFAULT`
+/// are shown so (`SKILL_PRESENTATION`, …; the shell's with how a command is
+/// called and answered, `caelumora_api::terminal::SHELL_PRESENTATION`), with
+/// what it shows of their arguments and results; those of any tool, `DEFAULT`
 /// and `QUIET`, are the type's own. A frontend shows those it knows and
 /// every other as `DEFAULT`. Written as its name, and read back as the
 /// presentation of that name.

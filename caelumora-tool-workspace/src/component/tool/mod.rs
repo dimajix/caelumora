@@ -189,13 +189,14 @@ mod tests {
         DELETE_FILE, GREP_FILES, LIST_FILES, MOVE_FILE, PUBLISH_FILE, READ_FILE, REPLACE_IN_FILE,
         WRITE_FILE,
     };
-    use super::shell::{COMMAND_OUTPUT, KILL_COMMAND, RUN_COMMAND};
+    use super::shell::{COMMAND_OUTPUT, KILL_COMMAND};
     use super::*;
     use crate::component::testing::component;
     use crate::library::WorkspaceToolLibrary;
     use caelumora_agents::library::AgentsLibrary;
     use caelumora_agents::testing as agent_testing;
     use caelumora_agents::testing::workspace_turn;
+    use caelumora_api::terminal::RUN_COMMAND;
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::Grant;

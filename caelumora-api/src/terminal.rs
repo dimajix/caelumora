@@ -1,17 +1,38 @@
 //! What a library is handed of a workspace (issue 251): the handle to its files (`Terminal`), its
-//! reading part (`TerminalReader`), its commands (`Shell`), and the paths inside it
-//! (`WorkspacePath`); how they are served is the kernel's (`caelumora_kernel::terminal`).
+//! reading part (`TerminalReader`), its commands (`Shell`) and how running one is called, shown and
+//! answered, and the paths inside it (`WorkspacePath`); how they are served is the kernel's
+//! (`caelumora_kernel::terminal`).
+//!
+//! A command is run by a call of `RUN_COMMAND`, shown as `SHELL_PRESENTATION`, answered by its
+//! `CommandState` with the end of its output (`CommandState::keeping_last`), and killed if the call
+//! is dropped while it waits (`KillOnDrop`).
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use caelumora_domain::tool::ToolPresentation;
 use caelumora_domain::workspace::CommandStatus;
 use chrono::{DateTime, Utc};
 use futures::Stream;
+use serde::Serialize;
 use std::fmt::Debug;
 use std::path::{Component, Path};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
-use std::{fmt, io};
+use std::{fmt, io, mem};
+use tokio::runtime::Handle;
+use tokio::time;
+use tracing::warn;
+
+/// The name of the call that runs a command in a workspace (issue 251).
+pub const RUN_COMMAND: &str = "run_command";
+
+/// How a shell command is shown (issue 251): its `command` as a line of code, its `output` as a
+/// terminal shows it, and its exit code.
+pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+
+/// How long the kill of a dropped call's command may take.
+const KILL_WITHIN: Duration = Duration::from_secs(5);
 
 /// The content of a file, read or to be written, in pieces.
 pub type ByteStream = Pin<Box<dyn Stream<Item = io::Result<Bytes>> + Send>>;
@@ -157,11 +178,13 @@ pub trait Terminal: TerminalReader {
     async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()>;
 }
 
-/// What a command printed since an offset, and where it stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// What a command printed since an offset, and where it stands - written as a call's result gives
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CommandState {
     pub id: String,
     pub status: CommandStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
     /// What it printed - standard output and error in the order they came -
     /// since the offset asked for, as text.
@@ -171,6 +194,58 @@ pub struct CommandState {
     /// Whether output before the offset asked for, or between it and what
     /// is given, was dropped: more than is kept.
     pub truncated: bool,
+}
+
+impl CommandState {
+    /// The state with the last `max_bytes` of its output alone - cut from the front, past a
+    /// character the cut falls inside -, `truncated` if anything was cut.
+    pub fn keeping_last(mut self, max_bytes: usize) -> CommandState {
+        if self.output.len() > max_bytes {
+            let cut = self.output.ceil_char_boundary(self.output.len() - max_bytes);
+            self.output.drain(..cut);
+            self.truncated = true;
+        }
+        self
+    }
+}
+
+/// The command `id` of `shell`, killed if this is dropped before `disarm`: a call dropped while it
+/// waits for its command - its turn cancelled or stopped - kills the command, in a task of
+/// its own bounded by `KILL_WITHIN`, which the drop does not await. A command left running would go
+/// on writing into the workspace after the call that started it.
+pub struct KillOnDrop {
+    shell: Arc<dyn Shell>,
+    id: String,
+    armed: bool,
+}
+
+impl KillOnDrop {
+    /// Kills the command `id` of `shell` if dropped before `disarm`.
+    pub fn new(shell: Arc<dyn Shell>, id: String) -> Self {
+        Self { shell, id, armed: true }
+    }
+
+    /// Leaves the command running once this is dropped.
+    pub fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Ok(runtime) = Handle::try_current() else { return };
+        let (shell, id) = (Arc::clone(&self.shell), mem::take(&mut self.id));
+        runtime.spawn(async move {
+            match time::timeout(KILL_WITHIN, shell.kill(&id, 0)).await {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => warn!(command = %id, "The command of an interrupted call could not be killed: {e}"),
+                Err(_) => warn!(command = %id, "The command of an interrupted call was not killed in time"),
+            }
+        });
+    }
 }
 
 /// Commands in a workspace (issue 251) as one scope sees them: started at once, followed by what
@@ -223,6 +298,50 @@ mod tests {
                 "{refused:?}: {error}"
             );
         }
+    }
+
+    #[test]
+    fn the_end_of_an_output_is_kept_cut_past_a_character() {
+        let state = CommandState {
+            id: "x".to_string(),
+            status: CommandStatus::Completed,
+            exit_code: Some(0),
+            output: "abcdéf".to_string(),
+            next_offset: 7,
+            truncated: false,
+        };
+        let kept = state.clone().keeping_last(2);
+        assert_eq!(
+            (kept.output.as_str(), kept.truncated),
+            ("f", true),
+            "the cut falls inside é and moves past it"
+        );
+        assert_eq!(state.clone().keeping_last(7), state, "all of it fits");
+    }
+
+    #[test]
+    fn a_state_is_written_as_a_call_s_result_without_an_exit_code_it_has_not() {
+        let running = CommandState {
+            id: "x".to_string(),
+            status: CommandStatus::Running,
+            exit_code: None,
+            output: "begun\n".to_string(),
+            next_offset: 6,
+            truncated: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&running).unwrap(),
+            serde_json::json!({
+                "id": "x",
+                "status": "running",
+                "output": "begun\n",
+                "next_offset": 6,
+                "truncated": false,
+            })
+        );
+        let ended =
+            CommandState { status: CommandStatus::Completed, exit_code: Some(1), ..running };
+        assert_eq!(serde_json::to_value(&ended).unwrap()["exit_code"], 1);
     }
 
     #[test]

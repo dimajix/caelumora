@@ -187,3 +187,16 @@ channel and no rule of `parse_input`; the terminal recognises it and hands it to
 actor. Where it runs was questioned - a bang being a shortcut to the system -, and kept in the
 workspace's shell: in the terminal program that is the system, the same machine, user,
 directory and environment, with the bounds of the commands besides.
+
+2026-11-16: The plan decided with the maintainer departs from two recommendations above. What
+enters the history is the person's message carrying a call of `run_command` with its result, the
+same shape as an agent's call (the maintainer's proposal), not a record of its own: the history,
+its readers, the REST API and the web UI's `shell` presentation take it as it is, and a tool's
+result is checked as it enters. It costs two rules: a person's calls and results are heard by the
+others, and given to a model in words; a message without words or attachments asks nobody to
+respond. And the command is run by a command of the channel, `/workspace run`, of a component
+`workspace` that no deployment has by default and the terminal's configuration adds - so the web
+UI does not get it by configuration, not by a rule of the terminal; `!` is its short form in the
+terminal, `!!` writes a literal `!`. Its output is shown once it ended; Ctrl-C ends a command under
+way, by dropping it, and a command so ended is not recorded - accepted for now. Step 1 moves what
+the workspace's shell tool and the command share into `caelumora_api::terminal`.

@@ -2,14 +2,11 @@
 //! through the `Shell` the workspace's writer hands out (`WorkspaceWriter::shell`, reached by
 //! `shell`), which sees the commands started in that channel alone.
 //!
-//! A call dropped while it waits for its command - the turn cancelled or
-//! stopped (issue 161) - kills the command: the one thing a tool does after
-//! its future is gone, in a task of its own bounded by `KILL_WITHIN`, which
-//! the drop does not await. A command left running would go on writing into
-//! the workspace after the turn that started it. One handed back as running
-//! is the model's to end, or a user's (issue 294): `kill_command` ends it
-//! through the same shell of the channel (`WorkspaceController::shell_in`)
-//! as the REST server does for them.
+//! A call dropped while it waits for its command - the turn cancelled or stopped (issue 161) -
+//! kills the command (`KillOnDrop`): the one thing a tool does after its future is gone. One handed
+//! back as running is the model's to end, or a user's (issue 294): `kill_command` ends it through
+//! the same shell of the channel (`WorkspaceController::shell_in`) as the REST server does for
+//! them.
 
 use super::{next, of_workspace, shell, tool, Use, UsingTool};
 use crate::component::WorkspaceParams;
@@ -18,91 +15,34 @@ use caelumora_agents::tool::{
     arguments, proposed_matcher, Tool, ToolError, ToolOutput, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::terminal::{CommandState, Shell};
+use caelumora_api::terminal::{CommandState, KillOnDrop, RUN_COMMAND, SHELL_PRESENTATION};
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation};
+use caelumora_domain::tool::{ToolDescription, ToolParameters};
 use caelumora_domain::workspace::CommandStatus;
 use caelumora_domain::workspace::Workspace;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::runtime::Handle;
-use tokio::time;
-use tracing::warn;
 
-/// A shell command (issue 251): its `command` as a line of code, its
-/// `output` as a terminal shows it, and its exit code.
-const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
-
-pub(super) const RUN_COMMAND: &str = "run_command";
 pub(super) const COMMAND_OUTPUT: &str = "command_output";
 pub(super) const KILL_COMMAND: &str = "kill_command";
 
 /// The longest a call may follow a command - Open Terminal's own bound.
 const MAX_WAIT_SECS: u64 = 300;
-/// How long a dropped call's kill may take.
-const KILL_WITHIN: Duration = Duration::from_secs(5);
-
-/// Kills a command if dropped before `disarm`.
-struct KillOnDrop {
-    shell: Arc<dyn Shell>,
-    id: String,
-    armed: bool,
-}
-
-impl KillOnDrop {
-    fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let Ok(runtime) = Handle::try_current() else { return };
-        let (shell, id) = (Arc::clone(&self.shell), mem::take(&mut self.id));
-        runtime.spawn(async move {
-            match time::timeout(KILL_WITHIN, shell.kill(&id, 0)).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => warn!(command = %id, "The command of an interrupted call could not be killed: {e}"),
-                Err(_) => warn!(command = %id, "The command of an interrupted call was not killed in time"),
-            }
-        });
-    }
-}
 
 fn wait(params: &WorkspaceParams, asked: Option<f64>) -> Duration {
     let most = params.max_wait_secs.min(MAX_WAIT_SECS) as f64;
     Duration::from_secs_f64(asked.unwrap_or(most).clamp(0.0, most))
 }
 
-/// `state` as the model is given it: the output cut from the front to
-/// what a result may hold.
+/// `state` as the model is given it: the output cut from the front to what a result may hold.
 fn result(params: &WorkspaceParams, prompts: &PromptTexts, state: CommandState) -> Value {
-    let mut output = state.output;
-    let mut truncated = state.truncated;
-    if output.len() > params.max_output_bytes {
-        let cut = output.ceil_char_boundary(output.len() - params.max_output_bytes);
-        output.drain(..cut);
-        truncated = true;
-    }
-    let mut result = json!({
-        "id": state.id,
-        "status": state.status,
-        "output": output,
-        "next_offset": state.next_offset,
-        "truncated": truncated,
-    });
-    if let Some(code) = state.exit_code {
-        result["exit_code"] = json!(code);
-    }
-    if state.status == CommandStatus::Running {
+    let running = state.status == CommandStatus::Running;
+    let mut result = json!(state.keeping_last(params.max_output_bytes));
+    if running {
         if let Some(next) = next(
             prompts,
             "still_running",
@@ -240,7 +180,7 @@ impl Tool for RunCommandTool {
             return Err(ToolError::InvalidParameter("'command' must name a command".to_string()));
         }
         let id = shell.start(&command).await?;
-        let guard = KillOnDrop { shell: Arc::clone(&shell), id: id.clone(), armed: true };
+        let guard = KillOnDrop::new(Arc::clone(&shell), id.clone());
         let state = shell.output(&id, 0, wait(&self.params, wait_secs)).await;
         guard.disarm();
         Ok(standing(&self.params, &self.prompts, state?, workspace))
@@ -336,9 +276,9 @@ mod tests {
     use caelumora_agents::tool::ToolProvider;
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::approval::ArgumentMatcher;
-    use caelumora_domain::prompt_catalogue::PromptCatalogue;
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use std::collections::BTreeMap;
+    use tokio::time;
 
     fn the_component() -> WorkspaceComponent {
         component(json!({ "max_wait_secs": 10 }))
@@ -383,6 +323,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(running.value["status"], "running");
+        assert!(running.value.get("exit_code").is_none(), "none while it runs");
         assert!(running.value["next"].as_str().unwrap().contains(COMMAND_OUTPUT));
         let id = running.value["id"].clone();
         let offset = running.value["next_offset"].clone();
@@ -457,28 +398,6 @@ mod tests {
             chained.arguments["command"],
             ArgumentMatcher::Pattern(regex::escape("ls && rm x")),
             "a chain, alone"
-        );
-    }
-
-    #[test]
-    fn output_beyond_what_a_result_holds_is_cut_from_the_front() {
-        let params: WorkspaceParams =
-            serde_json::from_value(json!({ "max_output_bytes": 2 })).unwrap();
-        let state = CommandState {
-            id: "x".to_string(),
-            status: CommandStatus::Completed,
-            exit_code: Some(0),
-            output: "abcdéf".to_string(),
-            next_offset: 7,
-            truncated: false,
-        };
-        // No text of how to go on is needed for a command that ended.
-        let result =
-            result(&params, &PromptTexts::new(Arc::new(PromptCatalogue::new()), None), state);
-        assert_eq!(
-            (result["output"].as_str(), result["truncated"].as_bool()),
-            (Some("f"), Some(true)),
-            "the cut falls inside é and moves past it: {result}"
         );
     }
 }
