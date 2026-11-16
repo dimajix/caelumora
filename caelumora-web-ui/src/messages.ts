@@ -93,13 +93,16 @@ export function mergeToolResultsAmong<T>(items: T[], messageOf: (item: T) => Mes
   return merged;
 }
 
+/** Where a command of a workspace's shell stands: the domain's `CommandStatus`. */
+type CommandStatus = 'running' | 'completed' | 'killed' | 'failed';
+
 /**
  * What a shell tool answers of a command (issue 251): the domain's `CommandState`, as far as it is
  * read here.
  */
 export interface CommandState {
   id: string;
-  status: 'running' | 'completed' | 'killed' | 'failed';
+  status: CommandStatus;
   output: string;
   truncated: boolean;
   exit_code?: number;

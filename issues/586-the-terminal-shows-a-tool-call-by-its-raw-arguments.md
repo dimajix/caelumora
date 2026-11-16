@@ -172,3 +172,7 @@ exported from the crate's `component`.
 tool's result `CommandState`, read by `commandState`, as the domain does - `CommandResult` is the
 result of a command; and where a command of a workspace's shell stands gets a module of its own,
 `caelumora_domain::workspace::command`, beside the workspace it runs in.
+
+2026-11-16: One more step, from the review of the last: the web UI names where a command stands
+`CommandStatus`, as the domain does, and the words it tells it in `commandStatusLabel`, as it
+names those of a call's visibility `visibilityLabel` - not `commandStatus`.

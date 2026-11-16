@@ -112,8 +112,8 @@ function argumentsObject(args: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-/** Where a command stands, as its result says. */
-function commandStatus(command: CommandState): string {
+/** The words that tell where `command` stands, as its result says. */
+function commandStatusLabel(command: CommandState): string {
   switch (command.status) {
     case 'running': return `Still running as ${command.id}`;
     case 'killed': return 'Killed';
@@ -157,7 +157,7 @@ const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
             </pre>
           )}
           <div className="mt-1 flex items-center gap-1 text-[11px]">
-            <span className={failed ? 'text-amber-600 dark:text-amber-400' : 'opacity-60'}>{commandStatus(answered)}</span>
+            <span className={failed ? 'text-amber-600 dark:text-amber-400' : 'opacity-60'}>{commandStatusLabel(answered)}</span>
             {answered.status === 'running' && onKillCommand && !endedCommands?.has(answered.id) && (
               <button
                 type="button"
