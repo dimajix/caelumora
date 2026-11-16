@@ -20,6 +20,9 @@ components:
 - id: program-log
   kind: program_log
   fail_policy: FailClosed
+- id: store-places
+  kind: store_places
+  fail_policy: FailClosed
 - id: turn-end
   kind: turn_end
   fail_policy: FailClosed

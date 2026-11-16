@@ -275,27 +275,27 @@ impl Places {
     ///
     /// # Errors
     /// If a directory cannot be looked into.
-    pub(crate) async fn holder_of_definitions(&self, scope: &Scope) -> StoreResult<PathBuf> {
+    pub(crate) async fn directory_of_definitions(&self, scope: &Scope) -> StoreResult<PathBuf> {
         match scope {
             Scope::GlobalScope => self
                 .config_dir
                 .clone()
                 .ok_or(StoreError::Backend("there is no directory of definitions".to_string())),
             Scope::UserScope { user_id } => {
-                self.directory_of(&Shelf::of(User::KIND.name()), (*user_id).into()).await
+                self.directory_of_document(&Shelf::of(User::KIND.name()), (*user_id).into()).await
             }
             Scope::GroupScope { group_id } => {
-                self.directory_of(&Shelf::of(Group::KIND.name()), (*group_id).into()).await
+                self.directory_of_document(&Shelf::of(Group::KIND.name()), (*group_id).into()).await
             }
             Scope::SessionScope { .. }
             | Scope::ChannelScope { .. }
-            | Scope::ProjectScope { .. } => self.holder_of(scope).await,
+            | Scope::ProjectScope { .. } => self.directory_of(scope).await,
         }
     }
 
     /// The directory of what lies in `scope`: the data directory for what no directory holds, as a
     /// user, a group and the global scope, whose documents say which is theirs.
-    async fn holder_of(&self, scope: &Scope) -> StoreResult<PathBuf> {
+    pub(crate) async fn directory_of(&self, scope: &Scope) -> StoreResult<PathBuf> {
         Ok(match scope {
             Scope::SessionScope { session_id } => self.sessions().join(session_id.to_string()),
             Scope::ChannelScope { session_id, channel_id } => self
@@ -330,7 +330,7 @@ impl Places {
             }
         }
         let dir = match name.filter(|_| shelf.beside.is_none()) {
-            Some(name) => self.holder_of(&name.scope).await?,
+            Some(name) => self.directory_of(&name.scope).await?,
             None => self.data_dir.clone(),
         };
         Ok(dir.join(&shelf.family).join(id.to_string()).join(&shelf.file))
@@ -343,12 +343,12 @@ impl Places {
     /// # Errors
     /// If a directory cannot be looked into.
     pub(crate) async fn directory_of_kind(&self, kind: &str, id: Uuid) -> StoreResult<PathBuf> {
-        self.directory_of(&Shelf::of(kind), id).await
+        self.directory_of_document(&Shelf::of(kind), id).await
     }
 
     /// The directory of the document `id` on `shelf`, or the one below the data directory it would
     /// have.
-    async fn directory_of(&self, shelf: &Shelf, id: Uuid) -> StoreResult<PathBuf> {
+    async fn directory_of_document(&self, shelf: &Shelf, id: Uuid) -> StoreResult<PathBuf> {
         Ok(match self.find(shelf, id).await? {
             Some(path) => path.parent().map_or_else(|| path.clone(), Path::to_path_buf),
             None => self.data_dir.join(&shelf.family).join(id.to_string()),

@@ -202,6 +202,12 @@ and states as the JSON store does (`FileDocuments`, `JsonStates`), in places of 
     reads, though it hears of nothing. A session runs in one of them, held by the lock of its file
     `locks/sessions/<id>` (`SessionLocks`, see [Several instances](#several-instances)), which stays
     until the session is purged.
+*   **It tells where it keeps what lies in a scope** (`StorePlaces`, offered by its backend as
+    `PersistenceBackend::places`): the data directory, and the directory of a session or a channel.
+    The kernel tells an agent's work its session's and its channel's by a reader of its own
+    (`StorePlacesReader`), which the kind `store_places` puts into the prompt where a personality
+    wires it (see [AGENT-TURN.md](AGENT-TURN.md#where-the-program-keeps-its-data)); `json` and
+    `postgres` tell nothing.
 *   **Content lies with what it belongs to** (`HomeContent`, the storage of content `home`): a key
     whose key space the program names in `spaces` lies in `content/` of the directory of what its
     second segment names - `attachments/<channel>/…` in the channel's, `artifacts/<project>/…` in

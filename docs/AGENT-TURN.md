@@ -880,6 +880,18 @@ the agents' library's but `ProgramLibrary`'s, which the program builds with the 
 the terminal lists it, the REST server none. The log holds every session, user and channel of the
 program, so the part comes only where a personality wires it, and says so.
 
+### Where the program keeps its data
+
+`store_places` tells the agent the directory the program keeps its data below, and those of its
+session and its channel, so that an agent asked how something was kept can look there with a
+terminal that reaches them. The layout is the store's: its backend tells where it keeps what lies in
+a scope ([STORAGE.md](STORAGE.md#in-a-home-directory)), and the kernel binds what the work is told
+of it as a reader of its own, as it binds the workspace's
+([PLUGINS.md](PLUGINS.md#what-a-system-service-offers-an-agents-work)). Where the backend tells no
+such places - `json`, `postgres`, the stores in memory -, the part is empty. Below
+the data directory lies every session, user and channel of the program, so the part comes only
+where a personality wires it, says so, and says that the files are the program's to write.
+
 ### Its workspace
 
 The prompt part of `workspace` describes the workspace the agent may use in its channel and names

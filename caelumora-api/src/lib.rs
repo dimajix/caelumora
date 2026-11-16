@@ -12,6 +12,7 @@ pub mod image;
 pub mod library;
 pub mod logging;
 pub mod model;
+pub mod places;
 pub mod reader;
 pub mod runtime;
 pub mod staging;

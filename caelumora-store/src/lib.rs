@@ -11,6 +11,7 @@ pub mod history;
 pub mod kept_chain;
 pub mod memberships;
 pub mod memory;
+pub mod places;
 pub mod sessions;
 #[cfg(any(test, feature = "test-support"))]
 pub mod suite;
@@ -21,6 +22,7 @@ pub mod transcript;
 use crate::documents::{CheckedStore, Document, DocumentOf, DocumentStorage};
 use crate::history::HistoryStore;
 use crate::memory::MemoryStore;
+use crate::places::StorePlaces;
 use crate::sessions::SessionLocks;
 use crate::transcript::TranscriptStore;
 use async_trait::async_trait;
@@ -305,6 +307,12 @@ pub trait PersistenceBackend: Debug + Send + Sync {
     fn session_locks(self: Arc<Self>) -> Option<Arc<dyn SessionLocks>> {
         None
     }
+
+    /// Where it keeps what lies in a scope in the file system of the host (issue 577); `None`, by
+    /// default: it tells no such place.
+    fn places(self: Arc<Self>) -> Option<Arc<dyn StorePlaces>> {
+        None
+    }
 }
 
 /// The stores (issues 323, 446, 448, 449): of the entities of every kind and of the states, over
@@ -325,6 +333,8 @@ pub struct Persistence {
     transcript_store: Arc<dyn TranscriptStore>,
     /// What holds the sessions, kept with the entities, against other processes.
     session_locks: Option<Arc<dyn SessionLocks>>,
+    /// Where the backend of the entities keeps what lies in a scope on the host, if it tells.
+    places: Option<Arc<dyn StorePlaces>>,
     /// The type of each kind opened, by its name.
     kinds: Arc<Mutex<HashMap<EntityKind, TypeKey>>>,
 }
@@ -343,6 +353,7 @@ impl Persistence {
             history_store: Arc::clone(&states).history_store()?,
             transcript_store: Arc::clone(&states).transcript_store()?,
             session_locks: Arc::clone(&entities).session_locks(),
+            places: Arc::clone(&entities).places(),
             entities,
             states,
             kinds: Default::default(),
@@ -368,6 +379,7 @@ impl Persistence {
             history_store: Arc::<MemoryStore>::clone(&memory),
             transcript_store: memory,
             session_locks: None,
+            places: None,
             kinds: Default::default(),
         }
     }
@@ -390,6 +402,13 @@ impl Persistence {
     /// the backend of the entities is shared by several.
     pub fn session_locks(&self) -> Option<Arc<dyn SessionLocks>> {
         self.session_locks.as_ref().map(Arc::clone)
+    }
+
+    /// Where the backend of the entities keeps what lies in a scope on the host
+    /// (`PersistenceBackend::places`), if it tells: of a channel, its documents - its states lie
+    /// there too only where the backend of the states is of the same place.
+    pub fn places(&self) -> Option<Arc<dyn StorePlaces>> {
+        self.places.as_ref().map(Arc::clone)
     }
 
     /// The store of the states.

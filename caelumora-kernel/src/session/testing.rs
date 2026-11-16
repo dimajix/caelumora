@@ -25,6 +25,7 @@ use caelumora_domain::channel::testing::main_channel;
 use caelumora_domain::channel::Channel;
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::{FieldPath, Filter};
+use caelumora_domain::scope::Scope;
 use caelumora_domain::session::testing::make_session;
 use caelumora_domain::session::{Session, SessionId};
 use caelumora_domain::store::{EntityKind, Revision, StoreError, StoreResult};
@@ -37,6 +38,7 @@ use caelumora_store::documents::{Document, DocumentOf, DocumentStorage};
 use caelumora_store::history::HistoryStore;
 use caelumora_store::memberships::StoreMemberships;
 use caelumora_store::memory::MemoryStore;
+use caelumora_store::places::StorePlaces;
 use caelumora_store::sessions::{SessionHold, SessionLocks};
 use caelumora_store::testing::record_users;
 use caelumora_store::transcript::TranscriptStore;
@@ -44,6 +46,7 @@ use caelumora_store::Persistence;
 use caelumora_store::{PersistenceBackend, Presence, StateStore};
 use serde_json::Value;
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -204,11 +207,14 @@ pub fn shared_kernel() -> (Arc<Kernel>, Arc<SharedLocks>) {
     (TestKernel { store, ..Default::default() }.build(), locks)
 }
 
-/// Stores in memory another process shares (issue 554), whose holds of sessions are
-/// `SharedLocks`: what tests tell them the other holds, and what they held and let go of.
+/// Stores in memory that behave as the home store does (`HomeLikeBackend`): another process
+/// shares them (issue 554), their holds of sessions `SharedLocks` - what tests tell them the other
+/// holds, and what they held and let go of -, and they tell where they keep what lies in a scope
+/// (issue 577).
 pub fn shared_store() -> (Persistence, Arc<SharedLocks>) {
     let locks = Arc::new(SharedLocks::default());
-    let entities = Arc::new(SharedBackend { inner: MemoryStore::new(), locks: Arc::clone(&locks) });
+    let entities =
+        Arc::new(HomeLikeBackend { inner: MemoryStore::new(), locks: Arc::clone(&locks) });
     (Persistence::new(entities, Arc::new(MemoryStore::new())).unwrap(), locks)
 }
 
@@ -256,14 +262,16 @@ impl Drop for HeldHere {
     }
 }
 
-/// A backend of the entities in memory that holds sessions by `SharedLocks`.
+/// A backend of the entities in memory that behaves as the home store does: it holds sessions by
+/// `SharedLocks`, and keeps what lies in a scope, as it tells (`StorePlaces`), below `/data` - a
+/// session in `sessions/<id>`, a channel in `channels/<id>` of its session's.
 #[derive(Debug)]
-struct SharedBackend {
+struct HomeLikeBackend {
     inner: MemoryStore,
     locks: Arc<SharedLocks>,
 }
 
-impl PersistenceBackend for SharedBackend {
+impl PersistenceBackend for HomeLikeBackend {
     fn documents(
         &self,
         kind: EntityKind,
@@ -286,6 +294,28 @@ impl PersistenceBackend for SharedBackend {
 
     fn session_locks(self: Arc<Self>) -> Option<Arc<dyn SessionLocks>> {
         Some(Arc::<SharedLocks>::clone(&self.locks))
+    }
+
+    fn places(self: Arc<Self>) -> Option<Arc<dyn StorePlaces>> {
+        Some(self)
+    }
+}
+
+#[async_trait]
+impl StorePlaces for HomeLikeBackend {
+    fn data_dir(&self) -> &Path {
+        Path::new("/data")
+    }
+
+    async fn directory_of(&self, scope: &Scope) -> StoreResult<PathBuf> {
+        let sessions = self.data_dir().join("sessions");
+        Ok(match scope {
+            Scope::SessionScope { session_id } => sessions.join(session_id.to_string()),
+            Scope::ChannelScope { session_id, channel_id } => {
+                sessions.join(format!("{session_id}/channels/{channel_id}"))
+            }
+            _ => self.data_dir().to_path_buf(),
+        })
     }
 }
 
