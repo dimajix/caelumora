@@ -181,6 +181,46 @@ smallest: a sub-channel with a requester who speaks through a tool, and the appr
 of the sub-agent going to someone. The background, forks and nesting can follow, each with its own
 cost. Not decided.
 
+### As a thread of 557
+
+[557](557-a-conversation-cannot-go-on-two-ways-at-once.md#threads-a-third-level-below-the-channel)
+now considers threads: a third level below session and channel, a conversation with its origin in a
+channel - the message it hangs at and the channel as it stood when it was opened -, kept apart from
+the channel, with a way back by a result. A sub-agent would be such a thread: opened by an agent
+through a tool or a command, with few taking part, begun with a brief - or, as a fork, with the
+conversation -, and its result coming back as the result of the call that opened it.
+
+That would answer some questions here together with 557, not decided:
+
+- **Where it lives.** The sub-channel is a thread of the main channel, not a channel of the
+  session: the session's list of channels does not fill up, and the web UI shows it at the call
+  that opened it.
+- **What it takes along.** Its owner and its classification at the start come from the main
+  channel, as for every thread.
+- **Seeing it.** Whoever reads the main channel could read its threads, the sub-agent's among them;
+  approvals and questions of the sub-agent could go to the users of the main channel, which would
+  give "not an (active) member" a meaning: a user who reads and answers there, but does not speak.
+- **Who may start one** follows who may open a thread.
+
+It leaves open how the main agent is in the thread (A or B above), and whether an agent that does
+not take part in the main channel may take part in its thread - which a new agent of a personality
+would.
+
+Since 557's decision of the same day, a thread is a part of its channel and shares its participants
+and notes. Two consequences for a sub-agent:
+
+- **The sub-agent takes part in the main channel** - an agent of the channel's scope, made for the
+  task -, or threads get participants beyond their channel's, which 557's decision does not provide
+  for. The users of the main channel are then participants of the thread by construction, and may
+  read it, approve and answer there.
+- **The main agent is in the thread with its actor of the channel**, its transcript there a branch
+  of its transcript in the channel: what it learns in the thread reaches its own line by the
+  result, or by the notes they share. That is 558's B in substance - only the result comes back -,
+  with the main agent speaking the brief itself instead of a tool speaking for it.
+- **A closed circle** (557's *Decision*) would keep who speaks in a sub-agent's thread to the main
+  agent, the sub-agent and the users who approve and answer for it; everyone in the channel still
+  reads it, and the sub-agent still takes part in the channel.
+
 ## Open questions
 
 - How is the main agent in the sub-channel (A or B), and who speaks the brief there?
@@ -189,6 +229,7 @@ cost. Not decided.
 - A new agent, an existing one, or a fork of the main agent?
 - Who may start a sub-agent, and is it bounded by what the main agent may?
 - Is the sub-channel kept, and how is it shown?
+- Is the sub-channel a thread of 557 (*As a thread of 557*)?
 
 ## Done when
 
@@ -202,3 +243,6 @@ cost. Not decided.
   channel of their own in the session, without the user as an active member, oriented by Claude
   Code. Related to [557](557-a-conversation-cannot-go-on-two-ways-at-once.md): a fork needs the same
   copy of an agent's state, and both need a channel that names where it came from.
+- **2026-11-16** — *As a thread of 557* added: 557 now considers threads, and a sub-agent would be
+  one, opened by an agent, with its result as the result of the call. Not decided. On the same day
+  557 decided that a thread is part of its channel; its consequences for a sub-agent added there.

@@ -101,3 +101,6 @@ order along the way.
 - **2026-10-16** — 383 done: an agent's actor holds the prompt texts and tool sets its turn under
   way names; the store keeps every one once by digest, beside the transcript, read by the
   `TranscriptStore`. Next in the order: 381.
+- **2026-11-16** — [557](557-a-conversation-cannot-go-on-two-ways-at-once.md) decided that a
+  channel's threads can be unloaded, and proposes doing it as 381 unloads a channel, with one
+  notion of idle for threads, channels and sessions; best designed together with 381.

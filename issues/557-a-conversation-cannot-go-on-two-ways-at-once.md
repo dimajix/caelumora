@@ -206,6 +206,78 @@ and the rule for changes to the shared beginning. So, if the answer to the quest
 it is *alternatives, one shown*, the idea does not need *every participant on any branch*, and 08's
 plan is the closer starting point, with the reasons it was rejected still standing.
 
+### Threads: a third level below the channel
+
+An assessment from the user's side, of 2026-11-16 - not a decision.
+
+**Conversations side by side.** Alternatives with one shown (`< 2/3 >`) are a pattern of chats with
+one person in them. With several people and agents in a channel, someone would have to decide which
+alternative is current for all of them - the switching 08 failed on. Group chats - Slack, Discord,
+Teams - have answered the same need alike, with threads. So the answer to the question underneath
+would be *conversations side by side*.
+
+**Where a thread sits.** Unlike in those systems, two levels exist here already: a session is a
+large working group with a common goal, a channel a small circle specialised on a part of it. A
+thread would be a third level below them: a passing strand of one circle's work, not a circle of
+its own. It belongs to its channel, not to the session: it is not in the session's list of
+channels, and it takes its owner, its participants and its classification at the start from its
+channel. A strand that grows into a lasting circle is a new channel.
+
+**What the user sees and does.**
+
+- **A thread hangs at a message and knows everything up to now.** The message it hangs at says what
+  it is about; what its agents know is the channel as it stands when the thread is opened. So a
+  thread can be opened at an older message without anything being replaced: the rule of branching
+  only at the current point holds for the context, while opening one feels free to the user.
+- **In the channel it stays small**: a mark at its message - "thread · 4 answers · @alice,
+  @coder" - that opens it beside the channel, and an unread count of its own.
+- **The channel's agents do not hear it.** Their contexts stay free of it; that is what it is for.
+- **A result can flow back.** At any time, or at its end, a thread hands a result to its channel as
+  a message: a summary an agent writes, or a message picked from the thread. The channel's agents
+  hear only that. This answers the question of merging back: by a result, never by the history.
+  Two approaches are tried in two threads, and the better one's result is taken over.
+- **Whoever may write in the channel may open a thread**: it is an act in the channel, not the
+  creation of a channel in the session, which stays the owner's.
+- **The agents come along as they are.** Opening takes a snapshot of every agent's
+  `AgentChannelState`. Without it, an agent in the thread has forgotten what it read and did itself,
+  and the thread feels like a new chat. A copy also behaves predictably: that a correction made in
+  the channel after the thread was opened does not reach the thread is what one expects of a thread
+  anyway. Of B's options, this is the copy, for the beginning and for the agents' states alike.
+
+**One concept for 557 and 558.** A sub-agent of [558](558-no-agent-hands-a-task-to-a-sub-agent.md)
+is a thread with three differences: an agent opens it, not a person; few take part in it; and it
+begins with a brief instead of the conversation - or, as a fork, with the conversation after all.
+Its result flows back as the result of the call that opened it. 558 already notes that both need a
+lineage and the copy of an agent's state; the way a result flows back is common to both as well.
+One concept - a conversation with its origin in a channel and a way back into it - would serve both
+issues.
+
+**What is not done.** A, branches within one channel, would be a second kind of conversation next
+to the channel. Alternatives with one shown stay at the level of a single answer, which is
+[238](238-retry-of-an-older-answer.md)'s.
+
+**What has to stay visible.** The world does not branch: two threads work on the same workspace,
+and the web UI should say so; versions of a workspace ([256](256-workspace-versions.md)), or a
+snapshot per thread, could help later. An external agent is told the beginning again, with what
+that loses, and the thread should show it. A thread is closed or archived, not deleted.
+
+**A smaller step for the commonest case.** For a side question alone, less would do - as `/btw` in
+Claude Code, which asks "a side question about the current session without adding to the
+conversation" ([commands](https://code.claude.com/docs/en/commands.md), 2026-11-16): a person asks
+one agent privately, with the channel's context; the answer is seen only by whoever asked and does
+not enter the transcript. That needs neither a copy nor a channel. It does not replace threads, but
+could come first.
+
+**Open in this assessment:**
+
+- Is a thread a `Channel` with an origin - one type, with a field naming its channel and the
+  position in it - or a type of its own that shares the channel's machinery? Everything a channel
+  does, a thread does too; what differs is where it is listed, what it takes from where, and the
+  way back. One type looks simpler.
+- Who takes part: every participant of the channel, those chosen by whoever opens it - and may an
+  agent that is not in the channel, 558's sub-agent, take part?
+- Who writes the result that flows back, and in whose name does it stand in the channel?
+
 ## Open questions
 
 - Alternatives with one shown, or conversations side by side (*The question underneath*)?
@@ -214,6 +286,200 @@ plan is the closer starting point, with the reasons it was rejected still standi
 - With B: does a branch take every participant along, or may the one who branches choose?
 - How are external agents treated - given the beginning again, or left behind?
 - May a branch be merged back, or is a branch only ever followed on its own?
+
+## Decision
+
+The maintainer's decision of 2026-11-16, on the assessment *Threads: a third level below the
+channel*:
+
+- **Conversations side by side, as threads.** The question underneath is answered: a branch in the
+  sense of this issue is a conversation beside another, not an alternative shown instead of it.
+- **A thread is part of its channel, a type of its own** - not a channel with an origin. What the
+  channel has, its threads share: its participants - one who joins the channel later may take part
+  in its threads too -, its notes, and its other properties. That is what tells a thread from a
+  separate channel.
+- **A thread may have a closed circle**, which limits who speaks in it, not who sees it: those of
+  the channel's participants chosen for it speak there, a later newcomer to the channel does not
+  join them, and everyone in the channel reads the thread all the same. Knowledge stays shared: the
+  notes and the artifacts of a work are the whole channel's, a closed thread keeps no notes of its
+  own, and nothing of its history - messages, attachments - is closed to the channel. Limiting what
+  is seen would mean limiting the access to messages and attachments in the history as well, which
+  is far too complex; whoever wants that strong a separation opens a channel of its own, which is
+  what a channel is for.
+- **Splitting a thread off into a new channel** dissolves exactly what it shares with its channel,
+  and is a branch in the sense of B: a channel of its own with a copied beginning, its own
+  participants and its own notes.
+
+This departs from the assessment in two points: a thread is not a `Channel` with an origin, and
+opening one copies no `AgentChannelState` as a whole, since the notes stay the channel's.
+
+### What follows from it
+
+In the model this is A - several conversations within one channel -, but as a concept of its own
+and without alternatives: threads hang at messages and only grow. So A's costs above apply, and they
+become the questions of the plan:
+
+- **What an agent keeps per thread.** `AgentChannelState` splits into what is the channel's - notes
+  and private notes - and what is a conversation's - its transcript and its turn state. A transcript
+  is a chain, and a chain is a tree already: an agent's transcript in a thread could be a branch of
+  its transcript in the channel, beginning where the thread was opened. Nothing is copied, and an
+  agent that comes to the thread later begins there as well.
+- **Whether the channel's own line is a thread too.** If a channel consists of threads, the first
+  one without an origin, there is one kind of conversation, and nothing that reads one has to tell
+  the channel's line from a thread; otherwise every such place has two cases. Recommended, not
+  decided (*Proposal for threads*).
+- **Who hears a thread.** Every participant of the channel may read every thread; an agent hears a
+  thread only once it takes part in it, so the contexts of the others stay free of it. When an agent
+  takes part - addressed by a mention, routed there by the moderator, or chosen by whoever opens the
+  thread - is proposed under *Proposal for threads*.
+- **Notes reach the whole channel**, whichever thread they were written in: wanted, since they are
+  the circle's, and the one way besides a result in which a thread reaches the channel.
+- **A closed circle is a rule of who speaks**, as the moderator applies it: only its members write
+  in the thread, and only its agents are routed there. It needs no access list of its own, and
+  every event of the thread reaches whoever reads the channel.
+- **Every message and event names its thread**, and so do the REST API and the streams; the
+  moderator routes per thread, mentions included.
+- **An agent asked in two threads** answers one after the other (*Threads in the running
+  channel*).
+- **Compaction and the transcript window** ([380](380-transcript-window.md)) work per thread.
+- **The way back.** A result handed back is a message in the line the thread hangs at.
+- **A newcomer** sees of a thread what `HistoryAccess` gives them of the channel.
+- **Splitting off** needs what B lists: a lineage, the copied beginning, the agents' transcripts of
+  the thread copied into the new channel, a rule of who may split, a name. Whether the channel's
+  notes are copied along or left behind is open.
+
+The next step is a plan for threads in this issue, or issues of their own for its parts - threads,
+splitting off, and a side question as `/btw`.
+
+### Threads in the running channel
+
+Decided by the maintainer on 2026-11-16:
+
+- **No loop of its own.** Threads run in their channel's `ChannelLoop`; a `ThreadLoop` beside it
+  would be far too heavy. It would need everything a channel's loop has - the moderator, the
+  routing, an inbox, a history, the internal actors, the participants kept in step with the
+  channel's -, and an agent would have a second actor in the same channel, a second writer of the
+  channel's notes.
+- **One actor per agent and channel, a head per thread.** The agent's transcript keeps a branch of
+  its own, with a head of its own, for every thread the agent takes part in.
+- **No turns at once across threads.** An agent works on one turn at a time, in whichever thread;
+  a person cannot write in several threads at once either.
+- **Threads can be unloaded.** A conversation can grow without bound - the history is read by
+  pages, the transcript is bounded by compaction -, so the threads cannot all be held in memory
+  for ever.
+
+What stays as it is: the channel keeps one history, in which every entry names its thread, so that
+an actor's inbox, where it stands (`heard`), catching up and starting again read one sequence per
+channel, as today; the notes have one writer; and whoever joins the channel takes part in it as
+before.
+
+What changes:
+
+- **`AgentChannelState` splits** into what is the channel's - notes, private notes, `heard`,
+  `last_message`, the prompt texts and tool sets kept, the numbers of attachments, the tokens
+  used - and a state per thread: the head of its branch, the window of it, its turn and
+  `processing_state`, and how full its context is.
+- **The thread of an event** is named in its `EventContext` and in the history's entry.
+- **Every reader of the transcript in memory** - a turn, a compaction, how full the context is,
+  answering again, taking in a change of a message - names the branch it reads; the window of
+  [380](380-transcript-window.md) is held per thread.
+- **Perceiving** appends a message said in a thread to the branch of that thread.
+- **During a turn in a thread**, the agent takes ahead only what is said in that thread - the
+  `EventReceiver` already takes envelopes of a kind ahead -, and what comes in other threads waits
+  in the inbox. Then it works through the threads with requests open, by the oldest request not
+  answered, and answers in each the last one, having heard everything before it: today's rule,
+  per thread.
+- **The web UI** shows where an agent is answering at that thread, so that one sees why it is
+  silent elsewhere.
+
+What is still hard:
+
+- **A fork of the agent itself** ([558](558-no-agent-hands-a-task-to-a-sub-agent.md)): its turn
+  waits in a tool call for a result that its own actor would have to produce in a thread - with
+  one turn at a time, a deadlock. Such a fork runs in the background, or does not exist; a
+  sub-agent that is another agent has no such problem.
+- **A change of a message before a thread forked** ([234](234-modify-revoke-and-retry-messages.md))
+  is appended behind it on every head whose path holds the message, not on one.
+- **External agents.** The remote agent keeps one conversation; a thread needs a remote context of
+  its own, a `RemoteState` per thread.
+
+### Proposal for threads
+
+The author's proposal of 2026-11-16 - not decided.
+
+**The channel's line is a thread**: the one without an origin. What sets it apart follows from
+that: it hangs at no message and has no way back, it is never closed and has no closed circle -
+all of the channel's participants take part in it -, and it is unloaded as any thread is. So there
+is one kind of conversation: whatever reads one - a turn, a compaction, the moderator, the history,
+the REST API - knows threads alone, and `AgentChannelState` holds thread states, the channel's line
+among them. The user sees nothing of it: in the web UI the line is the channel, and only what hangs
+at a message is called a thread.
+
+**Threads form a tree.** A thread's origin is a thread and a message in it; its branch in an
+agent's transcript forks from the branch of its origin where it was opened, and its result goes
+back to its origin. Its participants are the channel's, not bounded by those of its origin, since
+what is seen is the whole channel's anyway; and it is unloaded on its own, wherever in the tree it
+is. Limiting the depth would be the special case, and 558 needs nesting: an agent working in a
+thread that starts a sub-agent opens a thread in a thread. Depth hurts in the presentation: the web
+UI shows one thread at a time with its path - "channel › thread A › thread B" - instead of the
+tree; whether users may nest is a decision of the product that changes nothing of the model. An
+agent that comes to a thread without having taken part in its origin begins at its own branch in
+the nearest thread above in which it takes part - at last the channel's line -, and is given the
+origin's messages up to the fork to read, as a newcomer is: otherwise it does not know what the
+message the thread hangs at is about.
+
+**Who takes part in a thread.** A thread keeps who of the channel's participants takes part in it:
+
+- when it is opened: whoever opens it, the author of the message it hangs at, and whom its first
+  message mentions;
+- later: a person by writing in it, an agent by being mentioned in it;
+- in a closed circle, those fixed when it was opened, and nobody else: whoever is not among them
+  cannot write there, and a mention of an agent outside brings nobody in - the moderator says so,
+  as it tells its other notices.
+
+An open and a closed thread so differ in one thing alone: whether who takes part may grow.
+
+**Who hears and who answers.** An agent that takes part in a thread hears everything said in it -
+listening silently, appended to its branch, without a call of its model; one that does not has no
+branch of it. Who answers is the moderator's rule in a thread: the channel's `ResponderPolicy`,
+which is told which agents could answer, is given those taking part in the thread, and the thread's
+conversation. Mentions stay as they are; without one, the policy chooses among those taking part -
+with one agent in the thread, under `round_robin_policy`, `broadcast_policy` or
+`user_driven_policy`, that one: the usual case of a side question. The moderator keeps its context
+(`context_messages`) and its count of hops between agents per thread. A policy of its own for
+threads would be possible, but has no user yet.
+
+**Unloading, as [381](381-inactive-channels-held-in-memory.md) unloads a channel.**
+
+- **Closed** is a state the user sees: the thread is done - the natural moment to hand its result
+  back -, and whoever writes in it opens it again. **Unloaded** is the runtime's alone, and nobody
+  notices it: an open thread in which nothing happened for a while is unloaded, a closed one at
+  once.
+- **Unloading a thread** stores every agent's state of it, between turns, and lets go of the window
+  of its branch - a turn is never cut off for it -; the moderator drops its context of the thread,
+  as it starts empty after a restart. What stays is the thread's entry in the channel's list: its
+  id, the message it hangs at, its circle, and whether it is open.
+- **Idle** means as in 381: no message, request, approval or turn in the thread for a configured
+  time. **Any event in the thread loads it again**: every agent reads its state of the thread and
+  its branch from the window's start from the store - what a restart does today, for one thread.
+- **An agent's state of a thread is a document of its own**, per agent, channel and thread, and no
+  part of `AgentChannelState`'s, so that starting a channel does not load every thread. The history
+  stays one per channel, but the store reads a page of one thread without searching the channel's.
+  The list of a channel's threads is read by pages, the open ones first.
+- **One notion of idle on three levels.** With the channel's line a thread, a channel whose threads
+  are all unloaded is idle and is unloaded (381), and a session whose channels are all unloaded is
+  unloaded. So unloading threads belongs to the epic [378](378-resource-management-epic.md), and is
+  best designed together with 381 rather than as a second mechanism.
+
+**An order of steps.**
+
+1. Restructuring without a change of behaviour: the channel's line becomes a thread - the thread
+   named in `EventContext` and in the history, `AgentChannelState` split into the channel's part
+   and the thread states -, with one thread per channel.
+2. Threads, with one turn at a time: opening one, who takes part, the moderator per thread, a head
+   per thread, handing a result back.
+3. Each on its own afterwards: closed circles, unloading (with 381), external agents in threads,
+   splitting a thread off into a channel, and the side question as `/btw`.
 
 ## Done when
 
@@ -229,3 +495,16 @@ plan is the closer starting point, with the reasons it was rejected still standi
   rejection left without an issue.
 - **2026-11-11** — How Claude Code branches added for comparison (*How Claude Code does it*), from
   its documentation: a branch there is a new session with a copied beginning, option B with a copy.
+- **2026-11-16** — Threads assessed from the user's side (*Threads: a third level below the
+  channel*): conversations side by side, as a third level below session and channel, with a way
+  back by a result; one concept with the sub-agents of 558. Not decided.
+- **2026-11-16** — Decided by the maintainer (*Decision*): conversations side by side, as threads -
+  a type of its own, part of its channel, sharing its participants, notes and properties; splitting
+  a thread off into a new channel is a branch; a closed circle of a thread limits who speaks, not
+  who sees, and keeps no notes of its own. The consequences for the model are listed under *What
+  follows from it*; the plan is still to be made.
+- **2026-11-16** — Decided by the maintainer (*Threads in the running channel*): threads run in
+  their channel's loop, with one actor per agent and a head of its transcript per thread, no turns
+  at once across threads, and threads can be unloaded. Proposed, not decided (*Proposal for
+  threads*): the channel's line as a thread, a tree of threads, who takes part in a thread and who
+  answers there, unloading as 381 unloads a channel, and an order of steps.

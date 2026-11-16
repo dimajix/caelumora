@@ -64,3 +64,6 @@ idle, and nothing gives it back.
 - **2026-10-16** — Opened as part of the epic [378](378-resource-management-epic.md).
 - **2026-10-16** — With [386](386-actor-state-after-a-stop.md), a user's stream no longer starts a
   channel; it is taken out of what starts one again.
+- **2026-11-16** — [557](557-a-conversation-cannot-go-on-two-ways-at-once.md) proposes unloading
+  a channel's idle threads the way this issue unloads a channel; with the channel's line a thread,
+  a channel whose threads are all unloaded is idle. Best designed together.
