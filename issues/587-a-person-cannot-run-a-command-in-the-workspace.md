@@ -33,53 +33,65 @@ ended with, or spends an agent's turn on what the person could do in a second.
 
 ## Considerations
 
-### "For the terminal" does not stay in the terminal
+### The terminal alone offers it
 
-What the agents are to see has to enter the channel's history: through the user's actor, admitted
-by the channel, recorded, and perceived by the agents (see
-[CHANNELS.md](../docs/CHANNELS.md#acting-in-a-channel)). The terminal cannot do any of that
-itself, so the kernel needs a kind of its own for a person's command and its record, whatever
-offers it at first. The web UI shows the history too, so it has to show such a record, even if
-`!` is typed only in the terminal.
+The web UI does not get it (decided by the maintainer): a shortcut to the shell belongs to a
+program a person runs on their own machine, in the project they work on, not to a page served by
+a server. So nothing a frontend sends as a command of the channel may run it either -
+`/workspace run` offered by a component would be listed by the web UI's `/help` and run from
+there.
+
+Still, what the agents are to see has to enter the channel's history: through the user's actor,
+admitted by the channel, recorded, and perceived by the agents (see
+[CHANNELS.md](../docs/CHANNELS.md#acting-in-a-channel)). The terminal cannot do that itself, so
+the kernel needs a kind of its own for a person's command and its record, which the terminal
+alone calls.
 
 ### Where the command runs
+
+A bang is commonly a shortcut to the system - the shell of the machine the program runs on. In
+`caelumora-tui` the session's workspace is exactly that: its storage `directory` runs commands
+on the same machine, as the same user, in the directory the program was started in, with the
+program's environment (`shell: true`, `environment: inherit` in the defaults of
+`caelumora-tui/src/home.rs`), under the policy `allow_all`. So the options differ not in where
+a command runs, but in who runs and bounds it:
 
 - **A. In the session's workspace, through the channel's shell**, as an agent's command runs:
   `WorkspaceController::shell_in` asks what it asks of an agent - reading the session and the
   channel, the workspace usable in the channel, `WriteWorkspace` - in the person's name. The
   command is then the channel's ([WORKSPACE.md](../docs/WORKSPACE.md#commands)): bounded by
   the storage's `max_run_secs`, ended by the `CommandReaper` when nobody may run it any longer,
-  ended when the session stops. Its output is classified as the workspace, which flows into
-  every channel that uses it. In the terminal program this is the directory it was started in,
-  which is what the person expects.
-- **B. On the terminal's host, by the terminal itself.** Passes by every permission, by the
-  classification and by the bounds of the commands, and could not be offered by any other
-  frontend. Rejected.
+  ended when the session stops or the program shuts down in order (issue
+  [297](297-orderly-shutdown.md)). Its output is classified as the workspace, which flows into
+  every channel that uses it. The kernel ran it, so what is recorded is what came out. And it
+  runs where the agents' commands run, so an agent running it again finds the same.
+- **B. By the terminal itself, as a process of its own.** Passes by the bounds of the commands
+  and by the classification, and what is recorded is the terminal's word for what came out, not
+  the kernel's. It would work where the workspace's shell is switched off (`shell: false`), or
+  where no workspace is used - but there the agents could not run the command either, and what
+  they are shown of it could not be checked against anything. Rejected.
 
 Recommended: A. Where the channel uses no workspace, or its storage has no shell, the command is
-refused, saying why.
+refused, saying why. A terminal configured with another storage - a container of
+`open_terminal_docker` - runs it there, where its agents run theirs.
 
 ### How it is issued
 
-- **A. A command of the channel**, a `ChannelCommand` of a component, as the groups
-  `participant`, `agent` and `channel` are (`default_commands`,
-  [COMMANDS.md](../docs/COMMANDS.md#commands-are-components)) - for instance a group `workspace`
-  with `/workspace run <command>` - and `!` a lexical short form of it in
-  `caelumora_domain::command::parse_input`, beside `/`. That follows the pattern of commands: a
-  `CommandProvider` facet, run by the `CommandExecutor`, which asks `ExecuteCommand`; the command
-  asks for the rest what `shell_in` asks. A deployment that does not want people to run commands
-  leaves the component out of `AppConfig::commands`.
-- **B. A command of the terminal** (`TerminalCommand`). It would still have to send the record
-  through the user's actor, and no other frontend could offer it. Rejected unless A does not fit.
+The terminal recognises a line beginning with `!` before it classifies it by
+`caelumora_domain::command::parse_input`, which stays as it is: it is the rule the web UI
+mirrors, and the web UI does not get `!`. The rest of the line is handed to the user's actor -
+which runs the command through the channel's shell and has its record sent, as it carries out
+and announces a command of the channel (`UserActor::execute_command`) -, so that running a
+person's command and recording it are owned by one place in the kernel, not by the terminal.
+Whether this is a method of `UserActor` beside `execute_command`, and how it is named, is to be
+decided with the interface.
 
-Recommended: A. To be decided with it:
+To be decided as well:
 
-- whether the web UI accepts `!` as well - `parse_input` is mirrored there, and a lexical rule
-  of one frontend alone would be a second rule;
 - how a message beginning with a literal `!` is written - `!!`, as `//` writes a literal `/`,
   or no escape at all;
-- the name of the command and of its group, and whether it has a short form - no name of the
-  channel's may begin, or be the beginning of, one of the terminal's.
+- how a person learns of `!` - a line of `/help` in the terminal, as it lists the terminal's own
+  commands.
 
 ### What enters the history, and what the agents see
 
@@ -112,10 +124,12 @@ The options:
   a rule which of its commands they do -, or an entry of its own carrying the command's
   `CommandState`, as the shell tool's result does.
 
-Recommended: B. Its structured form lets both frontends show a person's command as they show an
+Recommended: B. Its structured form lets the terminal show a person's command as it shows an
 agent's, by the `shell` presentation (issue
-[586](586-the-terminal-shows-a-tool-call-by-its-raw-arguments.md) for the terminal); an entry of
-its own beside `CommandExecuted` is to be weighed against a second way of recording a command.
+[586](586-the-terminal-shows-a-tool-call-by-its-raw-arguments.md)); an entry of its own beside
+`CommandExecuted` is to be weighed against a second way of recording a command. The web UI, which
+does not issue the command, has to read such an entry in a history all the same, and show it or
+pass it by - to be decided with the entry.
 
 To be decided as well: whether a run asks anyone to respond. Claude Code's does not - the model
 sees it with the next message -, and recommended is the same: it wakes nobody and asks nobody,
@@ -139,12 +153,13 @@ the agents take it in as they take in a join.
 
 A person acts in their own name and asks no approval: approvals are for agents' calls
 ([APPROVALS.md](../docs/APPROVALS.md)). So whoever may change a workspace's files in a channel
-may run any command there. With a `local` storage, whose shell runs on Caelumora's host as its
-user ([WORKSPACE.md](../docs/WORKSPACE.md#storages)), that is a shell on the host for every such
-person - which an agent has today too, but only through approved calls. The operator's means
-against it is the component's place in `AppConfig::commands`; whether more is needed - a
-storage parameter, a permission of its own beside `WriteWorkspace` - is to be decided against
-[SECURITY.md](../docs/SECURITY.md) and [PERMISSION-CHECKS.md](../docs/PERMISSION-CHECKS.md).
+may run any command there - in the terminal program the one person who runs it, on their own
+machine, which is what a bang is for. No server offers it: the REST server maps no route to it,
+so a `local` storage, whose shell runs on Caelumora's host
+([WORKSPACE.md](../docs/WORKSPACE.md#storages)), gives nobody a shell there through it. The
+kernel's operation asks what an agent's command asks (`shell_in`); no permission of its own is
+planned - to be checked against [SECURITY.md](../docs/SECURITY.md) and
+[PERMISSION-CHECKS.md](../docs/PERMISSION-CHECKS.md) with the interface.
 
 ## Done when
 
@@ -156,14 +171,19 @@ storage parameter, a permission of its own beside `WriteWorkspace` - is to be de
 - The run is recorded in the channel's history channel-wide; every agent of the channel takes
   the command, its output and how it ended into its transcript where it happened, and is not
   asked to respond by it.
-- The web UI shows the recorded run - and, if so decided, accepts `!` too.
+- The web UI does not offer it, and neither does the REST server; `parse_input` is unchanged.
 - [COMMANDS.md](../docs/COMMANDS.md), [CHANNELS.md](../docs/CHANNELS.md),
-  [AGENT-TURN.md](../docs/AGENT-TURN.md), [WORKSPACE.md](../docs/WORKSPACE.md) and
-  [WEB-UI.md](../docs/WEB-UI.md) say what a person's command is, what is recorded of it, and what
-  an agent takes in.
+  [AGENT-TURN.md](../docs/AGENT-TURN.md) and [WORKSPACE.md](../docs/WORKSPACE.md) say what a
+  person's command is, what is recorded of it, and what an agent takes in.
 
 ## History
 
 2026-11-16: Opened at the maintainer's request: in the terminal, a line beginning with `!` should
 run a shell command, as in Claude Code, and the command with its result should enter the history,
 so that the agents see it.
+
+2026-11-16: The maintainer decided that the web UI does not get `!`. So it is no command of the
+channel and no rule of `parse_input`; the terminal recognises it and hands it to the user's
+actor. Where it runs was questioned - a bang being a shortcut to the system -, and kept in the
+workspace's shell: in the terminal program that is the system, the same machine, user,
+directory and environment, with the bounds of the commands besides.
