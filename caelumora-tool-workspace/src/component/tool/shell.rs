@@ -3,10 +3,10 @@
 //! `shell`), which sees the commands started in that channel alone.
 //!
 //! A call dropped while it waits for its command - the turn cancelled or stopped (issue 161) -
-//! kills the command (`KillOnDrop`): the one thing a tool does after its future is gone. One handed
-//! back as running is the model's to end, or a user's (issue 294): `kill_command` ends it through
-//! the same shell of the channel (`WorkspaceController::shell_in`) as the REST server does for
-//! them.
+//! kills the command (`kill_on_drop`): the one thing a tool does after its future is gone. One
+//! handed back as running is the model's to end, or a user's (issue 294): `kill_command` ends it
+//! through the same shell of the channel (`WorkspaceController::shell_in`) as the REST server does
+//! for them.
 
 use super::{next, of_workspace, shell, tool, Use, UsingTool};
 use crate::component::WorkspaceParams;
@@ -15,7 +15,7 @@ use caelumora_agents::tool::{
     arguments, proposed_matcher, Tool, ToolError, ToolOutput, ToolResult,
 };
 use caelumora_agents::turn::Turn;
-use caelumora_api::terminal::{CommandState, KillOnDrop, RUN_COMMAND, SHELL_PRESENTATION};
+use caelumora_api::terminal::{kill_on_drop, CommandState, RUN_COMMAND, SHELL_PRESENTATION};
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
@@ -180,7 +180,7 @@ impl Tool for RunCommandTool {
             return Err(ToolError::InvalidParameter("'command' must name a command".to_string()));
         }
         let id = shell.start(&command).await?;
-        let guard = KillOnDrop::new(Arc::clone(&shell), id.clone());
+        let guard = kill_on_drop(Arc::clone(&shell), id.clone());
         let state = shell.output(&id, 0, wait(&self.params, wait_secs)).await;
         guard.disarm();
         Ok(standing(&self.params, &self.prompts, state?, workspace))

@@ -140,9 +140,10 @@ at, and what the future holds is released. A tool therefore:
     `JoinHandle` only detaches it), a child process is killed on drop, and work on a thread of its
     own cannot be interrupted at all;
 *   ends on drop what it started outside the process and that would go on without it, in a task
-    of its own, bounded and logged, which the drop does not await: the commands of
-    `workspace`, which live with the storage, and the prompts an image model of the backend
-    `comfyui` runs for `image_generation`, which hold its server;
+    of its own, bounded and logged, which the drop does not await
+    (`caelumora_api::guard::EndOnDrop`): the commands of `workspace`, which live with the storage,
+    and the prompts an image model of the backend `comfyui` runs for `image_generation`, which hold
+    its server;
 *   does not block: code that never reaches an `await` cannot be interrupted, and holds up the
     agent's whole task, which even the abort after the stop's grace does not end.
 

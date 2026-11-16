@@ -5,8 +5,9 @@
 //!
 //! A command is run by a call of `RUN_COMMAND`, shown as `SHELL_PRESENTATION`, answered by its
 //! `CommandState` with the end of its output (`CommandState::keeping_last`), and killed if the call
-//! is dropped while it waits (`KillOnDrop`).
+//! is dropped while it waits (`kill_on_drop`).
 
+use crate::guard::EndOnDrop;
 use async_trait::async_trait;
 use bytes::Bytes;
 use caelumora_domain::tool::ToolPresentation;
@@ -19,10 +20,7 @@ use std::path::{Component, Path};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use std::{fmt, io, mem};
-use tokio::runtime::Handle;
-use tokio::time;
-use tracing::warn;
+use std::{fmt, io};
 
 /// The name of the call that runs a command in a workspace (issue 251).
 pub const RUN_COMMAND: &str = "run_command";
@@ -209,43 +207,12 @@ impl CommandState {
     }
 }
 
-/// The command `id` of `shell`, killed if this is dropped before `disarm`: a call dropped while it
-/// waits for its command - its turn cancelled or stopped - kills the command, in a task of
-/// its own bounded by `KILL_WITHIN`, which the drop does not await. A command left running would go
-/// on writing into the workspace after the call that started it.
-pub struct KillOnDrop {
-    shell: Arc<dyn Shell>,
-    id: String,
-    armed: bool,
-}
-
-impl KillOnDrop {
-    /// Kills the command `id` of `shell` if dropped before `disarm`.
-    pub fn new(shell: Arc<dyn Shell>, id: String) -> Self {
-        Self { shell, id, armed: true }
-    }
-
-    /// Leaves the command running once this is dropped.
-    pub fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for KillOnDrop {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let Ok(runtime) = Handle::try_current() else { return };
-        let (shell, id) = (Arc::clone(&self.shell), mem::take(&mut self.id));
-        runtime.spawn(async move {
-            match time::timeout(KILL_WITHIN, shell.kill(&id, 0)).await {
-                Ok(Ok(_)) => {}
-                Ok(Err(e)) => warn!(command = %id, "The command of an interrupted call could not be killed: {e}"),
-                Err(_) => warn!(command = %id, "The command of an interrupted call was not killed in time"),
-            }
-        });
-    }
+/// Kills the command `id` of `shell` if the guard is dropped before it is disarmed: a call dropped
+/// while it waits for its command - its turn cancelled or stopped - kills the command, which would
+/// go on writing into the workspace after the call that started it.
+pub fn kill_on_drop(shell: Arc<dyn Shell>, id: String) -> EndOnDrop {
+    let what = format!("the command {id}");
+    EndOnDrop::new(what, KILL_WITHIN, async move { shell.kill(&id, 0).await.map(drop) })
 }
 
 /// Commands in a workspace (issue 251) as one scope sees them: started at once, followed by what

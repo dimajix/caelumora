@@ -9,6 +9,7 @@
 
 use bytes::Bytes;
 use caelumora_api::error::describe_request_error;
+use caelumora_api::guard::EndOnDrop;
 use caelumora_api::image::Image;
 use caelumora_domain::remote::RemoteEndpoint;
 use regex::Regex;
@@ -16,12 +17,10 @@ use reqwest::{Client, Error, RequestBuilder, Response, Url};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
-use std::mem;
 use std::sync::LazyLock;
 use std::time::Duration;
-use tokio::runtime::Handle;
 use tokio::time;
-use tracing::{debug, warn};
+use tracing::debug;
 use uuid::Uuid;
 
 /// How long a call may take unless the endpoint says otherwise: its queue, its run and its fetch.
@@ -98,7 +97,7 @@ impl ComfyUiClient {
     /// The images `graph` gives - those of the node `output`, else of every node -, each by its
     /// file's name: the whole of it - queue, run and fetch - bounded by the endpoint's timeout. A
     /// prompt queued is ended in ComfyUI if the call is dropped, the time runs out or asking for it
-    /// fails before it ended (`CancelOnDrop`).
+    /// fails before it ended (`cancel_on_drop`).
     ///
     /// # Errors
     /// `Unreachable`, `Rejected`, `Unreadable`; `Refused`, `Failed` as ComfyUI says; `NoImage`;
@@ -116,26 +115,28 @@ impl ComfyUiClient {
 
     /// `generate`, without the bound of time. The prompt is given an id of its own before it is
     /// queued, so that a call dropped as it is queued ends it too; ComfyUI may give it another,
-    /// which the guard takes then.
+    /// which a guard of its own ends then, in place of the provisional one's.
     async fn run(
         &self,
         graph: Map<String, Value>,
         output: Option<&str>,
     ) -> ComfyUiResult<Vec<Image>> {
-        let mut guard = CancelOnDrop {
-            client: self.clone(),
-            prompt_id: Uuid::new_v4().to_string(),
-            armed: true,
-        };
-        match self.queue(graph, &guard.prompt_id).await {
-            Ok(prompt_id) => guard.prompt_id = prompt_id,
+        let provisional = Uuid::new_v4().to_string();
+        let guard = cancel_on_drop(self, provisional.clone());
+        let (prompt_id, guard) = match self.queue(graph, &provisional).await {
+            // The id ComfyUI gave it, which the guard ends in place of the provisional one.
+            Ok(prompt_id) => {
+                let given = cancel_on_drop(self, prompt_id.clone());
+                guard.disarm();
+                (prompt_id, given)
+            }
             Err(refused @ ComfyUiError::Refused(_)) => {
                 guard.disarm();
                 return Err(refused);
             }
             Err(e) => return Err(e),
-        }
-        let ended = self.finished(&guard.prompt_id).await;
+        };
+        let ended = self.finished(&prompt_id).await;
         // Done or failed, nothing is left to end; where asking failed, the guard ends it.
         if matches!(ended, Ok(_) | Err(ComfyUiError::Failed(_))) {
             guard.disarm();
@@ -359,37 +360,13 @@ fn without_paths(text: &str) -> String {
     PATH.replace_all(text, "<path>").into_owned()
 }
 
-/// Ends a prompt in ComfyUI if dropped before `disarm` (issue 512): a call given up - its turn
-/// cancelled or stopped, its time run out, its server no longer answering - would hold the server
-/// for nothing. The ending runs in a task of its own, bounded and logged, which the drop does not
-/// await.
-struct CancelOnDrop {
-    client: ComfyUiClient,
-    prompt_id: String,
-    armed: bool,
-}
-
-impl CancelOnDrop {
-    fn disarm(mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for CancelOnDrop {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let Ok(runtime) = Handle::try_current() else { return };
-        let (client, prompt_id) = (self.client.clone(), mem::take(&mut self.prompt_id));
-        runtime.spawn(async move {
-            match time::timeout(CANCEL_WITHIN, client.cancel(&prompt_id)).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => warn!(prompt = %prompt_id, "The prompt of a call given up was not ended: {e}"),
-                Err(_) => warn!(prompt = %prompt_id, "The prompt of a call given up was not ended in time"),
-            }
-        });
-    }
+/// Ends the prompt `prompt_id` in ComfyUI if the guard is dropped before it is disarmed (issue
+/// 512): a call given up - its turn cancelled or stopped, its time run out, its server no longer
+/// answering - would hold the server for nothing.
+fn cancel_on_drop(client: &ComfyUiClient, prompt_id: String) -> EndOnDrop {
+    let client = client.clone();
+    let what = format!("the prompt {prompt_id} in ComfyUI");
+    EndOnDrop::new(what, CANCEL_WITHIN, async move { client.cancel(&prompt_id).await })
 }
 
 #[cfg(test)]

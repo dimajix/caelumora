@@ -200,3 +200,7 @@ UI does not get it by configuration, not by a rule of the terminal; `!` is its s
 terminal, `!!` writes a literal `!`. Its output is shown once it ended; Ctrl-C ends a command under
 way, by dropping it, and a command so ended is not recorded - accepted for now. Step 1 moves what
 the workspace's shell tool and the command share into `caelumora_api::terminal`.
+
+2026-11-16: A step 1b added at the maintainer's request, from a finding of the review of step 1:
+the guard that kills a dropped call's command and the one that ends a dropped call's prompt in
+ComfyUI were one mechanism written twice; both are `caelumora_api::guard::EndOnDrop` now.
