@@ -9,6 +9,7 @@ issue files by `issues/generate.sh`, like [INDEX.md](INDEX.md) - never edit it b
 | No. | Status | Priority | Type | Issue |
 |---|---|---|---|---|
 | [143](143-joining-a-channel-with-foreign-knowledge.md) | open | low | bug | A participant added to a channel later sees what its agents read from other sessions, whose participants never agreed to be read by them. |
+| [588](588-a-person-s-call-is-released-without-its-result.md) | open | low | bug | A message carrying a person's call (issue 587) is reclassified and fitted into a lowered channel by its own classification alone, while its tool results keep theirs, so whoever is given the message is labelled below what it read, or loses more than the result. |
 
 ## Sessions and channels
 
