@@ -11,8 +11,8 @@ use super::WEB_FETCH_KIND;
 use crate::NAMESPACE;
 use async_trait::async_trait;
 use caelumora_agents::tool::{
-    arguments, described, page_of, page_parameters, proposed_matcher, KeepWholeAbove, TextPosition,
-    Tool, ToolError, ToolOutput, ToolResult,
+    arguments, described, page_of, page_parameters, KeepWholeAbove, TextPosition, Tool, ToolError,
+    ToolOutput, ToolResult,
 };
 use caelumora_agents::turn::Turn;
 use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
@@ -176,7 +176,7 @@ impl Tool for FetchPageTool {
         let url = params.get("url").and_then(Value::as_str);
         match url.and_then(same_host) {
             Some(matcher) => matcher,
-            None => proposed_matcher(&self.description, params),
+            None => ToolMatcher::proposed(&self.description, params),
         }
     }
 }
@@ -199,6 +199,7 @@ mod tests {
     use caelumora_domain::agent::{AgentChannelState, AgentId, Personality};
     use caelumora_domain::approval::Coverage;
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolResultStatus};
     use caelumora_domain::work::Work;
     use caelumora_kernel::testing::World;
@@ -530,10 +531,8 @@ mod tests {
         let matcher = tool.matcher(&json!({ "url": "https://docs.rs/tokio" }));
         let call = |url: &str| ToolCall {
             id: None,
-            function_name: FETCH_PAGE.to_string(),
             arguments: json!({ "url": url }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(FETCH_PAGE)
         };
         for url in ["https://docs.rs/serde", "http://docs.rs:8080/?q=1", "https://docs.rs"] {
             assert_eq!(matcher.matches(&call(url)).unwrap(), Coverage::Whole, "{url}");
@@ -549,7 +548,7 @@ mod tests {
         assert_eq!(matcher.matches(&call(written)).unwrap(), Coverage::Whole, "in any case");
         assert_eq!(
             tool.matcher(&json!({ "url": "no url" })),
-            proposed_matcher(tool.description(), &json!({ "url": "no url" })),
+            ToolMatcher::proposed(tool.description(), &json!({ "url": "no url" })),
             "as the parameters tell where there is no host"
         );
     }

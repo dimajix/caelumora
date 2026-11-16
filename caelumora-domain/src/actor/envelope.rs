@@ -632,6 +632,7 @@ mod tests {
     use crate::message::testing::{id, make_message};
     use crate::message::{Message, MessageId, MessageRole};
     use crate::question::QuestionId;
+    use crate::tool::testing::make_tool_call;
     use crate::turn::GivenUpReason;
     use crate::user::UserId;
     use crate::work::TurnId;
@@ -695,10 +696,8 @@ mod tests {
         };
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "noop".to_string(),
             arguments: serde_json::json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
+            ..make_tool_call("noop")
         };
         let tool = Message {
             tool_results: vec![ToolCallResult::of(
@@ -920,12 +919,9 @@ mod tests {
                 agent_id,
                 tool_call: ToolCall {
                     id: None,
-                    function_name: "noop".to_string(),
                     arguments: serde_json::json!({}),
-                    visibility: Default::default(),
-                    presentation: Default::default(),
+                    ..make_tool_call("noop")
                 },
-                description: "test".to_string(),
             })
         };
         let withdrawn = || ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };
@@ -1002,10 +998,8 @@ mod tests {
                 agent_id,
                 tool_call: ToolCall {
                     id: None,
-                    function_name: "noop".to_string(),
                     arguments: serde_json::json!({}),
-                    visibility: Default::default(),
-                    presentation: Default::default(),
+                    ..make_tool_call("noop")
                 },
                 questions: Questions {
                     questions: vec![Question {

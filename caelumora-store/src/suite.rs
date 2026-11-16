@@ -49,6 +49,7 @@ use caelumora_domain::store::{
 };
 use caelumora_domain::template::testing::{make_channel_template, make_template};
 use caelumora_domain::template::{ChannelTemplate, SessionTemplate, SessionTemplateId};
+use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::tool::{ToolCall, ToolSet, ToolVisibility};
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_domain::turn::TurnState;
@@ -1427,10 +1428,9 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
     let speaker = ActorId::Agent(agent);
     let hidden = ToolCall {
         id: Some("1".to_string()),
-        function_name: "look".to_string(),
         arguments: serde_json::json!({}),
         visibility: ToolVisibility::HIDDEN,
-        presentation: Default::default(),
+        ..make_tool_call("look")
     };
     let answer = Message {
         sender_id: speaker,

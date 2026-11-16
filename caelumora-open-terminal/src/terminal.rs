@@ -39,10 +39,10 @@ use crate::wire;
 use async_trait::async_trait;
 use caelumora_api::error::describe_request_error;
 use caelumora_api::terminal::{
-    ByteStream, CommandState, FileEntry, Shell, Terminal, TerminalError, TerminalReader,
-    TerminalResult, WorkspacePath,
+    ByteStream, FileEntry, Shell, Terminal, TerminalError, TerminalReader, TerminalResult,
+    WorkspacePath,
 };
-use caelumora_domain::workspace::{CommandStatus, WorkspaceId};
+use caelumora_domain::workspace::{CommandState, CommandStatus, WorkspaceId};
 use caelumora_kernel::terminal::{CommandKey, Commands, Kept};
 use chrono::{DateTime, Utc};
 use futures::{StreamExt, TryStreamExt};

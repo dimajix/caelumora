@@ -358,16 +358,14 @@ mod tests {
     use caelumora_domain::approval::ToolMatcher;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::question::{Addressee, Question, Questions};
-    use caelumora_domain::tool::ToolVisibility;
+    use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::user::UserId;
 
     fn call(name: &str) -> ToolCall {
         ToolCall {
             id: Some(name.to_string()),
-            function_name: name.to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(name)
         }
     }
 
@@ -403,9 +401,8 @@ mod tests {
             ToolCallState::approved(call("run")),
             ToolCallState::pending(
                 call("ask"),
-                String::new(),
                 false,
-                Some(ToolMatcher::exact(&call("ask"))),
+                Some(ToolMatcher::proposed(&make_tool_description("ask"), &call("ask").arguments)),
                 None,
             ),
         ]);
@@ -474,9 +471,11 @@ mod tests {
         let requests = view(&mut turn).register(vec![
             ToolCallState::pending(
                 call("approved"),
-                String::new(),
                 false,
-                Some(ToolMatcher::exact(&call("approved"))),
+                Some(ToolMatcher::proposed(
+                    &make_tool_description("approved"),
+                    &call("approved").arguments,
+                )),
                 Some(questions_of(alice)),
             ),
             ToolCallState::asking(call("asking"), questions_of(alice)),
@@ -640,13 +639,7 @@ mod tests {
         let requests = view(&mut turn).register(vec![
             ToolCallState::asking(call("both"), both),
             ToolCallState::asking(call("alice"), questions_of(alice)),
-            ToolCallState::pending(
-                call("approving"),
-                String::new(),
-                false,
-                None,
-                Some(questions_of(alice)),
-            ),
+            ToolCallState::pending(call("approving"), false, None, Some(questions_of(alice))),
             ToolCallState::asking(call("bob"), questions_of(bob)),
         ]);
         let [ActorEvent::ApprovalRequested(approval), ActorEvent::QuestionRequested(_), ActorEvent::QuestionRequested(alone), ActorEvent::QuestionRequested(_)] =

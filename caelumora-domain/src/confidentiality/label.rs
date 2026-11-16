@@ -59,6 +59,7 @@ mod tests {
     use crate::confidentiality::Confidentiality::*;
     use crate::content::testing::make_content_ref;
     use crate::content::ContentRef;
+    use crate::tool::testing::make_tool_call;
     use crate::tool::{ToolCall, ToolCallResult};
 
     #[test]
@@ -84,10 +85,8 @@ mod tests {
         let result = ToolCallResult::of(
             &ToolCall {
                 id: Some("1".to_string()),
-                function_name: "noop".to_string(),
                 arguments: serde_json::json!({}),
-                visibility: Default::default(),
-                presentation: Default::default(),
+                ..make_tool_call("noop")
             },
             Default::default(),
             "secret".to_string(),

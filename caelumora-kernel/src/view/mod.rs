@@ -2185,9 +2185,9 @@ mod tests {
                 pending[0].id,
                 pending[0].agent_id,
                 pending[0].channel_id,
-                pending[0].description.as_str()
+                pending[0].tool_call.description.as_deref()
             ),
-            (waiting.expect("the call waits"), helper.id, channel.id, "call delete")
+            (waiting.expect("the call waits"), helper.id, channel.id, Some("call delete"))
         );
         assert!(manager.running(session.id).is_none(), "read without starting the session");
     }

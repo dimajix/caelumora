@@ -4,6 +4,13 @@
 //! 169): its files carry no label of their own. Where the files lie is the storage the
 //! workspace names - configured, not stored - and its files are no part of
 //! the document: the place is the record.
+//!
+//! Where a command of a workspace's shell stands, and what it printed, is `command`'s; here the
+//! workspace itself.
+
+mod command;
+
+pub use command::{CommandState, CommandStatus};
 
 use crate::actor::ActorId;
 use crate::confidentiality::Classification;
@@ -239,17 +246,23 @@ pub enum WorkspaceChoice {
     New { storage: String, classification: Classification },
 }
 
-/// Where a command of a workspace's shell stands (issue 294).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CommandStatus {
-    Running,
-    /// Ended by itself, with its exit code if it has one.
-    Completed,
-    /// Ended because it was killed.
-    Killed,
-    /// Could not be run, or ended by a signal it was not sent.
-    Failed,
+/// Commands of a workspace's shell for the tests of this crate and of others.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing {
+    use super::{CommandState, CommandStatus};
+
+    /// The command `c1`, standing as `status` without an exit code, having printed two lines, none
+    /// dropped.
+    pub fn make_command_state(status: CommandStatus) -> CommandState {
+        CommandState {
+            id: "c1".to_string(),
+            status,
+            exit_code: None,
+            output: "a\nb\n".to_string(),
+            next_offset: 4,
+            truncated: false,
+        }
+    }
 }
 
 #[cfg(test)]

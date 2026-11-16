@@ -29,7 +29,8 @@ use caelumora_domain::scope::Scope;
 use caelumora_domain::security::Grant;
 use caelumora_domain::session::testing::bare_session;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::tool::{ToolCall, ToolDescription, ToolVisibility};
+use caelumora_domain::tool::testing::make_tool_call;
+use caelumora_domain::tool::{ToolCall, ToolDescription};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
 use caelumora_domain::work::Work;
@@ -334,10 +335,8 @@ pub fn calling(function: &str, arguments: Value) -> Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
-            function_name: function.to_string(),
             arguments,
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(function)
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     }

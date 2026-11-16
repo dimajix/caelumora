@@ -67,6 +67,7 @@ use caelumora_domain::session::SessionId;
 use caelumora_domain::snapshot::PersonalitySnapshot;
 use caelumora_domain::store::StoreError;
 use caelumora_domain::template::{ScopeTemplate, SessionTemplateId, WorkspaceTemplate};
+use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
 use caelumora_domain::tool::{ToolDescription, ToolParameters};
 use caelumora_domain::turn::GivenUpReason;
 use caelumora_domain::user::UserId;
@@ -1223,16 +1224,8 @@ impl Asking {
     /// The tool, in a set of its own.
     fn tools(ask: Addressee, sensitive: bool) -> FixedTools {
         let description = ToolDescription {
-            name: "asking".to_string(),
             description: "asks before it runs".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("asking")
         };
         FixedTools::new(
             "asks before it runs".to_string(),
@@ -1288,16 +1281,14 @@ async fn with_a_call_asking_whom(
     asker: fn(&World) -> UserId,
 ) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>, QuestionRequest, ChannelWatch) {
     use caelumora_domain::message::{Message, MessageRole};
-    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::ToolCall;
 
     let call = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
-            function_name: "asking".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("asking")
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
@@ -1555,16 +1546,13 @@ impl Commands {
     /// The tool, in a set of its own.
     fn tools() -> FixedTools {
         let description = ToolDescription {
-            name: "run".to_string(),
             description: "runs a command".to_string(),
             parameters: ToolParameters::object(
                 [("command", ToolParameters::shell().described("The command line"))],
                 ["command"],
             ),
             requires_approval: true,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("run")
         };
         FixedTools::new("runs commands".to_string(), vec![Arc::new(Self { description })])
     }
@@ -1973,16 +1961,8 @@ impl Outward {
     /// The tool, in a set of its own.
     fn tools() -> FixedTools {
         let description = ToolDescription {
-            name: "send_out".to_string(),
             description: "sends out".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("send_out")
         };
         FixedTools {
             destination: Some(Classification::PUBLIC),
@@ -2014,16 +1994,14 @@ impl Tool for Outward {
 #[tokio::test]
 async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_there() {
     use caelumora_domain::message::{Message, MessageRole};
-    use caelumora_domain::tool::{ToolCall, ToolResultStatus, ToolVisibility};
+    use caelumora_domain::tool::{ToolCall, ToolResultStatus};
 
     let call = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
-            function_name: "send_out".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("send_out")
         }],
         ..Message::new(Classification::general(Confidentiality::Internal))
     };
@@ -2122,7 +2100,7 @@ async fn a_tool_whose_remote_side_is_not_cleared_for_the_channel_is_not_offered_
 #[tokio::test]
 async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
     use caelumora_domain::message::{Message, MessageRole};
-    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::ToolCall;
 
     let internal = Classification::general(Confidentiality::Internal);
     let relayed = Message {
@@ -2134,10 +2112,8 @@ async fn an_agent_asked_by_an_agent_acts_for_its_own_owner() {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
-            function_name: "echo".to_string(),
             arguments: serde_json::json!({ "message": "it" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("echo")
         }],
         ..Message::new(internal)
     };
@@ -2218,16 +2194,14 @@ async fn with_a_reader_of(
     in_side: bool,
 ) -> (World, Arc<SessionLoop>, Arc<ChannelLoop>) {
     use caelumora_domain::message::{Message, MessageRole};
-    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::ToolCall;
 
     let call = Message {
         role: MessageRole::Assistant,
         tool_calls: vec![ToolCall {
             id: Some("1".to_string()),
-            function_name: "read_history".to_string(),
             arguments: serde_json::json!({ "channel": "side" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("read_history")
         }],
         ..Message::new(Classification::PUBLIC)
     };

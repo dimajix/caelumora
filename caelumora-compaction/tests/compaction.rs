@@ -22,7 +22,8 @@ use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::HistoryEntry;
 use caelumora_domain::message::Message;
-use caelumora_domain::tool::{ToolCall, ToolVisibility};
+use caelumora_domain::tool::testing::make_tool_call;
+use caelumora_domain::tool::ToolCall;
 use caelumora_kernel::channel::ChannelLoop;
 use caelumora_kernel::session::SessionLoop;
 use caelumora_kernel::testing::{shown, World};
@@ -90,10 +91,8 @@ async fn napping_with(
 {
     let nap = ToolCall {
         id: Some("1".to_string()),
-        function_name: "sleep".to_string(),
         arguments: json!({ "seconds": 0 }),
-        visibility: ToolVisibility::SHOWN,
-        presentation: Default::default(),
+        ..make_tool_call("sleep")
     };
     let mut script = vec![
         measured(100, saying("Hi.")),

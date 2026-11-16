@@ -63,10 +63,7 @@ fn tools(prompts: &PromptTexts) -> Result<FixedTools, PromptError> {
             ToolDescription {
                 name: name.to_string(),
                 description: String::new(),
-                parameters: ToolParameters::object(
-                    Vec::<(String, ToolParameters)>::new(),
-                    Vec::<String>::new(),
-                ),
+                parameters: ToolParameters::none(),
                 requires_approval: false,
                 visibility: ToolVisibility::SHOWN,
                 classification: None,

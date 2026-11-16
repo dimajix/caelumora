@@ -633,10 +633,10 @@ mod tests {
     use bytes::Bytes;
     use caelumora_domain::confidentiality::{Compartment, Confidentiality};
     use caelumora_domain::digest;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult};
     use caelumora_domain::user::UserId;
     use caelumora_security::SecurityContext;
-    use serde_json::Value;
     use std::fs;
     use std::slice;
     use tokio::time;
@@ -986,13 +986,7 @@ mod tests {
             files: drawn,
             shown: vec![image.clone()],
             ..ToolCallResult::of(
-                &ToolCall {
-                    id: None,
-                    function_name: "view_attachment".to_string(),
-                    arguments: Value::Null,
-                    visibility: Default::default(),
-                    presentation: Default::default(),
-                },
+                &ToolCall { id: None, ..make_tool_call("view_attachment") },
                 Default::default(),
                 String::new(),
                 main.classification.clone(),

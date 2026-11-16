@@ -5,7 +5,7 @@
 
 use super::words::{
     attachment, error_word, how_to_answer, how_to_approve, missed, offered_words, outcome,
-    question_rows, what_is_asked, Arguments, EXPLICIT,
+    question_rows, to_decide, what_is_asked, Called, EXPLICIT,
 };
 use super::{Screen, Typed};
 use crate::asking::{Asked, Asking};
@@ -219,8 +219,8 @@ fn lines_of(printed: &Printed) -> Vec<String> {
             vec![line]
         }
         Printed::Answering { sender } => vec![format!("{sender} is answering.")],
-        Printed::ToolCall { sender, call } => vec![call_line(sender, call)],
-        Printed::ToolResult(result) => vec![result_line(result)],
+        Printed::ToolCall { sender, call, .. } => vec![call_line(sender, call)],
+        Printed::ToolResult { result, .. } => vec![result_line(result)],
         Printed::Approval(request) => approval_lines(request),
         Printed::Questions { request, put_to_user } => questions_lines(request, *put_to_user),
         Printed::Notice(notice) | Printed::Plain(notice) => vec![notice.clone()],
@@ -244,22 +244,24 @@ fn said_line(said: &Said) -> String {
 /// The line that tells that `sender` calls the tool of `call`, and with what.
 fn call_line(sender: &str, call: &ToolCall) -> String {
     let tool = &call.function_name;
-    match Arguments::of(call) {
-        Arguments::None => format!("{sender} calls {tool}"),
-        Arguments::NotShown => format!("{sender} calls {tool}, its arguments not shown"),
-        Arguments::Shown(arguments) => format!("{sender} calls {tool} with {arguments}"),
+    match Called::of(call).on_one_line() {
+        Called::Described(description) => format!("{sender} calls {tool}: {description}"),
+        Called::Bare => format!("{sender} calls {tool}"),
+        Called::NotShown => format!("{sender} calls {tool}, its arguments not shown"),
+        Called::With(arguments) => format!("{sender} calls {tool} with {arguments}"),
     }
 }
 
 /// The line that tells how a call of the tool of `result` ended.
 fn result_line(result: &ToolCallResult) -> String {
-    format!("{} {}", result.tool_name, outcome(result))
+    let (told, _) = outcome(result);
+    format!("{} {told}", result.tool_name)
 }
 
 /// The lines that show `request` for approval, and how to answer it.
 fn approval_lines(request: &ApprovalRequest) -> Vec<String> {
     let id = request.id.0;
-    let mut lines = vec![format!("Approval requested, id {id}:"), request.description.clone()];
+    let mut lines = vec![format!("Approval requested, id {id}:"), to_decide(&request.tool_call)];
     if request.explicit {
         lines.push(EXPLICIT.to_string());
     }
@@ -316,6 +318,7 @@ pub(crate) mod testing {
 mod tests {
     use super::*;
     use crate::printed::{ErrorKind, Words};
+    use caelumora_api::terminal::SHELL_PRESENTATION;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::approval::testing::make_approval_request;
@@ -331,6 +334,8 @@ mod tests {
     use caelumora_domain::tool::{ToolResultStatus, ToolVisibility};
     use caelumora_domain::user::UserId;
     use caelumora_domain::value::name::Name;
+    use caelumora_domain::workspace::testing::make_command_state;
+    use caelumora_domain::workspace::{CommandState, CommandStatus};
     use serde_json::json;
     use serde_json::Value;
 
@@ -429,9 +434,10 @@ mod tests {
         assert!(!questions(&sensitive, false).join("\n").contains("Sensitive"), "not the user's");
     }
 
-    /// A tool called is written with its arguments in one line, shortened, or as not shown.
+    /// A tool called is written by what its tool says it does, or else with its arguments in one
+    /// line, shortened, or as not shown.
     #[test]
-    fn a_tool_called_is_written_with_its_arguments() {
+    fn a_tool_called_is_written_by_its_description_or_its_arguments() {
         let call = |arguments| ToolCall { arguments, ..make_tool_call("terminal") };
         let called = |arguments| call_line("helper", &call(arguments));
         assert_eq!(called(Value::Null), "helper calls terminal, its arguments not shown");
@@ -442,6 +448,28 @@ mod tests {
         );
         let long = called(json!({"text": "ä".repeat(500)}));
         assert!(long.ends_with('…') && long.chars().count() < 200, "{long}");
+
+        let described = ToolCall {
+            description: Some("Run in the workspace:\nls -la".to_string()),
+            ..call(json!({"command": "ls -la"}))
+        };
+        assert_eq!(
+            call_line("helper", &described),
+            "helper calls terminal: Run in the workspace:⏎ls -la",
+            "by what its tool says it does, on one line"
+        );
+    }
+
+    /// Whoever decides on a call is told what its tool says it does, whole, or else the tool and
+    /// its arguments (issue 586).
+    #[test]
+    fn a_call_to_decide_is_told_by_its_description_or_its_arguments() {
+        let call = ToolCall { arguments: json!({"command": "ls"}), ..make_tool_call("terminal") };
+        assert_eq!(to_decide(&call), r#"call terminal with {"command":"ls"}"#);
+        assert_eq!(to_decide(&ToolCall { arguments: json!({}), ..call.clone() }), "call terminal");
+        let described =
+            ToolCall { description: Some("Run in the workspace:\nls".to_string()), ..call };
+        assert_eq!(to_decide(&described), "Run in the workspace:\nls", "whole");
     }
 
     /// How a call ended is written by its first line and how many follow, or by why it did not.
@@ -463,6 +491,34 @@ mod tests {
             "terminal failed: no such file"
         );
         assert_eq!(ended(ToolResultStatus::Denied, "denied by a user"), "terminal was denied");
+    }
+
+    /// A result presented `shell` ends by where its command stands and how much it printed; one
+    /// that failed, or is no command's state, as any other.
+    #[test]
+    fn a_shell_result_ends_by_where_its_command_stands() {
+        let call = ToolCall { presentation: SHELL_PRESENTATION, ..make_tool_call("run_command") };
+        let ended = |status, content: &str| {
+            let classification = Default::default();
+            result_line(&ToolCallResult::of(&call, status, content.to_string(), classification))
+        };
+        let written = |state: &CommandState| serde_json::to_string(state).unwrap();
+        let completed =
+            CommandState { exit_code: Some(1), ..make_command_state(CommandStatus::Completed) };
+        assert_eq!(
+            ended(ToolResultStatus::Ok, &written(&completed)),
+            "run_command exit code 1, 2 lines"
+        );
+        let running = written(&make_command_state(CommandStatus::Running));
+        assert_eq!(
+            ended(ToolResultStatus::Ok, &running),
+            "run_command still running as c1, 2 lines"
+        );
+        assert_eq!(
+            ended(ToolResultStatus::Failed, "no shell here"),
+            "run_command failed: no shell here"
+        );
+        assert_eq!(ended(ToolResultStatus::Ok, "plain"), "run_command answered: plain");
     }
 
     /// A result not shown in the channel is told as such, not as an empty one.

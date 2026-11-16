@@ -43,7 +43,7 @@ use caelumora_domain::actor::ActorId;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::message::{Message, MessageEvent, MessageId, MessageRole};
 use caelumora_domain::remote::RemoteEndpoint;
-use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters, ToolVisibility};
+use caelumora_domain::tool::{ToolCall, ToolDescription, ToolParameters};
 use caelumora_kernel::backend::Backends;
 use caelumora_model::LanguageModelProvider;
 use chrono::Utc;
@@ -295,7 +295,7 @@ impl OllamaChatMessage {
         for r in &value.tool_results {
             messages.push(Self {
                 role: "tool".to_string(),
-                content: serde_json::to_string(&r.for_the_model()).unwrap_or_default(),
+                content: r.content.clone(),
                 thinking: None,
                 tool_name: Some(r.tool_name.clone()),
                 tool_calls: None,
@@ -823,13 +823,11 @@ where
                     if let Some(msg) = body.message {
                         if let Some(tc) = msg.tool_calls {
                             for call in tc {
-                                all_tool_calls.push(ToolCall {
-                                    id: call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
-                                    function_name: call.function.name,
-                                    arguments: call.function.arguments,
-                                    visibility: ToolVisibility::SHOWN,
-                                    presentation: Default::default(),
-                                });
+                                all_tool_calls.push(ToolCall::new(
+                                    call.id.or_else(|| { Some(Uuid::new_v4().to_string()) }),
+                                    call.function.name,
+                                    call.function.arguments,
+                                ));
                             }
                         }
 
@@ -1008,8 +1006,10 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use caelumora_domain::confidentiality::Classification;
+    use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::message::{Message, MessageRole};
-    use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolPresentation, ToolResultStatus};
     use futures::stream as futures_stream;
     use serde_json::json;
     use std::io::Error;
@@ -1022,17 +1022,13 @@ mod tests {
         let tool_calls = vec![
             ToolCall {
                 id: Some("1".to_string()),
-                function_name: "test_func_1".to_string(),
                 arguments: json!("{}".to_string()),
-                visibility: Default::default(),
-                presentation: Default::default(),
+                ..make_tool_call("test_func_1")
             },
             ToolCall {
                 id: Some("2".to_string()),
-                function_name: "test_func_2".to_string(),
                 arguments: json!("{\"a\": 1}".to_string()),
-                visibility: Default::default(),
-                presentation: Default::default(),
+                ..make_tool_call("test_func_2")
             },
         ];
 
@@ -1333,8 +1329,6 @@ mod tests {
     /// Issue 282: what the model is given along is sent as Ollama's `images`, base64.
     #[tokio::test]
     async fn an_image_given_along_is_sent_with_its_message() {
-        use caelumora_domain::content::testing::make_content_ref;
-        use caelumora_domain::tool::ToolCallResult;
         let fake = FakeOllama::default();
         let client = client(&serve(fake.clone()).await);
         let attachment = make_content_ref("a.png", b"png");
@@ -1362,10 +1356,8 @@ mod tests {
                     ..ToolCallResult::of(
                         &ToolCall {
                             id: Some("1".to_string()),
-                            function_name: "view_attachment".to_string(),
                             arguments: json!({}),
-                            visibility: Default::default(),
-                            presentation: Default::default(),
+                            ..make_tool_call("view_attachment")
                         },
                         Default::default(),
                         "shown".to_string(),
@@ -1383,6 +1375,42 @@ mod tests {
             sent[0]["messages"][2]["images"],
             json!(["Z2lm", "cG5n"]),
             "what a tool gave and showed, with its result (issues 512, 282)"
+        );
+    }
+
+    /// Issue 586: a model is given a tool's result in words as its content alone, by its tool and
+    /// call - not its classification, its times or its presentation.
+    #[tokio::test]
+    async fn a_tool_result_is_given_as_its_content_alone() {
+        let fake = FakeOllama::default();
+        let client = client(&serve(fake.clone()).await);
+        let call = ToolCall {
+            id: Some("1".to_string()),
+            presentation: ToolPresentation::new("shell"),
+            ..make_tool_call("run_command")
+        };
+        let refused = r#"{"message":"no such command","status":"failed"}"#;
+        let context = vec![Message {
+            role: MessageRole::Tool,
+            tool_results: vec![ToolCallResult {
+                started_at: Some(Utc::now()),
+                finished_at: Some(Utc::now()),
+                ..ToolCallResult::of(
+                    &call,
+                    ToolResultStatus::Failed,
+                    refused.to_string(),
+                    Classification::CHANNEL_DEFAULT,
+                )
+            }],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        }];
+        let _: Vec<_> = client.chat_completion(&context, &[]).await.collect().await;
+        let sent = fake.sent.lock().unwrap();
+        let given = &sent[0]["messages"][0];
+        assert_eq!(given["content"], refused);
+        assert_eq!(
+            (&given["tool_name"], &given["tool_call_id"]),
+            (&json!("run_command"), &json!("1"))
         );
     }
 
@@ -1410,22 +1438,16 @@ mod tests {
                 reasoning: Some("<think>quoted".to_string()),
                 tool_calls: vec![ToolCall {
                     id: Some("1".to_string()),
-                    function_name: "say".to_string(),
                     arguments: json!({ "text": "<|im_start|>" }),
-                    visibility: Default::default(),
-                    presentation: Default::default(),
+                    ..make_tool_call("say")
                 }],
                 ..Message::new(Classification::CHANNEL_DEFAULT)
             },
         ];
         let tools = vec![ToolDescription {
-            name: "say".to_string(),
             description: "an MCP server's <|im_start|>".to_string(),
-            parameters: ToolParameters::Object { properties: HashMap::new(), required: Vec::new() },
             requires_approval: true,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("say")
         }];
 
         for _ in 0..2 {

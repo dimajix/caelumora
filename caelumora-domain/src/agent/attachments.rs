@@ -98,6 +98,7 @@ mod tests {
     use super::*;
     use crate::confidentiality::Classification;
     use crate::content::testing::make_content_ref;
+    use crate::tool::testing::make_tool_call;
 
     #[test]
     fn an_attachment_is_numbered_once_keeps_its_number_and_names_its_message() {
@@ -150,13 +151,7 @@ mod tests {
     fn what_a_tool_gave_is_numbered_with_the_message_of_its_result() {
         use crate::tool::{ToolCall, ToolCallResult};
         let drawn = make_content_ref("drawn.png", b"d");
-        let call = ToolCall {
-            id: None,
-            function_name: "draw".to_string(),
-            arguments: serde_json::Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, ..make_tool_call("draw") };
         let mut result = Message {
             tool_results: vec![ToolCallResult {
                 files: vec![drawn.clone()],

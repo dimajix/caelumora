@@ -99,12 +99,12 @@ impl Tool for ReplaceInFileTool {
         Ok(of_file(turn, workspace, &at, Some(digest), value))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Replace { path, old_text, new_text, replace_all } = arguments(params)?;
         let how = if replace_all { "every occurrence" } else { "once" };
-        Ok(format!(
+        Ok(Some(format!(
             "Replace in '{path}' in the workspace, {how}:\n--- old\n{old_text}\n+++ new\n{new_text}"
-        ))
+        )))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {

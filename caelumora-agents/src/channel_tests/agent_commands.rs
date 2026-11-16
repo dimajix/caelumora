@@ -5,6 +5,7 @@ use super::*;
 use crate::tool::turn_end::TURN_END_KIND;
 use caelumora_api::command::CommandError;
 use caelumora_domain::chain::Node;
+use caelumora_domain::tool::testing::make_tool_call;
 use caelumora_domain::transcript::TranscriptEntry;
 use caelumora_kernel::command::{CommandContext, CommandReply};
 use std::sync::Mutex;
@@ -20,13 +21,11 @@ async fn with_a_marking_agent(asleep: bool) -> Stuck {
 async fn with_a_marking_agent_under(access_policy: Arc<dyn AccessPolicy>, asleep: bool) -> Stuck {
     use caelumora_domain::component::{ComponentConfig, ComponentDescriptor};
     use caelumora_domain::message::MessageRole;
-    use caelumora_domain::tool::{ToolCall, ToolVisibility};
+    use caelumora_domain::tool::ToolCall;
     let stop = ToolCall {
         id: Some("1".to_string()),
-        function_name: "stop".to_string(),
         arguments: serde_json::json!({}),
-        visibility: ToolVisibility::SHOWN,
-        presentation: Default::default(),
+        ..make_tool_call("stop")
     };
     let hi = Message {
         role: MessageRole::Assistant,

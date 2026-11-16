@@ -90,22 +90,12 @@ mod tests {
     use crate::testing;
     use crate::turn::Turn;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
-    use caelumora_domain::tool::{ToolDescription, ToolParameters};
+    use caelumora_domain::tool::testing::make_tool_description;
+    use caelumora_domain::tool::ToolDescription;
     use caelumora_domain::work::Work;
 
     fn tool(name: &str) -> ToolDescription {
-        ToolDescription {
-            name: name.to_string(),
-            description: "does something".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
-        }
+        ToolDescription { description: "does something".to_string(), ..make_tool_description(name) }
     }
 
     /// What the provider says in a turn begun with `sets`.

@@ -1018,6 +1018,7 @@ mod tests {
     use caelumora_domain::content::ContentRef;
     use caelumora_domain::history::{HistoryEntry, Recipients};
     use caelumora_domain::message::{Message, MessageId, MessageRole};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolContent};
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;
@@ -1705,13 +1706,7 @@ mod tests {
         assert_eq!(channel.history().await.len(), 1, "not above the channel");
 
         // A tool result is a part of its own.
-        let call = ToolCall {
-            id: None,
-            function_name: "f".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, arguments: serde_json::json!({}), ..make_tool_call("f") };
         let result = ToolCallResult::of(
             &call,
             Default::default(),
@@ -2744,10 +2739,9 @@ mod tests {
         let agent = ActorId::Agent(AgentId::new());
         let hidden = ToolCall {
             id: Some("1".to_string()),
-            function_name: "look".to_string(),
             arguments: serde_json::json!({}),
             visibility: ToolVisibility::HIDDEN,
-            presentation: Default::default(),
+            ..make_tool_call("look")
         };
         let thinking = Message {
             sender_id: agent,
@@ -2907,13 +2901,7 @@ mod tests {
             Err(Rejection::Invalid),
             "not his for a message naming her"
         );
-        let call = ToolCall {
-            id: None,
-            function_name: "f".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, arguments: serde_json::json!({}), ..make_tool_call("f") };
         let giving = |file: ContentRef| {
             let result = ToolCallResult {
                 files: vec![file],

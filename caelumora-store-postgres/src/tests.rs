@@ -26,7 +26,8 @@ use caelumora_domain::role::RoleId;
 use caelumora_domain::scope::Scope;
 use caelumora_domain::security::{Grant, SecurityAttributes, Subject};
 use caelumora_domain::store::{Revision, StoreError};
-use caelumora_domain::tool::{ToolCall, ToolCallState, ToolSet, ToolVisibility};
+use caelumora_domain::tool::testing::make_tool_call;
+use caelumora_domain::tool::{ToolCall, ToolCallState, ToolSet};
 use caelumora_domain::user::UserId;
 use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::work::Work;
@@ -337,22 +338,11 @@ async fn what_an_agent_waiting_for_an_approval_stored_survives_a_restart() {
     let system =
         state.keep_prompt(MessageRole::System, "system".to_string(), PromptAt::Start, None);
     state.transcript.push(said("look it up"));
-    let call = ToolCall {
-        id: Some("1".to_string()),
-        function_name: "search".to_string(),
-        arguments: json!({}),
-        visibility: ToolVisibility::SHOWN,
-        presentation: Default::default(),
-    };
+    let call =
+        ToolCall { id: Some("1".to_string()), arguments: json!({}), ..make_tool_call("search") };
     let turn = state.turn.as_mut().expect("a turn");
     turn.work.context.frame.prompts.push(system.clone());
-    turn.tool_calls.push(ToolCallState::pending(
-        call,
-        "searches the web".to_string(),
-        false,
-        None,
-        None,
-    ));
+    turn.tool_calls.push(ToolCallState::pending(call, false, None, None));
     let asked: Vec<_> = turn.pending_approvals().into_iter().map(|request| request.id).collect();
     assert_eq!(asked.len(), 1, "waits for an approval");
 

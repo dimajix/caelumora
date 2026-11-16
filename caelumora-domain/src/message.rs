@@ -11,7 +11,6 @@ use crate::tool::{ToolCall, ToolCallResult};
 use crate::work::TurnId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::iter;
 
@@ -212,15 +211,14 @@ impl Message {
         self.context_frame.map(|frame| (self.context_transcript, frame))
     }
 
-    /// The message as its sender publishes it to a channel (issues 54,
-    /// 133): every part only its owner sees (`Visibility::Owner`) is
-    /// withheld - a tool call or result whose call is the owner's is left
-    /// out, a call whose arguments are has them set to `null`, a result
-    /// that is is emptied - with the record of the answers to its
-    /// questions and what it gave and showed its model - and such reasoning
-    /// is dropped, and so is what it was produced from and what its tools
-    /// read or wrote (`ToolCallResult::knowledge`, issue 538), which whoever
-    /// may read what the agent saw reads. `None` if nothing is left to show.
+    /// The message as its sender publishes it to a channel (issues 54, 133): every part only its
+    /// owner sees (`Visibility::Owner`) is withheld - a tool call or result whose call is the
+    /// owner's is left out, a call whose arguments are has them withheld with the description made
+    /// of them (`ToolCall::withhold_arguments`), a result that is is emptied - with the record of
+    /// the answers to its questions and what it gave and showed its model - and such reasoning is
+    /// dropped, and so is what it was produced from and what its tools read or wrote
+    /// (`ToolCallResult::knowledge`, issue 538), which whoever may read what the agent saw reads.
+    /// `None` if nothing is left to show.
     pub fn published(&self) -> Option<Message> {
         let mut message = Message { context_transcript: None, context_frame: None, ..self.clone() };
         if !message.reasoning_visibility.is_channel() {
@@ -229,7 +227,7 @@ impl Message {
         message.tool_calls.retain(|c| c.visibility.call.is_channel());
         for call in &mut message.tool_calls {
             if !call.visibility.arguments.is_channel() {
-                call.arguments = Value::Null;
+                call.withhold_arguments();
             }
         }
         message.tool_results.retain(|r| r.visibility.call.is_channel());
@@ -251,8 +249,10 @@ impl Message {
     }
 
     /// What a model is given of the message where what it said may not be given (issue 258): which
-    /// tools it called and how they ended, without its content, reasoning, attachments, arguments,
-    /// what the calls returned or what they read, classified `classification`. For a turn given up
+    /// tools it called and how they ended - a result's status as its content
+    /// (`ToolResultStatus::as_content`) -, without its content, reasoning, attachments, arguments
+    /// and the descriptions made of them, what the calls returned or what they read, classified
+    /// `classification`. For a turn given up
     /// because its channel was lowered below it (issue 141), whose content its owner never
     /// released. `None` if nothing is left: no call, no result.
     pub fn names_only(&self, classification: &Classification) -> Option<Message> {
@@ -269,10 +269,10 @@ impl Message {
             ..self.clone()
         };
         for call in &mut message.tool_calls {
-            call.arguments = Value::Null;
+            call.withhold_arguments();
         }
         for result in &mut message.tool_results {
-            result.content.clear();
+            result.content = result.status.as_content(None);
             result.answers = None;
             result.files.clear();
             result.shown.clear();
@@ -509,7 +509,8 @@ pub fn executed_calls<'a>(
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing {
     use super::*;
-    use crate::tool::{ToolResultStatus, ToolVisibility};
+    use crate::tool::testing::make_tool_call;
+    use crate::tool::ToolResultStatus;
     use uuid::Uuid;
 
     /// A message from a user with id `id`.
@@ -528,13 +529,7 @@ pub mod testing {
     /// A message with id `id` of the result of a call of `generate_image`, shown to the channel,
     /// that gave its model `files` (issue 512): seen, not said - no attachment of the message.
     pub fn make_generated(id: MessageId, files: Vec<ContentRef>) -> Message {
-        let call = ToolCall {
-            id: Some("1".to_string()),
-            function_name: "generate_image".to_string(),
-            arguments: Value::Null,
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: Some("1".to_string()), ..make_tool_call("generate_image") };
         let result = ToolCallResult {
             files,
             ..ToolCallResult::of(
@@ -570,9 +565,11 @@ pub(crate) mod tests {
     use crate::context::{KnowledgeRef, KnowledgeSource};
     use crate::query::testing::meets_exactly_its_equals;
     use crate::session::SessionId;
+    use crate::tool::testing::make_tool_call;
     use crate::tool::ToolVisibility;
     use crate::user::UserId;
     use chrono::Duration;
+    use serde_json::Value;
 
     #[test]
     fn the_share_of_the_context_held_is_known_only_with_its_size_and_at_most_all_of_it() {
@@ -602,10 +599,10 @@ pub(crate) mod tests {
     fn call(id: &str, visibility: ToolVisibility) -> ToolCall {
         ToolCall {
             id: Some(id.to_string()),
-            function_name: "f".to_string(),
             arguments: serde_json::json!({"text": "secret"}),
             visibility,
-            presentation: Default::default(),
+            description: Some("Write 'secret'".to_string()),
+            ..make_tool_call("f")
         }
     }
 
@@ -617,6 +614,7 @@ pub(crate) mod tests {
             content: "secret".to_string(),
             status: Default::default(),
             visibility,
+            presentation: Default::default(),
             classification: Classification::CHANNEL_DEFAULT,
             started_at: Some(started_at),
             finished_at: Some(started_at + Duration::milliseconds(250)),
@@ -703,11 +701,6 @@ pub(crate) mod tests {
         assert!(
             given.tool_results.iter().all(|r| r.files.is_empty() && r.shown.is_empty()),
             "how the calls ended, not what they gave"
-        );
-        let for_the_model = results.tool_results[0].for_the_model();
-        assert!(
-            for_the_model.files.is_empty() && for_the_model.shown.is_empty(),
-            "a model is given them as what they are, not as text"
         );
     }
 
@@ -851,8 +844,10 @@ pub(crate) mod tests {
             "public as it is"
         );
         assert_eq!(published.tool_calls[1].arguments, Value::Null, "call-only without arguments");
+        assert_eq!(published.tool_calls[1].description, None, "nor the description made of them");
         assert_eq!(
-            published.tool_calls[2].arguments, message.tool_calls[3].arguments,
+            (&published.tool_calls[2].arguments, &published.tool_calls[2].description),
+            (&message.tool_calls[3].arguments, &message.tool_calls[3].description),
             "with its arguments where only its result is the owner's"
         );
         assert_eq!(published.id, message.id, "the same message, for the context panel to find");
@@ -901,11 +896,6 @@ pub(crate) mod tests {
             .collect();
         assert_eq!(contents, [("secret", true), ("", false), ("", false)], "the hidden result is gone, the call-only one and the one without its result empty, the record of its answers with it");
         assert!(published.tool_results.iter().all(|r| r.approval.len() == 1), "who approved the call stays with it, its result withheld or not: every user was told (issue 419)");
-        let for_the_model = results.tool_results[0].for_the_model();
-        assert!(
-            for_the_model.answers.is_none() && for_the_model.approval.is_empty(),
-            "a model is never given the record"
-        );
         let ran = |r: &ToolCallResult| (r.started_at, r.finished_at);
         assert_eq!(
             ran(&published.tool_results[1]),
@@ -971,10 +961,9 @@ pub(crate) mod tests {
         let secret = Classification::general(Confidentiality::Confidential);
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "read".to_string(),
             arguments: serde_json::json!({ "file": "plans" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            description: Some("Read 'plans'".to_string()),
+            ..make_tool_call("read")
         };
         let calling = Message {
             content: Some("let me look".to_string()),
@@ -1000,13 +989,18 @@ pub(crate) mod tests {
             (None, None, Classification::PUBLIC)
         );
         assert_eq!(
-            (given.tool_calls[0].function_name.as_str(), &given.tool_calls[0].arguments),
-            ("read", &Value::Null)
+            (
+                given.tool_calls[0].function_name.as_str(),
+                &given.tool_calls[0].arguments,
+                &given.tool_calls[0].description
+            ),
+            ("read", &Value::Null, &None),
+            "its tool alone"
         );
         let given = answered.names_only(&Classification::PUBLIC).expect("a result");
         assert_eq!(
             (given.tool_results[0].status, given.tool_results[0].content.as_str()),
-            (ToolResultStatus::Ok, ""),
+            (ToolResultStatus::Ok, r#"{"status":"ok"}"#),
             "how it ended, not what it returned"
         );
         assert_eq!(given.tool_results[0].classification, Classification::PUBLIC);

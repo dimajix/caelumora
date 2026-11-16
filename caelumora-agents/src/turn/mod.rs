@@ -428,6 +428,7 @@ mod tests {
     };
     use caelumora_domain::message::MessageId;
     use caelumora_domain::message::MessageRole;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
     use tokio::sync::mpsc;
 
@@ -497,7 +498,7 @@ mod tests {
     #[tokio::test]
     async fn what_is_put_aside_goes_with_the_next_answer() {
         use caelumora_domain::content::testing::make_content_ref;
-        use caelumora_domain::tool::{ToolCall, ToolVisibility};
+        use caelumora_domain::tool::ToolCall;
         use caelumora_kernel::testing::Discard;
         let mut state = AgentChannelState::default();
         state.begin_turn(Work::new(
@@ -517,10 +518,8 @@ mod tests {
         };
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "attach".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::default(),
-            presentation: Default::default(),
+            ..make_tool_call("attach")
         };
         turn.say(said(MessageRole::Assistant, true), &Discard).await.unwrap();
         turn.say(
@@ -559,10 +558,9 @@ mod tests {
 
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "write_private_note".to_string(),
             arguments: serde_json::json!({"text": "secret"}),
             visibility: ToolVisibility::HIDDEN,
-            presentation: Default::default(),
+            ..make_tool_call("write_private_note")
         };
         let thinking = Message {
             role: MessageRole::Assistant,

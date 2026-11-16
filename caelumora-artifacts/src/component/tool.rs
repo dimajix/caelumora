@@ -126,13 +126,14 @@ impl Tool for PublishArtifactTool {
         &self.description
     }
 
-    /// What an approver reads: which file is published as what.
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    /// What the call does, as an approver reads it and its channel shows it: which file is
+    /// published as what.
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Publish { path, name, .. } = arguments(params)?;
-        Ok(match name {
+        Ok(Some(match name {
             Some(name) => format!("Publish '{path}' in the workspace as the artifact '{name}'"),
             None => format!("Publish '{path}' in the workspace as an artifact"),
-        })
+        }))
     }
 
     async fn execute(

@@ -10,7 +10,7 @@ import {BookOpen, CheckCircle2, Download, EyeOff, Globe, ImageIcon, Package, Pap
 import type {ApprovalDecision, ArtifactResponse, Question, ToolCall, ToolPresentation, ToolResult, ToolResultStatus, ToolVisibility} from '../types';
 import {api, type WorkspaceFiles} from '../api';
 import {ApiRequestError} from '../errors';
-import {commandResult, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandResult} from '../messages';
+import {commandState, formatArguments, formatSize, formatTimestamp, ownerOnly, type CommandState} from '../messages';
 import {AnswersRecord, ChoiceRows, QuestionHeading} from './QuestionView';
 import {MarkdownMessage} from './MarkdownMessage';
 import {AttachmentList} from './AttachmentList';
@@ -71,9 +71,15 @@ export interface ToolCallContentProps {
   result?: ToolResult;
 }
 
-/** The default presentation: the call's arguments and its result, as they are. */
+/**
+ * The default presentation: what its tool says the call does, its arguments and its result, as
+ * they are.
+ */
 const DefaultToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => (
   <>
+    {call.description && (
+      <div className="text-[11px] whitespace-pre-wrap mb-1">{call.description}</div>
+    )}
     <div className="flex items-start gap-2 mb-1">
       <Terminal size={12} className="mt-0.5 opacity-50" />
       {call.arguments === null ? (
@@ -112,8 +118,8 @@ function argumentsObject(args: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-/** Where a command stands, as its result says. */
-function commandStatus(command: CommandResult): string {
+/** The words that tell where `command` stands, as its result says. */
+function commandStatusLabel(command: CommandState): string {
   switch (command.status) {
     case 'running': return `Still running as ${command.id}`;
     case 'killed': return 'Killed';
@@ -131,7 +137,7 @@ const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
   const args = argumentsObject(call.arguments);
   const command = typeof args?.command === 'string' ? args.command : null;
   const followed = typeof args?.id === 'string' ? args.id : null;
-  const answered = result && commandResult(result);
+  const answered = result && commandState(result);
   const failed = answered && (answered.status === 'failed' || (answered.exit_code ?? 0) !== 0);
   return (
     <>
@@ -157,7 +163,7 @@ const ShellToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) =>
             </pre>
           )}
           <div className="mt-1 flex items-center gap-1 text-[11px]">
-            <span className={failed ? 'text-amber-600 dark:text-amber-400' : 'opacity-60'}>{commandStatus(answered)}</span>
+            <span className={failed ? 'text-amber-600 dark:text-amber-400' : 'opacity-60'}>{commandStatusLabel(answered)}</span>
             {answered.status === 'running' && onKillCommand && !endedCommands?.has(answered.id) && (
               <button
                 type="button"

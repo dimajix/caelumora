@@ -43,7 +43,8 @@ bytes.workspace = true
 # (`message::testing`, `content::testing`, `channel::testing`,
 # `session::testing`, `user::testing`, `template::testing`, `agent::testing`),
 # the classifications and compartments they write (`confidentiality::testing`),
-# the approvals and questions agents ask (`approval::testing`, `question::testing`)
+# the approvals and questions agents ask (`approval::testing`, `question::testing`),
+# the commands of a workspace's shell (`workspace::testing`)
 # and the actors and attributes they share an entity with (`security::testing`).
 test-support = []
 

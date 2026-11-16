@@ -159,7 +159,8 @@ mod tests {
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::message::MessageRole;
-    use caelumora_domain::tool::{ToolCall, ToolCallResult};
+    use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_kernel::testing::Discard;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
     use chrono::Utc;
@@ -171,14 +172,11 @@ mod tests {
     /// the call ran if `ran`, and a note was staged.
     fn a_turn_that_called<'a>(state: &'a mut AgentChannelState, tool: &str, ran: bool) -> Turn<'a> {
         use caelumora_domain::note::{NoteChange, NoteId};
-        use caelumora_domain::tool::{ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), state);
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: tool.to_string(),
             arguments: serde_json::json!({ "to": "bob" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(tool)
         };
         let mut result = ToolCallResult::of(
             &call,
@@ -276,7 +274,11 @@ mod tests {
             ("send_mail", &Value::Null),
             "only which tool it called"
         );
-        assert!(given[2].tool_results[0].content.is_empty(), "nothing of what it returned");
+        assert_eq!(
+            given[2].tool_results[0].content,
+            ToolResultStatus::Ok.as_content(None),
+            "how it ended, nothing of what it returned"
+        );
         assert_eq!(given[1].classification, lowered, "as the channel is now");
         let told = given.last().and_then(|m| m.content.clone()).unwrap_or_default();
         assert!(told.contains("withheld"), "{told}");
@@ -291,14 +293,11 @@ mod tests {
     /// in one step: `send_mail` ran, `delete` waits for its approval.
     fn a_turn_with_an_open_step(state: &mut AgentChannelState) -> Turn<'_> {
         use caelumora_domain::approval::ToolMatcher;
-        use caelumora_domain::tool::{ToolCallState, ToolResultStatus, ToolVisibility};
         let mut turn = Turn::begun(AgentId::default(), state);
         let call = |id: &str, name: &str| ToolCall {
             id: Some(id.to_string()),
-            function_name: name.to_string(),
             arguments: serde_json::json!({ "to": "bob" }),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call(name)
         };
         let calls = vec![call("1", "send_mail"), call("2", "delete")];
         turn.push_message(Message {
@@ -311,9 +310,11 @@ mod tests {
             ToolCallState::approved(calls[0].clone()),
             ToolCallState::pending(
                 calls[1].clone(),
-                String::new(),
                 false,
-                Some(ToolMatcher::exact(&calls[1])),
+                Some(ToolMatcher::proposed(
+                    &make_tool_description(&calls[1].function_name),
+                    &calls[1].arguments,
+                )),
                 None,
             ),
         ];
@@ -332,7 +333,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_cancelled_turn_is_taken_over_with_every_call_answered() {
-        use caelumora_domain::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
         let turn = a_turn_with_an_open_step(&mut state);
         let (tx, mut rx) = mpsc::channel(8);
@@ -380,7 +380,6 @@ mod tests {
 
     #[tokio::test]
     async fn a_turn_given_up_with_an_open_step_answers_it() {
-        use caelumora_domain::tool::ToolResultStatus;
         let mut state = a_state_with("mail bob, then delete");
         let turn = a_turn_with_an_open_step(&mut state);
         turn.give_up(GivenUpReason::Failed { message: "boom".to_string() }, &Discard).await;

@@ -6,13 +6,12 @@ use anyhow::Error;
 use async_trait::async_trait;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_api::terminal::{
-    kill_on_drop, CommandState, Shell, TerminalResult, MAX_OUTPUT_BYTES, RUN_COMMAND,
-    SHELL_PRESENTATION,
+    kill_on_drop, Shell, TerminalResult, MAX_OUTPUT_BYTES, RUN_COMMAND, SHELL_PRESENTATION,
 };
 use caelumora_domain::command::{CommandDescription, CommandOutput, CommandParameter};
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
 use caelumora_domain::value::command_name::CommandName;
-use caelumora_domain::workspace::CommandStatus;
+use caelumora_domain::workspace::{CommandState, CommandStatus};
 use chrono::Utc;
 use serde_json::json;
 use std::sync::Arc;
@@ -88,11 +87,12 @@ impl ChannelCommand for RunCommand {
         let state = state.map_err(|e| failed(e.into()))?;
         let ended = ended(&state);
         let call = ToolCall {
-            id: Some(Uuid::new_v4().to_string()),
-            function_name: RUN_COMMAND.to_string(),
-            arguments: json!({ "command": args }),
-            visibility: Default::default(),
             presentation: SHELL_PRESENTATION,
+            ..ToolCall::new(
+                Some(Uuid::new_v4().to_string()),
+                RUN_COMMAND,
+                json!({ "command": args }),
+            )
         };
         let content = json!(state).to_string();
         let result = ToolCallResult {

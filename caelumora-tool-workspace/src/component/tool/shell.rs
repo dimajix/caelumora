@@ -11,17 +11,15 @@
 use super::{next, of_workspace, shell, tool, Use, UsingTool};
 use crate::component::WorkspaceParams;
 use async_trait::async_trait;
-use caelumora_agents::tool::{
-    arguments, proposed_matcher, Tool, ToolError, ToolOutput, ToolResult,
-};
+use caelumora_agents::tool::{arguments, Tool, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_api::terminal::{kill_on_drop, CommandState, RUN_COMMAND, SHELL_PRESENTATION};
+use caelumora_api::terminal::{kill_on_drop, RUN_COMMAND, SHELL_PRESENTATION};
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{ToolDescription, ToolParameters};
-use caelumora_domain::workspace::CommandStatus;
 use caelumora_domain::workspace::Workspace;
+use caelumora_domain::workspace::{CommandState, CommandStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -38,7 +36,10 @@ fn wait(params: &WorkspaceParams, asked: Option<f64>) -> Duration {
     Duration::from_secs_f64(asked.unwrap_or(most).clamp(0.0, most))
 }
 
-/// `state` as the model is given it: the output cut from the front to what a result may hold.
+/// `state` as the model is given it, by `params` and the texts `prompts`: the output cut from the
+/// front to what a result may hold, and for a command still running how to go on with it
+/// (`next`): a JSON object whose keys stand sorted, as `serde_json` keeps them, and which is read
+/// back as the `CommandState` it holds (`command_state`).
 fn result(params: &WorkspaceParams, prompts: &PromptTexts, state: CommandState) -> Value {
     let running = state.status == CommandStatus::Running;
     let mut result = json!(state.keeping_last(params.max_output_bytes));
@@ -134,10 +135,10 @@ pub(super) fn tools(
 }
 
 /// The calls like one of the shell tool `tool` with `params`, as its parameters tell
-/// (`proposed_matcher`): for a command, those beginning with its first words, however long a call
-/// waits for it.
+/// (`ToolMatcher::proposed`): for a command, those beginning with its first words, however long a
+/// call waits for it.
 fn followed_alike(tool: &ToolDescription, params: &Value) -> ToolMatcher {
-    let mut matcher = proposed_matcher(tool, params);
+    let mut matcher = ToolMatcher::proposed(tool, params);
     matcher.arguments.remove("wait_secs");
     matcher
 }
@@ -186,10 +187,10 @@ impl Tool for RunCommandTool {
         Ok(standing(&self.params, &self.prompts, state?, workspace))
     }
 
-    /// What an approver reads: the command, whole.
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    /// What the call does, as an approver reads it and its channel shows it: the command, whole.
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Run { command, .. } = arguments(params)?;
-        Ok(format!("Run in the workspace:\n{command}"))
+        Ok(Some(format!("Run in the workspace:\n{command}")))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {
@@ -223,8 +224,8 @@ impl Tool for CommandOutputTool {
         Ok(standing(&self.params, &self.prompts, state, workspace))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
-        arguments::<Follow>(params).map(|follow| format!("Follow command {}", follow.id))
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+        arguments::<Follow>(params).map(|follow| Some(format!("Follow command {}", follow.id)))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {
@@ -258,8 +259,8 @@ impl Tool for KillCommandTool {
         Ok(standing(&self.params, &self.prompts, state, workspace))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
-        arguments::<Follow>(params).map(|follow| format!("Kill command {}", follow.id))
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+        arguments::<Follow>(params).map(|follow| Some(format!("Kill command {}", follow.id)))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {
@@ -274,14 +275,29 @@ mod tests {
     use crate::component::WorkspaceComponent;
     use caelumora_agents::testing::{tool_named, workspace_turn};
     use caelumora_agents::tool::ToolProvider;
+    use caelumora_api::terminal::command_state;
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::approval::ArgumentMatcher;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolPresentation, ToolResultStatus};
+    use caelumora_domain::workspace::testing::make_command_state;
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use std::collections::BTreeMap;
     use tokio::time;
 
     fn the_component() -> WorkspaceComponent {
         component(json!({ "max_wait_secs": 10 }))
+    }
+
+    /// The result of a call presented `shell` that gave its model `value`, ended as `status`.
+    fn ended(value: &Value, status: ToolResultStatus) -> ToolCallResult {
+        let call = ToolCall { presentation: SHELL_PRESENTATION, ..make_tool_call(RUN_COMMAND) };
+        ToolCallResult::of(&call, status, value.to_string(), Default::default())
+    }
+
+    /// The state of the command a call answered `value` of, read back as a frontend reads it.
+    fn read_back(value: &Value) -> CommandState {
+        command_state(&ended(value, ToolResultStatus::Ok)).expect("a command's state")
     }
 
     #[tokio::test]
@@ -297,15 +313,40 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(ran.value["status"], "completed");
-        assert_eq!(ran.value["exit_code"], 0);
-        assert_eq!(ran.value["output"], "draft\nnotes.md\n");
+        assert!(
+            ran.value.to_string().starts_with(r#"{"exit_code":0,"id":"#),
+            "the model is given its keys sorted: {}",
+            ran.value
+        );
+        let state = read_back(&ran.value);
+        assert_eq!(
+            (state.status, state.exit_code, state.output.as_str()),
+            (CommandStatus::Completed, Some(0), "draft\nnotes.md\n")
+        );
         assert_eq!(
             ran.classification.as_ref(),
             Some(&world.workspace.classification),
             "classified as the workspace"
         );
         assert!(world.dir().join("notes.md").is_file(), "written into the workspace");
+    }
+
+    /// A result is read back as a command's state only of a call presented `shell` that answered
+    /// with one.
+    #[test]
+    fn a_result_is_a_command_s_state_only_of_a_shell_call_that_answered_one() {
+        let state = make_command_state(CommandStatus::Completed);
+        let written = json!(state);
+        assert_eq!(command_state(&ended(&written, ToolResultStatus::Ok)), Some(state));
+        let failed = ended(&written, ToolResultStatus::Failed);
+        assert_eq!(command_state(&failed), None, "a call that did not answer");
+        let presented_otherwise = ToolCallResult {
+            presentation: ToolPresentation::DEFAULT,
+            ..ended(&written, ToolResultStatus::Ok)
+        };
+        assert_eq!(command_state(&presented_otherwise), None, "a call presented otherwise");
+        let plain = ended(&json!("done"), ToolResultStatus::Ok);
+        assert_eq!(command_state(&plain), None, "an answer that is no command's state");
     }
 
     #[tokio::test]
@@ -322,25 +363,30 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(running.value["status"], "running");
-        assert!(running.value.get("exit_code").is_none(), "none while it runs");
         assert!(running.value["next"].as_str().unwrap().contains(COMMAND_OUTPUT));
-        let id = running.value["id"].clone();
-        let offset = running.value["next_offset"].clone();
+        assert!(running.value.get("exit_code").is_none(), "no exit code: no key");
+        let begun = read_back(&running.value);
+        assert_eq!((begun.status, begun.exit_code), (CommandStatus::Running, None));
         let followed = tool_named(&tool, COMMAND_OUTPUT)
-            .execute(&json!({ "id": id, "offset": offset, "wait_secs": 0.1 }), None, &mut turn)
+            .execute(
+                &json!({ "id": begun.id, "offset": begun.next_offset, "wait_secs": 0.1 }),
+                None,
+                &mut turn,
+            )
             .await
             .unwrap();
+        let followed = read_back(&followed.value);
         assert_eq!(
-            (followed.value["status"].as_str(), followed.value["output"].as_str()),
-            (Some("running"), Some("")),
+            (followed.status, followed.output.as_str()),
+            (CommandStatus::Running, ""),
             "nothing new"
         );
         let killed = tool_named(&tool, KILL_COMMAND)
-            .execute(&json!({ "id": id }), None, &mut turn)
+            .execute(&json!({ "id": begun.id }), None, &mut turn)
             .await
             .unwrap();
-        assert_eq!(killed.value["status"], "killed");
+        let killed = read_back(&killed.value);
+        assert_eq!(killed.status, CommandStatus::Killed);
         let unknown = tool_named(&tool, COMMAND_OUTPUT)
             .execute(&json!({ "id": "nonesuch" }), None, &mut turn)
             .await;
@@ -374,6 +420,7 @@ mod tests {
         assert_eq!(
             tool_named(&tool, RUN_COMMAND)
                 .describe(&json!({ "command": "rm -rf build && make" }))
+                .unwrap()
                 .unwrap(),
             "Run in the workspace:\nrm -rf build && make"
         );

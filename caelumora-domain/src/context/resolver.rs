@@ -559,11 +559,11 @@ mod tests {
     use crate::message::TokenUsage;
     use crate::prompt_catalogue::testing::kernel_catalogue;
     use crate::prompt_catalogue::{PromptVariant, KERNEL_PROMPTS};
+    use crate::tool::testing::{make_tool_call, make_tool_description};
     use crate::tool::{ToolCall, ToolCallResult, ToolDescription, ToolResultStatus};
     use crate::turn::TurnState;
     use crate::user::UserId;
     use crate::work::Work;
-    use serde_json::Value;
     use std::fs;
 
     fn contents(items: &[ContextItem]) -> Vec<String> {
@@ -637,13 +637,7 @@ mod tests {
             attachments,
             ..text("look")
         };
-        let call = ToolCall {
-            id: None,
-            function_name: "draw".to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, ..make_tool_call("draw") };
         let lowered = TurnId::new();
         let mut state = AgentChannelState::default();
         state.transcript.push(said(vec![image("first.png")]));
@@ -732,13 +726,7 @@ mod tests {
             attachments: vec![attachment.clone()],
             ..text("look")
         };
-        let call = ToolCall {
-            id: None,
-            function_name: "view_attachment".to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, ..make_tool_call("view_attachment") };
         let mut state = AgentChannelState::default();
         state.transcript.push(said(&old));
         state.transcript.push(said(&later));
@@ -865,10 +853,8 @@ mod tests {
         let alice = ActorId::User(UserId::new());
         let call = ToolCall {
             id: Some("c1".to_string()),
-            function_name: "run_command".to_string(),
             arguments: serde_json::json!({ "command": "ls" }),
-            visibility: Default::default(),
-            presentation: Default::default(),
+            ..make_tool_call("run_command")
         };
         let result = ToolCallResult::of(
             &call,
@@ -1410,16 +1396,13 @@ mod tests {
         use crate::tool::ToolParameters;
         let mut state = AgentChannelState::default();
         let echo = ToolDescription {
-            name: "echo".to_string(),
             description: "echoes".to_string(),
             parameters: ToolParameters::object(
                 [("text", ToolParameters::string().described("what"))],
                 ["text"],
             ),
             requires_approval: true,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
+            ..make_tool_description("echo")
         };
         let offered = vec![ToolSet::new("echo", "echoes", vec![echo])];
         let digest = digest::tool_sets(&offered);

@@ -180,8 +180,8 @@ impl Tool for GrepFilesTool {
         Ok(of_file(turn, workspace, &at, None, found))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Grep { pattern, path, .. } = arguments(params)?;
-        Ok(format!("Search the workspace's '{}' for:\n{pattern}", path.unwrap_or_default()))
+        Ok(Some(format!("Search the workspace's '{}' for:\n{pattern}", path.unwrap_or_default())))
     }
 }

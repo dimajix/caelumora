@@ -556,6 +556,7 @@ mod tests {
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::history::Audience;
     use caelumora_domain::message::{MessageId, MessageRole};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolCall;
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::UserId;
@@ -1020,13 +1021,7 @@ mod tests {
         for moderator in answering_moderators() {
             add_agents(&moderator);
             let user = ActorId::User(UserId::new());
-            let call = ToolCall {
-                id: Some("c1".to_string()),
-                function_name: "run_command".to_string(),
-                arguments: Value::Null,
-                visibility: Default::default(),
-                presentation: Default::default(),
-            };
+            let call = ToolCall { id: Some("c1".to_string()), ..make_tool_call("run_command") };
             let made = Message {
                 content: None,
                 tool_calls: vec![call],
@@ -1495,13 +1490,8 @@ mod tests {
     /// delivers it (issue 418): the moderator decides nothing of it.
     #[tokio::test]
     async fn every_moderator_lets_what_asks_nobody_go_where_every_channel_delivers_it() {
-        let call = ToolCall {
-            id: None,
-            function_name: "noop".to_string(),
-            arguments: serde_json::json!({}),
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call =
+            ToolCall { id: None, arguments: serde_json::json!({}), ..make_tool_call("noop") };
         for moderator in moderators() {
             let agents = add_agents(&moderator);
             let user = ActorId::User(UserId::new());
@@ -1564,7 +1554,6 @@ mod tests {
                         channel_id: Default::default(),
                         agent_id: AgentId::new(),
                         tool_call: call.clone(),
-                        description: "test".to_string(),
                     }),
                 ),
                 (user, ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() }),
@@ -1679,14 +1668,12 @@ mod tests {
 
     #[tokio::test]
     async fn an_answer_of_nothing_to_hear_asks_nobody() {
-        use caelumora_domain::tool::{ToolCallResult, ToolVisibility};
+        use caelumora_domain::tool::ToolCallResult;
         let classified = Classification::CHANNEL_DEFAULT;
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "noop".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            ..make_tool_call("noop")
         };
         let result =
             ToolCallResult::of(&call, Default::default(), "done".to_string(), classified.clone());

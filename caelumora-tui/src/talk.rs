@@ -1434,7 +1434,7 @@ mod tests {
         let channel = session_loop.channels().into_iter().next().expect("its first channel");
 
         assert_eq!(typed(&mut talk, "!echo hello").await, ["The command runs: Ctrl-C ends it"]);
-        let until = ["exited with 0", "calls run_command", "run_command answered"];
+        let until = ["exited with 0", "calls run_command", "run_command exit code 0, 1 line"];
         let printed = printed_until(&mut talk, &until).await;
 
         let call = printed.iter().find(|line| line.contains("calls run_command"));

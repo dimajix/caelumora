@@ -499,6 +499,7 @@ mod tests {
     use caelumora_domain::security::{Grant, Subject};
     use caelumora_domain::session::testing::bare_session;
     use caelumora_domain::session::SessionId;
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolCall;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::{User, UserId};
@@ -600,14 +601,7 @@ mod tests {
                 session_id: self.channel.session_id(),
                 channel_id: self.channel.id(),
                 agent_id: self.agent,
-                tool_call: ToolCall {
-                    id: Some("call_1".to_string()),
-                    function_name: "test_tool".to_string(),
-                    arguments: json!({}),
-                    visibility: Default::default(),
-                    presentation: Default::default(),
-                },
-                description: "test".to_string(),
+                tool_call: ToolCall { arguments: json!({}), ..make_tool_call("test_tool") },
             }
         }
 

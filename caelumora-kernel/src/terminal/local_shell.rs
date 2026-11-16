@@ -20,9 +20,9 @@
 use super::commands::{locked, Commands, Kept};
 use super::CommandKey;
 use async_trait::async_trait;
-use caelumora_api::terminal::{CommandState, Shell, TerminalError, TerminalResult};
-use caelumora_domain::workspace::CommandStatus;
+use caelumora_api::terminal::{Shell, TerminalError, TerminalResult};
 use caelumora_domain::workspace::WorkspaceId;
+use caelumora_domain::workspace::{CommandState, CommandStatus};
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::Pid;
 use serde::Deserialize;

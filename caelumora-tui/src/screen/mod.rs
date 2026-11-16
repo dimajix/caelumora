@@ -1,5 +1,11 @@
 //! How the terminal shows what it prints and reads what the user types: one way of drawing per
 //! implementation of [`Screen`] (issue 569).
+//!
+//! Both tell a tool call by what its tool says it does, else by its arguments, and how it ended
+//! by its result's presentation - a command by where it stands and how much it printed - (`words`,
+//! issue 586); `full` keeps a call with its result as one entry, folded, which unfolds to what the
+//! presentation shows of it - for a command, what it printed -, and `line` prints no more than the
+//! two lines.
 
 mod full;
 mod line;

@@ -411,10 +411,10 @@ mod tests {
     use crate::agent::AgentId;
     use crate::context::testing::text;
     use crate::prompt_catalogue::testing::kernel_catalogue;
+    use crate::tool::testing::make_tool_call;
     use crate::tool::{ToolCall, ToolCallResult};
     use crate::user::UserId;
     use chrono::{TimeZone as _, Utc};
-    use serde_json::Value;
 
     #[test]
     fn reasoning_is_given_back_as_the_models_rule_says() {
@@ -494,13 +494,7 @@ mod tests {
             "its own messages are noted, though not marked"
         );
 
-        let call = ToolCall {
-            id: None,
-            function_name: "draw".to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: None, ..make_tool_call("draw") };
         let drew = Message {
             sender_id: agent,
             role: MessageRole::Tool,

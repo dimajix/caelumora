@@ -9,24 +9,35 @@ person, is in [APPROVALS.md](APPROVALS.md); how components are built in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 Every tool is an object of its own, a `Tool` (issue 584): it holds its `ToolDescription`, carries
-out a call (`execute`), and says what approvers are shown for a call (`describe`), which calls are
-like a given one (`matcher`, for a rule derived from it), and what a call asks a person before it
-runs (`questions`). A component gives an agent tools through the facet `ToolProvider`, which hands
-out its tools as objects and answers for them as a set: what they are for, which of them it offers
-in a turn and why it offers none (`offered`, in general terms, never with the error), and where
-their arguments go (`destination`). A provider that decides none of this beyond a description and a
-destination is `FixedTools`, the tools its component made as it was built; one whose offer depends
-on its tools holds each with what it is offered by, never choosing among them by their names. A
-parameter written in a language - a bash command line, `ToolParameters::shell` - says so; the model
-is not told of it, but the default `matcher` derives from it a rule on the words a command begins
-with ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two
-calls alike says better than the default.
+out a call (`execute`), and says what a call does in words for a person (`describe`), which calls
+are like a given one (`matcher`, for a rule derived from it), and what a call asks a person before
+it runs (`questions`). A component gives an agent tools through the facet `ToolProvider`, which
+hands out its tools as objects and answers for them as a set: what they are for, which of them it
+offers in a turn and why it offers none (`offered`, in general terms, never with the error), and
+where their arguments go (`destination`). A provider that decides none of this beyond a description
+and a destination is `FixedTools`, the tools its component made as it was built; one whose offer
+depends on its tools holds each with what it is offered by, never choosing among them by their
+names. A parameter written in a language - a bash command line, `ToolParameters::shell` - says so;
+the model is not told of it, but the default `matcher` derives from it a rule on the words a command
+begins with ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes
+two calls alike says better than the default.
+
+What a call does, as its tool describes it, is the call's: the agent stamps it on the call as the
+executor admits it (`ToolCall::description`, issue 586), whoever decides on the call is shown it,
+and a frontend shows it with the call as its presentation allows (the web UI's, in
+[WEB-UI.md](WEB-UI.md)). A tool that says nothing of a call beyond its arguments gives none, and the
+call is shown by them; nor has a call answered before it was described. Made of the arguments, it
+is withheld with them (`ToolCall::withhold_arguments`).
 
 A `ToolDescription` declares a tool's name, description and parameters, whether it requires
 approval, its visibility, optionally the classification of its results, and its presentation: how
 frontends show its calls, so that they need not recognise a tool by its name. The presentation is
-display only - what a call does, and whether it waits for anyone, does not depend on it. Approval
-and classification are decided per tool by its provider, not by the personality.
+display only - what a call does, and whether it waits for anyone, does not depend on it. A call's
+result carries it too (`ToolCallResult::presentation`, issue 586), stamped from the call as its
+visibility is, so that a frontend shows a result it has not joined to its call, as the terminal's
+line-wise view does. A call is shown by its own presentation until its result comes, and then by
+the result's; so far no tool gives its result another, and the web UI reads the call's alone.
+Approval and classification are decided per tool by its provider, not by the personality.
 
 What a tool, its parameters and its tool set say to the model are texts of the prompt catalogue
 (issue 57, see [AGENT-TURN.md](AGENT-TURN.md#the-prompt-catalogue)), kept apart from the tool's
@@ -152,7 +163,9 @@ and whether the remote side stops depends on it, unless the tool ends it as abov
 
 ### Results
 
-Every call ends with a result the model can act on.
+Every call ends with a result the model can act on: its `content`, which is all the model is given
+of the `ToolCallResult` in words, by its tool and its call - besides what the tool gave and showed
+it, given as what it is.
 
 *   A successful call's result is the tool's output.
 *   Every other outcome is `{"status": ..., "message": ...}`, whose message says what happened and
@@ -399,12 +412,12 @@ and their approval defaults in [COMPONENTS.md](COMPONENTS.md#the-components); wh
 of each - its description and arguments - is the tool's own, in the code. How frontends show the
 calls of a tool is said by its `ToolPresentation`: a name, defined as a constant next to the tools
 shown so (`SKILL_PRESENTATION`, …) with what it shows of their arguments and results - the shell's,
-`SHELL_PRESENTATION`, with how a command is called and answered in `caelumora_api::terminal`; a
-frontend shows those it knows, and every other as `default` (issue 323). Two are any tool's, the
-type's own: `default`, and `quiet`, for a call that ends at once and whose effect shows
-elsewhere - not shown while it runs and where it succeeded, as `default` where it did not. Notes,
-private notes and agent memory are described in [MEMORY.md](MEMORY.md), skills in
-[SKILLS.md](SKILLS.md).
+`SHELL_PRESENTATION`, with how a command is called, answered and read back (`command_state`) in
+`caelumora_api::terminal`; a frontend shows those it knows, and every other as `default` (issue
+323). Two are any tool's, the type's own: `default`, and `quiet`, for a call that ends at once and
+whose effect shows elsewhere - not shown while it runs and where it succeeded, as `default` where
+it did not. Notes, private notes and agent memory are described in [MEMORY.md](MEMORY.md), skills
+in [SKILLS.md](SKILLS.md).
 
 `stop`, `bye` and `silence` end the turn with the current tool step: after `stop` and `bye` the
 agent sleeps, after `silence` it stays idle without an answer. `create_plan` submits a multi-step
@@ -471,10 +484,13 @@ with `publish_artifact`.
 **Commands.** A command runs in the workspace's directory, every one anew - a `cd` does not carry
 over - and is seen only from the channel it was started in. A call follows its command for
 `wait_secs`; one still running then is handed back with its id, and the model follows it with
-`command_output` or ends it with `kill_command`. The result is classified as the workspace. The
-approver reads the command whole, and a rule derived from an approved command covers the commands
-beginning with its first two words, however long a call waits. Following and ending a command need
-no approval, since only a command that was approved is followed or ended.
+`command_output` or ends it with `kill_command`. What a call answers - what the command printed
+since the offset asked for, cut from the front to what a result holds, where it stands and its exit
+code - is a `CommandState`, which a frontend reads back to show a call presented `shell`. The
+result is classified as the workspace. The approver reads the command whole, and a rule derived
+from an approved command covers the commands beginning with its first two words, however long a
+call waits. Following and ending a command need no approval, since only a command that was approved
+is followed or ended.
 
 A call dropped while it waits for its command - the turn cancelled or stopped - kills the command,
 in a task of its own, bounded and logged, that the drop does not await, as a tool ends what it

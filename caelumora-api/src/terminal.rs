@@ -10,11 +10,10 @@
 use crate::guard::EndOnDrop;
 use async_trait::async_trait;
 use bytes::Bytes;
-use caelumora_domain::tool::ToolPresentation;
-use caelumora_domain::workspace::CommandStatus;
+use caelumora_domain::tool::{ToolCallResult, ToolPresentation};
+use caelumora_domain::workspace::CommandState;
 use chrono::{DateTime, Utc};
 use futures::Stream;
-use serde::Serialize;
 use std::fmt::Debug;
 use std::path::{Component, Path};
 use std::pin::Pin;
@@ -28,6 +27,14 @@ pub const RUN_COMMAND: &str = "run_command";
 /// How a shell command is shown (issue 251): its `command` as a line of code, its `output` as a
 /// terminal shows it, and its exit code.
 pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+
+/// Where the command `result` tells of stands, as a frontend reads it back to show it (issue 586):
+/// of a call presented `shell` that answered, its `CommandState`; none for a call presented
+/// otherwise, one that did not answer, and an answer that is no such state.
+pub fn command_state(result: &ToolCallResult) -> Option<CommandState> {
+    let of_a_command = result.presentation == SHELL_PRESENTATION && result.status.is_ok();
+    of_a_command.then(|| serde_json::from_str(&result.content).ok()).flatten()
+}
 
 /// How much of a command's output a call's result holds, its end, unless configured otherwise:
 /// what the workspace's tool gives its model, and what a person's call keeps (issue 587).
@@ -180,37 +187,6 @@ pub trait Terminal: TerminalReader {
     async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()>;
 }
 
-/// What a command printed since an offset, and where it stands - written as a call's result gives
-/// it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CommandState {
-    pub id: String,
-    pub status: CommandStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-    /// What it printed - standard output and error in the order they came -
-    /// since the offset asked for, as text.
-    pub output: String,
-    /// Where to ask from next time.
-    pub next_offset: u64,
-    /// Whether output before the offset asked for, or between it and what
-    /// is given, was dropped: more than is kept.
-    pub truncated: bool,
-}
-
-impl CommandState {
-    /// The state with the last `max_bytes` of its output alone - cut from the front, past a
-    /// character the cut falls inside -, `truncated` if anything was cut.
-    pub fn keeping_last(mut self, max_bytes: usize) -> CommandState {
-        if self.output.len() > max_bytes {
-            let cut = self.output.ceil_char_boundary(self.output.len() - max_bytes);
-            self.output.drain(..cut);
-            self.truncated = true;
-        }
-        self
-    }
-}
-
 /// Kills the command `id` of `shell` if the guard is dropped before it is disarmed: a call dropped
 /// while it waits for its command - its turn cancelled or stopped - kills the command, which would
 /// go on writing into the workspace after the call that started it.
@@ -269,50 +245,6 @@ mod tests {
                 "{refused:?}: {error}"
             );
         }
-    }
-
-    #[test]
-    fn the_end_of_an_output_is_kept_cut_past_a_character() {
-        let state = CommandState {
-            id: "x".to_string(),
-            status: CommandStatus::Completed,
-            exit_code: Some(0),
-            output: "abcdéf".to_string(),
-            next_offset: 7,
-            truncated: false,
-        };
-        let kept = state.clone().keeping_last(2);
-        assert_eq!(
-            (kept.output.as_str(), kept.truncated),
-            ("f", true),
-            "the cut falls inside é and moves past it"
-        );
-        assert_eq!(state.clone().keeping_last(7), state, "all of it fits");
-    }
-
-    #[test]
-    fn a_state_is_written_as_a_call_s_result_without_an_exit_code_it_has_not() {
-        let running = CommandState {
-            id: "x".to_string(),
-            status: CommandStatus::Running,
-            exit_code: None,
-            output: "begun\n".to_string(),
-            next_offset: 6,
-            truncated: false,
-        };
-        assert_eq!(
-            serde_json::to_value(&running).unwrap(),
-            serde_json::json!({
-                "id": "x",
-                "status": "running",
-                "output": "begun\n",
-                "next_offset": 6,
-                "truncated": false,
-            })
-        );
-        let ended =
-            CommandState { status: CommandStatus::Completed, exit_code: Some(1), ..running };
-        assert_eq!(serde_json::to_value(&ended).unwrap()["exit_code"], 1);
     }
 
     #[test]

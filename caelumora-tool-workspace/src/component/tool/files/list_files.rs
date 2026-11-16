@@ -82,7 +82,10 @@ impl Tool for ListFilesTool {
         Ok(of_file(turn, workspace, &at, None, value))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
-        Ok(format!("List '{}' in the workspace", arguments::<At>(params)?.path.unwrap_or_default()))
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+        Ok(Some(format!(
+            "List '{}' in the workspace",
+            arguments::<At>(params)?.path.unwrap_or_default()
+        )))
     }
 }

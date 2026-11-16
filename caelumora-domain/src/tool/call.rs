@@ -26,6 +26,33 @@ pub struct ToolCall {
     pub visibility: ToolVisibility,
     #[serde(default, skip_serializing_if = "ToolPresentation::is_default")]
     pub presentation: ToolPresentation,
+    /// What its tool says the call does, in words for a person - put to whoever decides on it,
+    /// and shown with it -, stamped by the agent as it admits the call (issue 586). `None` where
+    /// the tool says nothing of a call beyond its arguments, where it was answered before it was
+    /// described, and where the arguments it is made from are withheld (`withhold_arguments`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+impl ToolCall {
+    /// A call of `function_name` with `arguments`, under `id` if it has one: shown and presented
+    /// as by default until the agent stamps it with what its tool declares.
+    pub fn new(id: Option<String>, function_name: impl Into<String>, arguments: Value) -> Self {
+        Self {
+            id,
+            function_name: function_name.into(),
+            arguments,
+            visibility: ToolVisibility::default(),
+            presentation: ToolPresentation::default(),
+            description: None,
+        }
+    }
+
+    /// Withholds its arguments, and the description made of them, where they are not to be shown.
+    pub fn withhold_arguments(&mut self) {
+        self.arguments = Value::Null;
+        self.description = None;
+    }
 }
 
 /// How a tool call ended (issue 15). Everything but `Ok` means the tool did
@@ -68,12 +95,29 @@ impl ToolResultStatus {
     pub fn is_ok(&self) -> bool {
         *self == ToolResultStatus::Ok
     }
+
+    /// The status as the content of a result the tool did not give, with the `message` that says
+    /// what happened and what to do next where there is one: `{"status": …, "message": …}`, else
+    /// `{"status": …}`.
+    pub fn as_content(self, message: Option<&str>) -> String {
+        let mut content = serde_json::json!({ "status": self });
+        if let Some(message) = message {
+            content["message"] = message.into();
+        }
+        content.to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallResult {
     pub id: Option<String>,
     pub tool_name: String,
+    /// What the model is given of the result in words (issue 586), beside its tool and its call's
+    /// id and what it gave and showed (`files`, `shown`): the tool's output, or for any other
+    /// status a JSON object of the `status` and, where it can be had, a `message`; the status
+    /// alone where only how the call ended is given (`ToolResultStatus::as_content`,
+    /// `Message::names_only`), and empty where the result is not published
+    /// (`Message::published`).
     pub content: String,
     /// Omitted when `Ok`.
     #[serde(default, skip_serializing_if = "ToolResultStatus::is_ok")]
@@ -82,6 +126,9 @@ pub struct ToolCallResult {
     /// published without its result.
     #[serde(default, skip_serializing_if = "ToolVisibility::is_shown")]
     pub visibility: ToolVisibility,
+    /// How the result is presented (issue 586): its call's, stamped by `of` as `visibility` is.
+    #[serde(default, skip_serializing_if = "ToolPresentation::is_default")]
+    pub presentation: ToolPresentation,
     /// How sensitive `content` is and for whom (issue 133): as the tool
     /// classified its result, else as the tool is configured, else as the
     /// channel. Never above the channel: what may not flow into it is
@@ -130,8 +177,8 @@ pub struct ToolCallResult {
 
 impl ToolCallResult {
     /// How `call` ended: `status`, and `content` for the model, classified
-    /// `classification`. Carries the call's id, tool and flags, so that the
-    /// result is published by what applied to the call.
+    /// `classification`. Carries the call's id, tool, flags and presentation, so that the
+    /// result is published by what applied to the call, and shown as it was.
     pub fn of(
         call: &ToolCall,
         status: ToolResultStatus,
@@ -144,6 +191,7 @@ impl ToolCallResult {
             content,
             status,
             visibility: call.visibility,
+            presentation: call.presentation,
             classification,
             started_at: None,
             finished_at: None,
@@ -152,20 +200,6 @@ impl ToolCallResult {
             files: Vec::new(),
             shown: Vec::new(),
             knowledge: Vec::new(),
-        }
-    }
-
-    /// The result as a model is given it in words: without the record of the answers to the call's
-    /// questions, of who approved it and of what the tool read, which are not the model's, and
-    /// without what it gave and showed, which a model is given as what it is, not as text.
-    pub fn for_the_model(&self) -> ToolCallResult {
-        ToolCallResult {
-            answers: None,
-            approval: Vec::new(),
-            files: Vec::new(),
-            shown: Vec::new(),
-            knowledge: Vec::new(),
-            ..self.clone()
         }
     }
 }
@@ -200,15 +234,13 @@ pub struct ToolCallState {
     reason = "kept once per call of a step; boxing the result would only cost an allocation"
 )]
 pub enum ToolCallStatus {
-    /// A person decides whether it may run (issue 13). They are shown
-    /// `description` - a decision of their own if `explicit`, which no rule
-    /// of a person answers - and offered a rule for the calls `suggested`
-    /// matches, if one can be derived from the call (issue 400). `id` is the approval's, from the
-    /// agent's request to the decision (issue 81). Approved, it asks its `questions`, if it has
-    /// any (issue 165).
+    /// A person decides whether it may run (issue 13), shown the call and its description - a
+    /// decision of their own if `explicit`, which no rule of a person answers - and offered a rule
+    /// for the calls `suggested` matches, if one can be derived from the call (issue 400). `id` is
+    /// the approval's, from the agent's request to the decision (issue 81). Approved, it asks its
+    /// `questions`, if it has any (issue 165).
     WaitingApproval {
         id: ApprovalId,
-        description: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         explicit: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,7 +268,6 @@ impl ToolCallState {
     /// and then to ask `questions`.
     pub fn pending(
         tool_call: ToolCall,
-        description: String,
         explicit: bool,
         suggested: Option<ToolMatcher>,
         questions: Option<Questions>,
@@ -245,7 +276,6 @@ impl ToolCallState {
             tool_call,
             status: ToolCallStatus::WaitingApproval {
                 id: ApprovalId::new(),
-                description,
                 explicit,
                 suggested,
                 questions,
@@ -321,33 +351,63 @@ impl ToolCallState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool::testing::{make_tool_call, make_tool_description};
 
     #[test]
     fn a_call_state_is_read_back_as_written() {
         let call = ToolCall {
             id: Some("1".to_string()),
-            function_name: "delete".to_string(),
             arguments: serde_json::json!({}),
-            visibility: ToolVisibility::SHOWN,
-            presentation: Default::default(),
+            description: Some("Delete it?".to_string()),
+            ..make_tool_call("delete")
         };
         let waiting = ToolCallState::pending(
             call.clone(),
-            "Delete it?".to_string(),
             true,
-            Some(ToolMatcher::exact(&call)),
+            Some(ToolMatcher::proposed(
+                &make_tool_description(&call.function_name),
+                &call.arguments,
+            )),
             None,
         );
         let read: ToolCallState =
             serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
         assert_eq!(read.approval_id(), waiting.approval_id());
-        assert!(
-            matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, ref description, .. } if description == "Delete it?")
-        );
+        assert!(matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, .. }));
+        assert_eq!(read.tool_call.description.as_deref(), Some("Delete it?"), "with its call");
         let ready: ToolCallState = serde_json::from_str(
             &serde_json::to_string(&ToolCallState::approved(call.clone())).unwrap(),
         )
         .unwrap();
         assert!(matches!(ready.status, ToolCallStatus::Ready { answers: None }));
+    }
+
+    /// A status is written as the content of a result the tool did not give, with its message
+    /// where there is one.
+    #[test]
+    fn a_status_is_written_as_a_result_s_content() {
+        let denied = ToolResultStatus::Denied;
+        assert_eq!(
+            denied.as_content(Some("declined")),
+            r#"{"message":"declined","status":"denied"}"#
+        );
+        assert_eq!(denied.as_content(None), r#"{"status":"denied"}"#);
+    }
+
+    /// Issue 586: a result is presented as its call, written with the presentation unless it is
+    /// `default`.
+    #[test]
+    fn a_result_is_presented_as_its_call() {
+        let ended = |call: &ToolCall| {
+            ToolCallResult::of(call, ToolResultStatus::Ok, "{}".to_string(), Default::default())
+        };
+        let shell = ToolPresentation::new("shell");
+        let result = ended(&ToolCall { presentation: shell, ..make_tool_call("run_command") });
+        assert_eq!(result.presentation, shell);
+        assert_eq!(serde_json::to_value(&result).unwrap()["presentation"], "shell");
+        let plain = serde_json::to_value(ended(&make_tool_call("look"))).unwrap();
+        assert!(plain.get("presentation").is_none(), "`default` is not written");
+        let read: ToolCallResult = serde_json::from_value(plain).unwrap();
+        assert_eq!(read.presentation, ToolPresentation::DEFAULT);
     }
 }

@@ -93,7 +93,7 @@ mod tests {
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::{AgentChannelState, AgentId};
     use caelumora_domain::question::{Addressee, Answers, Question, Questions};
-    use caelumora_domain::tool::ToolParameters;
+    use caelumora_domain::tool::testing::make_tool_description;
     use caelumora_domain::turn::TurnState;
     use caelumora_domain::work::Work;
     use serde_json::{json, Value};
@@ -101,18 +101,7 @@ mod tests {
 
     /// The description of a tool named `name`, without parameters.
     fn described(name: &str) -> ToolDescription {
-        ToolDescription {
-            name: name.to_string(),
-            description: "desc".to_string(),
-            parameters: ToolParameters::object(
-                Vec::<(String, ToolParameters)>::new(),
-                Vec::<String>::new(),
-            ),
-            requires_approval: false,
-            visibility: Default::default(),
-            classification: None,
-            presentation: Default::default(),
-        }
+        ToolDescription { description: "desc".to_string(), ..make_tool_description(name) }
     }
 
     /// A tool that answers "ok".

@@ -35,7 +35,7 @@ mod write_file;
 use super::{of_workspace, Use, UsingTool};
 use crate::component::WorkspaceParams;
 use bytes::Bytes;
-use caelumora_agents::tool::{proposed_matcher, Tool, ToolError, ToolOutput, ToolResult};
+use caelumora_agents::tool::{Tool, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
 use caelumora_api::terminal::{ByteStream, Terminal, TerminalReader, WorkspacePath};
 use caelumora_domain::approval::{ArgumentMatcher, ToolMatcher};
@@ -104,7 +104,7 @@ pub(super) fn tools(
 
 /// For a change of `tool`, the calls changing the same places as one with `params` - the file
 /// named by `keys`, for a move both of its places, whatever is written -; as its parameters tell
-/// (`proposed_matcher`) where `params` name none.
+/// (`ToolMatcher::proposed`) where `params` name none.
 fn changing_alike(tool: &ToolDescription, keys: &[&str], params: &Value) -> ToolMatcher {
     let arguments = keys
         .iter()
@@ -117,7 +117,7 @@ fn changing_alike(tool: &ToolDescription, keys: &[&str], params: &Value) -> Tool
         .collect::<Option<BTreeMap<_, _>>>();
     match arguments {
         Some(arguments) => ToolMatcher { tool: tool.name.clone(), arguments },
-        None => proposed_matcher(tool, params),
+        None => ToolMatcher::proposed(tool, params),
     }
 }
 
@@ -281,6 +281,7 @@ mod tests {
     use caelumora_domain::digest;
     use caelumora_domain::digest::Digest;
     use caelumora_domain::message::{Message, MessageRole};
+    use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::ToolPresentation;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_kernel::workspace::testing::session_with_workspace;
@@ -454,13 +455,7 @@ mod tests {
     /// What `output` knows, kept on the transcript of `turn` with a result of its call, as the
     /// executor keeps it (issue 538).
     fn kept(turn: &mut Turn<'_>, output: ToolOutput) {
-        let call = ToolCall {
-            id: Some("1".to_string()),
-            function_name: "tool".to_string(),
-            arguments: Value::Null,
-            visibility: Default::default(),
-            presentation: Default::default(),
-        };
+        let call = ToolCall { id: Some("1".to_string()), ..make_tool_call("tool") };
         let result =
             ToolCallResult::of(&call, ToolResultStatus::Ok, String::new(), Classification::PUBLIC);
         turn.record_said(Message {
@@ -613,12 +608,12 @@ mod tests {
         let tool = component(json!({}));
         let write = json!({ "path": "docs/a.md", "content": "hello\nworld" });
         assert_eq!(
-            tool_named(&tool, WRITE_FILE).describe(&write).unwrap(),
+            tool_named(&tool, WRITE_FILE).describe(&write).unwrap().unwrap(),
             "Write 'docs/a.md' in the workspace (11 bytes):\nhello\nworld"
         );
         let replace = json!({ "path": "a.md", "old_text": "x", "new_text": "y" });
         assert_eq!(
-            tool_named(&tool, REPLACE_IN_FILE).describe(&replace).unwrap(),
+            tool_named(&tool, REPLACE_IN_FILE).describe(&replace).unwrap().unwrap(),
             "Replace in 'a.md' in the workspace, once:\n--- old\nx\n+++ new\ny"
         );
         let matcher = tool_named(&tool, WRITE_FILE).matcher(&write);
@@ -633,12 +628,13 @@ mod tests {
         assert_eq!(matcher.arguments["path"], ArgumentMatcher::Pattern(regex::escape("docs/a.md")));
         let moving = json!({ "from": "docs/a.md", "to": "docs/b.md" });
         assert_eq!(
-            tool_named(&tool, MOVE_FILE).describe(&moving).unwrap(),
+            tool_named(&tool, MOVE_FILE).describe(&moving).unwrap().unwrap(),
             "Rename 'docs/a.md' to 'docs/b.md' in the workspace"
         );
         assert_eq!(
             tool_named(&tool, MOVE_FILE)
                 .describe(&json!({ "from": "docs/a.md", "to": "archive/a.md" }))
+                .unwrap()
                 .unwrap(),
             "Move 'docs/a.md' to 'archive/a.md' in the workspace"
         );
@@ -654,6 +650,7 @@ mod tests {
         assert_eq!(
             tool_named(&tool, PUBLISH_FILE)
                 .describe(&json!({ "path": "out/r.csv", "name": "Report.csv" }))
+                .unwrap()
                 .unwrap(),
             "Offer 'out/r.csv' in the workspace for download as 'Report.csv'"
         );

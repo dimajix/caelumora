@@ -86,9 +86,9 @@ impl Tool for WriteFileTool {
         Ok(of_file(turn, workspace, &at, Some(digest), value))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Write { path, content } = arguments(params)?;
-        Ok(format!("Write '{path}' in the workspace ({} bytes):\n{content}", content.len()))
+        Ok(Some(format!("Write '{path}' in the workspace ({} bytes):\n{content}", content.len())))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {

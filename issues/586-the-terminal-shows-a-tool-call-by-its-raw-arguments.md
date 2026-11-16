@@ -1,6 +1,6 @@
 # 586 — The terminal shows a tool call by its raw arguments
 
-**Status:** open
+**Status:** done
 **Type:** feature
 **Priority:** medium
 **Area:** User interaction
@@ -116,3 +116,129 @@ entry stands with its head alone until its result comes, joined by the call's id
 2026-11-16: Opened at the maintainer's request: the description shown for an approval should
 show at every call, the presentations of the web UI - a command's shell output above all -
 should be supported, and the output folded and unfolded with the mouse, folded by default.
+
+2026-11-16: Planned with the maintainer, in four steps, each reviewed and committed alone:
+
+1.  A `ToolCall` is made in one place: `ToolCall::new(id, function_name, arguments)` where a model
+    made it, `..make_tool_call(name)` in tests - so that a field of its own changes one place.
+2.  The result of a shell tool is written by a type, `CommandResult` of
+    `caelumora-tool-workspace` - named as `CommandState` and `CommandStatus` are, after the
+    command run in the shell, not the shell -, which the terminal reads it back with;
+    `SHELL_PRESENTATION` is made public.
+3.  The description stands at the call (option A). `Tool::describe` answers
+    `ToolResult<Option<String>>`, by default `None`: 32 of 48 tools did not describe a call and
+    answered their tool's text for the model, which says nothing of the call - where a call has
+    no description, its arguments are shown. `ToolExecutor::admit` stamps it, the one place that
+    holds the tool; a call answered at once, and a partial message, has none.
+    `ToolCall::withhold_arguments` withholds both, in `Message::published` and `names_only`.
+    `ApprovalRequest`, `ToolCallStatus::WaitingApproval`, `ToolCallState::pending` and
+    `Admission::Ask` lose their description and read the call's: approval requests are not
+    redacted (CONFIDENTIALITY.md), so nobody sees more or less than before. Both views of the
+    terminal head a call by its description in one line; the web UI shows it on the approval
+    card - which showed only the arguments - and in its `default` presentation.
+4.  The full-screen view shows a call and its result as one entry, folded by default, unfolded
+    and folded by a click on its head, all of them at once by Ctrl-O. A result joins the newest
+    call of its id that waits for one in its channel: call ids may repeat (APPROVALS.md). The
+    terminal knows `shell` and a `default` that shows the arguments and the result whole; the
+    file presentations are left to an issue of their own. The line-wise view prints no output
+    in full.
+
+2026-11-16: A step before step 3, from the review of step 1: `ToolMatcher::exact` and
+`ToolMatcher::proposed` took a `ToolCall` but read only its tool and arguments, so that
+`proposed_matcher` built a call no model made only to hand it on. They take what they read -
+`exact(tool, arguments)`, `proposed(tool: &ToolDescription, arguments)` -, and
+`proposed_matcher`, left a mere wrapper, is gone: the tools call `ToolMatcher::proposed`.
+
+2026-11-16: Two more steps before step 3, from the review of the last: the tests describe a tool
+from `make_tool_description` of `caelumora_domain::tool::testing`, naming only what they differ
+in, as they make a call from `make_tool_call`; and `ToolMatcher::exact`, which outside its module
+only tests call, is the module's own.
+
+2026-11-16: One more step before step 3, from the review of the last: `ToolParameters::none()`
+names the parameters of a tool that takes nothing, which `turn_end`, `list_skills` and
+`make_tool_description` wrote out as an object of empty lists.
+
+2026-11-16: Step 2 done, otherwise than planned: the review found the name `CommandResult` taken -
+`caelumora_api::command::CommandResult`, the result of every command - and the type the third with
+the same fields, beside `CommandState` of `caelumora-api` and `CommandResponse` of
+`caelumora-rest-api`. Decided with the maintainer: no new type. `CommandState` moves to
+`caelumora_domain::workspace`, beside `CommandStatus`, and is read as well as written; a shell
+tool gives its model the state - how to go on with a command still running added as `next` - as
+the JSON object it always was, keys sorted, and a frontend reads it back as a `CommandState`; the
+REST API answers it in place of `CommandResponse`, which is gone. `SHELL_PRESENTATION` is
+exported from the crate's `component`.
+
+2026-11-16: Two more steps, from the review of step 2: the web UI names what it reads of a shell
+tool's result `CommandState`, read by `commandState`, as the domain does - `CommandResult` is the
+result of a command; and where a command of a workspace's shell stands gets a module of its own,
+`caelumora_domain::workspace::command`, beside the workspace it runs in.
+
+2026-11-16: One more step, from the review of the last: the web UI names where a command stands
+`CommandStatus`, as the domain does, and the words it tells it in `commandStatusLabel`, as it
+names those of a call's visibility `visibilityLabel` - not `commandStatus`.
+
+2026-11-16: Step 3 done as planned. `ToolCall::description`, stamped by `ToolExecutor::admit`
+from `Tool::describe`, which answers `ToolResult<Option<String>>` and by default nothing; the 16
+tools that described a call describe it as before. `ApprovalRequest`,
+`ToolCallStatus::WaitingApproval`, `ToolCallState::pending` and `Admission::Ask` lost their own;
+an approval waiting in a turn stored before reads without it and is shown by the call's
+arguments. Both views of the terminal tell a call by its description on one line, an approval by
+it whole - else by the tool and its arguments -, and the web UI shows it on the approval card and
+in its `default` presentation.
+
+2026-11-16: Step 4 done. `printed::Printed::ToolCall` and `ToolResult` carry their channel's id;
+the full-screen view keeps a call as an entry of its own (`ShownCall`, `screen/full/call.rs`) in
+its scrollback, which holds entries now, not lines alone: a result joins the newest call of its
+id that waits for one in its channel - else it is printed alone, as before -, a call is folded
+until a click on its head unfolds it, its head staying where it is, and Ctrl-O unfolds every call,
+or folds them all where none is left folded. What a call shows is its presentation's: `shell`
+reads its result as a `CommandState` and ends by where the command stands and how much it
+printed, unfolding to what it printed; every other, and a `shell` call that failed, is shown as
+`default`, unfolding to the description, the arguments and the result whole; the presentations
+are found by name in a table, as the web UI's are. The words of `shell` stand with the full-screen
+view alone, not in `screen/words.rs`: the line-wise view prints no output, as decided, and tells
+how a call ended by `outcome` as before - a result carries no presentation by which it could know
+a command's end. Lines are counted in words by one function of `words`, for both.
+
+2026-11-16: One more step, from the review of step 4: the line-wise view tells how a `shell` call
+ended as the full-screen view does - by where the command stands and how much it printed -, not
+by the first line of its result's JSON.
+
+2026-11-16: Step 5 done, as decided with the maintainer: a result carries the presentation of its
+call (`ToolCallResult::presentation`), stamped by `ToolCallResult::of` as its visibility is - which
+leaves room for a tool to choose how its result is shown, not built while no tool needs it; a
+result stored before reads as `default`, and a model is given none (`for_the_model`). How a call
+ended is told in one place, `words::outcome`, for both views: a result of `shell` that answered
+by where its command stands and how much it printed, with whether it failed. The full-screen view
+draws every ending by it, and its presentations, chosen by the result's, show only what a call
+unfolds to. The web UI reads the call's presentation as before: it shows a command while it runs.
+
+2026-11-16: One more step, from the review of step 5: where a `shell` result is read back as the
+`CommandState` its tool wrote moves from the terminal's words to the owner of the format, beside
+`SHELL_PRESENTATION` in `caelumora_tool_workspace::component`.
+
+2026-11-16: Step 6 done as planned: `command_state` stands beside `SHELL_PRESENTATION` in
+`caelumora_tool_workspace::component`, and the tests of the shell tools read back what the tools
+wrote by it, as a frontend does.
+
+2026-11-16: One more step, decided with the maintainer from the review of step 5: a model is given
+a tool's result as its `content` alone, which for every status but `ok` holds the status and a
+message already. `ToolCallResult::for_the_model`, which the Ollama client wrote whole as JSON -
+with the classification, the times and whatever field a result gains, left out one by one -, is
+gone. A `serde_json::Value` or a type of its own in its place were weighed: the one decides for
+every model's API that a result is JSON, the other bundles two fields a client reads directly.
+
+2026-11-16: Step 7 done as decided: the Ollama client gives a tool message the result's `content`,
+and `ToolCallResult::for_the_model` is gone, with the assertions of tests on what it left out.
+What the model is given of a result says the doc of `content`, and TOOLS.md.
+Of a turn given up as `Lowered`, `Message::names_only` gives a result its status as its content
+(`ToolResultStatus::as_content`, by which the executor writes every result its tool did not give,
+with a message where one can be had), so that the model is told how each call ended, which the
+client found in the whole result before.
+
+2026-11-16: Done. Both views of the terminal tell a call by its description, the full-screen view
+folds a call with its result and shows a command's output, and what the model is given of a
+result is its content alone. Left as findings for the maintainer: the web UI reads the call's
+presentation alone, until a tool gives its result another; `Followed` could tell a quiet result
+by its own presentation, not by finding its call; and the list of statuses in TOOLS.md lacks
+`withheld`.

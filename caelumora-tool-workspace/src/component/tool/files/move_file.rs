@@ -99,10 +99,10 @@ impl Tool for MoveFileTool {
         Ok(of_workspace(knowing(moved, knew), workspace))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Move { from, to } = arguments(params)?;
         let how = if renames(&path(&from)?, &path(&to)?) { "Rename" } else { "Move" };
-        Ok(format!("{how} '{from}' to '{to}' in the workspace"))
+        Ok(Some(format!("{how} '{from}' to '{to}' in the workspace")))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {
