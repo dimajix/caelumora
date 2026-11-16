@@ -20,7 +20,7 @@ use caelumora_api::terminal::Shell;
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
-use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation};
+use caelumora_domain::tool::{ToolCallResult, ToolDescription, ToolParameters, ToolPresentation};
 use caelumora_domain::workspace::Workspace;
 use caelumora_domain::workspace::{CommandState, CommandStatus};
 use serde::Deserialize;
@@ -33,8 +33,16 @@ use tokio::time;
 use tracing::warn;
 
 /// A shell command (issue 251): its `command` as a line of code, its `output` as a terminal shows
-/// it, and its exit code - what a call answers, read as a `CommandState`.
+/// it, and its exit code - what a call answers, read back as a `CommandState` (`command_state`).
 pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+
+/// Where the command `result` tells of stands, as a frontend reads it back to show it: of a call
+/// presented `shell` that answered, the `CommandState` its tool gave its model; none for a call
+/// presented otherwise, one that did not answer, and an answer that is no such state.
+pub fn command_state(result: &ToolCallResult) -> Option<CommandState> {
+    let of_a_command = result.presentation == SHELL_PRESENTATION && result.status.is_ok();
+    of_a_command.then(|| serde_json::from_str(&result.content).ok()).flatten()
+}
 
 pub(super) const RUN_COMMAND: &str = "run_command";
 pub(super) const COMMAND_OUTPUT: &str = "command_output";
@@ -327,11 +335,25 @@ mod tests {
     use caelumora_domain::agent::AgentChannelState;
     use caelumora_domain::approval::ArgumentMatcher;
     use caelumora_domain::prompt_catalogue::PromptCatalogue;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::{ToolCall, ToolResultStatus};
+    use caelumora_domain::workspace::testing::make_command_state;
     use caelumora_kernel::workspace::testing::session_with_workspace;
     use std::collections::BTreeMap;
 
     fn the_component() -> WorkspaceComponent {
         component(json!({ "max_wait_secs": 10 }))
+    }
+
+    /// The result of a call presented `shell` that gave its model `value`, ended as `status`.
+    fn ended(value: &Value, status: ToolResultStatus) -> ToolCallResult {
+        let call = ToolCall { presentation: SHELL_PRESENTATION, ..make_tool_call(RUN_COMMAND) };
+        ToolCallResult::of(&call, status, value.to_string(), Default::default())
+    }
+
+    /// The state of the command a call answered `value` of, read back as a frontend reads it.
+    fn read_back(value: &Value) -> CommandState {
+        command_state(&ended(value, ToolResultStatus::Ok)).expect("a command's state")
     }
 
     #[tokio::test]
@@ -352,7 +374,7 @@ mod tests {
             "the model is given its keys sorted: {}",
             ran.value
         );
-        let state: CommandState = serde_json::from_value(ran.value.clone()).unwrap();
+        let state = read_back(&ran.value);
         assert_eq!(
             (state.status, state.exit_code, state.output.as_str()),
             (CommandStatus::Completed, Some(0), "draft\nnotes.md\n")
@@ -363,6 +385,24 @@ mod tests {
             "classified as the workspace"
         );
         assert!(world.dir().join("notes.md").is_file(), "written into the workspace");
+    }
+
+    /// A result is read back as a command's state only of a call presented `shell` that answered
+    /// with one.
+    #[test]
+    fn a_result_is_a_command_s_state_only_of_a_shell_call_that_answered_one() {
+        let state = make_command_state(CommandStatus::Completed);
+        let written = json!(state);
+        assert_eq!(command_state(&ended(&written, ToolResultStatus::Ok)), Some(state));
+        let failed = ended(&written, ToolResultStatus::Failed);
+        assert_eq!(command_state(&failed), None, "a call that did not answer");
+        let presented_otherwise = ToolCallResult {
+            presentation: ToolPresentation::DEFAULT,
+            ..ended(&written, ToolResultStatus::Ok)
+        };
+        assert_eq!(command_state(&presented_otherwise), None, "a call presented otherwise");
+        let plain = ended(&json!("done"), ToolResultStatus::Ok);
+        assert_eq!(command_state(&plain), None, "an answer that is no command's state");
     }
 
     #[tokio::test]
@@ -381,7 +421,7 @@ mod tests {
             .unwrap();
         assert!(running.value["next"].as_str().unwrap().contains(COMMAND_OUTPUT));
         assert!(running.value.get("exit_code").is_none(), "no exit code: no key");
-        let begun: CommandState = serde_json::from_value(running.value).unwrap();
+        let begun = read_back(&running.value);
         assert_eq!((begun.status, begun.exit_code), (CommandStatus::Running, None));
         let followed = tool_named(&tool, COMMAND_OUTPUT)
             .execute(
@@ -391,7 +431,7 @@ mod tests {
             )
             .await
             .unwrap();
-        let followed: CommandState = serde_json::from_value(followed.value).unwrap();
+        let followed = read_back(&followed.value);
         assert_eq!(
             (followed.status, followed.output.as_str()),
             (CommandStatus::Running, ""),
@@ -401,7 +441,7 @@ mod tests {
             .execute(&json!({ "id": begun.id }), None, &mut turn)
             .await
             .unwrap();
-        let killed: CommandState = serde_json::from_value(killed.value).unwrap();
+        let killed = read_back(&killed.value);
         assert_eq!(killed.status, CommandStatus::Killed);
         let unknown = tool_named(&tool, COMMAND_OUTPUT)
             .execute(&json!({ "id": "nonesuch" }), None, &mut turn)
@@ -478,8 +518,7 @@ mod tests {
         };
         // No text of how to go on is needed for a command that ended.
         let prompts = PromptTexts::new(Arc::new(PromptCatalogue::new()), None);
-        let result: CommandState =
-            serde_json::from_value(result(&params, &prompts, state)).unwrap();
+        let result = read_back(&result(&params, &prompts, state));
         assert_eq!(
             (result.output.as_str(), result.truncated),
             ("f", true),

@@ -27,7 +27,7 @@ mod files;
 mod shell;
 
 pub(super) use files::{known, text, READ_FILE};
-pub use shell::SHELL_PRESENTATION;
+pub use shell::{command_state, SHELL_PRESENTATION};
 
 use super::{WorkspaceComponent, WorkspaceParams, WORKSPACE_KIND};
 use crate::NAMESPACE;

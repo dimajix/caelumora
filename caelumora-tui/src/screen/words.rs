@@ -7,8 +7,8 @@ use caelumora_domain::approval::{ApprovalRequest, ArgumentMatcher, Reach, ToolMa
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::question::{Choice, Question, QuestionRequest};
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
-use caelumora_domain::workspace::{CommandState, CommandStatus};
-use caelumora_tool_workspace::component::SHELL_PRESENTATION;
+use caelumora_domain::workspace::CommandStatus;
+use caelumora_tool_workspace::component::command_state;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -107,13 +107,6 @@ pub(super) fn outcome(result: &ToolCallResult) -> (String, bool) {
         return (format!("{stands}, {printed}"), failed);
     }
     (answered(result), !result.status.is_ok())
-}
-
-/// Where the command `result` tells of stands: of a call presented `shell` that answered, the
-/// `CommandState` its tool gave its model.
-pub(super) fn command_state(result: &ToolCallResult) -> Option<CommandState> {
-    let of_a_command = result.presentation == SHELL_PRESENTATION && result.status.is_ok();
-    of_a_command.then(|| serde_json::from_str(&result.content).ok()).flatten()
 }
 
 /// What the call of `result` answered, in words that follow the tool's name: shortened to its first
@@ -294,6 +287,8 @@ mod tests {
     use super::*;
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::workspace::testing::make_command_state;
+    use caelumora_domain::workspace::CommandState;
+    use caelumora_tool_workspace::component::SHELL_PRESENTATION;
 
     /// A command failed where it could not run or ended by another exit code than 0, a call
     /// where it did not answer.

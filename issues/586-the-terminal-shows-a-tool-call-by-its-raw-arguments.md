@@ -216,3 +216,14 @@ unfolds to. The web UI reads the call's presentation as before: it shows a comma
 2026-11-16: One more step, from the review of step 5: where a `shell` result is read back as the
 `CommandState` its tool wrote moves from the terminal's words to the owner of the format, beside
 `SHELL_PRESENTATION` in `caelumora_tool_workspace::component`.
+
+2026-11-16: Step 6 done as planned: `command_state` stands beside `SHELL_PRESENTATION` in
+`caelumora_tool_workspace::component`, and the tests of the shell tools read back what the tools
+wrote by it, as a frontend does.
+
+2026-11-16: One more step, decided with the maintainer from the review of step 5: a model is given
+a tool's result as its `content` alone, which for every status but `ok` holds the status and a
+message already. `ToolCallResult::for_the_model`, which the Ollama client wrote whole as JSON -
+with the classification, the times and whatever field a result gains, left out one by one -, is
+gone. A `serde_json::Value` or a type of its own in its place were weighed: the one decides for
+every model's API that a result is JSON, the other bundles two fields a client reads directly.

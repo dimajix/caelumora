@@ -482,11 +482,11 @@ over - and is seen only from the channel it was started in. A call follows its c
 `wait_secs`; one still running then is handed back with its id, and the model follows it with
 `command_output` or ends it with `kill_command`. What a call answers - what the command printed
 since the offset asked for, cut from the front to what a result holds, where it stands and its exit
-code - is a `CommandState`, which a frontend reads back to show a call presented `shell`. The
-result is classified as the workspace. The approver reads the command whole, and a rule derived
-from an approved command covers the commands beginning with its first two words, however long a
-call waits. Following and ending a command need no approval, since only a command that was approved
-is followed or ended.
+code - is a `CommandState`, which a frontend reads back to show a call presented `shell`
+(`command_state` of the component, beside `SHELL_PRESENTATION`). The result is classified as the
+workspace. The approver reads the command whole, and a rule derived from an approved command
+covers the commands beginning with its first two words, however long a call waits. Following and
+ending a command need no approval, since only a command that was approved is followed or ended.
 
 A call dropped while it waits for its command - the turn cancelled or stopped - kills the command,
 in a task of its own, bounded and logged, that the drop does not await, as a tool ends what it

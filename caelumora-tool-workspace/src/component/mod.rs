@@ -5,7 +5,8 @@
 //! its shell (`tool`), the prompt part that tells the agent which workspace that is (`prompt`), and
 //! the files the agent knew given again after a compaction (`knowledge`, issue 538).
 //! Generic over the terminal: what it can do is what the workspace's storage gives, and the
-//! component knows no provider.
+//! component knows no provider. A frontend is given how its shell tools are presented, and how to
+//! read their results back (`SHELL_PRESENTATION`, `command_state`).
 
 mod knowledge;
 mod prompt;
@@ -13,7 +14,7 @@ mod prompt;
 mod testing;
 mod tool;
 
-pub use tool::SHELL_PRESENTATION;
+pub use tool::{command_state, SHELL_PRESENTATION};
 
 use crate::NAMESPACE;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model, PromptPosition, PromptProvider};

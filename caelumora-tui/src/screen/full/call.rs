@@ -7,11 +7,11 @@
 //! came, and one of `shell` whose result is no such state, one that failed or was refused.
 
 use super::styled::of_channel;
-use crate::screen::words::{arguments, command_state, outcome, Called};
+use crate::screen::words::{arguments, outcome, Called};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolPresentation};
 use caelumora_domain::value::name::Name;
-use caelumora_tool_workspace::component::SHELL_PRESENTATION;
+use caelumora_tool_workspace::component::{command_state, SHELL_PRESENTATION};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 

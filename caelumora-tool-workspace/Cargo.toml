@@ -20,6 +20,7 @@ tokio = { workspace = true, features = ["rt", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
+caelumora-domain = { workspace = true, features = ["test-support"] }
 caelumora-security = { workspace = true, features = ["test-support"] }
 caelumora-store.workspace = true
 caelumora-agents = { workspace = true, features = ["test-support"] }
