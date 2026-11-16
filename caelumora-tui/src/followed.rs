@@ -52,9 +52,6 @@ pub(crate) struct Followed {
     views: Views,
     /// What the user's actor in the channel shows, across its runs.
     watch: ChannelWatch,
-    /// The handles of the participants, as the channel was followed: what a message's mentions
-    /// are highlighted by.
-    handles: HashMap<ActorId, String>,
     /// The approval requests pending - those the agents' turns waited for as they were last read
     /// (`catch_up`), in the order of the participants and their calls, then those shown, in the
     /// order they were requested -, until the approver ends them - decided, timed out or
@@ -98,9 +95,9 @@ pub(crate) struct Followed {
 
 impl Followed {
     /// Follows `channel` for the user `views` are read by, from now on, as the views let them
-    /// (`ChannelView::user_follow`), knowing its participants' handles as they are now, and what
-    /// waits for the user there, as `catch_up` reads it - which whoever follows the channel tells
-    /// (`waiting`). `None` if the viewer is no user the channel lists, or cannot read it.
+    /// (`ChannelView::user_follow`), knowing what waits for the user there, as `catch_up` reads
+    /// it - which whoever follows the channel tells (`waiting`). `None` if the viewer is no user
+    /// the channel lists, or cannot read it.
     pub(crate) async fn new(channel: Arc<ChannelLoop>, views: Views) -> Option<Self> {
         let ActorId::User(user) = views.context().caller_id else { return None };
         let watch = views
@@ -110,14 +107,11 @@ impl Followed {
             .user_follow()
             .await
             .ok()??;
-        let handles =
-            channel.participants().into_iter().filter_map(|m| Some((m.id, m.handle?))).collect();
         let mut followed = Self {
             channel,
             user,
             views,
             watch,
-            handles,
             pending_approvals: Vec::new(),
             known_questions: HashSet::new(),
             approvable: HashMap::new(),
@@ -392,7 +386,11 @@ impl Followed {
                 self.known_questions.remove(id);
                 Vec::new()
             }
-            _ => shown(envelope, &self.handles),
+            // What another changed of what was said (issue 234).
+            ActorEvent::MessageModified(message) => {
+                said_printed(message, &self.handles(), Saying::Edited).into_iter().collect()
+            }
+            _ => shown(envelope),
         }
     }
 
@@ -597,7 +595,7 @@ impl Followed {
     /// them.
     fn message_printed(&mut self, message: &Message, saying: Saying) -> Vec<Printed> {
         let mut printed: Vec<Printed> =
-            said_printed(message, &self.handles, saying).into_iter().collect();
+            said_printed(message, &self.handles(), saying).into_iter().collect();
         for call in &message.tool_calls {
             let sender = message.sender_name.clone();
             let called = Printed::ToolCall { sender, call: Box::new(call.clone()) };
@@ -627,18 +625,25 @@ impl Followed {
     async fn view(&self) -> ViewResult<ChannelView> {
         self.views.channel(self.channel.session_id(), self.channel_id()).await
     }
+
+    /// The handles of the participants that run in the channel now (`ChannelLoop::participants`),
+    /// by participant: what the mentions of a message printed are highlighted by - those of who
+    /// joined after the channel was followed too, not those of who left. Read from the loop, not
+    /// the views, as what is printed is taken in at once (`take_in`); the web UI reads the
+    /// participants the channel lists, which differ for one whose actor is between two runs.
+    fn handles(&self) -> HashMap<ActorId, String> {
+        let participants = self.channel.participants().into_iter();
+        participants.filter_map(|m| Some((m.id, m.handle?))).collect()
+    }
 }
 
-/// What the terminal prints of `envelope` that the user's commands need nothing of, by the
-/// `handles` of the channel's participants: what was changed of what was said, and what was done
-/// in the channel.
-fn shown(envelope: &Envelope, handles: &HashMap<ActorId, String>) -> Vec<Printed> {
+/// What the terminal prints of `envelope` that the user's commands need nothing of: what was taken
+/// back of what was said, and what was done in the channel.
+fn shown(envelope: &Envelope) -> Vec<Printed> {
     let sender_id = envelope.context.sender_id;
     let sender = &envelope.context.sender_name;
     let plain = |line: String| Some(Printed::Plain(line));
     let printed = match &envelope.event {
-        // What another changed of what was said (issue 234).
-        ActorEvent::MessageModified(message) => said_printed(message, handles, Saying::Edited),
         ActorEvent::MessageRevoked { .. } => plain(format!("{sender} took a message back")),
         ActorEvent::RetryAccepted { .. } => plain(format!("{sender} answers again")),
         ActorEvent::RetryRefused { reason, .. } => {
@@ -889,6 +894,7 @@ mod tests {
     use caelumora_domain::tool::testing::make_tool_call;
     use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_kernel::channel::ChannelError;
+    use caelumora_kernel::kernel::Kernel;
     use caelumora_kernel::session::testing::{
         owned_kernel, running_session_of_a_user, spec, test_kernel,
     };
@@ -900,17 +906,18 @@ mod tests {
     use std::time::Duration;
     use tokio::time;
 
-    /// A running session of a user, in a kernel of its own, with its manager and the context of
-    /// its owner.
-    async fn running() -> (Arc<SessionManager>, Arc<SessionLoop>, SecurityContext) {
-        let manager = Arc::new(SessionManager::new(test_kernel()));
+    /// A running session of a user in `kernel`, with its manager and the context of its owner.
+    async fn running(
+        kernel: Arc<Kernel>,
+    ) -> (Arc<SessionManager>, Arc<SessionLoop>, SecurityContext) {
+        let manager = Arc::new(SessionManager::new(kernel));
         let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
         (manager, session_loop, ctx)
     }
 
     /// A channel followed by the owner of a running session, the first of their session.
     async fn followed() -> (Followed, Arc<ChannelLoop>, ActorId) {
-        let (manager, session_loop, ctx) = running().await;
+        let (manager, session_loop, ctx) = running(test_kernel()).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let views = manager.views(Viewer::new(ctx.clone()));
         let followed =
@@ -955,6 +962,34 @@ mod tests {
             Some(Said { words: words("look"), attachments: carried })
         );
         assert_eq!(said_by(message(Some(""), Vec::new())), None, "nothing said");
+    }
+
+    /// A message printed, or printed again as edited, mentions by their handles who take part in
+    /// the channel as it is printed: also who joined after the channel was followed, no longer who
+    /// left.
+    #[tokio::test]
+    async fn a_message_mentions_who_takes_part_as_it_is_printed() {
+        let kernel = test_kernel();
+        let (manager, session_loop, ctx) = running(Arc::clone(&kernel)).await;
+        let channel = session_loop.channels().into_iter().next().expect("the main channel");
+        let views = manager.views(Viewer::new(ctx.clone()));
+        let mut followed =
+            Followed::new(Arc::clone(&channel), views).await.expect("the owner takes part");
+        let agent = ActorId::Agent(an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await);
+        let mentioning = Message { mentions: vec![agent], ..message(agent, "@helper is here") };
+        let mut mentions = |event: ActorEvent| {
+            let printed = followed.take_in(&from(&channel, agent, event));
+            let [Printed::Said { said: Said { words: Some(words), .. }, .. }] = printed.as_slice()
+            else {
+                panic!("the message is printed: {printed:?}");
+            };
+            words.mentions.clone()
+        };
+        let said = ActorEvent::CompleteMessageGenerated(mentioning.clone());
+        assert_eq!(mentions(said), vec![0..7], "the handle of who joined");
+        channel.remove_participant(&ctx, agent).await.expect("the owner may remove it");
+        let edited = ActorEvent::MessageModified(mentioning);
+        assert!(mentions(edited).is_empty(), "not the handle of who left");
     }
 
     /// The words of a message mention the participants it mentions, by their handles in the
@@ -1208,8 +1243,7 @@ mod tests {
     #[tokio::test]
     async fn what_waits_as_a_channel_is_followed_is_known_and_shown_once() {
         let kernel = test_kernel();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-        let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
+        let (manager, session_loop, ctx) = running(Arc::clone(&kernel)).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let agent_id = an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await;
         let me = ctx.caller_id;
@@ -1352,8 +1386,7 @@ mod tests {
         let kernel =
             TestKernel { libraries: vec![&ScriptedAgents(Script::Hangs)], ..Default::default() }
                 .build();
-        let manager = Arc::new(SessionManager::new(Arc::clone(&kernel)));
-        let (session_loop, ctx, _) = running_session_of_a_user(&manager).await;
+        let (manager, session_loop, ctx) = running(Arc::clone(&kernel)).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let agent = ActorId::Agent(an_agent_in(&kernel, &session_loop, &ctx, channel.id()).await);
         let views = manager.views(Viewer::new(ctx));
@@ -1566,7 +1599,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_channel_is_followed_only_by_who_takes_part() {
-        let (manager, session_loop, ctx) = running().await;
+        let (manager, session_loop, ctx) = running(test_kernel()).await;
         let channel = session_loop.channels().into_iter().next().expect("the main channel");
         let followed_by = |ctx: SecurityContext| {
             Followed::new(Arc::clone(&channel), manager.views(Viewer::new(ctx)))
