@@ -641,15 +641,23 @@ mod tests {
             tool_calls: vec![make_tool_call("run_command")],
             ..by_alice.clone()
         };
-        for message in [
-            by_alice.clone(),
-            attached,
-            Message { role: MessageRole::Assistant, ..by_alice.clone() },
-            Message { role: MessageRole::Tool, ..by_alice.clone() },
-            Message { internal: true, ..by_alice.clone() },
-            called.clone(),
-            Message { role: MessageRole::Assistant, ..called },
+        // Whether each is a person's call (`Message::is_a_persons_call`, which its tests hold).
+        for (message, persons_call) in [
+            (by_alice.clone(), false),
+            (attached, false),
+            (Message { role: MessageRole::Assistant, ..by_alice.clone() }, false),
+            (Message { role: MessageRole::Tool, ..by_alice.clone() }, false),
+            (Message { internal: true, ..by_alice.clone() }, false),
+            (called.clone(), true),
+            (Message { role: MessageRole::Assistant, ..called }, false),
         ] {
+            assert_eq!(
+                keeps(&Filter::called_by_a_person(), said(message.clone())),
+                persons_call,
+                "a person's call as {:?}, calls {}",
+                message.role,
+                message.tool_calls.len()
+            );
             assert_eq!(
                 keeps(&Filter::heard(), said(message.clone())),
                 message.is_heard(),

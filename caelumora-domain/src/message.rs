@@ -299,6 +299,14 @@ impl Message {
         )
     }
 
+    /// The join of how the message and each of its tool results are classified
+    /// (`Classification::join_all`): what whoever is given it, results included, has seen. `None`
+    /// if they have no compartment in common.
+    pub fn classification_with_results(&self) -> Option<Classification> {
+        let results = self.tool_results.iter().map(|result| &result.classification);
+        Classification::join_all(iter::once(&self.classification).chain(results))
+    }
+
     /// Whether the message says anything in words or attachments (issue 282): what may ask someone
     /// to respond - a person's call alone asks nobody (issue 587). `Filter::saying` as a condition.
     pub fn says_something(&self) -> bool {
@@ -335,6 +343,7 @@ impl Message {
 
     /// Whether the message carries calls in the role of a user (issue 587): a person's, who called
     /// themselves - an agent's calls are in its own role, its results in a tool's.
+    /// `Filter::called_by_a_person` as a condition.
     fn is_a_persons_call(&self) -> bool {
         self.role == MessageRole::User && !self.tool_calls.is_empty()
     }
@@ -554,6 +563,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::agent::AgentId;
     use crate::channel::ChannelId;
+    use crate::confidentiality::testing::classified;
     use crate::confidentiality::Confidentiality;
     use crate::content::testing::make_content_ref;
     use crate::context::{KnowledgeRef, KnowledgeSource};
@@ -770,6 +780,29 @@ pub(crate) mod tests {
             ..made
         };
         assert!(of_an_agent.as_heard().is_none(), "an agent's call alone is its own work");
+    }
+
+    /// Issue 587: whoever is given a message with results has seen the join of all of it - as a
+    /// result classified above the message is; none where they share no compartment.
+    #[test]
+    fn a_message_is_classified_with_its_results_as_their_join() {
+        let internal = Classification::general(Confidentiality::Internal);
+        let message = Message {
+            tool_results: vec![ToolCallResult {
+                classification: internal.clone(),
+                ..result("1", ToolVisibility::SHOWN)
+            }],
+            ..Message::new(Classification::PUBLIC)
+        };
+        assert_eq!(message.classification_with_results(), Some(internal), "the result's above");
+        let apart = Message {
+            tool_results: vec![ToolCallResult {
+                classification: classified(Confidentiality::Internal, &["hr"]),
+                ..result("1", ToolVisibility::SHOWN)
+            }],
+            ..Message::new(classified(Confidentiality::Internal, &["finance"]))
+        };
+        assert_eq!(apart.classification_with_results(), None, "no compartment in common");
     }
 
     /// Issue 538: what a message's tools read or wrote is no part of what anyone else is given of

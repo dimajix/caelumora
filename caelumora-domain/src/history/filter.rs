@@ -122,14 +122,19 @@ impl Filter<HistoryField> {
     /// or attachments of a person or an agent, or the calls a person made
     /// (issue 587), not a step of a plan under way.
     pub fn heard() -> Self {
-        let persons_call = Filter::all_of([
-            Filter::eq(HistoryField::Role, MessageRole::User),
-            Filter::negated(Filter::IsNull(HistoryField::ToolCalls)),
-        ]);
         Filter::all_of([
             Filter::is_in(HistoryField::Role, [MessageRole::User, MessageRole::Assistant]),
             Filter::eq(HistoryField::Internal, false),
-            Filter::any_of([Filter::saying(), persons_call]),
+            Filter::any_of([Filter::saying(), Filter::called_by_a_person()]),
+        ])
+    }
+
+    /// A message carrying calls a person made themselves (issue 587): calls in the role of a user -
+    /// `Message::is_a_persons_call`, which `Message::is_heard` counts.
+    pub fn called_by_a_person() -> Self {
+        Filter::all_of([
+            Filter::eq(HistoryField::Role, MessageRole::User),
+            Filter::negated(Filter::IsNull(HistoryField::ToolCalls)),
         ])
     }
 

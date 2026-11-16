@@ -211,3 +211,9 @@ on the workspace already. It sends the run as the issuer's call (`UserActor::sen
 person's calls are heard with their results (`Message::as_heard`) and given to a model in words
 (`kernel.calls_made`); a message that says nothing in words or attachments asks nobody to respond
 (`Message::says_something`).
+
+2026-11-16: A step 2b added at the maintainer's request, from a finding of the review of step 2:
+`read_history`, which reads another channel, gave only what was said in words, so an agent reading
+a channel from outside never saw a person's command that the agents in it heard. It reads a
+person's calls now in the words the resolver gives them (`calls_in_words`), classified with what
+they answered (`Message::classification_with_results`, which `Work::see_message` uses too).

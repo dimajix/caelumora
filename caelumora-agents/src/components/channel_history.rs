@@ -1,12 +1,11 @@
-//! The `channel_history` component (issue 17): an agent reads the history of
-//! another channel of its session - the latest messages, or those that
-//! contain a text -, each with what it says and the attachments it carries
-//! (issue 282). Only channels the agent's channel may read by their
-//! classifications can be read - as the turn's views answer
-//! (`Situation::session`, issues 133, 163); every read is recorded as a
-//! `KnowledgeRef` with the turn's messages. When a message was said is
-//! written as the model is given the times of its own channel's (issue
-//! 424): in the turn's time zone, in the same form.
+//! The `channel_history` component (issue 17): an agent reads the history of another channel of its
+//! session - the latest messages, or those that contain a text -, each with what it says and the
+//! attachments it carries (issue 282), and the calls a person made in it, in the words a model is
+//! given them in its own channel (`calls_in_words`, issue 587). Only channels the agent's channel
+//! may read by their classifications can be read - as the turn's views answer
+//! (`Situation::session`, issues 133, 163); every read is recorded as a `KnowledgeRef` with the
+//! turn's messages. When a message was said is written as the model is given the times of its own
+//! channel's (issue 424): in the turn's time zone, in the same form.
 
 use crate::components::notes::READ_NOTES_TOOL_NAME;
 use crate::prompt::{texts_of, writing_for_the_model, NAMESPACE};
@@ -19,7 +18,7 @@ use async_trait::async_trait;
 use caelumora_api::component::{ComponentFacets, ComponentKind, LibraryComponents};
 use caelumora_domain::chain::Position;
 use caelumora_domain::confidentiality::Classification;
-use caelumora_domain::context::{KnowledgeRef, KnowledgeSource};
+use caelumora_domain::context::{calls_in_words, KnowledgeRef, KnowledgeSource};
 use caelumora_domain::history::{HistoryEntry, HistoryField};
 use caelumora_domain::message::Message;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
@@ -121,8 +120,13 @@ impl Tool for ReadHistoryTool {
         let page = channel.history_page_of(None, last, Some(wanted(query))).await?;
         let messages: Vec<&Message> = page.entries().filter_map(HistoryEntry::said).collect();
         let more = page.earlier.is_some();
-        // What was read is classified as the messages given (issue 168).
-        let classification = Classification::join_all(messages.iter().map(|m| &m.classification));
+        // What was read is classified as the messages given (issue 168), with what the calls of a
+        // person in them answered (issue 587).
+        let classification = messages
+            .iter()
+            .map(|m| m.classification_with_results())
+            .collect::<Option<Vec<_>>>()
+            .and_then(|all| Classification::join_all(&all));
         let source = KnowledgeSource::History {
             digest: page.digest,
             from: Some(channel.visible_from().await?).filter(|from| *from > Position::START),
@@ -136,6 +140,12 @@ impl Tool for ReadHistoryTool {
         };
 
         let time_zone = turn.situation().time_zone();
+        let texts = turn.situation().texts();
+        let messages: Vec<Message> = messages
+            .into_iter()
+            .map(|m| calls_in_words(&texts, m.clone()))
+            .collect::<Result<_, _>>()
+            .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
         let value = serde_json::json!({
             "channel": channel.name(),
             "messages": messages.iter().map(|m| {
@@ -155,13 +165,13 @@ impl Tool for ReadHistoryTool {
     }
 }
 
-/// Which messages the tool returns: those that say something - words or
-/// attachments (issue 282) -, or those whose words contain `query` if given -
-/// as names are compared (`Filter::Contains`).
+/// Which messages the tool returns: those that say something - words or attachments (issue 282) -
+/// or carry the calls a person made (issue 587), or those whose words contain `query` if given - as
+/// names are compared (`Filter::Contains`).
 fn wanted(query: Option<&str>) -> Filter<HistoryField> {
     match query {
         Some(query) => Filter::all_of([Filter::written(), Filter::containing(query)]),
-        None => Filter::saying(),
+        None => Filter::any_of([Filter::saying(), Filter::called_by_a_person()]),
     }
 }
 
@@ -182,27 +192,38 @@ pub fn register(registry: &mut LibraryComponents<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::library::AgentsLibrary;
     use crate::testing;
-    use caelumora_domain::actor::ActorId;
+    use caelumora_domain::actor::{ActorEvent, ActorId};
     use caelumora_domain::agent::AgentChannelState;
+    use caelumora_domain::component::ComponentDescriptor;
+    use caelumora_domain::config::AppConfig;
     use caelumora_domain::content::testing::make_content_ref;
     use caelumora_domain::history::{Audience, Recorded};
-    use caelumora_domain::message::MessageId;
+    use caelumora_domain::message::{MessageId, MessageRole};
+    use caelumora_domain::scope::Scope;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_kernel::command::SHELL_KIND;
     use caelumora_kernel::testing::World;
+    use caelumora_kernel::workspace::WorkspaceSpec;
 
-    /// A message saying `content`, recorded as the store keeps it.
-    fn said(content: &str) -> Value {
-        let message = Message {
-            id: MessageId::new(),
-            content: Some(content.to_string()),
-            ..Message::new(Classification::CHANNEL_DEFAULT)
-        };
+    /// `message`, said, recorded as the store keeps it.
+    fn recorded(message: Message) -> Value {
         serde_json::to_value(Recorded::new(
             HistoryEntry::Said { message },
             ActorId::System,
             Audience::Everybody,
         ))
         .unwrap()
+    }
+
+    /// A message saying `content`, recorded as the store keeps it.
+    fn said(content: &str) -> Value {
+        recorded(Message {
+            id: MessageId::new(),
+            content: Some(content.to_string()),
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        })
     }
 
     #[test]
@@ -219,14 +240,62 @@ mod tests {
             attachments: vec![make_content_ref("a.png", b"a")],
             ..Message::new(Classification::CHANNEL_DEFAULT)
         };
-        let attached = serde_json::to_value(Recorded::new(
-            HistoryEntry::Said { message: attached },
-            ActorId::System,
-            Audience::Everybody,
-        ))
-        .unwrap();
+        let attached = recorded(attached);
         assert!(wanted(None).matches(&attached), "unless it has attachments (issue 282)");
         assert!(!wanted(Some("tea")).matches(&attached), "which no query finds");
+        let called = Message {
+            id: MessageId::new(),
+            role: MessageRole::User,
+            tool_calls: vec![make_tool_call("run_command")],
+            ..Message::new(Classification::CHANNEL_DEFAULT)
+        };
+        assert!(wanted(None).matches(&recorded(called.clone())), "a person's call (issue 587)");
+        let of_an_agent = Message { role: MessageRole::Assistant, ..called };
+        assert!(!wanted(None).matches(&recorded(of_an_agent)), "not an agent's, its own work");
+    }
+
+    /// Issue 587: a person's call - a command they ran - is read in the words a model is given it
+    /// in its own channel, classified with what it answered.
+    #[tokio::test]
+    async fn a_person_s_call_is_read_in_words_and_classified_with_its_result() {
+        let with_shell = |config: &mut AppConfig| {
+            config.commands.component_nodes.push(ComponentDescriptor::new("shell", SHELL_KIND));
+        };
+        let world = World::configured(&[], &[&AgentsLibrary], |_| {}, with_shell).await;
+        let alice = World::as_user(world.alice);
+        let personality = world.personality("plain", None, &[]).await;
+        let helper = world.agent("helper", world.alice, &personality).await;
+        let session = world.shared_session(&[helper], &[]).await;
+        let docs = WorkspaceSpec::new("docs", Scope::UserScope { user_id: world.alice }, "shell");
+        let docs = world.kernel.workspace_manager().create(&alice, docs).await.unwrap();
+        session.update_workspace(&alice, Some(docs.id), None).await.unwrap();
+        let main = &session.channels()[0];
+        let mut admitted = main.observe();
+        let hers = main.user_actor(world.alice).unwrap();
+        hers.execute_command("workspace run echo notes.md").await.expect("hers to run");
+        while !matches!(
+            admitted.recv().await.unwrap().event,
+            ActorEvent::CompleteMessageGenerated(_)
+        ) {}
+        let tool =
+            testing::tool_named(&tools(&testing::prompts()).unwrap(), READ_HISTORY_TOOL_NAME);
+        let mut state = AgentChannelState::default();
+        let mut turn = testing::turn(&session, helper, world.alice, &mut state);
+
+        let params = serde_json::json!({ "channel": main.name() });
+        let read = tool.execute(&params, None, &mut turn).await.unwrap();
+        let text = read.value["messages"][0]["text"].as_str().expect("her call");
+        assert!(
+            text.starts_with("I called `run_command` with ") && text.contains(r#"notes.md\n"#),
+            "{text}"
+        );
+        assert_eq!(
+            read.classification,
+            Classification::join_all([&main.classification(), &docs.classification]),
+            "as what it answered"
+        );
+        drop(turn);
+        world.manager.stop(&alice, session.id()).await.unwrap();
     }
 
     /// Issue 538: what `read_history` read it gives with its output, for the executor to record:

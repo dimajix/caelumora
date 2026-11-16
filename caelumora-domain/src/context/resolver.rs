@@ -452,11 +452,12 @@ fn framed(
 /// `message` with the calls it carries as a `user` message - a person's, heard with their results
 /// (`Message::as_heard`, issue 587) - told in its words instead, worded by `texts`
 /// (`kernel.calls_made`): a model takes calls only from itself, and results only of its own calls.
-/// Any other message as it is.
+/// Any other message as it is. The one wording of a person's calls, wherever a model reads them -
+/// in its context, and in what it reads of another channel.
 ///
 /// # Errors
 /// `PromptError` if the text cannot be had.
-fn calls_in_words(texts: &PromptTexts, mut message: Message) -> Result<Message, PromptError> {
+pub fn calls_in_words(texts: &PromptTexts, mut message: Message) -> Result<Message, PromptError> {
     if message.role != MessageRole::User || message.tool_calls.is_empty() {
         return Ok(message);
     }

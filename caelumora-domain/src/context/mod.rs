@@ -36,4 +36,4 @@ pub use profile::{
     message_times_by_default, ModelProfile, ReasoningHistory, SenderFormat, SenderStyle,
     SystemMessages,
 };
-pub use resolver::{ContextResolver, ResolvedContext};
+pub use resolver::{calls_in_words, ContextResolver, ResolvedContext};
