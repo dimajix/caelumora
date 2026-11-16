@@ -12,10 +12,11 @@ waits.
 
 1.  **Interruption.** The agent registers the calls that require approval, runs whatever needs
     none, and moves to `WaitingForUser`. Its state, the waiting calls included, is stored.
-2.  **Request.** The agent emits `ApprovalRequested`. The moderator routes it to the channel's
-    `ApproverActor` only, which passes it on to the users - to everybody, so that all see what the
-    agent waits for; only who may approve is asked. A request nobody taking part may approve is
-    denied at once.
+2.  **Request.** The agent emits `ApprovalRequested`, with the call as it was admitted - its
+    arguments whole and what its tool says it does (`ToolCall::description`, see
+    [TOOLS.md](TOOLS.md)). The moderator routes it to the channel's `ApproverActor` only, which
+    passes it on to the users - to everybody, so that all see what the agent waits for; only who
+    may approve is asked. A request nobody taking part may approve is denied at once.
 3.  **Answers.** A user approves or denies through their `UserActor`, naming the request alone
     (`ApprovalAnswered`, issue 567); the moderator routes the answer to the approver only, which
     holds the request: it tells which agent asked, and whether the user may approve its calls. A

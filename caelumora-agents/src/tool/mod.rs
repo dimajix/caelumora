@@ -603,10 +603,12 @@ pub trait Tool: Send + Sync + Debug {
         ToolMatcher::proposed(self.description(), params)
     }
 
-    /// What a person deciding on a call with `params` is shown; by default what the tool does.
-    /// An error is the call's: arguments the tool cannot describe it cannot run with either.
-    fn describe(&self, _params: &Value) -> ToolResult<String> {
-        Ok(self.description().description.clone())
+    /// What a call with `params` does, in words for a person: put to whoever decides on it, and
+    /// shown with the call (`ToolCall::description`, issue 586). By default nothing - the call is
+    /// shown by its arguments -, for a tool that says nothing of a call beyond them. An error is
+    /// the call's: arguments the tool cannot describe it cannot run with either.
+    fn describe(&self, _params: &Value) -> ToolResult<Option<String>> {
+        Ok(None)
     }
 }
 
@@ -700,17 +702,11 @@ pub async fn workspace_writer(turn: &Turn<'_>) -> WorkspaceResult<Arc<dyn Worksp
 /// (`ToolExecutor::admit`, issue 155).
 #[derive(Debug)]
 pub enum Admission {
-    /// A user decides first; they are shown `description`. `explicit` if a
-    /// rule of a place asked for it: a decision of their own (issue 13).
-    /// `suggested` is what a rule derived from the call would match, if one
-    /// can be kept (issue 400).
-    /// Approved, it asks `questions`, if it has any (issue 165).
-    Ask {
-        description: String,
-        explicit: bool,
-        suggested: Option<ToolMatcher>,
-        questions: Option<Questions>,
-    },
+    /// A user decides first, shown the call - by what its tool says it does, where it says it,
+    /// and its arguments. `explicit` if a rule of a place asked for it: a decision of their own
+    /// (issue 13). `suggested` is what a rule derived from the call would match, if one can be kept
+    /// (issue 400). Approved, it asks `questions`, if it has any (issue 165).
+    Ask { explicit: bool, suggested: Option<ToolMatcher>, questions: Option<Questions> },
     /// The users answer its questions first (issue 165), as put to them.
     Await(Questions),
     /// It runs as it is.
@@ -724,8 +720,8 @@ impl Admission {
     /// The state `call` starts with, admitted so.
     pub fn state(self, call: ToolCall) -> ToolCallState {
         match self {
-            Admission::Ask { description, explicit, suggested, questions } => {
-                ToolCallState::pending(call, description, explicit, suggested, questions)
+            Admission::Ask { explicit, suggested, questions } => {
+                ToolCallState::pending(call, explicit, suggested, questions)
             }
             Admission::Await(questions) => ToolCallState::asking(call, questions),
             Admission::Run => ToolCallState::approved(call),
@@ -1018,9 +1014,10 @@ impl ToolExecutor {
     /// asks the rules again) -, then the call itself (issue 118) and the questions it asks (issue
     /// 165). Otherwise a user is asked if a rule of a place asks for it - explicitly, for a
     /// decision of their own - or if its tool, as the turn began with it (issue 137), requires
-    /// approval, and shown what the tool says of the call; the questions are asked once it is
-    /// approved, or at once.
-    pub async fn admit(&self, call: &ToolCall, turn: &Turn<'_>) -> Admission {
+    /// approval; the questions are asked once it is approved, or at once. A call that comes so far
+    /// is stamped with what its tool says it does (`ToolCall::description`, issue 586), which
+    /// whoever decides on it is shown and its channel shows with it; one answered before has none.
+    pub async fn admit(&self, call: &mut ToolCall, turn: &Turn<'_>) -> Admission {
         let agent = turn.situation().agent_id();
         if !offered(call, turn) {
             info!(
@@ -1070,15 +1067,15 @@ impl ToolExecutor {
                 turn,
             )));
         };
-        let description = match tool.describe(&call.arguments) {
+        call.description = match tool.describe(&call.arguments) {
             Ok(description) => description,
             Err(e @ ToolError::InvalidParameter(_)) => {
                 info!("Tool call '{}' by agent {} cannot run: {}", call.function_name, agent, e);
                 return Admission::Answered(Box::new(self.failed(call, e, turn)));
             }
             Err(e) => {
-                warn!("Cannot describe tool call '{}' for approval: {}", call.function_name, e);
-                "No description".to_string()
+                warn!("Cannot describe tool call '{}': {}", call.function_name, e);
+                None
             }
         };
         let questions = match self.questions(tool.as_ref(), call, turn) {
@@ -1095,12 +1092,9 @@ impl ToolExecutor {
         let asks =
             explicit || turn.tools().any(|t| t.name == call.function_name && t.requires_approval);
         match questions {
-            _ if asks => Admission::Ask {
-                description,
-                explicit,
-                suggested: suggested(tool.as_ref(), call),
-                questions,
-            },
+            _ if asks => {
+                Admission::Ask { explicit, suggested: suggested(tool.as_ref(), call), questions }
+            }
             Some(questions) => Admission::Await(questions),
             None => Admission::Run,
         }
@@ -1313,6 +1307,28 @@ mod tests {
         }
     }
 
+    /// A tool that says what a call of it does, by its arguments.
+    #[derive(Debug)]
+    struct Describing(ToolDescription);
+
+    #[async_trait]
+    impl Tool for Describing {
+        fn description(&self) -> &ToolDescription {
+            &self.0
+        }
+        async fn execute(
+            &self,
+            _params: &Value,
+            _answers: Option<&Answers>,
+            _turn: &mut Turn<'_>,
+        ) -> ToolResult<ToolOutput> {
+            Ok(json!({ "done": true }).into())
+        }
+        fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+            Ok(Some(format!("Do it with {params}")))
+        }
+    }
+
     fn hr() -> Classification {
         Classification::new(Confidentiality::Internal, [Compartment::new("hr")]).unwrap()
     }
@@ -1356,6 +1372,7 @@ mod tests {
                 answering("hr_tool", None, |_| ToolOutput::classified(json!({"salary": 1}), hr())),
                 answering("configured_tool", Some(hr()), |_| json!({"salary": 2}).into()),
                 Arc::new(Hanging(tool("hanging_tool", requires_approval, None))),
+                Arc::new(Describing(tool("describing_tool", requires_approval, None))),
                 answering("showing_tool", None, |_| shown(Classification::CHANNEL_DEFAULT)),
                 answering("showing_hr_tool", None, |_| shown(hr())),
                 answering("reading_tool", None, |turn| ToolOutput {
@@ -1560,7 +1577,7 @@ mod tests {
         let admitted = |executor: ToolExecutor| async move {
             let mut agent_channel_state = agent_turn(&executor).await;
             let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-            executor.admit(&call("test_tool"), &turn).await
+            executor.admit(&mut call("test_tool"), &turn).await
         };
 
         let denied = admitted(guarded(
@@ -1617,7 +1634,10 @@ mod tests {
             guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        assert!(matches!(executor.admit(&call("test_tool"), &turn).await, Admission::Ask { .. }));
+        assert!(matches!(
+            executor.admit(&mut call("test_tool"), &turn).await,
+            Admission::Ask { .. }
+        ));
 
         // As if set in another instance, and announced.
         let denying =
@@ -1639,7 +1659,7 @@ mod tests {
         let mut agent_channel_state = offered(&executor, Work { ..Default::default() }).await;
         let mut context = Turn::under_way(agent_id, &mut agent_channel_state);
 
-        let admitted = executor.admit(&call("test_tool"), &context).await;
+        let admitted = executor.admit(&mut call("test_tool"), &context).await;
         assert!(
             matches!(admitted, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())),
             "refused before anyone is asked: {admitted:?}"
@@ -1668,11 +1688,13 @@ mod tests {
             Admission::Ask { suggested, .. } => suggested,
             other => panic!("its tool requires approval, got {other:?}"),
         };
-        let long = suggested(asking.admit(&with("x".repeat(MAX_PATTERN_CHARS + 1)), &turn).await)
-            .expect("a rule by equality");
+        let long =
+            suggested(asking.admit(&mut with("x".repeat(MAX_PATTERN_CHARS + 1)), &turn).await)
+                .expect("a rule by equality");
         assert!(matches!(long.arguments["text"], ArgumentMatcher::Equals { .. }), "{long:?}");
         assert!(
-            suggested(asking.admit(&with("x".repeat(MAX_EQUALS_CHARS + 1)), &turn).await).is_none(),
+            suggested(asking.admit(&mut with("x".repeat(MAX_EQUALS_CHARS + 1)), &turn).await)
+                .is_none(),
             "no rule that cannot be kept"
         );
     }
@@ -1682,11 +1704,20 @@ mod tests {
         let asking = executor(Arc::new(AllowAllPolicy::new()));
         let mut agent_channel_state = agent_turn(&asking).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
+        let mut asked = call("test_tool");
         assert!(
-            matches!(asking.admit(&call("test_tool"), &turn).await, Admission::Ask { description, explicit: false, .. } if description == "desc"),
+            matches!(asking.admit(&mut asked, &turn).await, Admission::Ask { explicit: false, .. }),
             "its tool requires approval"
         );
-        match asking.admit(&call("does_not_exist"), &turn).await {
+        assert_eq!(asked.description, None, "its tool says nothing of it beyond its arguments");
+        let mut described = ToolCall { arguments: json!({ "x": 1 }), ..call("describing_tool") };
+        asking.admit(&mut described, &turn).await;
+        assert_eq!(
+            described.description.as_deref(),
+            Some(r#"Do it with {"x":1}"#),
+            "stamped with what its tool says it does"
+        );
+        match asking.admit(&mut call("does_not_exist"), &turn).await {
             Admission::Answered(result) => {
                 assert_eq!(result.status, ToolResultStatus::UnknownTool);
                 assert!(
@@ -1702,14 +1733,14 @@ mod tests {
         let mut agent_channel_state = agent_turn(&refusing).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(
-            matches!(refusing.admit(&call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden),
+            matches!(refusing.admit(&mut call("test_tool"), &turn).await, Admission::Answered(r) if r.status == ToolResultStatus::Forbidden),
             "first the policy"
         );
 
         let running = guarded(Arc::new(AllowAllPolicy::new()), false, Places::default());
         let mut agent_channel_state = agent_turn(&running).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        let admitted = running.admit(&call("test_tool"), &turn).await;
+        let admitted = running.admit(&mut call("test_tool"), &turn).await;
         assert!(matches!(admitted, Admission::Run), "no approval needed");
         let state = admitted.state(call("test_tool"));
         assert!(matches!(state.status, ToolCallStatus::Ready { answers: None }), "to be run");
@@ -1789,7 +1820,7 @@ mod tests {
             confidential,
         );
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
-        let admitted = executor.admit(&call("send_out"), &turn).await;
+        let admitted = executor.admit(&mut call("send_out"), &turn).await;
         assert!(
             matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool),
             "not called by its name: {admitted:?}"
@@ -1941,12 +1972,12 @@ mod tests {
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(
-            matches!(executor.admit(&call("vanishing_tool"), &turn).await, Admission::Run),
+            matches!(executor.admit(&mut call("vanishing_tool"), &turn).await, Admission::Run),
             "admitted while it is there"
         );
 
         vanishing.gone.store(true, Ordering::SeqCst);
-        let admitted = executor.admit(&call("vanishing_tool"), &turn).await;
+        let admitted = executor.admit(&mut call("vanishing_tool"), &turn).await;
         assert!(
             matches!(&admitted, Admission::Answered(r) if r.status == ToolResultStatus::UnknownTool),
             "{admitted:?}"

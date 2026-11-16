@@ -308,7 +308,6 @@ mod tests {
             ToolCallState::approved(calls[0].clone()),
             ToolCallState::pending(
                 calls[1].clone(),
-                String::new(),
                 false,
                 Some(ToolMatcher::proposed(
                     &make_tool_description(&calls[1].function_name),

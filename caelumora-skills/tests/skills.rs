@@ -302,7 +302,7 @@ async fn an_agent_writes_a_skill_of_its_owners_classified_as_what_it_saw_and_rai
 async fn an_approver_is_shown_the_skill_whole() {
     let world = world().await;
     let provider = skills::<dyn ToolProvider>(&world, json!({})).await;
-    let shown = tool_named(provider.as_ref(), CREATE_SKILL_TOOL_NAME).describe(&serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap();
+    let shown = tool_named(provider.as_ref(), CREATE_SKILL_TOOL_NAME).describe(&serde_json::json!({ "name": "deploy", "description": "How we deploy", "body": "1. Build.\n2. Ship.", "scope": "user" })).unwrap().unwrap();
     assert_eq!(shown, "Write the skill \"deploy\" (for every session of the agent's owner): How we deploy\n\n1. Build.\n2. Ship.");
     let unchanged = tool_named(provider.as_ref(), UPDATE_SKILL_TOOL_NAME)
         .describe(&serde_json::json!({ "name": "deploy" }));

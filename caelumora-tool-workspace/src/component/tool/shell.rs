@@ -236,10 +236,10 @@ impl Tool for RunCommandTool {
         Ok(standing(&self.params, &self.prompts, state?, workspace))
     }
 
-    /// What an approver reads: the command, whole.
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    /// What the call does, as an approver reads it and its channel shows it: the command, whole.
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Run { command, .. } = arguments(params)?;
-        Ok(format!("Run in the workspace:\n{command}"))
+        Ok(Some(format!("Run in the workspace:\n{command}")))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {
@@ -273,8 +273,8 @@ impl Tool for CommandOutputTool {
         Ok(standing(&self.params, &self.prompts, state, workspace))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
-        arguments::<Follow>(params).map(|follow| format!("Follow command {}", follow.id))
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+        arguments::<Follow>(params).map(|follow| Some(format!("Follow command {}", follow.id)))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {
@@ -308,8 +308,8 @@ impl Tool for KillCommandTool {
         Ok(standing(&self.params, &self.prompts, state, workspace))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
-        arguments::<Follow>(params).map(|follow| format!("Kill command {}", follow.id))
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+        arguments::<Follow>(params).map(|follow| Some(format!("Kill command {}", follow.id)))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {
@@ -436,6 +436,7 @@ mod tests {
         assert_eq!(
             tool_named(&tool, RUN_COMMAND)
                 .describe(&json!({ "command": "rm -rf build && make" }))
+                .unwrap()
                 .unwrap(),
             "Run in the workspace:\nrm -rf build && make"
         );

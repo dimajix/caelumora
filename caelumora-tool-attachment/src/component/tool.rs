@@ -334,14 +334,14 @@ impl Tool for CopyAttachmentTool {
         ))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let CopyTo { reference, path } = arguments(params)?;
-        Ok(match path {
+        Ok(Some(match path {
             Some(path) => format!("Copy attachment '{reference}' into the workspace as '{path}'"),
             None => {
                 format!("Copy attachment '{reference}' into the workspace under '{COPIED_TO}/'")
             }
-        })
+        }))
     }
 }
 

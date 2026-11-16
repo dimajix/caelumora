@@ -1526,7 +1526,6 @@ mod tests {
                         channel_id: Default::default(),
                         agent_id: AgentId::new(),
                         tool_call: call.clone(),
-                        description: "test".to_string(),
                     }),
                 ),
                 (user, ActorEvent::MessageRevoked { message: MessageId::new(), at: Utc::now() }),

@@ -5,7 +5,7 @@
 
 use super::words::{
     attachment, error_word, how_to_answer, how_to_approve, missed, offered_words, outcome,
-    question_rows, what_is_asked, Arguments, EXPLICIT,
+    question_rows, to_decide, what_is_asked, Called, EXPLICIT,
 };
 use super::{Screen, Typed};
 use crate::asking::{Asked, Asking};
@@ -238,10 +238,11 @@ fn said_line(said: &Said) -> String {
 /// The line that tells that `sender` calls the tool of `call`, and with what.
 fn call_line(sender: &str, call: &ToolCall) -> String {
     let tool = &call.function_name;
-    match Arguments::of(call) {
-        Arguments::None => format!("{sender} calls {tool}"),
-        Arguments::NotShown => format!("{sender} calls {tool}, its arguments not shown"),
-        Arguments::Shown(arguments) => format!("{sender} calls {tool} with {arguments}"),
+    match Called::of(call).on_one_line() {
+        Called::Described(description) => format!("{sender} calls {tool}: {description}"),
+        Called::Bare => format!("{sender} calls {tool}"),
+        Called::NotShown => format!("{sender} calls {tool}, its arguments not shown"),
+        Called::With(arguments) => format!("{sender} calls {tool} with {arguments}"),
     }
 }
 
@@ -253,7 +254,7 @@ fn result_line(result: &ToolCallResult) -> String {
 /// The lines that show `request` for approval, and how to answer it.
 fn approval_lines(request: &ApprovalRequest) -> Vec<String> {
     let id = request.id.0;
-    let mut lines = vec![format!("Approval requested, id {id}:"), request.description.clone()];
+    let mut lines = vec![format!("Approval requested, id {id}:"), to_decide(&request.tool_call)];
     if request.explicit {
         lines.push(EXPLICIT.to_string());
     }
@@ -423,9 +424,10 @@ mod tests {
         assert!(!questions(&sensitive, false).join("\n").contains("Sensitive"), "not the user's");
     }
 
-    /// A tool called is written with its arguments in one line, shortened, or as not shown.
+    /// A tool called is written by what its tool says it does, or else with its arguments in one
+    /// line, shortened, or as not shown.
     #[test]
-    fn a_tool_called_is_written_with_its_arguments() {
+    fn a_tool_called_is_written_by_its_description_or_its_arguments() {
         let call = |arguments| ToolCall { arguments, ..make_tool_call("terminal") };
         let called = |arguments| call_line("helper", &call(arguments));
         assert_eq!(called(Value::Null), "helper calls terminal, its arguments not shown");
@@ -436,6 +438,28 @@ mod tests {
         );
         let long = called(json!({"text": "ä".repeat(500)}));
         assert!(long.ends_with('…') && long.chars().count() < 200, "{long}");
+
+        let described = ToolCall {
+            description: Some("Run in the workspace:\nls -la".to_string()),
+            ..call(json!({"command": "ls -la"}))
+        };
+        assert_eq!(
+            call_line("helper", &described),
+            "helper calls terminal: Run in the workspace:⏎ls -la",
+            "by what its tool says it does, on one line"
+        );
+    }
+
+    /// Whoever decides on a call is told what its tool says it does, whole, or else the tool and
+    /// its arguments (issue 586).
+    #[test]
+    fn a_call_to_decide_is_told_by_its_description_or_its_arguments() {
+        let call = ToolCall { arguments: json!({"command": "ls"}), ..make_tool_call("terminal") };
+        assert_eq!(to_decide(&call), r#"call terminal with {"command":"ls"}"#);
+        assert_eq!(to_decide(&ToolCall { arguments: json!({}), ..call.clone() }), "call terminal");
+        let described =
+            ToolCall { description: Some("Run in the workspace:\nls".to_string()), ..call };
+        assert_eq!(to_decide(&described), "Run in the workspace:\nls", "whole");
     }
 
     /// How a call ended is written by its first line and how many follow, or by why it did not.

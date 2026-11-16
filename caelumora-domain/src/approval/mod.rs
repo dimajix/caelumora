@@ -105,7 +105,7 @@ impl ApprovalStrategy {
 }
 
 /// A tool call an agent waits for, as it is put to those who may approve it: where and by whom it
-/// was made, the call itself and how it is described to them.
+/// was made, and the call itself, with how its tool describes it (`ToolCall::description`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub id: ApprovalId,
@@ -113,7 +113,6 @@ pub struct ApprovalRequest {
     pub channel_id: ChannelId,
     pub agent_id: AgentId,
     pub tool_call: ToolCall,
-    pub description: String,
     /// Whether a rule of a place asked for this very call to be decided by
     /// a person (issue 13): no rule of a person answers it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -187,8 +186,10 @@ pub mod testing {
             session_id,
             channel_id,
             agent_id,
-            tool_call: make_tool_call("test_tool"),
-            description: "call test_tool".to_string(),
+            tool_call: ToolCall {
+                description: Some("call test_tool".to_string()),
+                ..make_tool_call("test_tool")
+            },
             explicit: false,
             suggested: None,
         }

@@ -922,7 +922,6 @@ mod tests {
                     arguments: serde_json::json!({}),
                     ..make_tool_call("noop")
                 },
-                description: "test".to_string(),
             })
         };
         let withdrawn = || ActorEvent::ApprovalRequestWithdrawn { id: Default::default() };

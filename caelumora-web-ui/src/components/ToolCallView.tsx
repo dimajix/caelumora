@@ -71,9 +71,15 @@ export interface ToolCallContentProps {
   result?: ToolResult;
 }
 
-/** The default presentation: the call's arguments and its result, as they are. */
+/**
+ * The default presentation: what its tool says the call does, its arguments and its result, as
+ * they are.
+ */
 const DefaultToolCallContent: React.FC<ToolCallContentProps> = ({call, result}) => (
   <>
+    {call.description && (
+      <div className="text-[11px] whitespace-pre-wrap mb-1">{call.description}</div>
+    )}
     <div className="flex items-start gap-2 mb-1">
       <Terminal size={12} className="mt-0.5 opacity-50" />
       {call.arguments === null ? (

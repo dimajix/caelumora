@@ -305,6 +305,11 @@ export interface ToolCall {
   arguments: unknown;
   visibility?: ToolVisibility;
   presentation?: ToolPresentation;
+  /**
+   * What its tool says the call does, for a person (issue 586); left out where the tool says
+   * nothing beyond its arguments, or they are withheld.
+   */
+  description?: string;
 }
 
 /** How a tool call ended; absent means `ok`. */
@@ -1292,7 +1297,6 @@ export interface ApprovalRequest {
   channel_id: string;
   agent_id: string;
   tool_call: ToolCall;
-  description: string;
   /**
    * A rule of the session or channel asked for this very call to be decided by a person (issue 13);
    * left out when not.

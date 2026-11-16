@@ -573,13 +573,13 @@ impl AgentActor {
         events
     }
 
-    /// Takes the model's `tool_calls` into the turn as the tool guard admits
-    /// them (`ToolExecutor::admit`) and asks for the approvals they
-    /// wait for. Only records them: whether the turn goes on to run them or
-    /// waits is `handle_executing_tools`'s to decide.
+    /// Takes the model's `tool_calls` into the turn as the tool guard admits them
+    /// (`ToolExecutor::admit`), stamped with their descriptions as the message carrying them is
+    /// said, and asks for the approvals they wait for. Only records them: whether the turn goes on
+    /// to run them or waits is `handle_executing_tools`'s to decide.
     async fn request_approvals(
         &self,
-        tool_calls: &[ToolCall],
+        tool_calls: &mut [ToolCall],
         turn: &mut Turn<'_>,
         output: &dyn EventSender,
     ) -> Result<()> {
@@ -588,7 +588,8 @@ impl AgentActor {
         }
         let mut states = Vec::with_capacity(tool_calls.len());
         for call in tool_calls {
-            states.push(self.tool_executor.admit(call, turn).await.state(call.clone()));
+            let admission = self.tool_executor.admit(call, turn).await;
+            states.push(admission.state(call.clone()));
         }
         for request in turn.tool_calls().register(states) {
             turn.send_event(request, output).await?;
@@ -692,7 +693,7 @@ impl AgentActor {
                 }
                 MessageEvent::Complete(mut message) => {
                     stamp(&mut message, turn, self.body.reasoning_visibility(), true);
-                    self.request_approvals(&message.tool_calls, turn, output).await?;
+                    self.request_approvals(&mut message.tool_calls, turn, output).await?;
                     let converged = message.tool_calls.is_empty();
                     if let Some(msg) = self.respond(message).await {
                         turn.say(msg, output).await?;

@@ -314,9 +314,10 @@ it is fetched anew as it starts.
     each call, never by the tool's name. `ToolCallView` draws the frame every call has - the tool,
     who sees it, its status and duration, the record of questions it asked - and leaves what is
     inside to the handler of the presentation (`PRESENTATIONS`); a call without one, or with one
-    this client does not know, shows its arguments and result as they are. What each handler shows
-    is described with it in `ToolCallView.tsx`. A call presented `quiet` is left out of the chat
-    while it runs and where it succeeded, and a message that held nothing else with it
+    this client does not know, shows what its tool says it does (`description`), its arguments and
+    its result as they are; the approval card shows the description above the arguments. What each
+    handler shows is described with it in `ToolCallView.tsx`. A call presented `quiet` is left out
+    of the chat while it runs and where it succeeded, and a message that held nothing else with it
     (`withoutQuietCalls`): what it did shows elsewhere. The context and history panels show it as
     any other. What a result gave or showed its model is shown at the card, but in the chat what a
     message of the same turn carries - the same content, known by its digest, as `attach` copies

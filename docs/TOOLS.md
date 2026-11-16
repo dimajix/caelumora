@@ -9,18 +9,25 @@ person, is in [APPROVALS.md](APPROVALS.md); how components are built in
 [CONFIDENTIALITY.md](CONFIDENTIALITY.md).
 
 Every tool is an object of its own, a `Tool` (issue 584): it holds its `ToolDescription`, carries
-out a call (`execute`), and says what approvers are shown for a call (`describe`), which calls are
-like a given one (`matcher`, for a rule derived from it), and what a call asks a person before it
-runs (`questions`). A component gives an agent tools through the facet `ToolProvider`, which hands
-out its tools as objects and answers for them as a set: what they are for, which of them it offers
-in a turn and why it offers none (`offered`, in general terms, never with the error), and where
-their arguments go (`destination`). A provider that decides none of this beyond a description and a
-destination is `FixedTools`, the tools its component made as it was built; one whose offer depends
-on its tools holds each with what it is offered by, never choosing among them by their names. A
-parameter written in a language - a bash command line, `ToolParameters::shell` - says so; the model
-is not told of it, but the default `matcher` derives from it a rule on the words a command begins
-with ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes two
-calls alike says better than the default.
+out a call (`execute`), and says what a call does in words for a person (`describe`), which calls
+are like a given one (`matcher`, for a rule derived from it), and what a call asks a person before
+it runs (`questions`). A component gives an agent tools through the facet `ToolProvider`, which
+hands out its tools as objects and answers for them as a set: what they are for, which of them it
+offers in a turn and why it offers none (`offered`, in general terms, never with the error), and
+where their arguments go (`destination`). A provider that decides none of this beyond a description
+and a destination is `FixedTools`, the tools its component made as it was built; one whose offer
+depends on its tools holds each with what it is offered by, never choosing among them by their
+names. A parameter written in a language - a bash command line, `ToolParameters::shell` - says so;
+the model is not told of it, but the default `matcher` derives from it a rule on the words a command
+begins with ([APPROVALS.md](APPROVALS.md#rules-on-commands)). A tool that knows more of what makes
+two calls alike says better than the default.
+
+What a call does, as its tool describes it, is the call's: the agent stamps it on the call as the
+executor admits it (`ToolCall::description`, issue 586), whoever decides on the call is shown it,
+and a frontend shows it with the call as its presentation allows (the web UI's, in
+[WEB-UI.md](WEB-UI.md)). A tool that says nothing of a call beyond its arguments gives none, and the
+call is shown by them; nor has a call answered before it was described. Made of the arguments, it
+is withheld with them (`ToolCall::withhold_arguments`).
 
 A `ToolDescription` declares a tool's name, description and parameters, whether it requires
 approval, its visibility, optionally the classification of its results, and its presentation: how

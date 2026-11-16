@@ -73,8 +73,8 @@ impl Tool for DeleteFileTool {
         Ok(of_workspace(value.into(), workspace))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
-        Ok(format!("Delete '{}' from the workspace", arguments::<Delete>(params)?.path))
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+        Ok(Some(format!("Delete '{}' from the workspace", arguments::<Delete>(params)?.path)))
     }
 
     fn matcher(&self, params: &Value) -> ToolMatcher {

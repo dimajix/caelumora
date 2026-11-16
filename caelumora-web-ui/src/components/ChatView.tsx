@@ -1892,6 +1892,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ sessionId, channelId, user, 
                    <div className="text-xs font-mono font-bold text-gray-500">{approval.tool_call.function_name}</div>
                    <div className="text-[11px] text-gray-400">ID: {approval.id}</div>
                 </div>
+                {approval.tool_call.description && (
+                  <p className="text-sm whitespace-pre-wrap mb-2">{approval.tool_call.description}</p>
+                )}
                 <pre className="text-xs font-mono bg-gray-50 dark:bg-gray-900 p-2 rounded-sm mb-4 overflow-x-auto">
                   {formatArguments(approval.tool_call.arguments)}
                 </pre>

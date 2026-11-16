@@ -470,6 +470,7 @@ mod tests {
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::{Choice, Question, QuestionRequest, Questions};
     use caelumora_domain::session::SessionId;
+    use caelumora_domain::tool::ToolCall;
     use caelumora_domain::user::UserId;
     use caelumora_domain::work::TurnId;
     use ratatui::backend::TestBackend;
@@ -601,7 +602,8 @@ mod tests {
     /// An approval waiting for the user.
     fn approval() -> Asking {
         let request = make_approval_request(SessionId::new(), ChannelId::new(), AgentId::new());
-        Asking::Approval(ApprovalRequest { description: "Run ls".to_string(), ..request })
+        let tool_call = ToolCall { description: Some("Run ls".to_string()), ..request.tool_call };
+        Asking::Approval(ApprovalRequest { tool_call, ..request })
     }
 
     /// What is asked is shown above the status line, its choices below it, the cursor on the

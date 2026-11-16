@@ -243,18 +243,17 @@ impl TurnState {
         self.tool_calls
             .iter()
             .filter_map(|c| match &c.status {
-                ToolCallStatus::WaitingApproval {
-                    id, description, explicit, suggested, ..
-                } => Some(ApprovalRequest {
-                    id: *id,
-                    session_id: self.work.event_context.session_id,
-                    channel_id: self.work.event_context.channel_id,
-                    agent_id: agent,
-                    tool_call: c.tool_call.clone(),
-                    description: description.clone(),
-                    explicit: *explicit,
-                    suggested: suggested.clone(),
-                }),
+                ToolCallStatus::WaitingApproval { id, explicit, suggested, .. } => {
+                    Some(ApprovalRequest {
+                        id: *id,
+                        session_id: self.work.event_context.session_id,
+                        channel_id: self.work.event_context.channel_id,
+                        agent_id: agent,
+                        tool_call: c.tool_call.clone(),
+                        explicit: *explicit,
+                        suggested: suggested.clone(),
+                    })
+                }
                 _ => None,
             })
             .collect()

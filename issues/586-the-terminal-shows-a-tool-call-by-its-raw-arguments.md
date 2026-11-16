@@ -176,3 +176,12 @@ result of a command; and where a command of a workspace's shell stands gets a mo
 2026-11-16: One more step, from the review of the last: the web UI names where a command stands
 `CommandStatus`, as the domain does, and the words it tells it in `commandStatusLabel`, as it
 names those of a call's visibility `visibilityLabel` - not `commandStatus`.
+
+2026-11-16: Step 3 done as planned. `ToolCall::description`, stamped by `ToolExecutor::admit`
+from `Tool::describe`, which answers `ToolResult<Option<String>>` and by default nothing; the 16
+tools that described a call describe it as before. `ApprovalRequest`,
+`ToolCallStatus::WaitingApproval`, `ToolCallState::pending` and `Admission::Ask` lost their own;
+an approval waiting in a turn stored before reads without it and is shown by the call's
+arguments. Both views of the terminal tell a call by its description on one line, an approval by
+it whole - else by the tool and its arguments -, and the web UI shows it on the approval card and
+in its `default` presentation.

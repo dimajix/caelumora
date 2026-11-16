@@ -602,7 +602,6 @@ mod tests {
                 channel_id: self.channel.id(),
                 agent_id: self.agent,
                 tool_call: ToolCall { arguments: json!({}), ..make_tool_call("test_tool") },
-                description: "test".to_string(),
             }
         }
 

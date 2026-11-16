@@ -26,6 +26,12 @@ pub struct ToolCall {
     pub visibility: ToolVisibility,
     #[serde(default, skip_serializing_if = "ToolPresentation::is_default")]
     pub presentation: ToolPresentation,
+    /// What its tool says the call does, in words for a person - put to whoever decides on it,
+    /// and shown with it -, stamped by the agent as it admits the call (issue 586). `None` where
+    /// the tool says nothing of a call beyond its arguments, where it was answered before it was
+    /// described, and where the arguments it is made from are withheld (`withhold_arguments`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 impl ToolCall {
@@ -38,7 +44,14 @@ impl ToolCall {
             arguments,
             visibility: ToolVisibility::default(),
             presentation: ToolPresentation::default(),
+            description: None,
         }
+    }
+
+    /// Withholds its arguments, and the description made of them, where they are not to be shown.
+    pub fn withhold_arguments(&mut self) {
+        self.arguments = Value::Null;
+        self.description = None;
     }
 }
 
@@ -214,15 +227,13 @@ pub struct ToolCallState {
     reason = "kept once per call of a step; boxing the result would only cost an allocation"
 )]
 pub enum ToolCallStatus {
-    /// A person decides whether it may run (issue 13). They are shown
-    /// `description` - a decision of their own if `explicit`, which no rule
-    /// of a person answers - and offered a rule for the calls `suggested`
-    /// matches, if one can be derived from the call (issue 400). `id` is the approval's, from the
-    /// agent's request to the decision (issue 81). Approved, it asks its `questions`, if it has
-    /// any (issue 165).
+    /// A person decides whether it may run (issue 13), shown the call and its description - a
+    /// decision of their own if `explicit`, which no rule of a person answers - and offered a rule
+    /// for the calls `suggested` matches, if one can be derived from the call (issue 400). `id` is
+    /// the approval's, from the agent's request to the decision (issue 81). Approved, it asks its
+    /// `questions`, if it has any (issue 165).
     WaitingApproval {
         id: ApprovalId,
-        description: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         explicit: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -250,7 +261,6 @@ impl ToolCallState {
     /// and then to ask `questions`.
     pub fn pending(
         tool_call: ToolCall,
-        description: String,
         explicit: bool,
         suggested: Option<ToolMatcher>,
         questions: Option<Questions>,
@@ -259,7 +269,6 @@ impl ToolCallState {
             tool_call,
             status: ToolCallStatus::WaitingApproval {
                 id: ApprovalId::new(),
-                description,
                 explicit,
                 suggested,
                 questions,
@@ -342,11 +351,11 @@ mod tests {
         let call = ToolCall {
             id: Some("1".to_string()),
             arguments: serde_json::json!({}),
+            description: Some("Delete it?".to_string()),
             ..make_tool_call("delete")
         };
         let waiting = ToolCallState::pending(
             call.clone(),
-            "Delete it?".to_string(),
             true,
             Some(ToolMatcher::proposed(
                 &make_tool_description(&call.function_name),
@@ -357,9 +366,8 @@ mod tests {
         let read: ToolCallState =
             serde_json::from_str(&serde_json::to_string(&waiting).unwrap()).unwrap();
         assert_eq!(read.approval_id(), waiting.approval_id());
-        assert!(
-            matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, ref description, .. } if description == "Delete it?")
-        );
+        assert!(matches!(read.status, ToolCallStatus::WaitingApproval { explicit: true, .. }));
+        assert_eq!(read.tool_call.description.as_deref(), Some("Delete it?"), "with its call");
         let ready: ToolCallState = serde_json::from_str(
             &serde_json::to_string(&ToolCallState::approved(call.clone())).unwrap(),
         )

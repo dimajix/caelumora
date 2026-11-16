@@ -931,7 +931,6 @@ mod tests {
         );
         let waiting = ToolCallState::pending(
             tool_call.clone(),
-            String::new(),
             false,
             Some(ToolMatcher::proposed(
                 &make_tool_description(&tool_call.function_name),

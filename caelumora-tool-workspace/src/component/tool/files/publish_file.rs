@@ -111,12 +111,12 @@ impl Tool for PublishFileTool {
         Ok(of_file(turn, workspace, &at, None, result))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Publish { path, name, .. } = arguments(params)?;
-        Ok(match name {
+        Ok(Some(match name {
             Some(name) => format!("Offer '{path}' in the workspace for download as '{name}'"),
             None => format!("Offer '{path}' in the workspace for download"),
-        })
+        }))
     }
 }
 

@@ -20,25 +20,52 @@ const SHORTENED: usize = 160;
 pub(super) const EXPLICIT: &str =
     "A rule of this session or channel asks for this call to be decided by a person.";
 
-/// What a tool is called with, as the terminal tells it.
+/// How a call is told: by what its tool says it does, or else by what it is called with (issue
+/// 586).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum Arguments {
-    /// Nothing.
-    None,
-    /// What is not shown in the channel.
+pub(super) enum Called {
+    /// What its tool says it does.
+    Described(String),
+    /// With nothing.
+    Bare,
+    /// With what is not shown in the channel.
     NotShown,
-    /// Its arguments in one line, shortened.
-    Shown(String),
+    /// With its arguments, as JSON.
+    With(String),
 }
 
-impl Arguments {
-    /// What `call` is called with.
+impl Called {
+    /// How `call` is told, whole.
     pub(super) fn of(call: &ToolCall) -> Self {
-        match &call.arguments {
-            Value::Null => Arguments::NotShown,
-            Value::Object(arguments) if arguments.is_empty() => Arguments::None,
-            arguments => Arguments::Shown(shortened(&arguments.to_string())),
+        if let Some(description) = &call.description {
+            return Called::Described(description.clone());
         }
+        match &call.arguments {
+            Value::Null => Called::NotShown,
+            Value::Object(arguments) if arguments.is_empty() => Called::Bare,
+            arguments => Called::With(arguments.to_string()),
+        }
+    }
+
+    /// The same on one line, shortened (`one_line`, `shortened`): as a call is headed.
+    pub(super) fn on_one_line(self) -> Self {
+        match self {
+            Called::Described(description) => Called::Described(one_line(&description)),
+            Called::With(arguments) => Called::With(shortened(&arguments)),
+            whole => whole,
+        }
+    }
+}
+
+/// What whoever decides on `call` is told of it, whole: what its tool says it does, or else the
+/// tool and its arguments.
+pub(super) fn to_decide(call: &ToolCall) -> String {
+    let tool = &call.function_name;
+    match Called::of(call) {
+        Called::Described(description) => description,
+        Called::Bare => format!("call {tool}"),
+        Called::NotShown => format!("call {tool}, its arguments not shown"),
+        Called::With(arguments) => format!("call {tool} with {arguments}"),
     }
 }
 
@@ -103,7 +130,9 @@ fn choice_words(choice: &Choice) -> String {
 /// What is asked, in words: the call to be approved, or the next question with its number.
 pub(super) fn what_is_asked(asking: &Asking) -> String {
     match asking {
-        Asking::Approval(request) => format!("Approve? {}", request.description),
+        Asking::Approval(request) => {
+            format!("Approve? {}", one_line(&to_decide(&request.tool_call)))
+        }
         Asking::Question { .. } => {
             asking.question().map(|(index, q)| question_line(index, q)).unwrap_or_default()
         }

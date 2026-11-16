@@ -410,7 +410,6 @@ mod tests {
             channel_id: Default::default(),
             agent_id,
             tool_call: call.clone(),
-            description: "test".to_string(),
         };
         let response = ApprovalVerdict::new(approval.id, agent_id);
         let questions = |sensitive| QuestionRequest {

@@ -400,7 +400,8 @@ it whole (issue 417). What anyone else is given of it is redacted by one rule
 (`Message::published`):
 
 *   a call whose `call` is the owner's is left out;
-*   a call whose `arguments` are the owner's has them set to `null`;
+*   a call whose `arguments` are the owner's has them set to `null`, and the description its tool
+    made of them dropped (`ToolCall::withhold_arguments`);
 *   a result that is the owner's is emptied, the record of the answers to its questions and what
     the tool gave and showed its model included;
 *   reasoning that is the owner's is dropped;

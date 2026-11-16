@@ -192,7 +192,7 @@ impl Tool for CreatePlanTool {
         }
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let plan = parse_plan(params)?;
         let steps = plan
             .steps
@@ -201,7 +201,7 @@ impl Tool for CreatePlanTool {
             .map(|(i, s)| format!("{}. {}", i + 1, s.description))
             .collect::<Vec<_>>()
             .join("\n");
-        Ok(format!("Proposed plan: {}\n{}", plan.summary, steps))
+        Ok(Some(format!("Proposed plan: {}\n{}", plan.summary, steps)))
     }
 }
 
@@ -384,7 +384,10 @@ mod tests {
             ]
         });
 
-        let description = create_plan.describe(&params).expect("valid plan should describe");
+        let description = create_plan
+            .describe(&params)
+            .expect("valid plan should describe")
+            .expect("a plan is described");
         assert!(description.contains("Investigate and fix the bug"));
         assert!(description.contains("1. Reproduce the issue"));
         assert!(description.contains("2. Find the root cause"));

@@ -359,10 +359,10 @@ impl Tool for CreateSkillTool {
         ))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Create { name, description, body, scope } = arguments(params)?;
         let scope = SkillScope::of(&scope)?;
-        Ok(format!("Write the skill \"{name}\" ({}): {description}\n\n{body}", scope.told()))
+        Ok(Some(format!("Write the skill \"{name}\" ({}): {description}\n\n{body}", scope.told())))
     }
 }
 
@@ -407,7 +407,7 @@ impl Tool for UpdateSkillTool {
         ))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
         let Update { name, description, body } = Update::of(params)?;
         let mut text = format!("Change the skill \"{name}\"");
         if let Some(description) = description {
@@ -416,6 +416,6 @@ impl Tool for UpdateSkillTool {
         if let Some(body) = body {
             text.push_str(&format!("\n\nIts steps, from now on:\n\n{body}"));
         }
-        Ok(text)
+        Ok(Some(text))
     }
 }

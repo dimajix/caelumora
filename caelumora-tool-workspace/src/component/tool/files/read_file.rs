@@ -93,8 +93,8 @@ impl Tool for ReadFileTool {
         Ok(of_file(turn, workspace, &at, Some(digest), result))
     }
 
-    fn describe(&self, params: &Value) -> ToolResult<String> {
-        Ok(format!("Read '{}' in the workspace", arguments::<Read>(params)?.path))
+    fn describe(&self, params: &Value) -> ToolResult<Option<String>> {
+        Ok(Some(format!("Read '{}' in the workspace", arguments::<Read>(params)?.path)))
     }
 }
 

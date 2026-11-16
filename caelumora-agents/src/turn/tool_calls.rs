@@ -401,7 +401,6 @@ mod tests {
             ToolCallState::approved(call("run")),
             ToolCallState::pending(
                 call("ask"),
-                String::new(),
                 false,
                 Some(ToolMatcher::proposed(&make_tool_description("ask"), &call("ask").arguments)),
                 None,
@@ -472,7 +471,6 @@ mod tests {
         let requests = view(&mut turn).register(vec![
             ToolCallState::pending(
                 call("approved"),
-                String::new(),
                 false,
                 Some(ToolMatcher::proposed(
                     &make_tool_description("approved"),
@@ -641,13 +639,7 @@ mod tests {
         let requests = view(&mut turn).register(vec![
             ToolCallState::asking(call("both"), both),
             ToolCallState::asking(call("alice"), questions_of(alice)),
-            ToolCallState::pending(
-                call("approving"),
-                String::new(),
-                false,
-                None,
-                Some(questions_of(alice)),
-            ),
+            ToolCallState::pending(call("approving"), false, None, Some(questions_of(alice))),
             ToolCallState::asking(call("bob"), questions_of(bob)),
         ]);
         let [ActorEvent::ApprovalRequested(approval), ActorEvent::QuestionRequested(_), ActorEvent::QuestionRequested(alone), ActorEvent::QuestionRequested(_)] =

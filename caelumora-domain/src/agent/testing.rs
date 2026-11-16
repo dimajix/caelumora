@@ -55,8 +55,8 @@ pub fn waiting_for_approval(
     turn.tool_calls = calls
         .into_iter()
         .map(|call| {
-            let description = format!("call {}", call.function_name);
-            ToolCallState::pending(call, description, false, None, None)
+            let description = Some(format!("call {}", call.function_name));
+            ToolCallState::pending(ToolCall { description, ..call }, false, None, None)
         })
         .collect();
     AgentChannelState {

@@ -1470,6 +1470,10 @@ async fn a_plan_runs_its_steps_as_intermediate_messages_and_ends_with_the_final_
         ],
         "the plan's call and its result, the steps, the answer"
     );
+    // The call stands with what its tool says it does, as it was admitted (issue 586).
+    let described: Vec<_> =
+        history.iter().flat_map(|m| &m.tool_calls).filter_map(|c| c.description.clone()).collect();
+    assert_eq!(described, ["Proposed plan: two steps\n1. first\n2. second"]);
     // Each step begins before what it says (issue 263).
     let items: Vec<String> = channel
         .history_entries()

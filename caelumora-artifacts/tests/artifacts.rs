@@ -332,6 +332,7 @@ async fn a_publication_is_approved_as_a_change_and_presented_as_one() {
     assert_eq!(
         tool_named(unconfigured.as_ref(), PUBLISH_ARTIFACT)
             .describe(&json!({ "path": "out/r.csv", "name": "Report.csv" }))
+            .unwrap()
             .unwrap(),
         "Publish 'out/r.csv' in the workspace as the artifact 'Report.csv'"
     );

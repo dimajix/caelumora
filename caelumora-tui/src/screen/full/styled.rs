@@ -5,7 +5,7 @@ use super::PROMPT;
 use crate::printed::{Printed, Said, Saying, Words};
 use crate::screen::words::{
     attachment, error_word, how_to_answer, how_to_approve, missed, outcome, question_rows,
-    Arguments, EXPLICIT,
+    to_decide, Called, EXPLICIT,
 };
 use crate::under_way::UnderWay;
 use caelumora_domain::actor::ActorState;
@@ -208,12 +208,11 @@ fn call_line(sender: &str, call: &ToolCall) -> Line<'static> {
         Span::styled(format!("  {sender} → "), Style::new().dim()),
         Span::styled(call.function_name.clone(), Style::new().bold()),
     ];
-    match Arguments::of(call) {
-        Arguments::None => {}
-        Arguments::NotShown => {
-            spans.push(Span::styled(" (arguments not shown)", Style::new().dim()))
-        }
-        Arguments::Shown(arguments) => {
+    match Called::of(call).on_one_line() {
+        Called::Described(description) => spans.push(Span::raw(format!(" {description}"))),
+        Called::Bare => {}
+        Called::NotShown => spans.push(Span::styled(" (arguments not shown)", Style::new().dim())),
+        Called::With(arguments) => {
             spans.push(Span::styled(format!(" {arguments}"), Style::new().dim()))
         }
     }
@@ -229,15 +228,18 @@ fn result_line(result: &ToolCallResult) -> Line<'static> {
     Line::styled(format!("    ⎿ {} {}", result.tool_name, outcome(result)), style)
 }
 
-/// The lines that show `request` for approval, and how to answer it.
+/// The lines that show `request` for approval - what is decided whole, a line each of its own -,
+/// and how to answer it.
 fn approval_lines(request: &ApprovalRequest) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::default(),
-        Line::from(vec![
-            Span::styled("Approval requested: ", Style::new().yellow().bold()),
-            Span::raw(request.description.clone()),
-        ]),
-    ];
+    let mut lines = vec![Line::default()];
+    let decided = to_decide(&request.tool_call);
+    for (index, row) in decided.split('\n').enumerate() {
+        let lead = match index {
+            0 => Span::styled("Approval requested: ", Style::new().yellow().bold()),
+            _ => Span::raw("  "),
+        };
+        lines.push(Line::from(vec![lead, Span::raw(row.to_string())]));
+    }
     if request.explicit {
         lines.push(Line::styled(EXPLICIT, Style::new().dim()));
     }
@@ -267,8 +269,11 @@ mod tests {
     use crate::printed::ErrorKind;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::approval::testing::make_approval_request;
+    use caelumora_domain::channel::ChannelId;
+    use caelumora_domain::session::SessionId;
     use caelumora_domain::tool::testing::make_tool_call;
-    use caelumora_domain::tool::ToolResultStatus;
+    use caelumora_domain::tool::{ToolCall, ToolResultStatus};
     use caelumora_domain::work::TurnId;
     use std::time::Duration;
 
@@ -312,6 +317,14 @@ mod tests {
         let called =
             Printed::ToolCall { sender: "helper".to_string(), call: Box::new(call.clone()) };
         assert_eq!(texts(&styled(&called)), ["  helper → terminal (arguments not shown)"]);
+        let described =
+            ToolCall { description: Some("Run in the workspace:\nls".to_string()), ..call.clone() };
+        let called = Printed::ToolCall { sender: "helper".to_string(), call: Box::new(described) };
+        assert_eq!(
+            texts(&styled(&called)),
+            ["  helper → terminal Run in the workspace:⏎ls"],
+            "by what its tool says it does, on one line"
+        );
         let result =
             ToolCallResult::of(&call, ToolResultStatus::Ok, "done".to_string(), Default::default());
         assert_eq!(
@@ -325,6 +338,20 @@ mod tests {
             texts(&styled(&Printed::Notice("Talking in main now".to_string()))),
             ["Talking in main now"]
         );
+    }
+
+    /// An approval is drawn with what is decided whole, a line each of its own, and how to answer
+    /// it (issue 586).
+    #[test]
+    fn an_approval_is_drawn_with_what_is_decided_whole() {
+        let request = make_approval_request(SessionId::new(), ChannelId::new(), AgentId::new());
+        let tool_call = ToolCall {
+            description: Some("Run in the workspace:\nls -la".to_string()),
+            ..request.tool_call
+        };
+        let request = ApprovalRequest { tool_call, ..request };
+        let lines = texts(&styled(&Printed::Approval(Box::new(request))));
+        assert_eq!(lines[..3], ["", "Approval requested: Run in the workspace:", "  ls -la"]);
     }
 
     /// What an answer under way streamed is drawn by its agent, reasoning before words; one that

@@ -608,12 +608,12 @@ mod tests {
         let tool = component(json!({}));
         let write = json!({ "path": "docs/a.md", "content": "hello\nworld" });
         assert_eq!(
-            tool_named(&tool, WRITE_FILE).describe(&write).unwrap(),
+            tool_named(&tool, WRITE_FILE).describe(&write).unwrap().unwrap(),
             "Write 'docs/a.md' in the workspace (11 bytes):\nhello\nworld"
         );
         let replace = json!({ "path": "a.md", "old_text": "x", "new_text": "y" });
         assert_eq!(
-            tool_named(&tool, REPLACE_IN_FILE).describe(&replace).unwrap(),
+            tool_named(&tool, REPLACE_IN_FILE).describe(&replace).unwrap().unwrap(),
             "Replace in 'a.md' in the workspace, once:\n--- old\nx\n+++ new\ny"
         );
         let matcher = tool_named(&tool, WRITE_FILE).matcher(&write);
@@ -628,12 +628,13 @@ mod tests {
         assert_eq!(matcher.arguments["path"], ArgumentMatcher::Pattern(regex::escape("docs/a.md")));
         let moving = json!({ "from": "docs/a.md", "to": "docs/b.md" });
         assert_eq!(
-            tool_named(&tool, MOVE_FILE).describe(&moving).unwrap(),
+            tool_named(&tool, MOVE_FILE).describe(&moving).unwrap().unwrap(),
             "Rename 'docs/a.md' to 'docs/b.md' in the workspace"
         );
         assert_eq!(
             tool_named(&tool, MOVE_FILE)
                 .describe(&json!({ "from": "docs/a.md", "to": "archive/a.md" }))
+                .unwrap()
                 .unwrap(),
             "Move 'docs/a.md' to 'archive/a.md' in the workspace"
         );
@@ -649,6 +650,7 @@ mod tests {
         assert_eq!(
             tool_named(&tool, PUBLISH_FILE)
                 .describe(&json!({ "path": "out/r.csv", "name": "Report.csv" }))
+                .unwrap()
                 .unwrap(),
             "Offer 'out/r.csv' in the workspace for download as 'Report.csv'"
         );
