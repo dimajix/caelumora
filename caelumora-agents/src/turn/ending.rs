@@ -159,7 +159,7 @@ mod tests {
     use caelumora_domain::confidentiality::{Classification, Confidentiality};
     use caelumora_domain::message::MessageId;
     use caelumora_domain::message::MessageRole;
-    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::tool::{ToolCall, ToolCallResult};
     use caelumora_kernel::testing::Discard;
     use caelumora_kernel::transport::memory::InMemoryEventSender;
@@ -310,7 +310,10 @@ mod tests {
                 calls[1].clone(),
                 String::new(),
                 false,
-                Some(ToolMatcher::exact(&calls[1].function_name, &calls[1].arguments)),
+                Some(ToolMatcher::proposed(
+                    &make_tool_description(&calls[1].function_name),
+                    &calls[1].arguments,
+                )),
                 None,
             ),
         ];

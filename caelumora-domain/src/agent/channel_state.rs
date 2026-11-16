@@ -933,7 +933,10 @@ mod tests {
             tool_call.clone(),
             String::new(),
             false,
-            Some(ToolMatcher::exact(&tool_call.function_name, &tool_call.arguments)),
+            Some(ToolMatcher::proposed(
+                &make_tool_description(&tool_call.function_name),
+                &tool_call.arguments,
+            )),
             None,
         );
         let state_in = |actor_state: ActorState| AgentChannelState {

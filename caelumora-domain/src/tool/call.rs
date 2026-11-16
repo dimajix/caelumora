@@ -335,7 +335,7 @@ impl ToolCallState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::testing::make_tool_call;
+    use crate::tool::testing::{make_tool_call, make_tool_description};
 
     #[test]
     fn a_call_state_is_read_back_as_written() {
@@ -348,7 +348,10 @@ mod tests {
             call.clone(),
             "Delete it?".to_string(),
             true,
-            Some(ToolMatcher::exact(&call.function_name, &call.arguments)),
+            Some(ToolMatcher::proposed(
+                &make_tool_description(&call.function_name),
+                &call.arguments,
+            )),
             None,
         );
         let read: ToolCallState =

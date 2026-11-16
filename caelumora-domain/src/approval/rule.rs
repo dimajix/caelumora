@@ -183,7 +183,7 @@ impl ToolMatcher {
     /// starts from, and the person widens. An argument is an escaped pattern where that fits
     /// `MAX_PATTERN_CHARS`, and compared by equality where it would not (issue 400) - which a
     /// value longer than `MAX_EQUALS_CHARS` fails to `check`.
-    pub fn exact(tool: &str, arguments: &Value) -> Self {
+    fn exact(tool: &str, arguments: &Value) -> Self {
         let arguments = match arguments {
             Value::Object(arguments) => arguments
                 .iter()

@@ -358,7 +358,7 @@ mod tests {
     use caelumora_domain::approval::ToolMatcher;
     use caelumora_domain::confidentiality::Classification;
     use caelumora_domain::question::{Addressee, Question, Questions};
-    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::user::UserId;
 
     fn call(name: &str) -> ToolCall {
@@ -403,7 +403,7 @@ mod tests {
                 call("ask"),
                 String::new(),
                 false,
-                Some(ToolMatcher::exact("ask", &call("ask").arguments)),
+                Some(ToolMatcher::proposed(&make_tool_description("ask"), &call("ask").arguments)),
                 None,
             ),
         ]);
@@ -474,7 +474,10 @@ mod tests {
                 call("approved"),
                 String::new(),
                 false,
-                Some(ToolMatcher::exact("approved", &call("approved").arguments)),
+                Some(ToolMatcher::proposed(
+                    &make_tool_description("approved"),
+                    &call("approved").arguments,
+                )),
                 Some(questions_of(alice)),
             ),
             ToolCallState::asking(call("asking"), questions_of(alice)),
