@@ -1,17 +1,20 @@
 //! How the full-screen terminal draws what it prints and the answers under way: in lines styled
 //! by what they tell (issue 569).
 
+use super::call::{ending_line, ShownCall};
 use super::PROMPT;
 use crate::printed::{Printed, Said, Saying, Words};
 use crate::screen::words::{
-    attachment, error_word, how_to_answer, how_to_approve, missed, outcome, question_rows,
-    to_decide, Called, EXPLICIT,
+    attachment, error_word, how_to_answer, how_to_approve, missed, question_rows, to_decide,
+    EXPLICIT,
 };
 use crate::under_way::UnderWay;
 use caelumora_domain::actor::ActorState;
 use caelumora_domain::approval::ApprovalRequest;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::question::QuestionRequest;
-use caelumora_domain::tool::{ToolCall, ToolCallResult};
+use caelumora_domain::tool::ToolCallResult;
+use caelumora_domain::value::name::Name;
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use std::time::Instant;
@@ -19,14 +22,35 @@ use std::time::Instant;
 /// The frames the status of an answer under way turns through, one each tenth of a second.
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-/// The lines `printed` is drawn as; none for what the status line shows instead.
-pub(super) fn styled(printed: &Printed) -> Vec<Line<'static>> {
-    match printed {
+/// What the full-screen view keeps of a thing printed: lines, a tool call - an entry of its own -,
+/// or how a call ended, which joins its call where that is shown.
+pub(super) enum Kept {
+    /// Lines; none for what the status line shows instead.
+    Lines(Vec<Line<'static>>),
+    /// A tool call.
+    Call(Box<ShownCall>),
+    /// How the call of `result` ended, in the channel `channel_id`: `alone` where its call is not
+    /// shown.
+    Ending { channel_id: ChannelId, result: Box<ToolCallResult>, alone: Vec<Line<'static>> },
+}
+
+/// What the full-screen view keeps of `printed`, told of the channel `elsewhere` where the user
+/// talks in another.
+pub(super) fn kept(printed: &Printed, elsewhere: Option<&Name>) -> Kept {
+    let lines = match printed {
         Printed::Said { sender, said, saying } => said_lines(sender, said, *saying),
         // The status line shows it as long as the answer is under way.
         Printed::Answering { .. } => Vec::new(),
-        Printed::ToolCall { sender, call } => vec![call_line(sender, call)],
-        Printed::ToolResult(result) => vec![result_line(result)],
+        Printed::ToolCall { channel_id, sender, call } => {
+            let channel = elsewhere.cloned();
+            let call = ShownCall::new(*channel_id, channel, sender.clone(), (**call).clone());
+            return Kept::Call(Box::new(call));
+        }
+        Printed::ToolResult { channel_id, result } => {
+            let alone = told_of(elsewhere, vec![ending_line(result)]);
+            let (channel_id, result) = (*channel_id, result.clone());
+            return Kept::Ending { channel_id, result, alone };
+        }
         Printed::Approval(request) => approval_lines(request),
         Printed::Questions { request, put_to_user } => questions_lines(request, *put_to_user),
         Printed::Notice(notice) => text_lines(notice, Style::new().dim().italic()),
@@ -35,15 +59,27 @@ pub(super) fn styled(printed: &Printed) -> Vec<Line<'static>> {
         }
         Printed::Missed { events } => vec![Line::styled(missed(*events), Style::new().yellow())],
         Printed::Plain(text) => text_lines(text, Style::new()),
-        Printed::Elsewhere { channel, printed } => styled(printed)
-            .into_iter()
-            .map(|line| {
-                let mut spans = vec![Span::styled(format!("[{channel}] "), Style::new().dim())];
-                spans.extend(line.spans);
-                Line::from(spans).style(line.style)
-            })
-            .collect(),
+        Printed::Elsewhere { channel, printed } => return kept(printed, Some(channel)),
+    };
+    Kept::Lines(told_of(elsewhere, lines))
+}
+
+/// `lines`, told of the channel `elsewhere` where there is one.
+fn told_of(elsewhere: Option<&Name>, lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    match elsewhere {
+        Some(channel) => of_channel(channel, lines),
+        None => lines,
     }
+}
+
+/// `lines` told of the channel `channel`, while the user talks in another.
+pub(super) fn of_channel(channel: &Name, lines: Vec<Line<'static>>) -> Vec<Line<'static>> {
+    let told = |line: Line<'static>| {
+        let mut spans = vec![Span::styled(format!("[{channel}] "), Style::new().dim())];
+        spans.extend(line.spans);
+        Line::from(spans).style(line.style)
+    };
+    lines.into_iter().map(told).collect()
 }
 
 /// The line typed by the user, as it is drawn once sent.
@@ -202,32 +238,6 @@ fn word_parts(words: &Words) -> Vec<(&str, bool)> {
     parts
 }
 
-/// The line that tells that `sender` calls the tool of `call`, and with what.
-fn call_line(sender: &str, call: &ToolCall) -> Line<'static> {
-    let mut spans = vec![
-        Span::styled(format!("  {sender} → "), Style::new().dim()),
-        Span::styled(call.function_name.clone(), Style::new().bold()),
-    ];
-    match Called::of(call).on_one_line() {
-        Called::Described(description) => spans.push(Span::raw(format!(" {description}"))),
-        Called::Bare => {}
-        Called::NotShown => spans.push(Span::styled(" (arguments not shown)", Style::new().dim())),
-        Called::With(arguments) => {
-            spans.push(Span::styled(format!(" {arguments}"), Style::new().dim()))
-        }
-    }
-    Line::from(spans)
-}
-
-/// The line that tells how the call of `result` ended: dimmed where it answered, red where not.
-fn result_line(result: &ToolCallResult) -> Line<'static> {
-    let style = match result.status.is_ok() {
-        true => Style::new().dim(),
-        false => Style::new().red(),
-    };
-    Line::styled(format!("    ⎿ {} {}", result.tool_name, outcome(result)), style)
-}
-
 /// The lines that show `request` for approval - what is decided whole, a line each of its own -,
 /// and how to answer it.
 fn approval_lines(request: &ApprovalRequest) -> Vec<Line<'static>> {
@@ -273,12 +283,21 @@ mod tests {
     use caelumora_domain::channel::ChannelId;
     use caelumora_domain::session::SessionId;
     use caelumora_domain::tool::testing::make_tool_call;
-    use caelumora_domain::tool::{ToolCall, ToolResultStatus};
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_domain::work::TurnId;
     use std::time::Duration;
 
     fn texts(lines: &[Line<'static>]) -> Vec<String> {
         lines.iter().map(|line| line.to_string()).collect()
+    }
+
+    /// The lines `printed` is drawn as, whatever the view keeps it as.
+    fn styled(printed: &Printed) -> Vec<Line<'static>> {
+        match kept(printed, None) {
+            Kept::Lines(lines) => lines,
+            Kept::Call(call) => call.lines().to_vec(),
+            Kept::Ending { alone, .. } => alone,
+        }
     }
 
     /// A message complete is set apart and led by its sender, broken where it has line breaks; a
@@ -314,21 +333,25 @@ mod tests {
     #[test]
     fn tools_errors_and_beginnings_are_drawn_by_what_they_tell() {
         let call = make_tool_call("terminal");
-        let called =
-            Printed::ToolCall { sender: "helper".to_string(), call: Box::new(call.clone()) };
+        let channel_id = ChannelId::new();
+        let printed = |call: &ToolCall| Printed::ToolCall {
+            channel_id,
+            sender: "helper".to_string(),
+            call: Box::new(call.clone()),
+        };
+        let called = printed(&call);
         assert_eq!(texts(&styled(&called)), ["  helper → terminal (arguments not shown)"]);
         let described =
             ToolCall { description: Some("Run in the workspace:\nls".to_string()), ..call.clone() };
-        let called = Printed::ToolCall { sender: "helper".to_string(), call: Box::new(described) };
         assert_eq!(
-            texts(&styled(&called)),
-            ["  helper → terminal Run in the workspace:⏎ls"],
-            "by what its tool says it does, on one line"
+            texts(&styled(&printed(&described))),
+            ["▸ helper → terminal Run in the workspace:⏎ls"],
+            "by what its tool says it does, on one line, folded"
         );
         let result =
             ToolCallResult::of(&call, ToolResultStatus::Ok, "done".to_string(), Default::default());
         assert_eq!(
-            texts(&styled(&Printed::ToolResult(Box::new(result)))),
+            texts(&styled(&Printed::ToolResult { channel_id, result: Box::new(result) })),
             ["    ⎿ terminal answered: done"]
         );
         assert!(styled(&Printed::Answering { sender: "helper".to_string() }).is_empty());

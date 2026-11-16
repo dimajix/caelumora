@@ -1,7 +1,10 @@
 //! The way of drawing `full`: the terminal's whole window, what was printed scrolled above and the
 //! line typed below, as Claude Code draws it (issue 569). Tab completes what is typed from what can
-//! be typed, showing what remains above the line (issue 579).
+//! be typed, showing what remains above the line (issue 579). A tool call stands with its result,
+//! folded: a click on its head unfolds it and folds it again, Ctrl+O every call at once (issue
+//! 586).
 
+mod call;
 mod choosing;
 mod clipboard;
 mod input;
@@ -37,7 +40,7 @@ use std::io;
 use std::panic;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use styled::{live_lines, status_line, styled, typed_line};
+use styled::{kept, live_lines, status_line, typed_line, Kept};
 use tokio::time::{self, Interval, MissedTickBehavior};
 use tracing::warn;
 
@@ -86,9 +89,10 @@ pub(crate) struct FullScreen {
 }
 
 /// What the full-screen window shows, and how keys, the mouse and pasted text change it: what was
-/// printed and what streams, scrolled by the user alone; what is asked of the user; the status
-/// line of the answers under way; the candidates of a completion; the line typed, which Tab
-/// completes; and what the user marks with the mouse, and the choice they click.
+/// printed and what streams, scrolled by the user alone, its tool calls unfolded and folded by a
+/// click on their heads or Ctrl+O; what is asked of the user; the status line of the answers under
+/// way; the candidates of a completion; the line typed, which Tab completes; and what the user
+/// marks with the mouse, and the choice they click.
 #[derive(Debug, Default)]
 struct Window {
     /// What was printed, and what streams after it.
@@ -100,6 +104,8 @@ struct Window {
     choosing: Option<Choosing>,
     /// Where what is asked was drawn last, which a click there chooses among.
     asked_area: Rect,
+    /// Where what was printed was drawn last, where a click on a tool call's head unfolds it.
+    printed_area: Rect,
     /// The line being typed.
     input: InputLine,
     /// What the user marks with the mouse, until a key or the left button is pressed, text pasted,
@@ -174,7 +180,9 @@ impl Drop for FullScreen {
 #[async_trait]
 impl Screen for FullScreen {
     fn print(&mut self, printed: Vec<Printed>) {
-        self.window.scrollback.push(printed.iter().flat_map(styled));
+        for printed in &printed {
+            self.window.print(printed);
+        }
         self.changed = true;
     }
 
@@ -218,6 +226,20 @@ impl Screen for FullScreen {
 }
 
 impl Window {
+    /// Shows `printed` as the view keeps it (`kept`): lines, a tool call as an entry of its own,
+    /// or how one ended - joining its call where that is shown.
+    fn print(&mut self, printed: &Printed) {
+        match kept(printed, None) {
+            Kept::Lines(lines) => self.scrollback.push(lines),
+            Kept::Call(call) => self.scrollback.push_call(*call),
+            Kept::Ending { channel_id, result, alone } => {
+                if !self.scrollback.end_call(channel_id, &result) {
+                    self.scrollback.push(alone);
+                }
+            }
+        }
+    }
+
     /// Completes the line typed from `typeable` at the next Tab.
     fn offer(&mut self, typeable: Arc<Typeable>) {
         self.typeable = typeable;
@@ -269,8 +291,8 @@ impl Window {
     }
 
     /// Takes in `mouse`: the wheel scrolls, and drops what is marked; the left button marks what it
-    /// is dragged over, and a click with it chooses what it is on (`Window::take_click`) - answered
-    /// where that ends what is asked.
+    /// is dragged over, and a click with it unfolds or chooses what it is on
+    /// (`Window::take_click`) - answered where that ends what is asked.
     fn take_mouse(&mut self, mouse: &MouseEvent) -> Option<Typed> {
         let at = Position::new(mouse.column, mouse.row);
         match mouse.kind {
@@ -300,10 +322,16 @@ impl Window {
         None
     }
 
-    /// Takes in a click at `at`: one on a choice of what is asked chooses it
+    /// Takes in a click at `at`: one on the head of a tool call unfolds or folds it
+    /// (`Scrollback::unfold_at`), one on a choice of what is asked chooses it
     /// (`Choosing::take_click`) - answered where that ends what is asked. Unlike a digit, which is
     /// typed where something is, a click chooses also then: it is no text.
     fn take_click(&mut self, at: Position) -> Option<Typed> {
+        let printed = self.printed_area;
+        if printed.contains(at) {
+            self.scrollback.unfold_at(at.y - printed.y);
+            return None;
+        }
         let area = self.asked_area;
         let choosing = self.choosing.as_mut().filter(|_| area.contains(at))?;
         match choosing.take_click(at.y - area.y, area.width) {
@@ -348,6 +376,7 @@ impl Window {
             KeyCode::Up if shift => self.scrollback.scroll_up(1),
             KeyCode::Down if shift => self.scrollback.scroll_down(1),
             KeyCode::End if control => self.scrollback.follow_end(),
+            KeyCode::Char('o') if control => self.scrollback.unfold_all(),
             _ => {
                 let line = self.input.take_key(key)?;
                 self.scrollback.push(typed_line(&line));
@@ -385,6 +414,7 @@ impl Window {
         ])
         .areas(area);
         self.asked_area = asking;
+        self.printed_area = printed;
 
         let (seen, above) = self.scrollback.visible(printed.width, printed.height);
         let seen = Paragraph::new(seen).wrap(Wrap { trim: false }).scroll((above, 0));
@@ -470,12 +500,15 @@ mod tests {
     use caelumora_domain::question::testing::make_question_request;
     use caelumora_domain::question::{Choice, Question, QuestionRequest, Questions};
     use caelumora_domain::session::SessionId;
-    use caelumora_domain::tool::ToolCall;
+    use caelumora_domain::tool::testing::make_tool_call;
+    use caelumora_domain::tool::{ToolCall, ToolCallResult, ToolResultStatus};
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::Name;
     use caelumora_domain::work::TurnId;
     use ratatui::backend::TestBackend;
     use ratatui::style::Modifier;
     use ratatui::Terminal;
+    use serde_json::json;
 
     /// `window` drawn on a terminal of `width` and `height`: its rows, and where the cursor
     /// stands.
@@ -566,7 +599,7 @@ mod tests {
     #[test]
     fn the_window_shows_what_was_printed_the_status_and_the_line_typed() {
         let mut window = Window::default();
-        window.scrollback.push(styled(&Printed::Notice("Talking in main now".to_string())));
+        window.print(&Printed::Notice("Talking in main now".to_string()));
         let agent = ActorId::Agent(AgentId::new());
         let answer = UnderWay::began(agent, "helper".to_string(), TurnId::new(), None);
         window.show_under_way(&[answer]);
@@ -587,7 +620,7 @@ mod tests {
     fn a_line_sent_is_shown_and_follows_the_end() {
         let mut window = Window::default();
         let printed = (0..10).map(|n| Printed::Plain(format!("line {n}")));
-        window.scrollback.push(printed.flat_map(|printed| styled(&printed)));
+        printed.for_each(|printed| window.print(&printed));
         window.take_key(&key(KeyCode::PageUp), 5);
         let (rows, _) = drawn(&mut window, 40, 6);
         assert_eq!(rows[3], "line 4", "five rows up from line 9: {rows:?}");
@@ -713,7 +746,7 @@ mod tests {
     fn what_is_dragged_over_is_marked_and_answered_as_drawn() {
         let mut window = Window::default();
         let printed = ["first line", "second line"].map(|text| Printed::Plain(text.to_string()));
-        window.scrollback.push(printed.iter().flat_map(styled));
+        printed.iter().for_each(|printed| window.print(printed));
         let mut terminal = Terminal::new(TestBackend::new(20, 5)).expect("a test terminal");
         let left = MouseButton::Left;
         window.take_event(mouse(MouseEventKind::Down(left), 6, 0), 5);
@@ -797,5 +830,57 @@ mod tests {
         let (rows, _) = drawn(&mut window, 30, 20);
         assert!(rows[usize::from(long)].starts_with("❯ [ ] 2. a long"), "{rows:?}");
         assert_eq!(window.take_key(&key(KeyCode::Enter), 5), Some(Typed::Chosen(vec![0])));
+    }
+
+    /// A tool call stands with its result, folded - also one told of another channel, whose
+    /// result comes once the user talks there no more -; a click on its head unfolds it and folds
+    /// it again, Ctrl+O every call at once (issue 586).
+    #[test]
+    fn a_tool_call_is_unfolded_and_folded_by_a_click_or_ctrl_o() {
+        let mut window = Window::default();
+        let channel_id = ChannelId::new();
+        let call = ToolCall { arguments: json!({ "command": "ls" }), ..make_tool_call("run") };
+        let called = Printed::ToolCall {
+            channel_id,
+            sender: "helper".to_string(),
+            call: Box::new(call.clone()),
+        };
+        window.print(&called);
+        let result =
+            ToolCallResult::of(&call, ToolResultStatus::Ok, "a\nb".to_string(), Default::default());
+        let side = Name::new("side").unwrap();
+        let ended = Printed::ToolResult { channel_id, result: Box::new(result) };
+        let elsewhere = Printed::Elsewhere { channel: side, printed: Box::new(ended) };
+        window.print(&elsewhere);
+        let (rows, _) = drawn(&mut window, 60, 12);
+        assert_eq!(
+            rows[..2],
+            [r#"▸ helper → run {"command":"ls"}"#, "    ⎿ run answered: a (and 1 line more)"],
+            "joined by its result, folded"
+        );
+
+        assert_eq!(clicked(&mut window, 3, 0), None);
+        let (rows, _) = drawn(&mut window, 60, 12);
+        assert_eq!(rows[0], r#"▾ helper → run {"command":"ls"}"#, "unfolded: {rows:?}");
+        assert_eq!(rows[4..6], ["      a", "      b"]);
+        clicked(&mut window, 3, 0);
+        let (rows, _) = drawn(&mut window, 60, 12);
+        assert!(rows[0].starts_with('▸'), "folded again: {rows:?}");
+
+        let control = KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL);
+        assert_eq!(window.take_event(Event::Key(control), 5), None);
+        let (rows, _) = drawn(&mut window, 60, 12);
+        assert!(rows[0].starts_with('▾'), "every call unfolded: {rows:?}");
+        window.take_event(Event::Key(control), 5);
+        let (rows, _) = drawn(&mut window, 60, 12);
+        assert!(rows[0].starts_with('▸'), "every call folded: {rows:?}");
+
+        let left = MouseButton::Left;
+        window.take_event(mouse(MouseEventKind::Down(left), 2, 0), 5);
+        window.take_event(mouse(MouseEventKind::Drag(left), 9, 0), 5);
+        window.take_event(mouse(MouseEventKind::Up(left), 9, 0), 5);
+        let (rows, _) = drawn(&mut window, 60, 12);
+        assert!(rows[0].starts_with('▸'), "dragged over, its head is marked, not unfolded");
+        assert!(window.selection.is_some(), "marked");
     }
 }

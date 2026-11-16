@@ -2,6 +2,7 @@
 //! way of drawing shows its own way (issue 569).
 
 use caelumora_domain::approval::ApprovalRequest;
+use caelumora_domain::channel::ChannelId;
 use caelumora_domain::content::ContentRef;
 use caelumora_domain::question::QuestionRequest;
 use caelumora_domain::tool::{ToolCall, ToolCallResult};
@@ -28,13 +29,20 @@ pub(crate) enum Printed {
     },
     /// A tool a participant calls, with its arguments - `Null` where they are not shown.
     ToolCall {
+        /// The channel it is called in, whose result it is joined by.
+        channel_id: ChannelId,
         /// Who calls it, by name.
         sender: String,
         /// The call.
         call: Box<ToolCall>,
     },
     /// How a tool call ended, with its result - empty where it is not shown.
-    ToolResult(Box<ToolCallResult>),
+    ToolResult {
+        /// The channel it was called in.
+        channel_id: ChannelId,
+        /// How it ended.
+        result: Box<ToolCallResult>,
+    },
     /// An approval requested, with how to answer it.
     Approval(Box<ApprovalRequest>),
     /// Questions a tool asks, with how to answer them if they are put to the user.

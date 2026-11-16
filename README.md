@@ -95,7 +95,10 @@ The TUI is drawn in one of two ways, chosen with `--screen` (issue 569). `full`,
 the whole window, as Claude Code does: what the channel shows above - scrolled with Page Up and
 Page Down, Shift and the arrows, or the mouse wheel, and following its end again with Ctrl+End -,
 the answers of agents as they stream at its end, a status line that tells who answers and where
-they stand, and the line typed below. Dragging the mouse marks text, which is copied to the
+they stand, and the line typed below. A tool call stands with how it ended, headed by what its
+tool says it does and folded: a click on its head unfolds it to its arguments and its result - for
+a command, what it printed - and folds it again, Ctrl+O every call at once (issue 586). Dragging
+the mouse marks text, which is copied to the
 clipboard and the primary selection as the button is released; with Shift held, the terminal marks
 it instead. `line` writes line by line,
 each line once, above the line being typed - for a screen reader, and wherever input or output is

@@ -213,8 +213,8 @@ fn lines_of(printed: &Printed) -> Vec<String> {
             vec![line]
         }
         Printed::Answering { sender } => vec![format!("{sender} is answering.")],
-        Printed::ToolCall { sender, call } => vec![call_line(sender, call)],
-        Printed::ToolResult(result) => vec![result_line(result)],
+        Printed::ToolCall { sender, call, .. } => vec![call_line(sender, call)],
+        Printed::ToolResult { result, .. } => vec![result_line(result)],
         Printed::Approval(request) => approval_lines(request),
         Printed::Questions { request, put_to_user } => questions_lines(request, *put_to_user),
         Printed::Notice(notice) | Printed::Plain(notice) => vec![notice.clone()],

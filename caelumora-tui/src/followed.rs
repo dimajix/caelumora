@@ -645,9 +645,10 @@ impl Followed {
     fn message_printed(&mut self, message: &Message, saying: Saying) -> Vec<Printed> {
         let mut printed: Vec<Printed> =
             said_printed(message, &self.channel.mentions(), saying).into_iter().collect();
+        let channel_id = self.channel_id();
         for call in &message.tool_calls {
             let sender = message.sender_name.clone();
-            let called = Printed::ToolCall { sender, call: Box::new(call.clone()) };
+            let called = Printed::ToolCall { channel_id, sender, call: Box::new(call.clone()) };
             match (&call.id, call.presentation == ToolPresentation::QUIET) {
                 (Some(id), true) => {
                     self.quiet_calls.insert(id.clone(), (message.sender_id, called));
@@ -662,7 +663,7 @@ impl Followed {
                 Some((_, called)) => printed.push(called),
                 None => {}
             }
-            printed.push(Printed::ToolResult(Box::new(result.clone())));
+            printed.push(Printed::ToolResult { channel_id, result: Box::new(result.clone()) });
         }
         printed
     }

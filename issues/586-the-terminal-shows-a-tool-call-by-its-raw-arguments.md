@@ -185,3 +185,21 @@ an approval waiting in a turn stored before reads without it and is shown by the
 arguments. Both views of the terminal tell a call by its description on one line, an approval by
 it whole - else by the tool and its arguments -, and the web UI shows it on the approval card and
 in its `default` presentation.
+
+2026-11-16: Step 4 done. `printed::Printed::ToolCall` and `ToolResult` carry their channel's id;
+the full-screen view keeps a call as an entry of its own (`ShownCall`, `screen/full/call.rs`) in
+its scrollback, which holds entries now, not lines alone: a result joins the newest call of its
+id that waits for one in its channel - else it is printed alone, as before -, a call is folded
+until a click on its head unfolds it, its head staying where it is, and Ctrl-O unfolds every call,
+or folds them all where none is left folded. What a call shows is its presentation's: `shell`
+reads its result as a `CommandState` and ends by where the command stands and how much it
+printed, unfolding to what it printed; every other, and a `shell` call that failed, is shown as
+`default`, unfolding to the description, the arguments and the result whole; the presentations
+are found by name in a table, as the web UI's are. The words of `shell` stand with the full-screen
+view alone, not in `screen/words.rs`: the line-wise view prints no output, as decided, and tells
+how a call ended by `outcome` as before - a result carries no presentation by which it could know
+a command's end. Lines are counted in words by one function of `words`, for both.
+
+2026-11-16: One more step, from the review of step 4: the line-wise view tells how a `shell` call
+ended as the full-screen view does - by where the command stands and how much it printed -, not
+by the first line of its result's JSON.

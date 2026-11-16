@@ -40,10 +40,10 @@ impl Called {
         if let Some(description) = &call.description {
             return Called::Described(description.clone());
         }
-        match &call.arguments {
-            Value::Null => Called::NotShown,
-            Value::Object(arguments) if arguments.is_empty() => Called::Bare,
-            arguments => Called::With(arguments.to_string()),
+        match (&call.arguments, arguments(call)) {
+            (Value::Null, _) => Called::NotShown,
+            (_, None) => Called::Bare,
+            (_, Some(arguments)) => Called::With(arguments.to_string()),
         }
     }
 
@@ -54,6 +54,23 @@ impl Called {
             Called::With(arguments) => Called::With(shortened(&arguments)),
             whole => whole,
         }
+    }
+}
+
+/// What `call` is called with, where it is called with anything that is shown.
+pub(super) fn arguments(call: &ToolCall) -> Option<&Value> {
+    match &call.arguments {
+        Value::Null => None,
+        Value::Object(arguments) if arguments.is_empty() => None,
+        arguments => Some(arguments),
+    }
+}
+
+/// `count` lines, in words.
+pub(super) fn lines_counted(count: usize) -> String {
+    match count {
+        1 => "1 line".to_string(),
+        count => format!("{count} lines"),
     }
 }
 
@@ -80,7 +97,7 @@ pub(super) fn outcome(result: &ToolCallResult) -> String {
     let first = lines().next().map(shortened);
     let more = lines().count().saturating_sub(1);
     let said = |how: &str| match &first {
-        Some(first) if more > 0 => format!("{how}: {first} (and {more} lines more)"),
+        Some(first) if more > 0 => format!("{how}: {first} (and {} more)", lines_counted(more)),
         Some(first) => format!("{how}: {first}"),
         None => how.to_string(),
     };
