@@ -167,3 +167,8 @@ tool gives its model the state - how to go on with a command still running added
 the JSON object it always was, keys sorted, and a frontend reads it back as a `CommandState`; the
 REST API answers it in place of `CommandResponse`, which is gone. `SHELL_PRESENTATION` is
 exported from the crate's `component`.
+
+2026-11-16: Two more steps, from the review of step 2: the web UI names what it reads of a shell
+tool's result `CommandState`, read by `commandState`, as the domain does - `CommandResult` is the
+result of a command; and where a command of a workspace's shell stands gets a module of its own,
+`caelumora_domain::workspace::command`, beside the workspace it runs in.

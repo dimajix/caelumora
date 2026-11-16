@@ -256,7 +256,7 @@ pub enum CommandStatus {
 /// What a command of a workspace's shell printed since an offset, and where it stands (issues 294,
 /// 586): what the shell answers, what a call of a shell tool gives its model - with how to go on
 /// with one still running, which is no part of it -, and what the REST API answers. The web UI
-/// reads a shell tool's result as one, in `commandResult` (`caelumora-web-ui/src/messages.ts`),
+/// reads a shell tool's result as one, in `commandState` (`caelumora-web-ui/src/messages.ts`),
 /// and tells an exit code not given by its key being absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandState {

@@ -93,8 +93,11 @@ export function mergeToolResultsAmong<T>(items: T[], messageOf: (item: T) => Mes
   return merged;
 }
 
-/** What a shell tool answers of a command (issue 251). */
-export interface CommandResult {
+/**
+ * What a shell tool answers of a command (issue 251): the domain's `CommandState`, as far as it is
+ * read here.
+ */
+export interface CommandState {
   id: string;
   status: 'running' | 'completed' | 'killed' | 'failed';
   output: string;
@@ -103,7 +106,7 @@ export interface CommandResult {
 }
 
 /** The result of a successful call of a shell tool, or `null` for any other. */
-export function commandResult(result: ToolResult): CommandResult | null {
+export function commandState(result: ToolResult): CommandState | null {
   if (result.status && result.status !== 'ok') return null;
   try {
     const parsed = JSON.parse(result.content);
@@ -122,7 +125,7 @@ export function endedCommands(messages: Message[]): Set<string> {
   for (const msg of messages) {
     for (const call of msg.tool_calls ?? []) {
       const result = call.presentation === 'shell' ? msg.tool_results?.find(r => r.id === call.id) : undefined;
-      const command = result && commandResult(result);
+      const command = result && commandState(result);
       if (command && command.status !== 'running') ended.add(command.id);
     }
   }
