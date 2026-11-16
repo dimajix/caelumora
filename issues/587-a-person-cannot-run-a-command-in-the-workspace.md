@@ -236,3 +236,9 @@ first line only.
 
 2026-11-16: Steps 1 to 3 merged into `main`; in progress until `read_history` searches a person's
 calls by their description, after issue 586.
+
+2026-11-16: Step 4 - before the search, decided with the maintainer: a person's call had no
+description, which only the agent's `ToolExecutor::admit` stamps, from its tool. `/workspace run`
+describes its call as the workspace's tool describes one, by one function of
+`caelumora_api::terminal`, `run_description`; the terminal tells a person's call by it, as an
+agent's.
