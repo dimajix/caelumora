@@ -107,3 +107,6 @@ issue 586 carry no presentation and are shown as `default`; no code reads them o
 
 2026-11-16: Step 1 done: TOOLS.md lists `withheld` under "Results", pointing to where a classified
 result is described, not repeating it.
+
+2026-11-16: Step 2 done: `Followed` leaves out a result presented `quiet` that succeeded by its
+own presentation; `quiet_calls` serves to print the call of one that did not.

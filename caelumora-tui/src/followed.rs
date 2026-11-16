@@ -92,11 +92,12 @@ pub(crate) struct Followed {
     /// last first (issue 235).
     under_way: Vec<UnderWay>,
     /// The calls presented `quiet` whose results are yet to come, by id, with the agent that made
-    /// them and what would be printed of them - shown live or printed from the history: a result
-    /// of one is left out where it succeeded, as its call was, and printed with the call where it
-    /// did not. Dropped as the agent's turn ends; one of a turn ended before the history was read
-    /// stays until the agent's next turn ends. A result whose call was missed - the watch lagged,
-    /// or the call lay before the history read - is printed as any other.
+    /// them and what would be printed of them - shown live or printed from the history -, so that
+    /// a result of one that is not left out is printed with its call. Dropped as the agent's turn
+    /// ends; one of a turn ended before the history was read stays until the agent's next turn
+    /// ends. A result presented `quiet` that succeeded is left out by its own presentation, its
+    /// call found or not (issue 589); any other whose call was missed - the watch lagged, or the
+    /// call lay before the history read - is printed alone.
     quiet_calls: HashMap<String, (ActorId, Printed)>,
     /// The messages printed from the history as the user began to talk in the channel last,
     /// replaced at each reading: one the channel shows after - said as the history was read - is
@@ -656,9 +657,9 @@ impl Followed {
 
     /// What the terminal prints of `message`, said in a message of the kind `saying`: its words and
     /// what it carries (`said_printed`), the tools it calls and how calls ended - but a call
-    /// presented `quiet`, kept among the quiet calls until its result comes, which is left out
-    /// where it succeeded; where it did not, the call is printed with it, as the web UI shows
-    /// them.
+    /// presented `quiet`, kept among the quiet calls until its result comes, and a result presented
+    /// `quiet` that succeeded, which are left out; a result of a quiet call that is not left out is
+    /// printed with its call, as the web UI shows them.
     fn message_printed(&mut self, message: &Message, saying: Saying) -> Vec<Printed> {
         let mut printed: Vec<Printed> =
             said_printed(message, &self.channel.mentions(), saying).into_iter().collect();
@@ -675,10 +676,11 @@ impl Followed {
         }
         for result in &message.tool_results {
             let quiet = result.id.as_ref().and_then(|id| self.quiet_calls.remove(id));
-            match quiet {
-                Some(_) if result.status.is_ok() => continue,
-                Some((_, called)) => printed.push(called),
-                None => {}
+            if result.presentation == ToolPresentation::QUIET && result.status.is_ok() {
+                continue;
+            }
+            if let Some((_, called)) = quiet {
+                printed.push(called);
             }
             printed.push(Printed::ToolResult { channel_id, result: Box::new(result.clone()) });
         }
@@ -1551,6 +1553,56 @@ mod tests {
             ActorEvent::CompleteMessageGenerated(ended),
         )));
         assert_eq!(printed, ["attach failed: no"], "its call forgotten");
+    }
+
+    /// Issue 589: a result presented `quiet` that succeeded is left out by its own presentation,
+    /// though its call was not seen - it lay before the history read, or its turn ended -; one
+    /// that did not succeed is printed alone.
+    #[tokio::test]
+    async fn a_quiet_result_is_left_out_without_its_call() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let quiet = ToolCall { presentation: ToolPresentation::QUIET, ..make_tool_call("attach") };
+        let ended = |status, content: &str| {
+            let result =
+                ToolCallResult::of(&quiet, status, content.to_string(), Default::default());
+            let ended = Message { tool_results: vec![result], ..message(agent, "") };
+            from(&channel, agent, ActorEvent::CompleteMessageGenerated(ended))
+        };
+        let succeeded = followed.take_in(&ended(ToolResultStatus::Ok, "attached"));
+        assert!(lines(&succeeded).is_empty(), "left out: {:?}", lines(&succeeded));
+        let failed = followed.take_in(&ended(ToolResultStatus::Failed, "no"));
+        assert_eq!(lines(&failed), ["attach failed: no"]);
+    }
+
+    /// Issue 589: a quiet call whose result is presented otherwise is printed with it, by the
+    /// result's presentation.
+    #[tokio::test]
+    async fn a_quiet_call_is_printed_with_a_result_presented_otherwise() {
+        let (mut followed, channel, _) = followed().await;
+        let agent = ActorId::Agent(AgentId::new());
+        let quiet = ToolCall { presentation: ToolPresentation::QUIET, ..make_tool_call("attach") };
+        let calling = Message { tool_calls: vec![quiet.clone()], ..message(agent, "") };
+        let called =
+            followed.take_in(&from(&channel, agent, ActorEvent::CompleteMessageGenerated(calling)));
+        assert!(lines(&called).is_empty(), "the call kept back");
+        let result = ToolCallResult {
+            presentation: ToolPresentation::DEFAULT,
+            ..ToolCallResult::of(
+                &quiet,
+                ToolResultStatus::Ok,
+                "attached".to_string(),
+                Default::default(),
+            )
+        };
+        let ended = Message { tool_results: vec![result], ..message(agent, "") };
+        let printed = lines(&followed.take_in(&from(
+            &channel,
+            agent,
+            ActorEvent::CompleteMessageGenerated(ended),
+        )));
+        assert_eq!(printed.len(), 2, "the call and its result: {printed:?}");
+        assert_eq!(printed[1], "attach answered: attached");
     }
 
     /// That an agent began to answer is printed; another user's response is no answer of an
