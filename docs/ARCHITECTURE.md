@@ -58,7 +58,8 @@ drawn in [CRATES.md](CRATES.md):
     alone, so that a client reads the API without the server (issue 323).
 *   **`caelumora-rest-server`** - a crate the program links: the REST API and the server-sent event
     streams, with authentication. It maps what the kernel answers to the responses of
-    `caelumora-rest-api` and decides nothing itself. Its handlers' building blocks - the logged-in
+    `caelumora-rest-api` - or answers the domain's type where that is the wire - and decides
+    nothing itself. Its handlers' building blocks - the logged-in
     user, `ApiError`, the extractors, the shared state - are public, and the routes of the API, the
     plugins' among them, are a `Router` to nest. See [REST-SERVER.md](REST-SERVER.md).
 *   **`caelumora-app`** - the program: the composition root that lists the plugins and the

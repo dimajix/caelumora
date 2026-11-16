@@ -7,7 +7,7 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::security::Grant;
 use caelumora_domain::snapshot;
 use caelumora_domain::value::text::Description;
-use caelumora_domain::workspace::{CommandStatus, WorkspaceId};
+use caelumora_domain::workspace::WorkspaceId;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -117,17 +117,4 @@ pub struct FileResponse {
     pub size: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modified: Option<DateTime<Utc>>,
-}
-
-/// How a command of a workspace's shell stands (issue 294): as a result of
-/// `run_command` shows it, without what the model is told to do next.
-#[derive(Debug, Serialize)]
-pub struct CommandResponse {
-    pub id: String,
-    pub status: CommandStatus,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-    pub output: String,
-    pub next_offset: u64,
-    pub truncated: bool,
 }

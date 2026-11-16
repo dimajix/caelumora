@@ -13,6 +13,8 @@ mod prompt;
 mod testing;
 mod tool;
 
+pub use tool::SHELL_PRESENTATION;
+
 use crate::NAMESPACE;
 use caelumora_agents::prompt::{texts_of, writing_for_the_model, PromptPosition, PromptProvider};
 use caelumora_agents::tool::{tool_text, ApprovalMode, ToolProvider};

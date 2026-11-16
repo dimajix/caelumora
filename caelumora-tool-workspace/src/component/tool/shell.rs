@@ -16,13 +16,13 @@ use crate::component::WorkspaceParams;
 use async_trait::async_trait;
 use caelumora_agents::tool::{arguments, Tool, ToolError, ToolOutput, ToolResult};
 use caelumora_agents::turn::Turn;
-use caelumora_api::terminal::{CommandState, Shell};
+use caelumora_api::terminal::Shell;
 use caelumora_domain::approval::ToolMatcher;
 use caelumora_domain::prompt_catalogue::{context, PromptError, PromptTexts};
 use caelumora_domain::question::Answers;
 use caelumora_domain::tool::{ToolDescription, ToolParameters, ToolPresentation};
-use caelumora_domain::workspace::CommandStatus;
 use caelumora_domain::workspace::Workspace;
+use caelumora_domain::workspace::{CommandState, CommandStatus};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::mem;
@@ -32,9 +32,9 @@ use tokio::runtime::Handle;
 use tokio::time;
 use tracing::warn;
 
-/// A shell command (issue 251): its `command` as a line of code, its
-/// `output` as a terminal shows it, and its exit code.
-const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
+/// A shell command (issue 251): its `command` as a line of code, its `output` as a terminal shows
+/// it, and its exit code - what a call answers, read as a `CommandState`.
+pub const SHELL_PRESENTATION: ToolPresentation = ToolPresentation::new("shell");
 
 pub(super) const RUN_COMMAND: &str = "run_command";
 pub(super) const COMMAND_OUTPUT: &str = "command_output";
@@ -80,27 +80,19 @@ fn wait(params: &WorkspaceParams, asked: Option<f64>) -> Duration {
     Duration::from_secs_f64(asked.unwrap_or(most).clamp(0.0, most))
 }
 
-/// `state` as the model is given it: the output cut from the front to
-/// what a result may hold.
-fn result(params: &WorkspaceParams, prompts: &PromptTexts, state: CommandState) -> Value {
-    let mut output = state.output;
-    let mut truncated = state.truncated;
-    if output.len() > params.max_output_bytes {
-        let cut = output.ceil_char_boundary(output.len() - params.max_output_bytes);
-        output.drain(..cut);
-        truncated = true;
+/// `state` as the model is given it, by `params` and the texts `prompts`: the output cut from the
+/// front to what a result may hold, and for a command still running how to go on with it
+/// (`next`): a JSON object whose keys stand sorted, as `serde_json` keeps them, and which is read
+/// back as the `CommandState` it holds.
+fn result(params: &WorkspaceParams, prompts: &PromptTexts, mut state: CommandState) -> Value {
+    if state.output.len() > params.max_output_bytes {
+        let cut = state.output.ceil_char_boundary(state.output.len() - params.max_output_bytes);
+        state.output.drain(..cut);
+        state.truncated = true;
     }
-    let mut result = json!({
-        "id": state.id,
-        "status": state.status,
-        "output": output,
-        "next_offset": state.next_offset,
-        "truncated": truncated,
-    });
-    if let Some(code) = state.exit_code {
-        result["exit_code"] = json!(code);
-    }
-    if state.status == CommandStatus::Running {
+    let running = state.status == CommandStatus::Running;
+    let mut result = json!(state);
+    if running {
         if let Some(next) = next(
             prompts,
             "still_running",
@@ -355,9 +347,16 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(ran.value["status"], "completed");
-        assert_eq!(ran.value["exit_code"], 0);
-        assert_eq!(ran.value["output"], "draft\nnotes.md\n");
+        assert!(
+            ran.value.to_string().starts_with(r#"{"exit_code":0,"id":"#),
+            "the model is given its keys sorted: {}",
+            ran.value
+        );
+        let state: CommandState = serde_json::from_value(ran.value.clone()).unwrap();
+        assert_eq!(
+            (state.status, state.exit_code, state.output.as_str()),
+            (CommandStatus::Completed, Some(0), "draft\nnotes.md\n")
+        );
         assert_eq!(
             ran.classification.as_ref(),
             Some(&world.workspace.classification),
@@ -380,24 +379,30 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(running.value["status"], "running");
         assert!(running.value["next"].as_str().unwrap().contains(COMMAND_OUTPUT));
-        let id = running.value["id"].clone();
-        let offset = running.value["next_offset"].clone();
+        assert!(running.value.get("exit_code").is_none(), "no exit code: no key");
+        let begun: CommandState = serde_json::from_value(running.value).unwrap();
+        assert_eq!((begun.status, begun.exit_code), (CommandStatus::Running, None));
         let followed = tool_named(&tool, COMMAND_OUTPUT)
-            .execute(&json!({ "id": id, "offset": offset, "wait_secs": 0.1 }), None, &mut turn)
+            .execute(
+                &json!({ "id": begun.id, "offset": begun.next_offset, "wait_secs": 0.1 }),
+                None,
+                &mut turn,
+            )
             .await
             .unwrap();
+        let followed: CommandState = serde_json::from_value(followed.value).unwrap();
         assert_eq!(
-            (followed.value["status"].as_str(), followed.value["output"].as_str()),
-            (Some("running"), Some("")),
+            (followed.status, followed.output.as_str()),
+            (CommandStatus::Running, ""),
             "nothing new"
         );
         let killed = tool_named(&tool, KILL_COMMAND)
-            .execute(&json!({ "id": id }), None, &mut turn)
+            .execute(&json!({ "id": begun.id }), None, &mut turn)
             .await
             .unwrap();
-        assert_eq!(killed.value["status"], "killed");
+        let killed: CommandState = serde_json::from_value(killed.value).unwrap();
+        assert_eq!(killed.status, CommandStatus::Killed);
         let unknown = tool_named(&tool, COMMAND_OUTPUT)
             .execute(&json!({ "id": "nonesuch" }), None, &mut turn)
             .await;
@@ -471,12 +476,13 @@ mod tests {
             truncated: false,
         };
         // No text of how to go on is needed for a command that ended.
-        let result =
-            result(&params, &PromptTexts::new(Arc::new(PromptCatalogue::new()), None), state);
+        let prompts = PromptTexts::new(Arc::new(PromptCatalogue::new()), None);
+        let result: CommandState =
+            serde_json::from_value(result(&params, &prompts, state)).unwrap();
         assert_eq!(
-            (result["output"].as_str(), result["truncated"].as_bool()),
-            (Some("f"), Some(true)),
-            "the cut falls inside é and moves past it: {result}"
+            (result.output.as_str(), result.truncated),
+            ("f", true),
+            "the cut falls inside é and moves past it: {result:?}"
         );
     }
 }

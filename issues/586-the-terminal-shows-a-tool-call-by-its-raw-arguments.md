@@ -157,3 +157,13 @@ only tests call, is the module's own.
 2026-11-16: One more step before step 3, from the review of the last: `ToolParameters::none()`
 names the parameters of a tool that takes nothing, which `turn_end`, `list_skills` and
 `make_tool_description` wrote out as an object of empty lists.
+
+2026-11-16: Step 2 done, otherwise than planned: the review found the name `CommandResult` taken -
+`caelumora_api::command::CommandResult`, the result of every command - and the type the third with
+the same fields, beside `CommandState` of `caelumora-api` and `CommandResponse` of
+`caelumora-rest-api`. Decided with the maintainer: no new type. `CommandState` moves to
+`caelumora_domain::workspace`, beside `CommandStatus`, and is read as well as written; a shell
+tool gives its model the state - how to go on with a command still running added as `next` - as
+the JSON object it always was, keys sorted, and a frontend reads it back as a `CommandState`; the
+REST API answers it in place of `CommandResponse`, which is gone. `SHELL_PRESENTATION` is
+exported from the crate's `component`.

@@ -4,7 +4,7 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use caelumora_domain::workspace::CommandStatus;
+use caelumora_domain::workspace::CommandState;
 use chrono::{DateTime, Utc};
 use futures::Stream;
 use std::fmt::Debug;
@@ -155,22 +155,6 @@ pub trait Terminal: TerminalReader {
     async fn mkdir(&self, path: &WorkspacePath) -> TerminalResult<()>;
     /// Moves `from` to `to`, which must not exist.
     async fn move_entry(&self, from: &WorkspacePath, to: &WorkspacePath) -> TerminalResult<()>;
-}
-
-/// What a command printed since an offset, and where it stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommandState {
-    pub id: String,
-    pub status: CommandStatus,
-    pub exit_code: Option<i32>,
-    /// What it printed - standard output and error in the order they came -
-    /// since the offset asked for, as text.
-    pub output: String,
-    /// Where to ask from next time.
-    pub next_offset: u64,
-    /// Whether output before the offset asked for, or between it and what
-    /// is given, was dropped: more than is kept.
-    pub truncated: bool,
 }
 
 /// Commands in a workspace (issue 251) as one scope sees them: started at once, followed by what

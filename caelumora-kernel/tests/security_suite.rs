@@ -12,7 +12,7 @@
 use anyhow::Error;
 use caelumora_api::command::CommandError;
 use caelumora_api::reader::ViewError;
-use caelumora_api::terminal::{CommandState, TerminalError, WorkspacePath};
+use caelumora_api::terminal::{TerminalError, WorkspacePath};
 use caelumora_api::workspace::WorkspaceError;
 use caelumora_domain::actor::{ActorId, Rejection};
 use caelumora_domain::agent::{Agent, AgentId, Personality};
@@ -40,7 +40,7 @@ use caelumora_domain::user::testing::make_user;
 use caelumora_domain::user::{UserId, UserProfile};
 use caelumora_domain::value::name::{Name, NameMatch, ScopedName};
 use caelumora_domain::value::text::{Description, Introduction};
-use caelumora_domain::workspace::{CommandStatus, Workspace, WorkspaceId};
+use caelumora_domain::workspace::{CommandState, CommandStatus, Workspace, WorkspaceId};
 use caelumora_kernel::actor::user::UserActor;
 use caelumora_kernel::agent::{AgentError, AgentSpec};
 use caelumora_kernel::channel::testing::as_command_error;

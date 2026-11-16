@@ -18,14 +18,12 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use caelumora_api::terminal::{
-    CommandState, FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath,
-};
+use caelumora_api::terminal::{FileEntry, Terminal, TerminalError, TerminalReader, WorkspacePath};
 use caelumora_domain::channel::ChannelId;
 use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::security::Grant;
 use caelumora_domain::session::SessionId;
-use caelumora_domain::workspace::WorkspaceId;
+use caelumora_domain::workspace::{CommandState, WorkspaceId};
 use caelumora_kernel::controller::WorkspaceController;
 use caelumora_kernel::workspace::WorkspaceSpec;
 use caelumora_rest_api::access::AccessEntry;
@@ -34,7 +32,7 @@ use caelumora_rest_api::deleted::{DeletedResponse, ListOptions};
 use caelumora_rest_api::scope::ItemDescriptionRequest;
 use caelumora_rest_api::session::SessionSnapshot;
 use caelumora_rest_api::workspace::{
-    AttachWorkspaceRequest, CommandResponse, CreateWorkspaceRequest, FileResponse, FilesQuery,
+    AttachWorkspaceRequest, CreateWorkspaceRequest, FileResponse, FilesQuery,
     RenameWorkspaceRequest, StorageResponse, UsesWorkspaceRequest, WorkspaceResponse,
 };
 use futures::TryStreamExt;
@@ -289,7 +287,7 @@ pub(super) async fn kill_command(
     State(state): State<Arc<AppState>>,
     Path((id, cid, command_id)): Path<(Uuid, Uuid, String)>,
     user: AuthenticatedUser,
-) -> Result<Json<CommandResponse>, ApiError> {
+) -> Result<Json<CommandState>, ApiError> {
     let (session, channel) = open_channel(&state, &user, SessionId(id), ChannelId(cid)).await?;
     let (_, shell) = session
         .workspace()?
@@ -297,7 +295,7 @@ pub(super) async fn kill_command(
         .await?;
     // Where its storage gives no shell, no command is known there.
     let shell = shell.ok_or_else(|| TerminalError::UnknownCommand(command_id.clone()))?;
-    Ok(Json(command_response(shell.kill(&command_id, 0).await?)))
+    Ok(Json(shell.kill(&command_id, 0).await?))
 }
 
 async fn update_workspace(
@@ -389,17 +387,5 @@ fn file_response(entry: FileEntry) -> FileResponse {
         is_dir: entry.is_dir,
         size: entry.size,
         modified: entry.modified,
-    }
-}
-
-/// How a command stands, as the API shows it.
-fn command_response(state: CommandState) -> CommandResponse {
-    CommandResponse {
-        id: state.id,
-        status: state.status,
-        exit_code: state.exit_code,
-        output: state.output,
-        next_offset: state.next_offset,
-        truncated: state.truncated,
     }
 }

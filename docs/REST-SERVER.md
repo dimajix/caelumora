@@ -23,8 +23,9 @@ The request and response types are not the server's: they lie in the crate `cael
 one module per subject (`session`, `channel`, `workspace`, …), which depends on the domain alone, so
 that a client reads them without the server (issue 323). A response is made there from the domain's
 entities and snapshots, by `From` or an `of`. What only the kernel knows - the names of the places a
-message's knowledge was read in, a file of a workspace, a command of its shell - the handler puts
-into the response itself.
+message's knowledge was read in, a file of a workspace - the handler puts into the response itself.
+Where the domain's type is itself the wire, written as `serde` writes it, the API answers it as it
+is: a `Message`, a `CommandState`.
 
 ### The program
 
