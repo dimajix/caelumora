@@ -341,9 +341,9 @@ mod tests {
     use caelumora_domain::agent::AgentId;
     use caelumora_domain::chain::Position;
     use caelumora_domain::channel::testing::main_channel;
-    use caelumora_domain::channel::{self, Channel, ChannelId, HistoryAccess};
+    use caelumora_domain::channel::{self, Channel, ChannelId, HistoryAccess, Participant};
     use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
-    use caelumora_domain::event::GlobalEvent;
+    use caelumora_domain::event::{Announcing, EntityChange, GlobalEvent};
     use caelumora_domain::group::{Group, GroupId};
     use caelumora_domain::history::{HistoryEntry, Reader};
     use caelumora_domain::scope::Scope;
@@ -604,6 +604,44 @@ mod tests {
                 .collect();
             assert_eq!(left, [ActorId::System], "once, in the kernel's name");
         }
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 590: a session does not take over its own announcements - its controller holds every
+    /// change of it live already -, so that a join it hears of only after the leave that followed
+    /// it does not list the one let go again.
+    #[tokio::test]
+    async fn a_join_heard_of_after_the_leave_does_not_list_the_one_let_go_again() {
+        let world = World::new().await;
+        let mut events = world.kernel.event_bus().subscribe_all();
+        let session = world.session_of(&[world.bob], &[], &[]).await;
+        // The session hears what is announced once it runs: it follows the bus before it starts
+        // its channels.
+        let main = session.channels()[0].id();
+        time::timeout(Duration::from_secs(5), async {
+            while let Some(event) = events.recv().await {
+                if let Some(((_, id), EntityChange::Custom { name: channel::STARTED, .. })) =
+                    event.about::<Channel>()
+                {
+                    if id == main {
+                        return;
+                    }
+                }
+            }
+        })
+        .await
+        .expect("it runs");
+        let alice = World::as_user(world.alice);
+        let bob = ActorId::User(world.bob);
+        session.remove_participant(&alice, bob).await.expect("the owner lets him go");
+
+        let joined = SessionUpdateEvent::ParticipantJoined(Participant::User(world.bob));
+        let joined = GlobalEvent::updated::<Session>(&session.id(), &joined);
+        world.kernel.event_bus().announce(joined, &*session.session());
+        // Time for the session to hear of it.
+        time::sleep(Duration::from_millis(100)).await;
+
+        assert!(!session.session().takes_part(bob), "still let go");
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 

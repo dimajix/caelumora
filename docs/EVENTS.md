@@ -44,7 +44,7 @@ kind; `change.update::<AgentUpdateEvent>()` answers what an update says, and
 event bus, which kind of entity a receiver must be allowed to read - takes the fields themselves.
 What an update does to its entity is the entity's own rule: `Session::apply`, `Channel::apply`,
 `Agent::apply` and `User::apply` make what it says into the entity's values (issues 248, 353),
-where it is made and where a change made elsewhere is taken over.
+where it is made - and, for an agent or a user, where a change made elsewhere is taken over.
 
 Written as JSON, an event is an object of these fields, `within` absent for a kind that lies in
 nothing, a change of its life written as its name alone (`"change": "Deleted"`), an update as

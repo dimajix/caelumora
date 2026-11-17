@@ -180,7 +180,9 @@ impl Updatable for Session {
             }
             SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
             SessionUpdateEvent::ProjectChanged(project) => self.project = *project,
-            // Taken over as announced: announcing was the business of whoever took them in.
+            // What a join and a leave mean, as the domain's rule of each update is; nothing in the
+            // kernel applies them today - a participant comes and goes by `take_in` and `let_go`,
+            // and announcing it was the business of whoever took them in or let them go.
             SessionUpdateEvent::ParticipantJoined(participant) => {
                 self.take_in(participant.clone());
             }
@@ -426,10 +428,10 @@ mod tests {
     }
 
     /// Issue 590: one let go is out of the participants and their group, their invitation used up
-    /// all the same; a leave taken over again, as a controller's own announcement comes back to
-    /// it, changes nothing, and one taken in after it is listed again.
+    /// all the same; a leave applied again changes nothing, and one taken in after it is listed
+    /// again.
     #[test]
-    fn one_let_go_is_out_of_the_session_and_a_leave_taken_over_again_changes_nothing() {
+    fn one_let_go_is_out_of_the_session_and_a_leave_applied_again_changes_nothing() {
         let alice = UserId::new();
         let bob = UserId::new();
         let invitation = AclEntry::invitation(ActorId::User(bob));
@@ -444,7 +446,7 @@ mod tests {
         assert!(session.let_go(ActorId::User(bob)).is_none(), "nobody to let go again");
 
         let left = SessionUpdateEvent::ParticipantLeft(ActorId::User(bob));
-        session.apply(&left).expect("a leave taken over again");
+        session.apply(&left).expect("a leave applied again");
         let listed: Vec<_> = session.participants.iter().map(Participant::actor_id).collect();
         assert_eq!(listed, [ActorId::User(alice)], "changes nothing");
         session.apply(&SessionUpdateEvent::ParticipantJoined(Participant::User(bob))).unwrap();

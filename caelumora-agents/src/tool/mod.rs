@@ -1164,10 +1164,9 @@ mod tests {
     use caelumora_domain::context::{ContextRef, FrameRef, KnowledgeSource};
     use caelumora_domain::digest;
     use caelumora_domain::digest::Digest;
-    use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::note::NoteId;
     use caelumora_domain::session::testing::bare_session;
-    use caelumora_domain::session::{Session, SessionId, SessionUpdateEvent};
+    use caelumora_domain::session::{Session, SessionId};
     use caelumora_domain::tool::testing::{make_tool_call, make_tool_description};
     use caelumora_domain::tool::{ToolCallStatus, ToolResultStatus};
     use caelumora_domain::turn::TurnState;
@@ -1467,8 +1466,8 @@ mod tests {
         assert!(timed_out_result(&testing::prompts()).contains("ask the user whether to try again"));
     }
 
-    fn executor(access_policy: Arc<dyn AccessPolicy>) -> ToolExecutor {
-        guarded(access_policy, true, Places::default())
+    async fn executor(access_policy: Arc<dyn AccessPolicy>) -> ToolExecutor {
+        guarded(access_policy, true, Places::default()).await
     }
 
     /// The rules of the places an agent works in (issue 13).
@@ -1482,17 +1481,18 @@ mod tests {
     /// The mock tools - each requiring approval if `requires_approval` -
     /// guarded by `access_policy` and the rules of `places`; the controller of
     /// the session is returned, for its rules to be changed.
-    fn guarded_in(
+    async fn guarded_in(
         access_policy: Arc<dyn AccessPolicy>,
         requires_approval: bool,
         places: Places,
     ) -> (ToolExecutor, Arc<SessionController>) {
         guarding(access_policy, vec![("tools", Arc::new(mock_tools(requires_approval)))], places)
+            .await
     }
 
     /// The tools of `providers`, by their component ids, guarded by
     /// `access_policy` and the rules of `places`.
-    fn guarding(
+    async fn guarding(
         access_policy: Arc<dyn AccessPolicy>,
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
         places: Places,
@@ -1505,13 +1505,14 @@ mod tests {
             places,
             agent,
         )
+        .await
     }
 
     /// As `guarding`, the flow decided by `confidentiality` (issue 304): for
     /// the actor `actor` - an agent, as tools are called -, whose runtime
     /// holds the policies, the system's rules and the session of the test
     /// (issue 371).
-    fn guarding_under(
+    async fn guarding_under(
         access_policy: Arc<dyn AccessPolicy>,
         confidentiality: Arc<dyn ConfidentialityPolicy>,
         providers: Vec<(&str, Arc<dyn ToolProvider>)>,
@@ -1546,19 +1547,25 @@ mod tests {
             ..Default::default()
         }
         .build();
-        let channel = ChannelRuntime::outside_a_session(kernel, session, channel);
+        // Stored too, so that a test can change its rules through its controller: the document
+        // alone, of a session that does not run - the channel runs outside one. A policy that
+        // refuses everything refuses storing it as well; its tests change no rule.
+        let mut stored = session.clone();
+        let sessions = &kernel.entity_stores().sessions;
+        let _ = sessions.create(&SecurityContext::system(), &mut stored).await;
+        let channel = ChannelRuntime::outside_a_session(kernel, stored, channel);
         let session = channel.session_controller_of();
         let executor =
             ToolExecutor::new(providers, agent_runtime(channel.new_participant_runtime(actor)));
         (executor.unwrap(), session)
     }
 
-    fn guarded(
+    async fn guarded(
         access_policy: Arc<dyn AccessPolicy>,
         requires_approval: bool,
         places: Places,
     ) -> ToolExecutor {
-        guarded_in(access_policy, requires_approval, places).0
+        guarded_in(access_policy, requires_approval, places).await.0
     }
 
     fn rule(tool: &str, decision: RuleDecision) -> ApprovalRule {
@@ -1580,48 +1587,66 @@ mod tests {
             executor.admit(&mut call("test_tool"), &turn).await
         };
 
-        let denied = admitted(guarded(
-            Arc::clone(&access_policy),
-            false,
-            Places { system: vec![rule("test_tool", RuleDecision::Deny)], ..Default::default() },
-        ))
+        let denied = admitted(
+            guarded(
+                Arc::clone(&access_policy),
+                false,
+                Places {
+                    system: vec![rule("test_tool", RuleDecision::Deny)],
+                    ..Default::default()
+                },
+            )
+            .await,
+        )
         .await;
         assert!(
             matches!(denied, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden && r.content == forbidden_result(&testing::prompts())),
             "the system's, as the policy refuses: {denied:?}"
         );
-        let asked = admitted(guarded(
-            Arc::clone(&access_policy),
-            false,
-            Places { channel: vec![rule("test_tool", RuleDecision::Ask)], ..Default::default() },
-        ))
+        let asked = admitted(
+            guarded(
+                Arc::clone(&access_policy),
+                false,
+                Places {
+                    channel: vec![rule("test_tool", RuleDecision::Ask)],
+                    ..Default::default()
+                },
+            )
+            .await,
+        )
         .await;
         assert!(
             matches!(asked, Admission::Ask { explicit: true, .. }),
             "the channel's, of a tool that would not ask: {asked:?}"
         );
-        let both = admitted(guarded(
-            Arc::clone(&access_policy),
-            false,
-            Places {
-                session: vec![rule("*", RuleDecision::Ask)],
-                channel: vec![rule("test_tool", RuleDecision::Deny)],
-                ..Default::default()
-            },
-        ))
+        let both = admitted(
+            guarded(
+                Arc::clone(&access_policy),
+                false,
+                Places {
+                    session: vec![rule("*", RuleDecision::Ask)],
+                    channel: vec![rule("test_tool", RuleDecision::Deny)],
+                    ..Default::default()
+                },
+            )
+            .await,
+        )
         .await;
         assert!(
             matches!(both, Admission::Answered(ref r) if r.status == ToolResultStatus::Forbidden),
             "the strongest of all places: {both:?}"
         );
-        let other = admitted(guarded(
-            Arc::clone(&access_policy),
-            false,
-            Places { session: vec![rule("hr_tool", RuleDecision::Deny)], ..Default::default() },
-        ))
+        let other = admitted(
+            guarded(
+                Arc::clone(&access_policy),
+                false,
+                Places { session: vec![rule("hr_tool", RuleDecision::Deny)], ..Default::default() },
+            )
+            .await,
+        )
         .await;
         assert!(matches!(other, Admission::Run), "a rule about another tool: {other:?}");
-        let default = admitted(guarded(access_policy, true, Places::default())).await;
+        let default = admitted(guarded(access_policy, true, Places::default()).await).await;
         assert!(
             matches!(default, Admission::Ask { explicit: false, .. }),
             "the tool's own default is no rule: {default:?}"
@@ -1631,7 +1656,7 @@ mod tests {
     #[tokio::test]
     async fn a_rule_that_denies_set_while_a_call_waits_refuses_it_when_run() {
         let (executor, session) =
-            guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default());
+            guarded_in(Arc::new(AllowAllPolicy::new()), true, Places::default()).await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(matches!(
@@ -1639,10 +1664,10 @@ mod tests {
             Admission::Ask { .. }
         ));
 
-        // As if set in another instance, and announced.
-        let denying =
-            SessionUpdateEvent::ApprovalRulesChanged(vec![rule("test_tool", RuleDecision::Deny)]);
-        session.process_global_event(&GlobalEvent::updated::<Session>(&session.id(), &denying));
+        // Set through its controller, as the running session's are.
+        let denying = vec![rule("test_tool", RuleDecision::Deny)];
+        let system = SecurityContext::system();
+        session.update_approval_rules(&system, denying).await.expect("the rules are changed");
         let result = executor.execute(&call("test_tool"), None, &mut turn, future::pending()).await;
         assert_eq!(result.status, ToolResultStatus::Forbidden, "as it stands when run");
         assert!(result.started_at.is_none(), "it never ran");
@@ -1653,7 +1678,7 @@ mod tests {
     /// it runs.
     #[tokio::test]
     async fn the_policy_is_checked_once_as_the_call_is_admitted() {
-        let executor = executor(Arc::new(DenyAllPolicy));
+        let executor = executor(Arc::new(DenyAllPolicy)).await;
 
         let agent_id = AgentId::new();
         let mut agent_channel_state = offered(&executor, Work { ..Default::default() }).await;
@@ -1679,7 +1704,7 @@ mod tests {
     async fn a_call_is_offered_a_rule_only_where_one_can_be_kept() {
         use caelumora_domain::approval::{ArgumentMatcher, MAX_EQUALS_CHARS, MAX_PATTERN_CHARS};
 
-        let asking = executor(Arc::new(AllowAllPolicy::new()));
+        let asking = executor(Arc::new(AllowAllPolicy::new())).await;
         let mut agent_channel_state = agent_turn(&asking).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let with =
@@ -1701,7 +1726,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_is_asked_for_run_or_answered_at_once_as_it_can_succeed() {
-        let asking = executor(Arc::new(AllowAllPolicy::new()));
+        let asking = executor(Arc::new(AllowAllPolicy::new())).await;
         let mut agent_channel_state = agent_turn(&asking).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let mut asked = call("test_tool");
@@ -1729,7 +1754,7 @@ mod tests {
             other => panic!("an unknown tool is answered at once, got {other:?}"),
         }
 
-        let refusing = executor(Arc::new(DenyAllPolicy));
+        let refusing = executor(Arc::new(DenyAllPolicy)).await;
         let mut agent_channel_state = agent_turn(&refusing).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(
@@ -1737,7 +1762,7 @@ mod tests {
             "first the policy"
         );
 
-        let running = guarded(Arc::new(AllowAllPolicy::new()), false, Places::default());
+        let running = guarded(Arc::new(AllowAllPolicy::new()), false, Places::default()).await;
         let mut agent_channel_state = agent_turn(&running).await;
         let turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let admitted = running.admit(&mut call("test_tool"), &turn).await;
@@ -1770,7 +1795,8 @@ mod tests {
             access_policy,
             vec![("outward", outward), ("local", local)],
             Places::default(),
-        );
+        )
+        .await;
 
         let internal = sets_offered(
             &executor,
@@ -1890,7 +1916,7 @@ mod tests {
 
     /// An executor whose flow knows the compartment "hr", and which lets
     /// every action (issue 304: the flow is the policy's apart).
-    fn with_hr() -> ToolExecutor {
+    async fn with_hr() -> ToolExecutor {
         use caelumora_domain::confidentiality::{Compartment, Compartments};
         use caelumora_security::confidentiality::ConfidentialityRules;
         let compartments = Compartments::new([(Compartment::new("hr"), vec![])]).unwrap();
@@ -1902,12 +1928,13 @@ mod tests {
             Places::default(),
             ActorId::Agent(AgentId::new()),
         )
+        .await
         .0
     }
 
     #[tokio::test]
     async fn a_call_runs_is_timed_and_classified_as_the_channel_unless_it_says_otherwise() {
-        let executor = with_hr();
+        let executor = with_hr().await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
@@ -1968,7 +1995,8 @@ mod tests {
             Arc::new(AllowAllPolicy::new()),
             vec![("vanishing", provider)],
             Places::default(),
-        );
+        )
+        .await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         assert!(
@@ -1990,7 +2018,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_still_running_when_its_turn_ends_is_interrupted_and_counts_as_run() {
-        let executor = executor(Arc::new(AllowAllPolicy::new()));
+        let executor = executor(Arc::new(AllowAllPolicy::new())).await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let ending = async {
@@ -2017,7 +2045,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_call_a_user_interrupts_tells_the_model_who_did_and_that_the_turn_goes_on() {
-        let executor = executor(Arc::new(AllowAllPolicy::new()));
+        let executor = executor(Arc::new(AllowAllPolicy::new())).await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let interrupting = async {
@@ -2036,7 +2064,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_result_that_may_not_flow_into_the_channel_never_reaches_the_model() {
-        let executor = with_hr();
+        let executor = with_hr().await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
@@ -2066,7 +2094,7 @@ mod tests {
     /// may not flow into the channel.
     #[tokio::test]
     async fn what_a_result_showed_goes_with_it_where_the_channel_admits_it() {
-        let executor = with_hr();
+        let executor = with_hr().await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
 
@@ -2088,7 +2116,7 @@ mod tests {
     /// is given the result; withheld, neither.
     #[tokio::test]
     async fn what_a_tool_read_goes_with_its_result_where_the_model_is_given_it() {
-        let executor = with_hr();
+        let executor = with_hr().await;
         let mut agent_channel_state = agent_turn(&executor).await;
         let mut turn = Turn::under_way(AgentId::new(), &mut agent_channel_state);
         let history = KnowledgeSource::History { digest: None, from: None };
@@ -2207,7 +2235,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_result_classified_by_the_tool_is_kept_where_the_channel_admits_it() {
-        let executor = with_hr();
+        let executor = with_hr().await;
         let mut agent_channel_state = agent_turn(&executor).await;
         if let Some(turn) = agent_channel_state.turn.as_mut() {
             turn.work.classification = hr();

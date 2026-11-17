@@ -149,6 +149,10 @@ Steps, each committed on its own:
    the leave that followed it lists the one let go again for a moment, and a change of the
    session meanwhile would store them back - what a sub-agent of 558, taken in and let go soon
    after, runs into.
+4b. A session follows whom it takes in where it takes them in, not by hearing its own
+   announcement on the bus: it subscribes to its own topic for this alone since step 4, and every
+   event of its channels passes its loop to be dropped; a stale or forged join would have it follow
+   one let go. Its subscription then no longer lives on `run`'s stack alone.
 5. A history store answers the open ranges of attendance of a channel at once, so that a channel
    being built reads them in one question instead of one per former participant
    (`HistoryStore::attendance`, step 3), whose number grows with every sub-agent.
@@ -223,3 +227,13 @@ agents deleted or restored meanwhile.
   session stopped has its attendance end only as the channel is built again.
 - **2026-11-17** — Decided with the maintainer: the two points left by step 3 are steps of their
   own, 4 and 5 (*Plan*), before the REST routes.
+- **2026-11-17** — Step 4 done, simpler than planned: the session takes over its own
+  announcements no more at all, rather than reading itself again as stored. Its controller is the
+  one writer of it in its instance and holds every change live already - as EVENTS.md and
+  STORAGE.md said, while `SessionLoop::handle_global_event` still applied each announcement on top
+  of the live copy; `SessionController::process_global_event` is gone. The session follows its own
+  announcements only for whom it takes in. A test holds that a join heard of after the leave that
+  followed it lists nobody again.
+- **2026-11-17** — Accepted by the maintainer: step 4 as done, without `take_stored`. The finding
+  of its review - the session hears its own joins through the bus only to follow whom it took in -
+  is a step of its own, 4b (*Plan*).

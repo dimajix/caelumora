@@ -276,12 +276,6 @@ impl SessionController {
             .map(drop)
     }
 
-    /// Takes over a change made elsewhere - already stored there - once it
-    /// is announced (`LiveDocument::take_over`).
-    pub fn process_global_event(&self, event: &GlobalEvent) {
-        self.session.take_over(event);
-    }
-
     /// Applies `event` on behalf of `ctx` (`LiveDocument::update`): stored
     /// first - which is where the permission is checked (issue 11) - and
     /// only then changed live and announced.

@@ -419,9 +419,10 @@ impl SessionLoop {
         let mut start_rx = self.start_rx.try_lock().map_err(|_| anyhow!("Already running"))?;
 
         let mut join_set = JoinSet::new();
-        // The session's own events, and those about its agents' lifecycle and its participants'
-        // names; taking them into their controllers is the `ControllerManager`'s (issue 121). A
-        // participant taken in later is followed once that is announced (issue 221).
+        // The session's own events, for whom it takes in (issue 221), and those about its agents'
+        // lifecycle and its participants' names; taking them into their controllers is the
+        // `ControllerManager`'s (issue 121). A participant taken in later is followed once that is
+        // announced.
         let mut topics = vec![SubscriptionTopic::Session(self.id())];
         topics.extend(self.participant_topics());
         let mut subscription = self.events.subscribe(SecurityContext::system(), topics);
@@ -503,11 +504,13 @@ impl SessionLoop {
         if let Some((participant, name)) = renamed(global_event) {
             self.participant_renamed(participant, &name);
         }
-        match global_event.about::<Agent>() {
-            Some((id, EntityChange::Deleted | EntityChange::Restored)) => {
-                self.follow_agents(Some(id)).await
-            }
-            _ => self.session_controller.process_global_event(global_event),
+        // Its own announcements it does not take over: its controller is the one writer of it,
+        // which holds every change live already - and taken over on top of what changed since,
+        // a join would list again one let go after it (issue 590).
+        if let Some((id, EntityChange::Deleted | EntityChange::Restored)) =
+            global_event.about::<Agent>()
+        {
+            self.follow_agents(Some(id)).await
         }
     }
 
