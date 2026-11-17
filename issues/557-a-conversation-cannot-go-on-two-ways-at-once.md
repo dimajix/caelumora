@@ -481,6 +481,36 @@ threads would be possible, but has no user yet.
 3. Each on its own afterwards: closed circles, unloading (with 381), external agents in threads,
    splitting a thread off into a channel, and the side question as `/btw`.
 
+### Decided on 2026-11-17
+
+Decided by the maintainer, on the proposal above and on the sub-agents of
+[558](558-no-agent-hands-a-task-to-a-sub-agent.md#decision):
+
+- **The tree is the model's, not the user's.** Threads form a tree so that there is one concept,
+  and the channel's line takes no special part: it is a thread, the one without an origin. That
+  decides *The channel's line is a thread* above. No frontend shows the tree; the path of
+  *Threads form a tree* - "channel › thread A › thread B" - is not wanted.
+- **A person branches once.** A person opens a thread only at a message of the channel's line;
+  deeper threads come only from sub-agents. The rule is the kernel's, where a thread is opened -
+  not the TUI's or the REST server's, which offer nothing else and are refused if they ask for it.
+- **A thread begins in one of two ways.** *Forked*: the agents' branches fork from where they
+  stand in the thread's origin, and they know the conversation so far - as a person opens a
+  thread. *Fresh*: the information and resources of the channel are shared - its notes, its
+  artifacts, its properties -, but the conversation begins anew: every agent's branch in the
+  thread begins at the root - an external agent's calls begin there already -, except the branch
+  of whoever opened it, if it takes part, which forks, since it has to know why it asked. A
+  sub-agent's thread is fresh.
+- **A thread has a responder policy of its own**, chosen when it is opened - the channel's unless
+  another is named -, since what suits a thread depends on what it is for; it chooses among those
+  taking part in the thread. This replaces *the channel's `ResponderPolicy`* in *Who hears and who
+  answers* above. A sub-agent's thread needs one of its own, since under the channel's
+  `user_driven_policy` or `mentions_only_policy` nobody would be asked reliably.
+- **Hops between agents are counted per thread**, from the thread's first message on - for a
+  sub-agent, from its brief.
+
+The fork of an agent itself, under *What is still hard*, is not needed: a sub-agent is a new agent
+of a personality, and its start does not block the agent that started it (558).
+
 ## Done when
 
 - The model is decided - within one channel, as channels, or not at all - with the reasoning
@@ -508,3 +538,7 @@ threads would be possible, but has no user yet.
   at once across threads, and threads can be unloaded. Proposed, not decided (*Proposal for
   threads*): the channel's line as a thread, a tree of threads, who takes part in a thread and who
   answers there, unloading as 381 unloads a channel, and an order of steps.
+- **2026-11-17** — Decided by the maintainer (*Decided on 2026-11-17*): the tree of threads is the
+  model's alone, with the channel's line a thread; a person branches once, by a rule of the
+  kernel; a thread begins forked or fresh; every thread has a responder policy of its own; hops are
+  counted per thread. The sub-agents of 558 decided with it.

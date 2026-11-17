@@ -56,3 +56,7 @@ issues says whether this is meant.
 **2026-11-15** - Opened from a finding while working on
 [574](574-notes-and-memory-cannot-be-read-by-a-command.md): `ChannelView::notes` reads the
 participants taking part alone.
+
+**2026-11-17** - One more case: a sub-agent of
+[558](558-no-agent-hands-a-task-to-a-sub-agent.md#decision) is deleted when its work is ended, so
+what it noted in the channel falls off the board with it. Not a precondition of 558.

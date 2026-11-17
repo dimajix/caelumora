@@ -231,6 +231,72 @@ and notes. Two consequences for a sub-agent:
 - Is the sub-channel kept, and how is it shown?
 - Is the sub-channel a thread of 557 (*As a thread of 557*)?
 
+## Decision
+
+The maintainer's decision of 2026-11-17, on the author's proposal. It goes beyond *As a thread of
+557* in one point: the main agent does not take part in the sub-agent's thread, so what is said
+there of the main agent in the thread with its actor of the channel no longer holds.
+
+- **A sub-agent works in a fresh thread** of the channel
+  ([557](557-a-conversation-cannot-go-on-two-ways-at-once.md#decided-on-2026-11-17)): it shares
+  the channel's notes, artifacts and properties, but its conversation begins with the brief.
+- **Starting it does not block.** The tool opens the thread, writes the brief into it as its first
+  message, in the main agent's name, and returns at once with the thread's id. The main agent's
+  turn ends as any turn does. So a sub-agent always works in the background, and several can work
+  side by side.
+- **The main agent does not take part in the thread.** It neither hears it nor is asked there; its
+  work stays in the thread it started the sub-agent from.
+- **The way back is given to read.** The sub-agent's answer to the brief - the message of the turn
+  that answers it, which the events of a turn name (`correlation_id`) - is given to the main agent
+  to read in the thread it started the sub-agent from, as a `Given` entry with the sub-agent as its
+  giver - "@researcher gave you this to read:", as a skill given with `/skill` -, together with a
+  request to respond. It is not a message of that thread, and no other agent hears it; the users
+  see the answer in the sub-agent's thread and at the call that started it. So the main agent sees
+  the result as Claude Code shows it, as something that came back to the call, and answers in its
+  own thread with what it makes of it. A tool by which the sub-agent reports its result explicitly
+  stays the alternative, should the answer to the brief not suffice to tell the result.
+- **Asking again** is a second tool: it writes into the thread in the main agent's name, and the
+  answer to it is given to read in the same way.
+- **The thread's policy**: the sub-agent answers what the main agent writes there, and mentions.
+  What it answers a user who writes in the thread is no result and is given to nobody.
+- **No messages across threads in general.** Directed messages from one thread to an agent in
+  another, kept out of that thread's history, were considered and are not pursued: a second way of
+  speaking beside the channel, with a visibility and a record of its own, while what is given to
+  read covers the one case that needs it.
+- **The sub-agent is deleted when its work is ended**, and with it its thread is closed for good
+  and cannot be opened again. Its work is ended by the main agent, through a tool, or by a user
+  closing the thread; deleting it after its first result would leave nothing to ask again.
+- **Which sub-agents may be started** is the tool's configuration: a list of the personalities it
+  may start an agent of, whose components bring its tools and everything else. The sub-agent is a
+  new agent of one of them, owned by the main agent's owner, who has to be able to read the
+  personality, as for any agent made.
+
+What this answers of the open questions above: the main agent is in the thread neither as A nor as
+B - the tool speaks the brief, and the answer comes back given to read -; a sub-agent always works
+in the background; it is a new agent of a listed personality; and its thread is shown at the call
+that started it and ends with the sub-agent.
+
+- **The sub-agent takes part in its own thread alone**, decided as well. Every participant of a
+  thread is a participant of the channel; but a sub-agent that took part in the channel's line
+  would hear it, and could be chosen there by the channel's policy. So it is a participant of the
+  channel - its rights, the channel's notes and properties - that takes part in its thread and in
+  no other, the channel's line included. That departs from 557's proposal that all of the
+  channel's participants take part in its line.
+- **Its notes and 581.** What is noted in a channel is read from the agents taking part in it
+  ([581](581-the-notes-of-an-agent-that-left-fall-off-the-board.md)), so a sub-agent's notes may
+  vanish when it is deleted, and only its result and its artifacts remain. 581 is no precondition:
+  if they vanish, that is one more finding for 581, not a reason to wait for it.
+
+### What is still open
+
+- **How the sub-agent is kept to its thread**: by the access lists, or by another mechanism.
+- **An idle sub-agent.** Whether one the main agent never ends is ended after a while.
+- **Whether users may write in its thread**, or the thread is a closed circle of the sub-agent
+  alone.
+- **The command.** A user starting a sub-agent by command, as wanted: to whom its answer is given,
+  and in which thread.
+- **Bounding its rights** by what the main agent may, beyond the list of personalities.
+
 ## Done when
 
 - The model is decided - how the main agent is in the sub-channel, what the user is there, and what
@@ -246,3 +312,8 @@ and notes. Two consequences for a sub-agent:
 - **2026-11-16** — *As a thread of 557* added: 557 now considers threads, and a sub-agent would be
   one, opened by an agent, with its result as the result of the call. Not decided. On the same day
   557 decided that a thread is part of its channel; its consequences for a sub-agent added there.
+- **2026-11-17** — Decided by the maintainer (*Decision*): a sub-agent works in a fresh thread, is
+  started without blocking, the main agent takes no part in its thread, its answer is given to the
+  main agent to read in the thread it was started from, and it is deleted when its work is ended;
+  the tool lists the personalities it may start; it takes part in its own thread alone; 581 is no
+  precondition. What is still open is listed there.
