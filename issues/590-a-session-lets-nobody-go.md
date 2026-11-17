@@ -137,9 +137,34 @@ Steps, each committed on its own:
 2. `SessionLoop::remove_participant` and `leave`, through every channel of the session, running
    or not; `LeaveSession`; the security suite; CHANNELS.md, PERMISSION-CHECKS.md, SECURITY.md, and
    the sentence "a session lets nobody go" where it stands.
-3. The REST routes and the web UI; `SessionError::NotAParticipant`, answered as `invalid_channel`
+3. A channel reconciles its history as it is built: whoever it keeps as a former participant with
+   a range of attendance still open in it - let go while it did not run - is recorded as left, in
+   the kernel's name, ahead of every actor it starts. The channel stays the one writer of its
+   history; nothing was recorded while it did not run, so the leave stands where it would have
+   stood. A participant without an actor removed from a running channel - left out as it started -
+   is recorded as left at once. The pattern is documented (below).
+4. A session takes over a change made elsewhere by reading its document as stored, as the
+   controllers of projects and workspaces do (`take_stored`), not by applying its own
+   announcements again on top of its live copy (`LiveDocument::take_over`): a join handled after
+   the leave that followed it lists the one let go again for a moment, and a change of the
+   session meanwhile would store them back - what a sub-agent of 558, taken in and let go soon
+   after, runs into.
+5. A history store answers the open ranges of attendance of a channel at once, so that a channel
+   being built reads them in one question instead of one per former participant
+   (`HistoryStore::attendance`, step 3), whose number grows with every sub-agent.
+6. The REST routes and the web UI; `SessionError::NotAParticipant`, answered as `invalid_channel`
    today, answered for a session.
-4. The exception of 564 rolled back.
+7. The exception of 564 rolled back.
+
+**Reconciling as a pattern** (the maintainer, 2026-11-17): a running object is the one writer of
+what it holds. What changes while it does not run is stored in its document alone - by a
+controller of its own, in the kernel's name -, and as it is put into service again - a session, a
+channel, a thread - it first brings what it derives from the document in line with it, as though
+the change had happened while it ran: its history, its actors - the groups of its participants
+follow as the document is stored. What is lost is the order of changes among each other and their
+exact time where the document does not keep them; a queue of the acts themselves was weighed and
+not taken - more than this needs. The session's `follow_agents` as it starts already does so for
+agents deleted or restored meanwhile.
 
 ## Done when
 
@@ -180,3 +205,21 @@ Steps, each committed on its own:
   someone is let go brings them back with the channel; and a session takes over its own
   announcements on top of its live copy, so that a join handled after a leave lists the one let
   go again for a moment.
+- **2026-11-17** — Decided with the maintainer: the history of a channel that did not run is
+  reconciled as it starts (step 3, before the REST routes), and reconciling as an entity is put
+  into service again is a pattern of its own (*Plan*). The session writes no history: the
+  `HistoryStore` is the read side, and a channel's history is written with its state by its loop
+  alone.
+- **2026-11-17** — Step 3 done: `ChannelLoop::reconcile`, as the channel is built, hands `run` the
+  leave of each former participant whose attendance is still open (`attending`, beside
+  `rejoining_from` in `channel/history.rs`), ahead of every actor it starts, so that `run` stays
+  the one writer of the history and nothing can be removed or taken in again before it; a
+  participant without an actor removed from a running channel is recorded as left at once. The
+  leave is recorded in the kernel's name at the time of the start, not with who let them go and
+  when, which the document keeps. `ActorChange::Leave` carries the name as said. The pattern is a
+  principle in ARCHITECTURE.md (*Reconciled as it starts*). Left for the maintainer: each start
+  reads the attendance of every former participant one by one, which a store method answering
+  the open ranges of a channel at once would replace; and one whose actor had not ended as its
+  session stopped has its attendance end only as the channel is built again.
+- **2026-11-17** — Decided with the maintainer: the two points left by step 3 are steps of their
+  own, 4 and 5 (*Plan*), before the REST routes.

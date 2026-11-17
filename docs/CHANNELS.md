@@ -667,7 +667,9 @@ follows its users alike, for their renames (see [`@`-Mentions](#-mentions)).
 Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
 takes part again in every channel it rested in: a running session builds its actor anew, gives it
 the part of the history it may see, as when it joined, and announces it as a join. Removing a
-resting agent from a channel changes the document alone, and the agent does not come back there.
+resting agent from a channel changes the document, and the agent does not come back there; its
+leave was recorded as it began to rest, or, deleted while the channel did not run, is recorded as
+it is removed (see [How others learn of it](#how-others-learn-of-it)).
 Purging it removes its document and its state, its own and in every channel; in the channels it
 rested in it stays a former participant, without when it left. An agent of a session's or a
 channel's scope goes with that session or channel (see [Sessions](#sessions)).
@@ -714,6 +716,13 @@ session, so they go out of every channel of it as well:
     one, whose document cannot be changed, lets go whoever is not in the session as it is
     restored, removed by the kernel and without asking their clearance - one taken into the
     session again meanwhile comes back with it.
+*   **Recorded where it did not run as the channel is built.** A channel that does not run records
+    nothing in its history; as it is built, it hands the leave of each former participant whose
+    attendance is still open there to its run, in the kernel's name, ahead of everyone it starts
+    (`reconcile`, see [ARCHITECTURE.md](ARCHITECTURE.md#principles)). Nothing was recorded
+    meanwhile, so the leave stands where it would have stood, and whom one takes in again sees only
+    what they are granted - but for one whose actor had not ended as its session stopped, whose
+    attendance ends only there.
 *   **Not rolled back.** Taking them out of a channel ended their turn, so a channel that fails
     leaves its error to the caller, and asking again - for one out of the session and still in a
     channel of it - finishes it.
@@ -816,8 +825,9 @@ same after a renaming.
     it is told in the name of - nothing of theirs is echoed back to them; it is no word of theirs.
     An agent takes note of it without responding (see [AGENT-TURN.md](AGENT-TURN.md)).
 
-A resting agent removed from a channel changes the document alone (above): nothing runs that could
-leave, and nothing is announced in the channel.
+A participant removed without an actor - a resting agent, one left out as the channel started -
+has nothing running that could leave: its leave is announced in the channel at once where its
+attendance in the history is still open, and not at all where it is closed already.
 
 A user's live stream of the channel - the REST server's, the terminal's - ends because it is
 theirs: it is followed through their actor, which ends when it is stopped, and where a run of it

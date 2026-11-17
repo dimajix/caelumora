@@ -332,18 +332,20 @@ mod tests {
     use crate::kernel::Kernel;
     use crate::session::testing::*;
     use crate::session::ChannelSpec;
-    use crate::session::{SessionError, SessionManager};
+    use crate::session::{SessionError, SessionLoop, SessionManager};
     use crate::testing::{attributes, World};
     use crate::view::Viewer;
     use anyhow::Error;
     use caelumora_domain::actor::ActorId;
     use caelumora_domain::agent::testing::make_personality;
     use caelumora_domain::agent::AgentId;
+    use caelumora_domain::chain::Position;
     use caelumora_domain::channel::testing::main_channel;
-    use caelumora_domain::channel::{self, Channel, HistoryAccess};
+    use caelumora_domain::channel::{self, Channel, ChannelId, HistoryAccess};
     use caelumora_domain::component::{ComponentBundle, ComponentConfig, ComponentDescriptor};
     use caelumora_domain::event::GlobalEvent;
     use caelumora_domain::group::{Group, GroupId};
+    use caelumora_domain::history::{HistoryEntry, Reader};
     use caelumora_domain::scope::Scope;
     use caelumora_domain::security::{AclEntry, SecurityAttributes};
     use caelumora_domain::session::testing::make_session;
@@ -443,14 +445,19 @@ mod tests {
         manager.stop(&SecurityContext::system(), session.id()).await.unwrap();
     }
 
-    /// Issue 590: one let go from the session is let go from every channel of it - a running one,
-    /// one that does not run, in its document and in the copy the session holds, and a deleted one
-    /// as it is restored -, the leave is announced, and they are not taken into a channel again but
-    /// through the session.
-    #[tokio::test]
-    async fn one_let_go_from_the_session_is_let_go_from_every_channel_of_it() {
-        let world = World::new().await;
-        let bundles = Arc::clone(&world.kernel.entity_stores().component_bundles);
+    /// Alice's session with carol in its channel "main" and in two that do not run once it is
+    /// opened again: "unavailable", whose policy bob shared with alice and withdrew, and "deleted";
+    /// her joins recorded in both (`out_of_service`).
+    struct OutOfService {
+        session: Arc<SessionLoop>,
+        unavailable: ChannelId,
+        deleted: ChannelId,
+        /// Bob's policy, as withdrawn.
+        withdrawn: ComponentBundle,
+    }
+
+    async fn out_of_service(world: &World) -> OutOfService {
+        let bundles = &world.kernel.entity_stores().component_bundles;
         let bobs = World::as_user(world.bob);
         let policy = ComponentConfig {
             component_nodes: vec![ComponentDescriptor::new("policy", "broadcast_policy")],
@@ -472,13 +479,46 @@ mod tests {
         let spec = ChannelSpec { components: by_bundle, ..with_carol("unavailable") };
         let unavailable = session.create_channel(&alice, spec).await.unwrap().id();
         let deleted = session.create_channel(&alice, with_carol("deleted")).await.unwrap().id();
+        for channel in [unavailable, deleted] {
+            assert!(carol_attending(world, channel, true).await, "her join is recorded");
+        }
         assert!(session.delete_channel(&alice, deleted).await.unwrap(), "deleted");
-        let attributes = attributes(Some(world.bob), &[]);
-        let mut withdrawn = ComponentBundle { security_attributes: attributes, ..shared };
+        let unshared = attributes(Some(world.bob), &[]);
+        let mut withdrawn = ComponentBundle { security_attributes: unshared, ..shared };
         bundles.update(&bobs, &mut withdrawn).await.expect("bob withdraws it");
         world.manager.stop(&alice, session.id()).await.unwrap();
         let session = world.manager.open(&alice, session.id()).await.unwrap();
         assert!(session.channel(unavailable).is_none(), "does not run");
+        OutOfService { session, unavailable, deleted, withdrawn }
+    }
+
+    /// Whether carol's range of attendance in `channel` is open, once it is as `open` says.
+    async fn carol_attending(world: &World, channel: ChannelId, open: bool) -> bool {
+        let carol = ActorId::User(world.carol);
+        let history = world.kernel.history_store();
+        time::timeout(Duration::from_secs(5), async {
+            loop {
+                let attended = history.attendance(channel, carol).await.unwrap();
+                if attended.iter().any(|at| at.range.end == Position::MAX) == open {
+                    break;
+                }
+                time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    /// Issue 590: one let go from the session is let go from every channel of it - a running one,
+    /// one that does not run, in its document and in the copy the session holds, and a deleted one
+    /// as it is restored -, the leave is announced, and they are not taken into a channel again but
+    /// through the session.
+    #[tokio::test]
+    async fn one_let_go_from_the_session_is_let_go_from_every_channel_of_it() {
+        let world = World::new().await;
+        let OutOfService { session, unavailable, deleted, .. } = out_of_service(&world).await;
+        let alice = World::as_user(world.alice);
+        let carol = ActorId::User(world.carol);
         let main = Arc::clone(&session.channels()[0]);
         let topics = vec![SubscriptionTopic::All];
         let mut hers = world.kernel.event_bus().subscribe(World::as_user(world.carol), topics);
@@ -523,6 +563,47 @@ mod tests {
             matches!(again.downcast_ref(), Some(SessionError::NotAParticipant { .. })),
             "{again}"
         );
+        world.manager.stop(&alice, session.id()).await.unwrap();
+    }
+
+    /// Issue 590: a channel that did not run as someone was let go from its session records their
+    /// leave as it is built (reconciling), once and in the kernel's name - one that comes back as
+    /// its components can be read again, and one restored -, so that their attendance ends there.
+    #[tokio::test]
+    async fn a_channel_that_did_not_run_records_the_leave_as_it_is_built() {
+        let world = World::new().await;
+        let OutOfService { session, unavailable, deleted, withdrawn } =
+            out_of_service(&world).await;
+        let alice = World::as_user(world.alice);
+        let carol = ActorId::User(world.carol);
+        session.remove_participant(&alice, carol).await.expect("the owner lets her go");
+
+        let reshared = attributes(Some(world.bob), &[world.alice]);
+        let mut shared = ComponentBundle { security_attributes: reshared, ..withdrawn };
+        let bundles = &world.kernel.entity_stores().component_bundles;
+        bundles.update(&World::as_user(world.bob), &mut shared).await.expect("shared again");
+        let session = world.manager.open(&alice, session.id()).await.unwrap();
+        assert!(session.channel(unavailable).is_some(), "runs again");
+        session.restore_channel(&alice, deleted).await.expect("restored");
+
+        let history = world.kernel.history_store();
+        for channel in [unavailable, deleted] {
+            assert!(carol_attending(&world, channel, false).await, "her attendance ends");
+            let page = history.page(channel, &Reader::Channel, Position::START, None, 1000, None);
+            let page = page.await.unwrap();
+            let left: Vec<ActorId> = page
+                .entries()
+                .filter_map(|entry| match entry {
+                    HistoryEntry::ParticipantLeft { participant, by, .. }
+                        if *participant == carol =>
+                    {
+                        Some(*by)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(left, [ActorId::System], "once, in the kernel's name");
+        }
         world.manager.stop(&alice, session.id()).await.unwrap();
     }
 

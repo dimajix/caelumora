@@ -207,8 +207,10 @@ enum ActorChange {
     Start(ChannelActor, Option<Position>, Option<SecurityContext>),
     /// The actor that leaves, what it was called as it left, on whose behalf it was removed - in
     /// whose name `run` announces it once its task has ended (`ParticipantLeft`, issues 162, 262,
-    /// 408) -, and the thread it took part in, where it is announced (issue 557).
-    Leave(ActorId, Name, SecurityContext, ThreadId),
+    /// 408) -, and the thread it took part in, where it is announced (issue 557). Also for one
+    /// that has no actor but takes part in the history (issue 590) - left out as the channel
+    /// started, or let go while it did not run (`reconcile`) -, which `run` announces at once.
+    Leave(ActorId, String, SecurityContext, ThreadId),
 }
 
 #[derive(Debug)]
@@ -345,6 +347,8 @@ impl ChannelLoop {
             run_lock: Mutex::new(()),
         });
         channel_loop.runtime.attach(&channel_loop);
+        // What changed while it did not run, brought in line before anyone starts (issue 590).
+        channel_loop.reconcile().await;
         // Its internal actors (issue 420), which are its own: nothing to
         // resolve, nothing to leave out. `run` starts them with the
         // participants'.

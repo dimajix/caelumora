@@ -500,6 +500,17 @@ The design repeats a few decisions; new code follows them.
     announced afterwards, and events only announce - nothing changes because an event arrived.
 *   **Stage, then commit.** A turn stages its changes and applies them when it completes, so a
     failed turn leaves nothing behind.
+*   **Reconciled as it starts.** A running object - a session, a channel - is the one writer of
+    what it derives from its document as it runs: its history, its actors. What changes while it
+    does not run is stored in its document alone, by a controller of its own in the kernel's name -
+    the groups of its participants follow as it is stored -, and as the object is put into service
+    again, it first brings what it derives in line with its document, as though the change had
+    happened while it ran (reconciling, issue [590](../issues/590-a-session-lets-nobody-go.md)).
+    What the document does not keep - the order of such changes among each other, their exact
+    time - is lost; the acts themselves are not queued. A channel records the leave of whoever it
+    let go meanwhile as it is built (`ChannelLoop::reconcile`, see
+    [CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)); a session has its channels
+    follow the agents deleted or restored meanwhile as it starts (`SessionLoop::follow_agents`).
 *   **Least authority.** Everything is handed only what it needs: a component gets a narrow context,
     not its actor's runtime; an actor gets its own channel, not the session.
 *   **The kernel decides, the agent side asks.** As the frontends map what the kernel decides, the

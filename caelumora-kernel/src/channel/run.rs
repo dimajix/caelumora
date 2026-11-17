@@ -17,7 +17,6 @@ use caelumora_domain::confidentiality::Classification;
 use caelumora_domain::history::{Audience, Heard, Reader, Recorded};
 use caelumora_domain::message::Message;
 use caelumora_domain::store::StoreResult;
-use caelumora_domain::value::name::Name;
 use caelumora_security::confidentiality::ConfidentialityQuestions;
 use caelumora_security::{ActionType, Enforcement, Reclassified, SecurityContext};
 use std::collections::HashMap;
@@ -54,7 +53,7 @@ struct RunningActor {
 /// (issue 557).
 struct Leaving {
     remover: SecurityContext,
-    name: Name,
+    name: String,
     until: Position,
     thread: ThreadId,
 }
@@ -225,13 +224,13 @@ impl ChannelLoop {
         running: &HashMap<ActorId, RunningActor>,
     ) {
         let Leaving { remover, name, until, thread } = leaving;
-        let removed = ActorEvent::ParticipantLeft { participant, name: name.to_string(), until };
+        let removed = ActorEvent::ParticipantLeft { participant, name, until };
         self.announce(removed, remover, thread, running).await;
     }
 
     /// What `actor` is called, as the channel names whoever it announces
     /// something in the name of; its id if it cannot be named.
-    async fn name_of(&self, actor: ActorId) -> String {
+    pub(super) async fn name_of(&self, actor: ActorId) -> String {
         self.controllers.actor_name(actor).await.unwrap_or_else(|e| {
             warn!("Cannot name {} for channel {}: {}", actor, self.id, e);
             actor.to_string()
@@ -1052,6 +1051,7 @@ mod tests {
     use caelumora_domain::turn::GivenUpReason;
     use caelumora_domain::user::testing::make_user;
     use caelumora_domain::user::UserId;
+    use caelumora_domain::value::name::Name;
     use caelumora_domain::work::TurnId;
     use caelumora_security::AllowAllPolicy;
     use caelumora_security::SecurityContext;
@@ -2292,7 +2292,7 @@ mod tests {
     /// An actor told to stop whose task has not ended: no inbox, who removed it, and the thread
     /// it took part in.
     fn leaving_actor(id: ActorId, remover: SecurityContext, thread: ThreadId) -> RunningActor {
-        let name = Name::new("helper").expect("a name");
+        let name = "helper".to_string();
         RunningActor {
             id,
             abort_handle: tokio::spawn(async {}).abort_handle(),
