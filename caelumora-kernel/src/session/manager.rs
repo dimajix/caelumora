@@ -1117,7 +1117,7 @@ impl SessionManager {
                 .channel(channel)
                 .ok_or(SessionError::ChannelNotFound { session: session_loop.id(), channel })?;
             for participant in participants {
-                channel.found(context, participant.actor_id()).await?;
+                session_loop.found(context, &channel, participant.actor_id()).await?;
             }
         }
         Ok(session_loop)

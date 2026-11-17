@@ -1,18 +1,21 @@
-//! What part of a channel's history a participant sees, read from the store
-//! (issues 46, 379): a view begins at a position, and the history is read in
-//! pages from its end only as far back as is needed.
+//! Where a participant takes part in a channel's history and what part of it they see, read from
+//! the store (issues 46, 379, 590): a view begins at a position, and the history is read in pages
+//! from its end only as far back as is needed; whose attendance is still open is what a channel
+//! reconciles as it is built.
 
-use super::ChannelLoop;
+use super::{ActorChange, ChannelLoop};
 use caelumora_domain::actor::ActorId;
 use caelumora_domain::chain::Position;
-use caelumora_domain::channel::{ChannelId, HistoryAccess, HistoryStart};
+use caelumora_domain::channel::{ChannelId, HistoryAccess, HistoryStart, ThreadId};
 use caelumora_domain::history::{HistoryEntry, Reader};
 use caelumora_domain::message::{Message, MessageId};
 use caelumora_domain::query::Filter;
 use caelumora_domain::store::StoreResult;
+use caelumora_security::SecurityContext;
 use caelumora_store::history::HistoryStore;
 use chrono::{DateTime, Utc};
-use tracing::warn;
+use std::collections::HashMap;
+use tracing::{info, warn};
 
 /// How many items a page holds that is read to find something in a history
 /// rather than to show it.
@@ -105,5 +108,36 @@ impl ChannelLoop {
             .await?
             .last()
             .map_or(Position::START, |at| at.range.start))
+    }
+
+    /// Who takes part in the channel's history now, and in which thread: whoever has a range of
+    /// attendance still open (`HistoryStore::attending`); nobody if it cannot be read, which is
+    /// logged.
+    pub(super) async fn attending(&self) -> HashMap<ActorId, ThreadId> {
+        self.history_store.attending(self.id).await.unwrap_or_else(|e| {
+            warn!("Cannot read who takes part in channel {}: {}", self.id, e);
+            HashMap::new()
+        })
+    }
+
+    /// Brings the channel's history in line with its document as it is built (reconciling, issue
+    /// 590): whoever the document keeps as a former participant with a range of attendance still
+    /// open in its history - let go while the channel did not run, in its stored document - is
+    /// handed to `run` as leaving (`ActorChange::Leave`), in the kernel's name, in the thread of
+    /// that range, ahead of every actor it starts: `run` announces it before anything else, as
+    /// though it had happened while the channel ran. Who let them go and when, the document keeps
+    /// (`FormerParticipant::left`). Where the history was recorded on after they were let go - an
+    /// actor removed whose task had not ended as its session stopped - their attendance ends only
+    /// here.
+    pub(super) async fn reconcile(&self) {
+        let attending = self.attending().await;
+        for former in &self.channel().former {
+            let participant = former.participant.actor_id();
+            let Some(&thread) = attending.get(&participant) else { continue };
+            let name = self.name_of(participant).await;
+            info!("{} left channel {} while it did not run: recorded now", participant, self.id);
+            let leave = ActorChange::Leave(participant, name, SecurityContext::system(), thread);
+            let _ = self.changes_tx.send(leave);
+        }
     }
 }

@@ -252,6 +252,7 @@ pub fn attributes_of<'a>(action: &ActionType<'a>) -> Option<&'a SecurityAttribut
         | CancelChannel(a)
         | WakeChannel(a)
         | LeaveChannel(a)
+        | LeaveSession(a)
         | RetryMessage(a)
         | AnswerQuestion(a)
         | ShowCommand { channel: a, .. }

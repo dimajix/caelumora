@@ -598,7 +598,8 @@ participant (issue 417), and is kept apart from the channel state's document (is
     behind, the tool that reads another channel. The answer of a turn, what its end carried as it
     was delivered, is read from the messages of the turn said before its end
     (`HistoryStore::answer`). Where a participant's view begins is the start of their first range
-    (`HistoryStore::attendance`). A page is addressed by the position (`seq`) of its oldest item; a
+    (`HistoryStore::attendance`); who takes part now, and where, is whoever has a range open
+    (`HistoryStore::attending`). A page is addressed by the position (`seq`) of its oldest item; a
     client passes it back without computing with it.
 *   **The holder keeps a window.** The channel loop holds the history from `history_from` on, a
     small part of the document: the last `WINDOW` (200) entries. After every put it lets go of what
@@ -765,8 +766,10 @@ in [ARCHITECTURE.md](ARCHITECTURE.md#managers-and-controllers).
     `Writing::change`, and the `UserController` changes the profile alike: one refused as
     outdated - the document was written elsewhere since the controller took it over - is read
     again as stored and applied once more (issue 492).
-*   **Events.** Controllers publish their changes on the `EventBus` (see [EVENTS.md](EVENTS.md)) and
-    take over changes announced elsewhere.
+*   **Events.** Controllers publish their changes on the `EventBus` (see [EVENTS.md](EVENTS.md));
+    those the `ControllerManager` keeps take over changes announced elsewhere (see
+    [Following changes](#following-changes)), while a session's and a channel's are the one writer
+    of their document in the one instance where the session runs.
 *   **One shape.** Every controller holds its document as a `LiveDocument` (issue 358), which does
     all of the above alike for every kind: a change told by the kind's update event
     (`Updatable::apply`, in the domain) is applied, stored with when it was changed
@@ -802,8 +805,11 @@ A missing record is `StoreError::NotFound`, which a lookup that expects it may b
 
 ### Following changes
 
-Neither the actors nor the sessions subscribe to changes of themselves - a running session follows
-only whether its agents are deleted or restored, which decides which actors run in its channels, and
+Neither the actors nor the sessions take over changes of themselves - a running session's
+controller is the one writer of it and holds every change live already; taken over again on top of
+what changed since, a join would list one let go after it (issue
+[590](../issues/590-a-session-lets-nobody-go.md)). A running session follows only whom it takes
+in, whether its agents are deleted or restored, which decides which actors run in its channels, and
 whether its participants are renamed, which decides whom a mention addresses (see
 [CHANNELS.md](CHANNELS.md)). The `ControllerManager` takes every announced change to an agent, a
 user, a workspace or a project into its live controller, once per instance - the place where changes

@@ -318,7 +318,7 @@ impl SessionLoop {
             }
         };
         for participant in &participants {
-            if let Err(error) = channel_loop.found(context, participant.actor_id()).await {
+            if let Err(error) = self.found(context, &channel_loop, participant.actor_id()).await {
                 self.abandon_channel(context, &channel_loop).await;
                 return Err(error);
             }
@@ -394,8 +394,11 @@ impl SessionLoop {
     /// again run from now on, the others stay left out, with why they still
     /// cannot run - also one whose store failed, for the session runs
     /// already. Asked on every request in the session, so logged at
-    /// `debug!`. One deleted while it was built is not started.
+    /// `debug!`. One deleted while it was built is not started. Not while
+    /// someone is let go from one of them (`rebuilding`, issue 590): it is
+    /// tried again by the next request.
     pub(crate) async fn retry_unavailable(self: &Arc<Self>) {
+        let Ok(_rebuilding) = self.rebuilding.try_lock() else { return };
         let unavailable: Vec<Arc<Channel>> = self
             .channels
             .iter()
@@ -428,6 +431,64 @@ impl SessionLoop {
                 ),
             }
         }
+    }
+
+    /// Lets `participant` go from the channel `channel_id`, which did not run as it was reached
+    /// (issue 463), on behalf of `context`, who let them go from the session (issue 590): in its
+    /// stored document, as its controller lets one go, and in the copy the session holds, so that
+    /// it is built without them - or as a running channel lets them go, if it was built again
+    /// meanwhile. Not while it is built again (`rebuilding`, `retry_unavailable`), so that it is
+    /// never built from a copy that still lists them.
+    ///
+    /// # Errors
+    /// Whatever storing the channel reports.
+    pub(super) async fn let_go_where_unavailable(
+        &self,
+        context: &SecurityContext,
+        channel_id: ChannelId,
+        participant: ActorId,
+    ) -> Result<()> {
+        let _rebuilding = self.rebuilding.lock().await;
+        match self.listed_channel(channel_id) {
+            Some((_, ChannelRun::Running(running))) => {
+                running.let_go_with_the_session(context, participant).await
+            }
+            Some((held, ChannelRun::Unavailable(_))) if held.lists(participant) => {
+                let held = Channel::clone(&held);
+                let by = context.caller_id;
+                let channel = self.let_go_where_not_running(held, &[participant], by).await?;
+                if let Some(mut entry) = self.channels.get_mut(&channel_id) {
+                    if let ChannelEntry::Unavailable { channel: held, .. } = &mut *entry {
+                        *held = Arc::new(channel);
+                    }
+                }
+                Ok(())
+            }
+            Some((_, ChannelRun::Unavailable(_))) | None => Ok(()),
+        }
+    }
+
+    /// `channel`, which does not run, with `participants` let go by `by` (issue 590): stored in the
+    /// kernel's name - letting them go from the session was permitted - by a controller of its own,
+    /// which keeps each as a former participant, lets the group of its participants follow and
+    /// announces it, as for a running channel (`ChannelController::remove_participant`).
+    ///
+    /// # Errors
+    /// Whatever storing the channel reports.
+    async fn let_go_where_not_running(
+        &self,
+        channel: Channel,
+        participants: &[ActorId],
+        by: ActorId,
+    ) -> Result<Channel> {
+        if participants.is_empty() {
+            return Ok(channel);
+        }
+        let controller = self.controllers.new_channel_controller(channel);
+        for participant in participants {
+            controller.remove_participant(&SecurityContext::system(), *participant, by).await?;
+        }
+        Ok(Channel::clone(&controller.load()))
     }
 
     /// Stops and deletes the channel `channel_id` on behalf of `context`.
@@ -539,7 +600,13 @@ impl SessionLoop {
     /// order of issue 304: the deleted channel is read as such (`ReadDeleted`, as the session lists
     /// its deleted channels), then restoring it is asked (`Restore`), then its participants'
     /// clearance, as creating one does; the store asks again as it restores it, and to change the
-    /// session that lists it again (`UpdateSession`).
+    /// session that lists it again (`UpdateSession`). Who was let go from the session while it was
+    /// deleted (issue 590) is let go from it now, in the kernel's name and removed by it, before
+    /// it is built - the document of a deleted channel cannot be changed -, and their clearance is
+    /// not asked: who was taken into the session again meanwhile comes back with it. While it is
+    /// restored, none of its participants is taken in or let go (`changing`, issue 590): it holds
+    /// the locks of all of them, in the order of their ids, until it is listed again, so that one
+    /// let go meanwhile is let go after it, from it too.
     ///
     /// # Errors
     /// - `SessionError::ChannelNotFound` if the session has no such deleted
@@ -576,21 +643,35 @@ impl SessionLoop {
                 StoreError::PermissionDenied,
             )
             .await?;
+        // All of its participants held, in one order wherever several are, until it is listed.
+        let mut held: Vec<ActorId> =
+            channel.participants.iter().map(Participant::actor_id).collect();
+        held.sort_by_key(ActorId::id);
+        held.dedup();
+        let mut _changing = Vec::with_capacity(held.len());
+        for participant in held {
+            _changing.push(self.changing.lock(participant).await);
+        }
+        let session = self.session();
+        let (staying, gone): (Vec<Participant>, Vec<Participant>) =
+            channel.participants.iter().cloned().partition(|p| session.takes_part(p.actor_id()));
+        let gone: Vec<ActorId> = gone.iter().map(Participant::actor_id).collect();
         // As when it was created: its participants' clearance may have
         // changed while it was deleted.
-        self.participation.require_admitted(context, &channel, &channel.participants).await?;
+        self.participation.require_admitted(context, &channel, &staying).await?;
         let scope = Scope::ChannelScope { session_id: self.id, channel_id };
         let channel = self.stores.channels.restore(context, channel_id).await?;
         // The group of its participants first, with it, in the kernel's name (issue 348): whatever
         // fails later, its participants reach it.
         let listed = async {
             self.groups.restore_participants(slice::from_ref(&scope), &removal).await?;
+            let channel = self.let_go_where_not_running(channel, &gone, ActorId::System).await?;
             self.session_controller.add_channel(context, channel_id).await?;
-            self.add_channel_loop(&channel).await
+            Ok((self.add_channel_loop(&channel).await?, channel))
         }
         .await;
-        let channel_loop = match listed {
-            Ok(channel_loop) => channel_loop,
+        let (channel_loop, channel) = match listed {
+            Ok(listed) => listed,
             Err(error) => {
                 // Rolled back: deleted again with its group, marked as it was, so that it is
                 // neither half back nor lost, and a restoring tried again finds what went with it.

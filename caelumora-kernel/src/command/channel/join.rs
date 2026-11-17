@@ -2,12 +2,15 @@
 
 use crate::channel::ChannelError;
 use crate::command::{command_error, ChannelCommand, CommandContext};
+use crate::error::is_forbidden;
+use crate::session::SessionError;
 use async_trait::async_trait;
 use caelumora_api::actor::Actor;
 use caelumora_api::command::{Command, CommandError, CommandResult};
 use caelumora_domain::command::{
     CommandDescription, CommandOutput, CommandParameter, ParameterKind,
 };
+use caelumora_domain::store::StoreError;
 use caelumora_domain::value::command_name::CommandName;
 
 const JOIN_COMMAND_NAME: &str = "channel join";
@@ -35,11 +38,26 @@ impl Command for JoinCommand {
     }
 }
 
+/// Whether `error` of joining a channel named by name would tell more than that the issuer may not
+/// join it: not cleared, out of scope, not found as the issuer is read, or the channel gone or
+/// stopped since it was found.
+fn hides_the_channel(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref(),
+        Some(ChannelError::NotCleared { .. } | ChannelError::OutOfScope { .. })
+    ) || matches!(error.downcast_ref(), Some(StoreError::NotFound { .. }))
+        || matches!(
+            error.downcast_ref(),
+            Some(SessionError::ChannelNotFound { .. } | SessionError::ChannelUnavailable { .. })
+        )
+}
+
 #[async_trait]
 impl ChannelCommand for JoinCommand {
     /// Runs `/channel join` with `args`: the issuer joins the running channel of the session of
-    /// that whole name (`SessionLoop::channel_named`, `ChannelLoop::join`, which asks `JoinChannel`
-    /// in their own context). Who may join a channel reads nothing of it before they did, so it is
+    /// that whole name (`SessionLoop::channel_named`), through the session, which makes one change
+    /// of a participant at a time (`SessionLoop::join`, issue 590), and asks `JoinChannel` in their
+    /// own context. Who may join a channel reads nothing of it before they did, so it is
     /// not sought among those they read; and a channel they may not join - by its access list, or
     /// not cleared for it -, or that does not run, is named as one that does not exist, so that
     /// channels cannot be probed. Only the issuer is answered: the channel tells everyone that they
@@ -61,16 +79,15 @@ impl ChannelCommand for JoinCommand {
         if channel.channel().lists(issuer) {
             return Ok(CommandOutput::private(format!("You take part in {name} already.")));
         }
-        match channel.join(&context.issuer.security_context(), issuer).await {
+        // Through the session, which makes one change of a participant at a time (issue 590).
+        let context_of_issuer = context.issuer.security_context();
+        match session.join(&context_of_issuer, issuer, Some(channel.id())).await {
             Ok(()) => Ok(CommandOutput::private(format!("Joined {name}."))),
-            Err(e) => match e.downcast_ref() {
-                Some(
-                    ChannelError::Forbidden { .. }
-                    | ChannelError::NotCleared { .. }
-                    | ChannelError::OutOfScope { .. },
-                ) => Err(nowhere()),
-                _ => Err(command_error(JOIN_COMMAND_NAME, &e)),
-            },
+            // Refused - the channel's entry, the session's for one no longer in it, a store's
+            // check -, not cleared, out of scope, or gone or stopped meanwhile: named alike, so
+            // that channels cannot be probed.
+            Err(e) if is_forbidden(&e) || hides_the_channel(&e) => Err(nowhere()),
+            Err(e) => Err(command_error(JOIN_COMMAND_NAME, &e)),
         }
     }
 }

@@ -34,8 +34,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 ///   agent saw: its context holds more than the conversation - its system
 ///   prompt, internal steps, tool results.
 /// - Cancelling or waking a channel is allowed to whoever may read it.
-/// - Leaving a channel (`LeaveChannel`) is allowed to everybody, asked in the context of the one
-///   who leaves: whether they are the caller's own is the kernel's to ask.
+/// - Leaving a channel or a session (`LeaveChannel`, `LeaveSession`) is allowed to everybody,
+///   asked in the context of the one who leaves: whether they are the caller's own is the
+///   kernel's to ask.
 /// - Joining a session or channel (`JOIN`) is allowed to whom an entry
 ///   grants `Join`, asked in the context of the one who joins.
 /// - What may flow where, and who is cleared for what, is not its to decide:
@@ -238,7 +239,7 @@ impl AccessPolicy for OwnershipPolicy {
             | ActionType::StopSession(a) => self.owns(a, context).await,
             // Leaving takes nothing from anyone: who may not leave would be held in a
             // conversation. Whose participant it is the kernel asks before.
-            ActionType::LeaveChannel(_) => true,
+            ActionType::LeaveChannel(_) | ActionType::LeaveSession(_) => true,
             // Hooks for another policy (issue 24): what decides a call
             // today is the tools offered and the place's rules; secrets
             // have no owner to decide by yet (issue 310).
@@ -439,6 +440,7 @@ mod tests {
         assert!(allows(bob, ActionType::get(Session::KIND, &hers)).await);
         assert!(allows(bob, ActionType::CancelChannel(&hers)).await, "a reader acts in it");
         assert!(allows(carol, ActionType::LeaveChannel(&hers)).await, "leaving takes nothing");
+        assert!(allows(carol, ActionType::LeaveSession(&hers)).await, "nor leaving a session");
         assert!(allows(alice, ActionType::ReadAgentContext(&hers)).await);
         assert!(
             !allows(bob, ActionType::ReadAgentContext(&hers)).await,

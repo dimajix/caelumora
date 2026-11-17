@@ -86,6 +86,10 @@ pub enum ActionType<'a> {
     /// owner, once the kernel found them the caller's own, as joining is asked. Whoever may change
     /// the channel removes anyone without it.
     LeaveChannel(&'a SecurityAttributes),
+    /// Taking oneself, or one's own agent, out of a session by one's own act (issue 590), carrying
+    /// the session's attributes - asked as `LeaveChannel` is. Whoever may change the session lets
+    /// anyone go without it.
+    LeaveSession(&'a SecurityAttributes),
     /// Asking an agent of a channel to answer again instead of one of its
     /// messages, or of its answer under way (issues 234, 235), carrying the
     /// channel's attributes: an act on the conversation, like cancelling or
@@ -216,6 +220,7 @@ impl<'a> ActionType<'a> {
             ActionType::CancelChannel(_) => "CancelChannel".into(),
             ActionType::WakeChannel(_) => "WakeChannel".into(),
             ActionType::LeaveChannel(_) => "LeaveChannel".into(),
+            ActionType::LeaveSession(_) => "LeaveSession".into(),
             ActionType::RetryMessage(_) => "RetryMessage".into(),
             ActionType::AnswerQuestion(_) => "AnswerQuestion".into(),
             ActionType::ModifyMessage { author, .. } => format!("ModifyMessage(of {author})"),
@@ -244,7 +249,7 @@ impl<'a> ActionType<'a> {
             ActionType::ReadAgentContext(_) => "context",
             ActionType::ReadAgentTools { .. } | ActionType::ReadAgentComponents(_) => "agent",
             ActionType::ApproveToolCall(_) => "approval",
-            ActionType::StopSession(_) => "session",
+            ActionType::StopSession(_) | ActionType::LeaveSession(_) => "session",
             ActionType::CancelChannel(_) => "cancel",
             ActionType::WakeChannel(_) | ActionType::LeaveChannel(_) => "channel",
             ActionType::RetryMessage(_)

@@ -6,9 +6,11 @@
 //!
 //! Every controller holds its document as a `LiveDocument` (issue 358),
 //! which keeps it live, holds a lock while it is changed, stores it - with
-//! when it was changed (`Updatable::touch`) -, announces it and takes over
-//! changes made elsewhere (`process_global_event`), and notes each change in
-//! the log. What a controller does besides, it does between the steps of a
+//! when it was changed (`Updatable::touch`) -, announces it, and notes each
+//! change in the log. The controllers the `ControllerManager` keeps take over
+//! changes made elsewhere (`process_global_event`); a session's and a
+//! channel's are the one writer of their document where the session runs, and
+//! take over none (issue 590). What a controller does besides, it does between the steps of a
 //! `Writing`.
 //! The user's writes the user's profile; the user record itself belongs to
 //! the system and is not changed through it.

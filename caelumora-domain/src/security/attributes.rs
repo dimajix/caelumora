@@ -52,6 +52,16 @@ impl SecurityAttributes {
         self.acl.retain(|entry| *entry != invitation);
     }
 
+    /// Gives the invitation of `actor` back (issues 564, 590), where `before` - these attributes as
+    /// they were before it was used up - held it and these do not: what undoing a taking-in sets
+    /// back of `use_up_invitation`.
+    pub fn give_back_invitation(&mut self, actor: ActorId, before: &SecurityAttributes) {
+        let invitation = AclEntry::invitation(actor);
+        if before.acl.contains(&invitation) && !self.acl.contains(&invitation) {
+            self.acl.push(invitation);
+        }
+    }
+
     /// These attributes, letting `subjects` read besides.
     pub fn granting_read(self, subjects: impl IntoIterator<Item = Subject>) -> Self {
         subjects

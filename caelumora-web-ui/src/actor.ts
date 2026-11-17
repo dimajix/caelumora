@@ -51,8 +51,10 @@ export function sameActor(a: ActorId, b: ActorId): boolean {
   return actorKey(a) === actorKey(b);
 }
 
-/** The part of an `ActorId` the REST API addresses an actor by. */
-export function actorUuid(id: ActorId | undefined): string | null {
-  if (!id || typeof id === 'string') return null;
-  return Object.values(id)[0] ?? null;
+/**
+ * How a path of the REST API names a user or an agent (`ActorPath`, issue 590): its `actorKey`,
+ * `User:<uuid>` or `Agent:<uuid>`; `null` for any other actor, which no path names.
+ */
+export function actorPath(id: ActorId | undefined): string | null {
+  return id && (userIdOf(id) !== null || agentIdOf(id) !== null) ? actorKey(id) : null;
 }

@@ -1531,6 +1531,9 @@ pub async fn history_store_behaves(states: &dyn StateStore, histories: &dyn Hist
         "a participant from what was shared, and still"
     );
     assert!(histories.attendance(key, stranger).await.unwrap().is_empty());
+    let attending = histories.attending(key).await.unwrap();
+    assert_eq!(attending.get(&other), Some(&ThreadId::default()), "taking part now, and where");
+    assert!(!attending.contains_key(&stranger), "never was one");
     let last = |page: HistoryPage| {
         page.entries().filter_map(HistoryEntry::said).map(|m| m.id).collect::<Vec<_>>()
     };

@@ -707,6 +707,8 @@ export interface SessionParticipant {
   id: ActorId;
   name: string;
   kind: ParticipantKind;
+  /** Whether you may take this participant out of the session by your own act (issue 590). */
+  can_leave: boolean;
 }
 
 /** The state of all sessions when the global event stream connects (issue 34). */

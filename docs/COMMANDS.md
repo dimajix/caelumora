@@ -163,11 +163,12 @@ they are issued in asks (`UpdateChannel`).
 `/channel create` asks what making a channel asks (`SessionLoop::create_channel`: `CreateChannel`,
 `UpdateSession`), with the issuer alone in it, `/channel delete` what reading the channel named and
 deleting it ask (`SessionLoop::delete_channel`: `DeleteChannel`, `UpdateSession`), and
-`/channel join` what joining it asks (`ChannelLoop::join`: `JoinChannel`). `/channel leave` asks
-what leaving asks (`ChannelLoop::leave`: `LeaveChannel`), and with an agent named what reading the
-channel asks besides. `/workspace run` asks what an agent's command asks in the workspace, in the
-issuer's name (`WorkspaceController::shell_in`): reading the session and the channel, the workspace
-usable there, `WriteWorkspace`; and its call what every message asks as the channel admits it.
+`/channel join` what joining it asks, through the session (`SessionLoop::join`: `JoinChannel`).
+`/channel leave` asks what leaving asks (`ChannelLoop::leave`: `LeaveChannel`), and with an agent
+named what reading the channel asks besides. `/workspace run` asks what an agent's command asks in
+the workspace, in the issuer's name (`WorkspaceController::shell_in`): reading the session and the
+channel, the workspace usable there, `WriteWorkspace`; and its call what every message asks as the
+channel admits it.
 
 ### Private or channel-wide answers
 

@@ -571,8 +571,12 @@ is permitted and can succeed.
 ## Participants
 
 Participants of the session can be added to and removed from a running channel, and leave it.
-Changing the participants is an operation of the channel, not of the session
-(`ChannelLoop::add_participant`, `remove_participant`, `leave`). Like renaming, the change is made
+Changing the participants is an operation of the channel (`ChannelLoop::add_participant`,
+`remove_participant`, `leave`), but whoever takes someone into a channel goes through the session
+(`SessionLoop::add_participant`, `join`, also for one in the session already): it makes the changes
+of one participant one at a time, before the channel does (issue 590), so that a rollback of the
+session's part never takes out one another took into a channel meanwhile, nor taking in and letting
+go cross; founding a channel holds it for each founder. Like renaming, the change is made
 by the channel's one writer, the `ChannelController`, by the rules of the channel's document: who
 comes in is no longer a former participant and has their invitation used up (`Channel::take_in`),
 who is removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the
@@ -616,13 +620,12 @@ themselves or their own agent, never someone else.
     and only then anything else in their name. Only the channel is cleared for; joining the session
     as such asks no clearance, since each of its channels is read by those cleared for it.
 *   **The session first, then the channel.** One the channel cannot take in after all - refused,
-    or failed as their actor starts - stays in the session, and is not rolled back out of it (issue
-    [564](../issues/564-taking-someone-in-is-rolled-back-in-part.md)): what the channel can refuse
-    is asked before the session is stored, so only a failure or a race is left; being in the session
-    and in none of its channels is a state of its own, as for one taken in without a channel; and a
-    session lets nobody go. Who is in the session already is added to a channel by whoever may
-    change the channel alone, and joins it by the channel's entry alone - so one left so can be
-    taken in again.
+    or failed as their actor starts - is rolled back out of the session as it had them before, in
+    the kernel's name, their invitation to it given back, and announced as a leave where who is
+    listed changed; what the channel can refuse is asked before the session is stored, so only a
+    failure or a race is left. Who is in
+    the session already is added to a channel by whoever may change the channel alone, and joins it
+    by the channel's entry alone.
 *   **Stored in the kernel's name** for one who joined: joining was the act that was permitted. A
     personal `Join` entry - an invitation - is used up as the person comes into the session or the
     channel, whoever takes them in (`Session::take_in`, `Channel::take_in`), so that one removed
@@ -632,7 +635,8 @@ themselves or their own agent, never someone else.
     follows before it is announced (`SessionUpdateEvent::ParticipantJoined`), so that the new one
     hears of it, too - announced only for one who did not take part before, so that two who take
     the same person in at once announce them once -, and a running session follows an agent taken
-    in as it follows those it started with.
+    in as it follows those it started with, from where it takes them in - not by hearing its own
+    announcement, of which it hears none (issue [590](../issues/590-a-session-lets-nobody-go.md)).
 
 Whom one could take in is the session view's to answer (`SessionView::candidates`): the users and
 agents whose names are sought (`NameMatch`), each with whether they take part already and why they
@@ -660,15 +664,17 @@ channel it takes part in until it is restored. The channels follow its mark inst
 *   the views show it as a former participant, removed as its mark says, and keep its name, so that
     what it said keeps its sender.
 
-A running session subscribes to the events of its agents, and looks at all of them again as it
-starts and after it lost events, so that a deletion or a restore it did not hear of is not missed;
-after a loss it follows every agent taking part, also one taken in whose announcement was lost. It
-follows its users alike, for their renames (see [`@`-Mentions](#-mentions)).
+A session subscribes to the events of its agents as it is made, follows each one it takes in as it
+takes them in, and looks at all of them again as it starts and after it lost events, so that a
+deletion or a restore it did not hear of is not missed. It follows its users alike, for their
+renames (see [`@`-Mentions](#-mentions)).
 
 Restoring the agent is refused if another agent took its name in its scope meanwhile. Otherwise it
 takes part again in every channel it rested in: a running session builds its actor anew, gives it
 the part of the history it may see, as when it joined, and announces it as a join. Removing a
-resting agent from a channel changes the document alone, and the agent does not come back there.
+resting agent from a channel changes the document, and the agent does not come back there; its
+leave was recorded as it began to rest, or, deleted while the channel did not run, is recorded as
+it is removed (see [How others learn of it](#how-others-learn-of-it)).
 Purging it removes its document and its state, its own and in every channel; in the channels it
 rested in it stays a former participant, without when it left. An agent of a session's or a
 channel's scope goes with that session or channel (see [Sessions](#sessions)).
@@ -694,6 +700,41 @@ joining and founding come in by one.
 *   **Whether it could run is not asked**: its owner takes out an agent whose personality was
     withdrawn. One that no longer exists - a deleted agent resting in the channel - cannot leave;
     whoever may change the channel removes it.
+
+### Letting someone go from the session
+
+Who takes part in a session is let go from it by whoever may change it
+(`SessionLoop::remove_participant`), or leaves it by their own act, themselves or their own agent
+(`leave`) - asked as leaving a channel is, as `LeaveSession` (issue
+[590](../issues/590-a-session-lets-nobody-go.md)). Whoever a channel lists takes part in its
+session, so they go out of every channel of it as well:
+
+*   **The session first**, stored as the session's participants change - in the name of whoever
+    let them go, or the kernel's for one who left -; the group of its participants follows, so
+    that they read the session no longer, and it is announced (`ParticipantLeft`) to them as well.
+    From then on no channel takes them in (`NotInSession`); one taking them in meanwhile finishes
+    first, since taking in and letting go of one participant are made one at a time.
+*   **Then every channel of it, in the kernel's name**: letting them go from the session was what
+    was asked. Each keeps them as a former participant, removed by whoever let them go, and ends
+    their actor as a removal does. A channel that does not run (issue 463) is changed in its stored
+    document and in the copy the session holds of it, never while it is built again; a deleted
+    one, whose document cannot be changed, lets go whoever is not in the session as it is
+    restored, removed by the kernel and without asking their clearance - one taken into the
+    session again meanwhile comes back with it.
+*   **Recorded where it did not run as the channel is built.** A channel that does not run records
+    nothing in its history; as it is built, it hands the leave of each former participant whose
+    attendance is still open there to its run, in the kernel's name, ahead of everyone it starts
+    (`reconcile`, see [ARCHITECTURE.md](ARCHITECTURE.md#principles)). Nothing was recorded
+    meanwhile, so the leave stands where it would have stood, and whom one takes in again sees only
+    what they are granted - but for one whose actor had not ended as its session stopped, whose
+    attendance ends only there.
+*   **Not rolled back.** Taking them out of a channel ended their turn, so a channel that fails
+    leaves its error to the caller, and asking again - for one out of the session and still in a
+    channel of it - finishes it.
+*   **Nothing is deleted.** What they said stays in the histories, and an agent's state stays; the
+    session keeps no former participants of its own, its channels keep theirs. A personal
+    invitation was used up as they came in. No rule for the owner or the last one, as for a
+    channel.
 
 ### How much history a newcomer sees
 
@@ -789,8 +830,9 @@ same after a renaming.
     it is told in the name of - nothing of theirs is echoed back to them; it is no word of theirs.
     An agent takes note of it without responding (see [AGENT-TURN.md](AGENT-TURN.md)).
 
-A resting agent removed from a channel changes the document alone (above): nothing runs that could
-leave, and nothing is announced in the channel.
+A participant removed without an actor - a resting agent, one left out as the channel started -
+has nothing running that could leave: its leave is announced in the channel at once where its
+attendance in the history is still open, and not at all where it is closed already.
 
 A user's live stream of the channel - the REST server's, the terminal's - ends because it is
 theirs: it is followed through their actor, which ends when it is stopped, and where a run of it
@@ -800,9 +842,9 @@ need not listen for the announcement. That the channel lists them is read as it 
 watch began (`ChannelView::user_follow`), not as the view read it before: one who left in between
 is not followed past the end their actor showed before the watch began.
 
-Every channel response carries `can_change`, and every participant `can_leave`, so that a client
-offers adding and removing participants, and leaving, only where the user may (see
-[WEB-UI.md](WEB-UI.md)).
+Every channel response carries `can_change`, and every participant `can_leave` - of a channel and,
+alike, of a session -, so that a client offers adding and removing participants, and leaving, only
+where the user may (see [WEB-UI.md](WEB-UI.md)).
 
 ## Acting on the channel as a whole
 

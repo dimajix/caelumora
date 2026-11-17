@@ -502,11 +502,10 @@ An operation that stored something and then fails part of the way is rolled back
 set back to how it was before - in the kernel's name, since the operation was permitted -, and its
 caller gets the error. A step that does so is named `roll_back_…` after what it rolls back
 (`SessionManager::roll_back_creation`, `SessionLoop::roll_back_channel_deletion`). It is no
-transaction: what cannot be set back is logged and stays (issue 354). One exception: who is taken
-into a session and one of its channels at once stays in the session when the channel cannot take
-them in: being in a session and in none of its channels is a state of its own, and setting it back
-would need a way out of a session, which lets nobody go, for this case alone (see
-[CHANNELS.md](CHANNELS.md#taking-someone-into-the-session)).
+transaction: what cannot be set back is logged and stays (issue 354). One exception: who is let go
+from a session stays let go when one of its channels fails to let them go, since taking them out of
+the others ended their turns - asking again finishes it (see
+[CHANNELS.md](CHANNELS.md#letting-someone-go-from-the-session)).
 
 ### Errors in a turn end the turn, not the agent
 

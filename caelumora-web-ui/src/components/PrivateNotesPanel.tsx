@@ -9,7 +9,7 @@ import React, {useEffect, useState} from 'react';
 import {Lock, X} from 'lucide-react';
 import type {ChannelParticipant, PrivateNotes} from '../types';
 import {api} from '../api';
-import {actorUuid} from '../actor';
+import {actorPath, agentIdOf} from '../actor';
 import {ApiRequestError, reportError} from '../errors';
 import {changedAgentState, onGlobalEvent} from '../globalEvents';
 import {classificationDescription, classificationLabel} from '../confidentiality';
@@ -24,14 +24,15 @@ interface PrivateNotesPanelProps {
 }
 
 export const PrivateNotesPanel: React.FC<PrivateNotesPanelProps> = ({sessionId, channelId, participant, onClose}) => {
-  const agent = actorUuid(participant.id);
+  const path = actorPath(participant.id);
+  const agent = agentIdOf(participant.id);
   const [found, setFound] = useState<PrivateNotes[] | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!agent) return;
+    if (!path || !agent) return;
     let current = true;
-    const load = () => api.getPrivateNotes(sessionId, agent)
+    const load = () => api.getPrivateNotes(sessionId, path)
       .then(response => { if (current) setFound(response); })
       .catch(error => {
         if (error instanceof ApiRequestError && error.code === 'context_forbidden') {
@@ -46,7 +47,7 @@ export const PrivateNotesPanel: React.FC<PrivateNotesPanelProps> = ({sessionId, 
       if (changed?.sessionId === sessionId && changed.agentId === agent) void load();
     });
     return () => { current = false; unsubscribe(); };
-  }, [sessionId, agent]);
+  }, [sessionId, path, agent]);
 
   // This channel's first, the others as the server sorted them, by name.
   const groups = found && [

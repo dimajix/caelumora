@@ -8,6 +8,7 @@
 //! it - by `From` or an `of`; what only the kernel knows is put into it by the server.
 
 pub mod access;
+pub mod actor;
 pub mod agent;
 pub mod auth;
 pub mod channel;

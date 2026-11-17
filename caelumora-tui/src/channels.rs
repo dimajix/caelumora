@@ -796,7 +796,8 @@ mod tests {
         channels.settled().await;
         assert!(channels.followed(late.id()).is_none(), "still not theirs");
 
-        late.add_participant(&owner, other, HistoryAccess::All).await.expect("the owner adds them");
+        let into = Some((late.id(), HistoryAccess::All));
+        session_loop.add_participant(&owner, other, into).await.expect("the owner adds them");
         let talked_in = channels.talked_in().map(|f| f.channel_id());
         until_told(&mut channels, "late").await;
         assert!(channels.followed(late.id()).is_some());
@@ -823,7 +824,8 @@ mod tests {
         channels.settled().await;
         assert!(channels.awaiting(id).is_none(), "not followed yet");
 
-        late.add_participant(&owner, other, HistoryAccess::All).await.expect("the owner adds them");
+        let into = Some((late.id(), HistoryAccess::All));
+        session_loop.add_participant(&owner, other, into).await.expect("the owner adds them");
         let told = until_told(&mut channels, "late").await;
         let approval_line = format!("In late: Approval requested, id {}:", id.0);
         assert!(told.contains(&approval_line), "{told:?}");

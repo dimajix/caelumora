@@ -263,7 +263,9 @@ async fn who_sees_a_running_agents_reasoning_follows_its_personality_as_last_tak
     let mut owners = Personality { reasoning_visibility: Visibility::Owner, ..answering };
     world.kernel.entity_stores().personalities.update(&World::system(), &mut owners).await.unwrap();
 
-    main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All)
+    let into = Some((main.id(), HistoryAccess::All));
+    session
+        .add_participant(&World::as_user(world.alice), ActorId::Agent(other), into)
         .await
         .expect("it may run");
     let alice = main.user_actor(world.alice).expect("she takes part");
@@ -374,7 +376,9 @@ async fn what_only_an_agents_owner_sees_is_recorded_and_reaches_nobody_else() {
     assert_eq!(on_his_page.reasoning, None, "nor on a page");
     assert_eq!(for_bob.message(answered.id).await.unwrap().reasoning, None, "nor read by its id");
 
-    main.add_participant(&World::as_user(world.alice), ActorId::Agent(other), HistoryAccess::All)
+    let into = Some((main.id(), HistoryAccess::All));
+    session
+        .add_participant(&World::as_user(world.alice), ActorId::Agent(other), into)
         .await
         .expect("it may run");
     let caught_up = time::timeout(Duration::from_secs(5), async {
@@ -3559,8 +3563,9 @@ async fn an_agent_is_seen_by_who_may_read_it_with_the_channels_they_may_read() {
     assert_eq!(names(world.manager.views(bob).personalities().await.unwrap()), ["bobs", "shared"]);
 }
 
-/// Adding an agent to a channel: its personality in its own name - may it
-/// run -, its clearance, and changing the channel - its owner's alone.
+/// Adding an agent to a channel - through the session, the one way into a channel (issue 590):
+/// its personality in its own name - may it run -, its clearance, and changing the channel - its
+/// owner's alone.
 #[tokio::test]
 async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality() {
     let world = agent_testing::world().await;
@@ -3570,13 +3575,24 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
     let session = world.shared_session(&[], &[helper, other]).await;
     let main = Arc::clone(&session.channels()[0]);
     let alice = World::as_user(world.alice);
+    // Through the session, the one way into a channel (issue 590).
+    let into = |channel| Some((channel, HistoryAccess::All));
 
     let (added, asked) =
-        world.asked(main.add_participant(&alice, ActorId::Agent(helper), HistoryAccess::All)).await;
+        world.asked(session.add_participant(&alice, ActorId::Agent(helper), into(main.id()))).await;
     assert!(added.is_ok());
     assert_eq!(
         asked,
         checks(&[
+            // The session's way: the channel reached and changed, the agent read, may it run and
+            // is it cleared - before anything is stored.
+            "alice: GetChannel(alice's) yes",
+            "alice: Cleared(alice) yes",
+            "alice: UpdateChannel(alice's) yes",
+            "alice: GetAgent(alice's) yes",
+            "alice as helper: GetPersonality(bob's) yes",
+            "alice: Cleared(helper) yes",
+            // The channel's, as it takes it in.
             "alice: UpdateChannel(alice's) yes",
             "alice as helper: GetPersonality(bob's) yes",
             "alice: Cleared(helper) yes",
@@ -3596,11 +3612,17 @@ async fn adding_an_agent_needs_owning_the_channel_and_the_agent_its_personality(
         .await
         .unwrap();
     let (refused, asked) =
-        world.asked(main.add_participant(&alice, ActorId::Agent(other), HistoryAccess::All)).await;
+        world.asked(session.add_participant(&alice, ActorId::Agent(other), into(main.id()))).await;
     assert!(denied(&refused.unwrap_err()));
     assert_eq!(
         asked,
-        checks(&["alice: UpdateChannel(alice's) yes", "alice as other: GetPersonality(bob's) no"]),
+        checks(&[
+            "alice: GetChannel(alice's) yes",
+            "alice: Cleared(alice) yes",
+            "alice: UpdateChannel(alice's) yes",
+            "alice: GetAgent(alice's) yes",
+            "alice as other: GetPersonality(bob's) no",
+        ]),
         "an agent that may not run is not added"
     );
     world.manager.stop(&alice, session.id()).await.unwrap();

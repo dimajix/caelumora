@@ -92,6 +92,12 @@ commands in [COMMANDS.md](COMMANDS.md), notes in [MEMORY.md](MEMORY.md), the con
 [AGENT-TURN.md](AGENT-TURN.md#asking-what-an-agent-saw) - and the request and response of each in
 its handler's doc comment.
 
+An actor of a path - `{aid}` of `…/participants/{aid}` and `…/actors/{aid}` - is named by its kind
+and its id, `User:<uuid>` or `Agent:<uuid>` (`ActorPath`, issue
+[590](../issues/590-a-session-lets-nobody-go.md)): the server hands it on as it is, and whether it
+takes part is asked where it is asked anyway. Anything else, a bare UUID among it, is
+`400 invalid_path`.
+
 | Endpoint | Does |
 |---|---|
 | `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/refresh` | Log in and out, the logged-in user, renew the session |
@@ -100,6 +106,7 @@ its handler's doc comment.
 | `GET`, `POST /sessions`; `GET`, `PATCH`, `DELETE /sessions/{id}`; `POST /sessions/{id}/restore`, `…/purge` | Sessions: list, create from a template (with a workspace chosen instead of the template's, and in a shared project - made in its own and put there, or not made at all), fetch without starting, rename, delete, restore, purge |
 | `PUT /sessions/{id}/language`, `…/time-zone`, `…/privacy`, `…/description`, `…/approval-rules`; `PUT`, `DELETE /sessions/{id}/workspace`; `PUT`, `DELETE /sessions/{id}/project` | Change the language its channels without one of their own are held in, its time zone, whom the session lets read what was said, what it is for, what it restricts of tool calls; attach or take away its workspace; put it into a shared project or take it out into its own (issue 467) |
 | `POST /sessions/{id}/participants`, `…/join`; `GET /sessions/{id}/candidates?prefix=&channel=` | Take a user or agent into the session - and a channel at once; join it by one's own act; search whom to take in by the beginning of their name, with whether they take part and why they cannot be taken in |
+| `DELETE /sessions/{id}/participants/{aid}`; `POST /sessions/{id}/participants/{aid}/leave` | Let a participant go from the session and every channel of it, as whoever may change the session; take oneself, or one's own agent, out of it by one's own act - `404 participant_not_found` for one who takes part in neither |
 | `GET /sessions/{id}/actors/{aid}/private_notes` | The private notes an agent wrote in the channels of the session the user may read |
 | `GET`, `POST /agents`; `GET`, `PATCH`, `DELETE /agents/{id}`; `POST /agents/{id}/restore`, `…/purge`; `GET /personalities` | Agents: list, make one of a personality in the user's scope, the global one or a session's or channel's they may read, fetch with the channels it takes part in that the user may read, rename, delete (it rests in its channels as a former participant), restore (back into them), purge; the personalities the user may make an agent of |
 | `GET`, `POST /workspaces`; `GET /workspaces/storages`; `GET`, `PATCH`, `DELETE /workspaces/{id}`; `PUT /workspaces/{id}/access`, `…/description`, `…/classification`; `POST /workspaces/{id}/restore`, `…/purge` | Workspaces: list, make, the storages they can be made in, fetch, rename, delete, share, describe, reclassify, restore, purge |

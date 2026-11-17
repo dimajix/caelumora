@@ -296,8 +296,8 @@ export const api = {
   },
 
   /** One participant, with who it is (issue 244). */
-  async getParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<ChannelParticipant> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`);
+  async getParticipant(sessionId: string, channelId: string, actor: string): Promise<ChannelParticipant> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actor}`);
     await ensureOk(res, 'Failed to fetch the participant');
     return res.json();
   },
@@ -306,26 +306,26 @@ export const api = {
    * What one participant's model calls used (issue 573), without the rest of it; `null` for one
    * that is no agent, or whose calls counted none yet.
    */
-  async getParticipantUsage(sessionId: string, channelId: string, actorUuid: string): Promise<TokenUsage | null> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/usage`);
+  async getParticipantUsage(sessionId: string, channelId: string, actor: string): Promise<TokenUsage | null> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actor}/usage`);
     await ensureOk(res, 'Failed to fetch what the participant used');
     return res.json();
   },
 
-  /** Removes `actorUuid` - the id of the user or agent, without its kind - from the channel. */
-  async removeParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}`, {
+  /** Removes `actor` - a user or an agent, as a path names it (`actorPath`) - from the channel. */
+  async removeParticipant(sessionId: string, channelId: string, actor: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actor}`, {
       method: 'DELETE',
     });
     await ensureOk(res, 'Failed to remove the participant');
   },
 
   /**
-   * Takes `actorUuid` - you, or an agent of yours - out of the channel by your own act (issue 562),
+   * Takes `actor` - you, or an agent of yours - out of the channel by your own act (issue 562),
    * without the right to change it.
    */
-  async leaveChannel(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/leave`, {
+  async leaveChannel(sessionId: string, channelId: string, actor: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actor}/leave`, {
       method: 'POST',
     });
     await ensureOk(res, 'Failed to leave the channel');
@@ -492,11 +492,11 @@ export const api = {
   },
 
   /**
-   * Asks agent `actorUuid` to answer again instead of its answer under way, the turn `turnId`
+   * Asks agent `actor` to answer again instead of its answer under way, the turn `turnId`
    * (issue 235).
    */
-  async retryAnswer(sessionId: string, channelId: string, actorUuid: string, turnId: string): Promise<void> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/retry`, {
+  async retryAnswer(sessionId: string, channelId: string, actor: string, turnId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actor}/retry`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ turn_id: turnId }),
@@ -504,36 +504,36 @@ export const api = {
     await ensureOk(res, 'Failed to ask for another answer');
   },
 
-  /** What actor `actorUuid` saw when it produced message `messageId`. */
-  async getMessageContext(sessionId: string, channelId: string, actorUuid: string, messageId: string): Promise<MessageContextResponse> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/messages/${messageId}/context`);
+  /** What `actor` - as a path names it (`actorPath`) - saw as it produced message `messageId`. */
+  async getMessageContext(sessionId: string, channelId: string, actor: string, messageId: string): Promise<MessageContextResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actor}/messages/${messageId}/context`);
     await ensureOk(res, 'Failed to fetch the context');
     return res.json();
   },
 
   /**
-   * A page of all that was offered to actor `actorUuid` in the channel and what it said itself
+   * A page of all that was offered to `actor` in the channel and what it said itself
    * (issues 207, 218), as `getHistory`.
    */
-  async getAgentHistory(sessionId: string, channelId: string, actorUuid: string, before?: number | null): Promise<HistoryPage<HistoryMessage>> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/history${pageQuery(before)}`);
+  async getAgentHistory(sessionId: string, channelId: string, actor: string, before?: number | null): Promise<HistoryPage<HistoryMessage>> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actor}/history${pageQuery(before)}`);
     await ensureOk(res, 'Failed to fetch the history');
     return res.json();
   },
 
-  /** The tools actor `actorUuid` has now in the channel, in their tool sets (issue 194). */
-  async getAgentTools(sessionId: string, channelId: string, actorUuid: string): Promise<AgentToolsResponse> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actorUuid}/tools`);
+  /** The tools `actor` has now in the channel, in their tool sets (issue 194). */
+  async getAgentTools(sessionId: string, channelId: string, actor: string): Promise<AgentToolsResponse> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/actors/${actor}/tools`);
     await ensureOk(res, 'Failed to fetch the tools');
     return res.json();
   },
 
   /**
-   * The private notes agent `agentUuid` wrote in the channels of the session the user may read, by
-   * channel name (issue 233).
+   * The private notes agent `agent` - as its path names it (`actorPath`) - wrote in the channels
+   * of the session the user may read, by channel name (issue 233).
    */
-  async getPrivateNotes(sessionId: string, agentUuid: string): Promise<PrivateNotes[]> {
-    const res = await request(`/sessions/${sessionId}/actors/${agentUuid}/private_notes`);
+  async getPrivateNotes(sessionId: string, agent: string): Promise<PrivateNotes[]> {
+    const res = await request(`/sessions/${sessionId}/actors/${agent}/private_notes`);
     await ensureOk(res, 'Failed to fetch the private notes');
     return res.json();
   },
@@ -564,8 +564,8 @@ export const api = {
   },
 
   /** Ends the turn of one participant of the channel; the others go on (issue 235). */
-  async cancelParticipant(sessionId: string, channelId: string, actorUuid: string): Promise<void> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/cancel`, {
+  async cancelParticipant(sessionId: string, channelId: string, actor: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actor}/cancel`, {
       method: 'POST',
     });
     await ensureOk(res, 'Failed to stop the answer');
@@ -581,11 +581,11 @@ export const api = {
   },
 
   /**
-   * Interrupts the tool call `callId` of agent `actorUuid` in its turn `turnId` alone; the turn
+   * Interrupts the tool call `callId` of agent `actor` in its turn `turnId` alone; the turn
    * goes on (issue 276).
    */
-  async interruptToolCall(sessionId: string, channelId: string, actorUuid: string, turnId: string, callId: string): Promise<void> {
-    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actorUuid}/tool-calls/${encodeURIComponent(callId)}/cancel`, {
+  async interruptToolCall(sessionId: string, channelId: string, actor: string, turnId: string, callId: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/channels/${channelId}/participants/${actor}/tool-calls/${encodeURIComponent(callId)}/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ turn_id: turnId }),
@@ -605,6 +605,17 @@ export const api = {
       method: 'DELETE',
     });
     await ensureOk(res, 'Failed to delete session');
+  },
+
+  /**
+   * Takes `actor` - you, or an agent of yours, as a path names it (`actorPath`) - out of the
+   * session and every channel of it by your own act (issue 590).
+   */
+  async leaveSession(sessionId: string, actor: string): Promise<void> {
+    const res = await request(`/sessions/${sessionId}/participants/${actor}/leave`, {
+      method: 'POST',
+    });
+    await ensureOk(res, 'Failed to leave the session');
   },
 
   /**

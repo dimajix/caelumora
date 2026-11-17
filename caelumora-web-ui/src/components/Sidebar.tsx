@@ -28,7 +28,7 @@ import {ApiRequestError, reportError} from '../errors';
 import {asGlobalEvent, dispatchGlobalEvent, saidInChannel, sessionChange} from '../globalEvents';
 import {askForNotifications, countedIn, isOthers, mayAskForNotifications, mentions, notifyMention, onChannelRead, unreadLabel} from '../unread';
 import {openEventStream} from '../stream';
-import {userActor} from '../actor';
+import {actorPath, sameActor, userActor} from '../actor';
 import {ActionMenu} from './ActionMenu';
 import {ResizeHandle} from './ResizeHandle';
 import {usePanelWidth} from '../panelWidth';
@@ -122,17 +122,17 @@ function upsert(sessions: SessionSnapshot[], session: SessionSnapshot): SessionS
 }
 
 /**
- * Fetches one session with its channels, or `null` if it is gone again -
- * its deletion then follows or has already arrived.
+ * Fetches one session with its channels: `gone` if it is gone again or no longer the user's to
+ * read - its deletion then follows or has already arrived, or they left it -, `failed` if it could
+ * not be fetched, which is reported.
  */
-async function fetchSession(sessionId: string): Promise<SessionSnapshot | null> {
+async function fetchSession(sessionId: string): Promise<SessionSnapshot | 'gone' | 'failed'> {
   try {
     return await api.getSession(sessionId);
   } catch (error) {
-    if (!(error instanceof ApiRequestError && error.status === 404)) {
-      reportError('Failed to load session', error);
-    }
-    return null;
+    if (error instanceof ApiRequestError && error.status === 404) return 'gone';
+    reportError('Failed to load session', error);
+    return 'failed';
   }
 }
 
@@ -142,7 +142,8 @@ interface SidebarProps {
   selectedSessionId: string | null;
   selectedChannelId: string | null;
   onSelectChannel: (sessionId: string, channelId: string) => void;
-  onSessionDeleted: (sessionId: string) => void;
+  /** The session no longer exists, or may no longer be read - deleted, or left (issue 590). */
+  onSessionGone: (sessionId: string) => void;
   /** The selected channel no longer exists - deleted here or elsewhere. */
   onChannelDeleted: (channelId: string) => void;
   /**
@@ -161,7 +162,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedSessionId,
   selectedChannelId,
   onSelectChannel,
-  onSessionDeleted,
+  onSessionGone,
   onChannelDeleted,
   page,
   onSelectPage,
@@ -222,7 +223,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [mayAsk, setMayAsk] = useState(mayAskForNotifications);
   const me = userActor(user.id);
 
-  /** Drops a session from the list - deleted here or elsewhere. */
+  /** Drops a session from the list - deleted here or elsewhere, or no longer read. */
   const removeSession = (sessionId: string) => {
     setSessions(prev => prev.filter(s => s.id !== sessionId));
     setExpandedSessions(prev => {
@@ -230,12 +231,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       delete next[sessionId];
       return next;
     });
-    onSessionDeleted(sessionId);
+    onSessionGone(sessionId);
   };
 
+  // One no longer read - deleted, or left, or no longer shared (issue 590) - leaves the list.
   const refreshSession = async (sessionId: string) => {
     const session = await fetchSession(sessionId);
-    if (session) setSessions(prev => upsert(prev, session));
+    if (session === 'gone') removeSession(sessionId);
+    else if (session !== 'failed') setSessions(prev => upsert(prev, session));
   };
 
   // The stream outlives renders; these always see the current props.
@@ -354,6 +357,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     setPrivacyOf(sessionId);
   };
 
+  /** Leaves the session by your own act (issue 590); it stays listed where you still read it. */
+  const handleLeaveSession = async (sessionId: string) => {
+    const you = actorPath(me);
+    if (!you) return;
+    try {
+      await api.leaveSession(sessionId, you);
+      await refreshSession(sessionId);
+    } catch (error) {
+      reportError('Failed to leave the session', error);
+    }
+  };
+
   const handleDeleteSession = async (sessionId: string) => {
     try {
       await api.deleteSession(sessionId);
@@ -463,6 +478,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
                       {label: 'Workspace', icon: HardDrive, onSelect: () => setWorkspaceOf(session.id)},
                       {label: 'Project', icon: FolderKanban, onSelect: () => setProjectOf(session.id)},
+                      ...(session.participants.some(p => p.can_leave && sameActor(p.id, me)) ? [
+                        {label: 'Leave', icon: LogOut, danger: true, confirm: 'Leave session?', onSelect: () => void handleLeaveSession(session.id)},
+                      ] : []),
                       {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},
                     ]}
                   />

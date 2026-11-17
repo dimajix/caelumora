@@ -280,6 +280,9 @@ pub struct ParticipantResponse {
     pub id: ActorId,
     pub name: String,
     pub kind: ParticipantKind,
+    /// Whether you may take this participant out of the session by your own act - yourself, or
+    /// an agent of yours (issue 590).
+    pub can_leave: bool,
 }
 
 impl ParticipantResponse {
@@ -289,6 +292,7 @@ impl ParticipantResponse {
             id: view.id,
             kind: ParticipantKind::of(view.id)?,
             name: view.name.unwrap_or_else(|| UNKNOWN.to_string()),
+            can_leave: view.can_leave,
         })
     }
 }

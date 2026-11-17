@@ -50,6 +50,8 @@ pub enum SessionUpdateEvent {
     /// Someone was taken in after it was built (issue 221): by whoever may
     /// change it, or by themselves, where an entry let them join.
     ParticipantJoined(Participant),
+    /// Someone was let go (issue 590): by whoever may change it, or by their own act.
+    ParticipantLeft(ActorId),
 }
 
 define_id!(SessionId);
@@ -178,9 +180,14 @@ impl Updatable for Session {
             }
             SessionUpdateEvent::WorkspaceChanged(workspace) => self.workspace = *workspace,
             SessionUpdateEvent::ProjectChanged(project) => self.project = *project,
-            // Taken over as announced: announcing was the business of whoever took them in.
+            // What a join and a leave mean, as the domain's rule of each update is; nothing in the
+            // kernel applies them today - a participant comes and goes by `take_in` and `let_go`,
+            // and announcing it was the business of whoever took them in or let them go.
             SessionUpdateEvent::ParticipantJoined(participant) => {
                 self.take_in(participant.clone());
+            }
+            SessionUpdateEvent::ParticipantLeft(actor) => {
+                self.let_go(*actor);
             }
         }
         Ok(())
@@ -248,6 +255,31 @@ impl Session {
             self.participants.push(participant);
         }
         anew
+    }
+
+    /// Undoes taking `actor` in (`take_in`), as `before` - the session as it was before - had them
+    /// (issue 590): out of its participants unless listed before, and their invitation given back
+    /// if it was there. Nothing if they were let go meanwhile (`let_go`): who let them go decided.
+    /// Nothing else of the session is set back, so that what changed meanwhile stays. Answers
+    /// whether they were taken out of its participants: only then is a leave announced.
+    pub fn undo_take_in(&mut self, actor: ActorId, before: &Session) -> bool {
+        if !self.takes_part(actor) {
+            return false;
+        }
+        let unlisted = !before.takes_part(actor);
+        if unlisted {
+            self.participants.retain(|p| p.actor_id() != actor);
+        }
+        self.security_attributes.give_back_invitation(actor, &before.security_attributes);
+        unlisted
+    }
+
+    /// Lets `actor` go (issue 590): out of its participants, so that the group of its participants
+    /// follows it where it is stored. Their invitation stays used up: coming back takes an entry
+    /// that is not. `None` if they take no part: only then is no leave announced.
+    pub fn let_go(&mut self, actor: ActorId) -> Option<Participant> {
+        let index = self.participants.iter().position(|p| p.actor_id() == actor)?;
+        Some(self.participants.remove(index))
     }
 
     /// Whether `actor` is one of its participants.
@@ -362,6 +394,7 @@ pub mod testing {
 mod tests {
     use super::*;
     use crate::agent::AgentId;
+    use crate::group::Group;
     use crate::session::testing::bare_session;
 
     /// A new session of `owner` with `participants`, granting what `access` grants besides.
@@ -409,6 +442,60 @@ mod tests {
             }),
             "read by its members"
         );
+    }
+
+    /// Issue 590: one let go is out of the participants and their group, their invitation used up
+    /// all the same; a leave applied again changes nothing, and one taken in after it is listed
+    /// again.
+    #[test]
+    fn one_let_go_is_out_of_the_session_and_a_leave_applied_again_changes_nothing() {
+        let alice = UserId::new();
+        let bob = UserId::new();
+        let invitation = AclEntry::invitation(ActorId::User(bob));
+        let mut session = session_of(alice, vec![Participant::User(alice)], &[invitation]);
+        session.take_in(Participant::User(bob));
+
+        let let_go = session.let_go(ActorId::User(bob)).as_ref().map(Participant::actor_id);
+        assert_eq!(let_go, Some(ActorId::User(bob)), "let go");
+        assert!(!session.takes_part(ActorId::User(bob)), "out of its participants");
+        assert!(!Group::of_session(&session).has_member(ActorId::User(bob)), "and their group");
+        assert!(!session.security_attributes.acl.contains(&invitation), "invitation used up");
+        assert!(session.let_go(ActorId::User(bob)).is_none(), "nobody to let go again");
+
+        let left = SessionUpdateEvent::ParticipantLeft(ActorId::User(bob));
+        session.apply(&left).expect("a leave applied again");
+        let listed: Vec<_> = session.participants.iter().map(Participant::actor_id).collect();
+        assert_eq!(listed, [ActorId::User(alice)], "changes nothing");
+        session.apply(&SessionUpdateEvent::ParticipantJoined(Participant::User(bob))).unwrap();
+        assert!(session.takes_part(ActorId::User(bob)), "taken in after it, listed again");
+    }
+
+    /// Issue 590: undoing a taking-in sets back what it changed - out again, unless listed before,
+    /// and the invitation given back -, and nothing for one let go meanwhile.
+    #[test]
+    fn undoing_a_taking_in_sets_back_the_participant_and_the_invitation() {
+        let alice = UserId::new();
+        let (bob, carol) = (ActorId::User(UserId::new()), ActorId::User(UserId::new()));
+        let invitation = AclEntry::invitation(bob);
+        let before = session_of(alice, vec![Participant::User(alice)], &[invitation]);
+        let mut session = before.clone();
+        session.take_in(Participant::User(bob.as_user_id().unwrap()));
+
+        assert!(session.undo_take_in(bob, &before), "taken out again");
+        assert!(!session.takes_part(bob));
+        assert!(session.security_attributes.acl.contains(&invitation), "invitation given back");
+        assert!(!session.undo_take_in(carol, &before), "nobody to take out");
+        // Let go between coming in and the undoing: who let him go decided.
+        session.take_in(Participant::User(bob.as_user_id().unwrap()));
+        session.let_go(bob);
+        assert!(!session.undo_take_in(bob, &before), "let go already");
+        assert!(!session.takes_part(bob), "and stays so");
+        let mut listed = before.clone();
+        listed.take_in(Participant::User(bob.as_user_id().unwrap()));
+        let mut again = listed.clone();
+        again.take_in(Participant::User(bob.as_user_id().unwrap()));
+        assert!(!again.undo_take_in(bob, &listed), "listed before, so listed still");
+        assert!(again.takes_part(bob));
     }
 
     /// The condition of the sessions an actor takes part in meets exactly
