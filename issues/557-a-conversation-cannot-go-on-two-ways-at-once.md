@@ -882,6 +882,122 @@ answers (`Work::event_context`), have to be deleted, and the open tasks of exter
 them. Step 2 changes what is stored again - `ParticipantJoined`, the `Attendance` and
 `ChannelState` -, and the same states have to be deleted then.
 
+## Plan: step 2, threads as building blocks
+
+The author's proposal of 2026-11-17, after the sketch of step 2 was traced through the code - not
+decided but where it says so. It replaces the sketch where they differ. The sub-agents themselves
+are planned in 558,
+[*Plan: the crate caelumora-subagents*](558-no-agent-hands-a-task-to-a-sub-agent.md#plan-the-crate-caelumora-subagents).
+
+### What the code showed
+
+Traced on 2026-11-17, with three investigations of the code:
+
+- **Only an actor speaks in its own name.** `OriginEventSender` lets an actor send only as itself,
+  and nothing outside `ChannelLoop::run` reaches the channel's input. A brief "in the main agent's
+  name" said through the main agent's actor is a message of its turn: in its transcript, carrying
+  its `turn_id`, and asking someone only at the end of that turn, in the line.
+- **A join is applied after it is taken in** (`ActorChange::Start`, handled after the events by
+  `run`'s biased select): what is said right after taking someone in can be routed before its
+  inbox opens, and is never delivered to it.
+- **No actor knows its thread.** `AgentBody::own`, the channel's announcements of a join or a leave
+  (`ChannelLoop::announce`) and what a user addresses to an agent - an answer to its question, a
+  request to answer again, a command, a nudge - are made in the line.
+- **A mention of an agent that takes no part in the thread** is not addressed to it: the thread's
+  policy chooses instead (`PolicyModerator::mentioned_responders`).
+- **Quiet after a cancel is the whole channel's** (`ChannelLoop::quiet`): nobody is asked in any
+  thread, and every actor's turn is cancelled.
+- **A filter of one thread needs no column**: a page can be filtered by the kept item's
+  `context.thread_id` and the entry's kind in the memory, the JSON and the Postgres store alike.
+
+### Decided
+
+The maintainer, on 2026-11-17: the channel offers building blocks - opening a thread, taking
+someone into it - and knows nothing of sub-agents; what makes a sub-agent and carries its work lies
+elsewhere, in a crate of its own, `caelumora-subagents` (558).
+
+### The building blocks
+
+Proposed:
+
+1. **Founding a thread.** `ChannelLoop::open_thread` opens a thread at an origin and takes its
+   founders into it, as founding a channel takes in its founders (`ChannelLoop::found`): naming
+   them was opening the thread, so it asks no `UpdateChannel`. It asks a new action, `OpenThread`,
+   granted to whoever reads the channel, as `CancelChannel` and `WakeChannel` are, and the founders'
+   clearance for the channel's classification. `close_thread` closes it.
+
+   ```rust
+   /// Opens a thread at `origin`, in the name of `context`, with `founders` taking part in it
+   /// alone, and returns its id.
+   pub async fn open_thread(&self, context: &SecurityContext, origin: ThreadOrigin,
+       founders: Vec<Founder>) -> Result<ThreadId, ChannelError>;
+   /// Closes `thread` in the name of `context`; `false` if it is not open.
+   pub async fn close_thread(&self, context: &SecurityContext, thread: ThreadId)
+       -> Result<bool, ChannelError>;
+   ```
+
+   A founder is a participant - one of the session, then of the channel, taking part in this thread
+   alone - or an internal actor of a registered kind (5). Opening goes through `run`'s ordered input
+   of changes: the thread, then its founders started, then whatever they say first.
+2. **Giving something to read.** A new event by which an actor gives another participant a message
+   to read and asks it to respond - recorded by the channel to the recipient by name, as a request
+   to respond is, so that it is delivered again from the history (issue 223), and taken in by the
+   recipient's intake as a `Given` entry of its transcript, with the giver named as `/skill` names
+   one ("@researcher gave you this to read:"). The agent records the given message once, as it
+   records what it is given today (`MessageGiven`); the message given has an id of its own. Nobody
+   speaks in another's name: the giver is a statement of the event. Admitted from an internal actor
+   of the thread it is given in, or given into the origin of that actor's own thread.
+3. **Threads in the running channel.** `ChannelLoop::threads` changes while the channel runs, and
+   the channel's threads, their origins and their internal actors are a part of `ChannelState`,
+   recorded whole, from which the channel builds them as it starts.
+4. **An actor knows its thread.** It learns from its runtime the thread it takes part in; what it
+   makes itself - `own()` - happens there, and so do the channel's announcements of its join and
+   leave. The thread of a join is the one its context names, as D4 was changed: no field of
+   `ParticipantJoined`. The `Attendance` keeps each range with its thread; delivering, catching up
+   and an agent's history go by it (D5, D6).
+5. **Kinds of internal actors that a plugin registers.** Today the approver is the one internal
+   actor, configured in the channel's document and built by `ChannelLoop::create_actor`. A registry
+   `InternalActorKinds`, filled by plugins as `AgentKinds` is filled by libraries
+   (`KernelBuilder::register_internal_actor`), builds an actor of a kind from parameters and a
+   narrow runtime - its channel, its thread, the thread's origin; its transport is `run`'s. An
+   internal actor of a thread is kept with the thread in `ChannelState`, with its kind, its id and
+   its parameters, and built again from there as the channel starts; what it has to keep across a
+   restart it keeps there, written back by the channel - one writer. It is an actor of a kind of its
+   own (`ActorId::Internal`).
+6. **Reaching a running channel from a plugin.** A plugin's writer is bound with the work's
+   `SessionView` (`KernelBuilder::extend_writers`); the view gives out the running session it holds
+   (`SessionView::session_loop`, today the crate's), and the plugin reaches the channel as a
+   frontend does (`SessionLoop::channel_for`), acting in the work's context through the loop's
+   public operations, each checking itself. The alternative is a service of the kernel's for
+   acting on channels.
+
+### To decide in step 2
+
+- **T1 - Founding a thread** instead of taking someone in with `UpdateChannel`, under a new action
+  `OpenThread` granted by reading the channel. Recommended.
+- **T2 - How a plugin reaches a running channel**: through `SessionView::session_loop`, or a
+  service of its own. Recommended: the view.
+- **T3 - `ActorId::Internal`** as a new kind of actor, beside the approver's. Recommended.
+- **T4 - Where an internal actor keeps what it must keep across a restart**: in its parameters in
+  `ChannelState`, written back by the channel, or in a state of the plugin's own. Recommended: the
+  channel's.
+- **T5 - The event of giving to read**: its name, and whether the users see it - the brief and the
+  answer given are what a person follows of a sub-agent. Recommended: published to the users, given
+  to the recipient by name.
+- **T6 - What is of the whole channel**: by the entry's kind and the line's context, written into
+  the filter, or a field derived as the kept item's `published` is (`KeptItem::thread`), so that
+  the kinds are listed once (`HistoryEntry::is_of_thread`). Recommended: the derived field.
+
+### The cut
+
+1. **2a, restructuring without a change of behaviour**: threads built from `ChannelState` and
+   changing at runtime, an actor knowing its thread, the thread of a join from its context,
+   delivering and reading by thread - with everyone in the line, so that every rule gives what it
+   gives today.
+2. **2b, the building blocks with their first user**: founding and closing a thread, giving to
+   read, kinds of internal actors, reaching a running channel - together with
+   `caelumora-subagents` (558), which uses them, in commits each reviewed on its own.
+
 ## Done when
 
 - The model is decided - within one channel, as channels, or not at all - with the reasoning
@@ -950,3 +1066,9 @@ them. Step 2 changes what is stored again - `ParticipantJoined`, the `Attendance
 - **2026-11-17** — Decided by the maintainer: in step 1 an event naming a thread the channel does
   not have stays rejected as `Rejection::Invalid`; a rejection of its own, for what is sent into a
   closed thread, comes with step 2 (*Step 2*, *What is sent into a closed thread*).
+- **2026-11-17** — The sketch of step 2 traced through the code; the maintainer decided that the
+  channel offers building blocks alone, and that the sub-agents' work lies in a crate of its own,
+  `caelumora-subagents` (558). Proposed (*Plan: step 2, threads as building blocks*): founding and
+  closing a thread, giving something to read, threads in `ChannelState`, an actor knowing its
+  thread, kinds of internal actors registered by plugins, and reaching a running channel from a
+  plugin; T1 to T6 to decide, and a cut into 2a and 2b.

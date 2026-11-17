@@ -297,6 +297,111 @@ that started it and ends with the sub-agent.
   and in which thread.
 - **Bounding its rights** by what the main agent may, beyond the list of personalities.
 
+## Plan: the crate caelumora-subagents
+
+The author's proposal of 2026-11-17 - not decided but where it says so. The channel's building
+blocks it uses are planned in
+[557](557-a-conversation-cannot-go-on-two-ways-at-once.md#plan-step-2-threads-as-building-blocks).
+
+### Where the code contradicts the decision
+
+Traced on 2026-11-17:
+
+- **"Writes the brief into it as its first message, in the main agent's name."** Only an actor
+  speaks in its own name (`OriginEventSender`). Said through the main agent's actor, the brief is a
+  message of its turn - in its transcript, with its `turn_id` -, and asks the sub-agent at best at
+  that turn's end, in the line. Nobody else can say it in the main agent's name.
+- **"The sub-agent's answer to the brief - the message of the turn that answers it, which the
+  events of a turn name (`correlation_id`)."** A turn answers every request taken in together, in
+  the context of the last; a request heard during a turn, or right after a turn that answered it,
+  is dropped as answered; a retry answers in its own context; and an agent asleep, a quiet
+  channel or a chain cut off makes no turn at all.
+- **"As a skill given with `/skill`."** That is an agent's command: admitted only from a user,
+  admitted again with its sender's rights as it is delivered again from the history - a deleted
+  sub-agent's none -, shown to users, and asking nobody to respond.
+- **"Deleted when its work is ended, and its thread is closed for good."** A session lets nobody
+  go (issue 564), so every sub-agent stays among its participants; a deleted agent rests in its
+  channels and comes back with a restore; and while a sub-agent of an agent whose owner does not
+  own the session lives, its channel's scope keeps the channel from being deleted
+  (`ScopeNotEmpty`).
+- **"And mentions."** A mention of an agent that takes no part in the thread asks nobody there by
+  the mention: the thread's policy chooses instead.
+
+### Decided
+
+The maintainer, on 2026-11-17: the channel offers building blocks alone (557), and the sub-agents'
+work - making one, carrying its brief in and its answer out, ending it - lies in a crate of its
+own, `caelumora-subagents`.
+
+### The crate
+
+Built as `caelumora-skills`, `caelumora-memory` and `caelumora-artifacts` are (PLUGINS.md, *What
+a plugin is*), a plugin and a library at once, cut by features:
+
+| Feature | What | Trusted |
+|---|---|---|
+| `api` | the writer `SubAgentWriter` and its errors | what the agent side is given of the service |
+| `kernel` | `SubagentsPlugin`: binds the writer (`extend_writers`), and registers the delegate (below) as a kind of internal actor | as the kernel |
+| `library` | `SubagentsLibrary`: the tool, offered where the writer is (`Situation::has_writer`), configured with the personalities it may start an agent of | for nothing |
+
+```rust
+// caelumora-subagents, feature api
+/// What an agent's work does with sub-agents: starts one on a brief, asks it again, ends it.
+pub trait SubAgentWriter: Send + Sync {
+    /// Starts an agent of `personality` on `brief`, in a thread of its own at the call `origin`:
+    /// returns the thread at once.
+    async fn start(&self, personality: &str, origin: ThreadOrigin, brief: String)
+        -> Result<ThreadId, SubAgentError>;
+    /// Gives the sub-agent of `thread` `text` to read and asks it to respond, once it answered.
+    async fn ask(&self, thread: ThreadId, text: String) -> Result<(), SubAgentError>;
+    /// Ends the sub-agent of `thread`, and closes the thread.
+    async fn end(&self, thread: ThreadId) -> Result<(), SubAgentError>;
+}
+```
+
+### How it works
+
+- **Starting.** The writer makes an agent of the personality (`AgentManager::create`, in the
+  channel's scope, owned by the main agent's owner, who has to be able to read the personality),
+  and founds a thread at the call (557's `open_thread`) with two founders: the new agent, taking
+  part in the thread alone, and a **delegate** - an internal actor of the crate's kind, given the
+  main agent, the origin thread and the brief. The call returns the thread's id at once; the main
+  agent's turn ends as any turn does.
+- **The delegate carries the brief in.** It gives the sub-agent the brief to read, in the
+  sub-agent's thread, and asks it to respond (557's giving to read), in its own name, naming the
+  main agent as the giver. The sub-agent is asked by a request of its own, not by the moderator's
+  policy, so that no policy, mention or chain limit decides it.
+- **The delegate carries the answer out.** It holds the one brief that is open, and takes the
+  sub-agent's next turn end in its thread as the answer to it - sound because the thread is a
+  closed circle in which the delegate alone gives the sub-agent anything, one brief at a time.
+  Then it gives the main agent, in the origin thread, what came of it, and asks it to respond: the
+  answer; that the turn ended without one; that it was given up, and why; or that the sub-agent
+  was not asked. The main agent so never waits for nothing. In a turn, the main agent takes it in
+  once its turn ended.
+- **Asking again** is `ask`: the delegate gives the sub-agent the text once the open brief is
+  answered.
+- **Ending** is `end`: the sub-agent leaves the channel, is deleted (E3 below), and the thread is
+  closed with its delegate.
+- **What users see.** The thread is read by everyone in the channel; that a brief was given and
+  what was given back are shown there and at the call that started it (557, T5).
+
+### To decide
+
+- **E3 - How a sub-agent ends.** B: it leaves the channel and is deleted - restored, it comes back
+  into the session alone. C: as B, then purged in the kernel's name - nothing of it left but what it
+  said, which is final, and a new rule: today only an administrator or a retention policy purges.
+  Recommended: C.
+- **Whether the answer wakes a main agent that sleeps** - a mention wakes, a policy's choice does
+  not. Recommended: it wakes, as a mention does.
+- **What a quiet channel does** to a brief and to an answer given: today nobody is asked while the
+  channel is quiet, in any thread. Recommended: the delegate gives, and asks once the channel is
+  woken.
+- **Names.** Two sub-agents of one personality living at once need names of their own in the
+  channel's scope; the writer gives each a name of its own.
+
+Still open from above: the command by which a user starts a sub-agent, and bounding its rights by
+what the main agent may.
+
 ## Done when
 
 - The model is decided - how the main agent is in the sub-channel, what the user is there, and what
@@ -317,3 +422,8 @@ that started it and ends with the sub-agent.
   main agent to read in the thread it was started from, and it is deleted when its work is ended;
   the tool lists the personalities it may start; it takes part in its own thread alone; 581 is no
   precondition. What is still open is listed there.
+- **2026-11-17** — The decision traced through the code (*Where the code contradicts the
+  decision*); the maintainer decided that the channel offers building blocks alone and the
+  sub-agents' work lies in a crate of its own, `caelumora-subagents`. Proposed (*Plan: the crate
+  caelumora-subagents*): the crate's three features, the writer, and a delegate - an internal actor
+  of the crate's kind - that carries the brief in and the answer out by giving to read.
