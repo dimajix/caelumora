@@ -337,3 +337,22 @@ agents deleted or restored meanwhile.
   finishes it.
 - **2026-11-17** — Decided with the maintainer: a lock per participant in the session, as a step of
   its own (step 8, *Plan*), from the finding of the review of step 7.
+- **2026-11-17** — Step 8 done, as the maintainer chose (option 1 of three): every way into a
+  channel goes through the session, which makes the changes of one participant one at a time
+  (`SessionLoop::changing`, `LocksById`): taking in - the session, the channel and the rollback -,
+  letting go, and founding a channel for each founder (`SessionLoop::found`, also as a template's
+  channels are founded) hold it, before the channel's own.
+  `/channel join` joins through `SessionLoop::join`; `ChannelLoop::add_participant` and `join` are
+  the kernel's (`pub(crate)`), so that nothing outside it takes someone into a channel past the
+  session. What `/channel join` asks grows by what the session's join asks of one in it already -
+  reading the one who joins, and the channel's entry and clearance asked as the session takes them
+  in, before the channel asks them again; joining alice's agent by bob is refused as he reads it
+  once he read it, before anything in its name. `/channel join` answers every refusal, and what
+  would tell that the channel exists - not found as the issuer is read, gone or stopped meanwhile -,
+  as a channel that does not exist. The security suite's tests of adding and joining a channel go
+  through the session. The window itself is not held by a test: two takings-in at once do not
+  reach it reliably, as 564 found for the channel's lock. Left for the maintainer: restoring a
+  channel brings its participants back without the session's lock - one let go meanwhile comes
+  back with it, as documented -; and `/channel join` by one a channel still lists but the session
+  no longer does - a letting go that failed in a channel - asks the session's entry and may take
+  them back into the session, where it refused them as `NotInSession` before.

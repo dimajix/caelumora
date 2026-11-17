@@ -25,7 +25,9 @@ impl SessionLoop {
     /// stored - their clearance for the channel too; the session is stored first, then the
     /// channel: one the channel cannot take in after all - refused, or failed as their actor
     /// starts - is rolled back out of the session as it had them before (`roll_back_taking_in`,
-    /// issue 590).
+    /// issue 590). One change of a participant at a time (`changing`): who takes the same person
+    /// in, or lets them go, meanwhile waits, so that a rollback never takes out one whom another
+    /// took into a channel.
     ///
     /// # Errors
     /// `StoreError::PermissionDenied` if `context` may not change the session or the channel;
@@ -38,6 +40,7 @@ impl SessionLoop {
         participant: ActorId,
         into: Option<(ChannelId, HistoryAccess)>,
     ) -> Result<()> {
+        let _changing = self.changing.lock(participant).await;
         let session = self.session();
         if into.is_none() || !session.participants.iter().any(|p| p.actor_id() == participant) {
             self.policies
@@ -92,6 +95,7 @@ impl SessionLoop {
         participant: ActorId,
         into: Option<ChannelId>,
     ) -> Result<()> {
+        let _changing = self.changing.lock(participant).await;
         let channel = match into {
             Some(id) => Some(self.channel_to_join(id)?),
             None => None,
@@ -200,6 +204,24 @@ impl SessionLoop {
         }
     }
 
+    /// Takes `participant` into `channel` of the session as one of its founders, on behalf of
+    /// `context`, who created it (`ChannelLoop::found`), one change of a participant at a time
+    /// (`changing`, issue 590), as taking in makes it: for the creation of a channel alone -
+    /// `create_channel`, a template's (`SessionManager::create_from_template`), and
+    /// `SessionManager::create`.
+    ///
+    /// # Errors
+    /// As `ChannelLoop::found`.
+    pub(crate) async fn found(
+        &self,
+        context: &SecurityContext,
+        channel: &ChannelLoop,
+        participant: ActorId,
+    ) -> Result<()> {
+        let _changing = self.changing.lock(participant).await;
+        channel.found(context, participant).await
+    }
+
     /// Lets `participant` go from the session on behalf of `context`, who may change it
     /// (`UpdateSession`, asked before anything else), and from every channel of it (issue 590):
     /// then as [`Self::let_go`] says.
@@ -254,19 +276,16 @@ impl SessionLoop {
 
     /// Lets `participant` go on behalf of `context`, stored in the name of `storing` (issue 590),
     /// asking nothing: its callers asked what letting go is asked for in their way, and say in
-    /// whose name it is stored. Unlike a channel's one way out (`ChannelLoop::let_go`, `Exit`),
-    /// the session holds no lock per participant that would keep what is asked with the change.
-    /// Out of the session first, so that nobody takes them into one of its channels from then on
-    /// (`ChannelLoop::take_in`) - one being taken in holds the participant in its channel, and is
-    /// let go once that is done -; then out of every channel of it in the kernel's name, kept as
-    /// removed by `context`'s caller, each as it is when it is reached: a running one as
+    /// whose name it is stored. One change of a participant at a time (`changing`), as taking in
+    /// makes it, so that taking one person in and letting them go do not cross; what is asked is
+    /// asked before. Out of the session first, so that nobody takes them into one of its channels
+    /// from then on (`ChannelLoop::take_in`); then out of every channel of it in the kernel's name,
+    /// kept as removed by `context`'s caller, each as it is when it is reached: a running one as
     /// `ChannelLoop::let_go_with_the_session` says, one that does not run (issue 463) as
     /// `let_go_where_unavailable` does. A deleted channel lets them go as it is restored
     /// (`restore_channel`). Nothing is rolled back - taking them out of a channel ended their
     /// turn -: a channel that fails leaves the error to the caller, and asking again, for one out
-    /// of the session and not yet out of each of its channels, finishes it. One taken into the
-    /// session and a channel again while this goes on may be let go from that channel all the
-    /// same, and stays in the session: a state of its own, though no order of the two produces it.
+    /// of the session and not yet out of each of its channels, finishes it.
     ///
     /// # Errors
     /// Whatever storing the session or a channel reports.
@@ -276,6 +295,7 @@ impl SessionLoop {
         storing: &SecurityContext,
         participant: ActorId,
     ) -> Result<()> {
+        let _changing = self.changing.lock(participant).await;
         match self.session_controller.remove_participant(storing, participant).await {
             // Out of the session already, as a let go that failed in a channel left them.
             Ok(_) | Err(StoreError::NotFound { .. }) => {}

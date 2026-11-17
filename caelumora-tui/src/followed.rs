@@ -1840,7 +1840,8 @@ mod tests {
         assert!(shows(&mut followed, |shown| matches!(shown, Shown::Ended)).await, "it stopped");
         assert!(followed.actor().is_none(), "none runs between the two runs");
 
-        channel.add_participant(&owner, other, HistoryAccess::All).await.expect("added again");
+        let into = Some((channel.id(), HistoryAccess::All));
+        session_loop.add_participant(&owner, other, into).await.expect("added again");
         assert!(shows(&mut followed, |shown| matches!(shown, Shown::Started)).await, "a new run");
         assert!(!followed.ended().await, "taking part again");
         let again = followed.actor().expect("their new actor runs");

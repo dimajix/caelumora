@@ -2087,7 +2087,8 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
         .unwrap();
     waiting.await;
     let waiting = answered();
-    channel.add_participant(&alice_ctx, ActorId::User(bob.id), HistoryAccess::All).await.unwrap();
+    let into = Some((channel.id(), HistoryAccess::All));
+    session.add_participant(&alice_ctx, ActorId::User(bob.id), into).await.unwrap();
     channel
         .user_actor(alice.id)
         .unwrap()
@@ -2132,10 +2133,8 @@ async fn an_external_agent_is_told_who_is_in_its_channel_and_who_joined_or_left_
     // Who joined or left while it was away is caught up with in order.
     channel.remove_participant(&alice_ctx, ActorId::Agent(hermes.id)).await.unwrap();
     channel.remove_participant(&alice_ctx, ActorId::User(bob.id)).await.unwrap();
-    channel
-        .add_participant(&alice_ctx, ActorId::Agent(hermes.id), HistoryAccess::All)
-        .await
-        .unwrap();
+    let into = Some((channel.id(), HistoryAccess::All));
+    session.add_participant(&alice_ctx, ActorId::Agent(hermes.id), into).await.unwrap();
     let waiting = answered();
     channel
         .user_actor(alice.id)

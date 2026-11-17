@@ -318,7 +318,7 @@ impl SessionLoop {
             }
         };
         for participant in &participants {
-            if let Err(error) = channel_loop.found(context, participant.actor_id()).await {
+            if let Err(error) = self.found(context, &channel_loop, participant.actor_id()).await {
                 self.abandon_channel(context, &channel_loop).await;
                 return Err(error);
             }

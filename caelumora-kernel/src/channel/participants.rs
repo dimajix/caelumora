@@ -56,12 +56,13 @@ impl ChannelLoop {
     /// `history` grants: whoever may change the channel (`UpdateChannel`),
     /// asked before anything of the participant (issue 198, F2) - who may not
     /// learns nothing of its clearance or its personality. Then taken in as
-    /// [`Self::take_in`] says.
+    /// [`Self::take_in`] says. For `SessionLoop::add_participant` alone, which holds the session's
+    /// lock of the participant first (issue 590).
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if `context` may not change the channel; as
     /// [`Self::take_in`].
-    pub async fn add_participant(
+    pub(crate) async fn add_participant(
         &self,
         context: &SecurityContext,
         participant: ActorId,
@@ -80,11 +81,12 @@ impl ChannelLoop {
     /// or their own agent - into the channel by their own act (issue 221), where an entry of the
     /// channel's access list lets them join (`JOIN`). They see the whole history, as whoever may
     /// change the channel let them by letting them join. Stored in the kernel's name, once joining
-    /// was permitted; then as [`Self::take_in`] says.
+    /// was permitted; then as [`Self::take_in`] says. For `SessionLoop::join` alone, which holds
+    /// the session's lock of the participant first (issue 590).
     ///
     /// # Errors
     /// `ChannelError::Forbidden` if they may not join; as [`Self::take_in`].
-    pub async fn join(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
+    pub(crate) async fn join(&self, context: &SecurityContext, participant: ActorId) -> Result<()> {
         self.take_in(context, participant, HistoryAccess::All, Entry::Joining).await
     }
 
@@ -92,9 +94,9 @@ impl ChannelLoop {
     /// (issue 420), on behalf of `context`, who just created it: given what is said from its join
     /// on, as everybody who is there from the start - nothing is shared with it (issue 417). Asked
     /// nothing beyond what anyone taken in is asked - creating the channel was permitted, with whom
-    /// it names - and stored in the kernel's name; then as [`Self::take_in`] says. For the creation
-    /// of a channel alone (`SessionLoop::create_channel`, `SessionManager::create_from_template`):
-    /// anything later is adding.
+    /// it names - and stored in the kernel's name; then as [`Self::take_in`] says. For
+    /// `SessionLoop::found` alone, which holds the session's lock of the participant first (issue
+    /// 590): anything later is adding.
     ///
     /// # Errors
     /// As [`Self::take_in`].

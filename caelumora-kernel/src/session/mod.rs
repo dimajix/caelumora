@@ -19,6 +19,7 @@ use crate::controller::{ControllerManager, SessionController, WorkspaceControlle
 use crate::event::{EventBus, EventSubscription, Following, SubscriptionTopic};
 use crate::group::{keep_participants, GroupManager};
 use crate::kernel::{ChannelRuntime, Kernel};
+use crate::lock::LocksById;
 use crate::scoped::{purge_for_good, ScopeNotEmpty, ScopedEntities};
 use crate::view::{Viewer, Views};
 use crate::workspace::WorkspaceManager;
@@ -239,6 +240,12 @@ pub struct SessionLoop {
     /// someone is let go from one of them (issue 590), so that none is built from a copy that
     /// still lists one let go.
     rebuilding: Mutex<()>,
+    /// Held while a participant is taken in - into the session and a channel of it, rolled back if
+    /// the channel cannot take them in, or as a founder of a channel (`found`) - or let go from the
+    /// session (issue 590), one change of a participant at a time, as a channel makes them
+    /// (`ChannelLoop::changing`): before the channel's lock, every way into a channel coming
+    /// through the session.
+    changing: LocksById<ActorId>,
 }
 
 /// Removes the document of channel `channel_id` for good, in the kernel's name, with the group of
@@ -380,6 +387,7 @@ impl SessionLoop {
             following,
             moving: Mutex::new(()),
             rebuilding: Mutex::new(()),
+            changing: LocksById::new(),
         });
         for channel in channels {
             session_loop.add_listed_channel(channel).await?;

@@ -571,8 +571,12 @@ is permitted and can succeed.
 ## Participants
 
 Participants of the session can be added to and removed from a running channel, and leave it.
-Changing the participants is an operation of the channel, not of the session
-(`ChannelLoop::add_participant`, `remove_participant`, `leave`). Like renaming, the change is made
+Changing the participants is an operation of the channel (`ChannelLoop::add_participant`,
+`remove_participant`, `leave`), but whoever takes someone into a channel goes through the session
+(`SessionLoop::add_participant`, `join`, also for one in the session already): it makes the changes
+of one participant one at a time, before the channel does (issue 590), so that a rollback of the
+session's part never takes out one another took into a channel meanwhile, nor taking in and letting
+go cross; founding a channel holds it for each founder. Like renaming, the change is made
 by the channel's one writer, the `ChannelController`, by the rules of the channel's document: who
 comes in is no longer a former participant and has their invitation used up (`Channel::take_in`),
 who is removed is kept as a former participant (`Channel::let_go`, issue 164). It stores the
@@ -708,8 +712,8 @@ session, so they go out of every channel of it as well:
 *   **The session first**, stored as the session's participants change - in the name of whoever
     let them go, or the kernel's for one who left -; the group of its participants follows, so
     that they read the session no longer, and it is announced (`ParticipantLeft`) to them as well.
-    From then on no channel takes them in (`NotInSession`); one taking them in meanwhile holds them
-    in its channel, and the channel lets them go once that is done.
+    From then on no channel takes them in (`NotInSession`); one taking them in meanwhile finishes
+    first, since taking in and letting go of one participant are made one at a time.
 *   **Then every channel of it, in the kernel's name**: letting them go from the session was what
     was asked. Each keeps them as a former participant, removed by whoever let them go, and ends
     their actor as a removal does. A channel that does not run (issue 463) is changed in its stored
