@@ -838,9 +838,9 @@ need not listen for the announcement. That the channel lists them is read as it 
 watch began (`ChannelView::user_follow`), not as the view read it before: one who left in between
 is not followed past the end their actor showed before the watch began.
 
-Every channel response carries `can_change`, and every participant `can_leave`, so that a client
-offers adding and removing participants, and leaving, only where the user may (see
-[WEB-UI.md](WEB-UI.md)).
+Every channel response carries `can_change`, and every participant `can_leave` - of a channel and,
+alike, of a session -, so that a client offers adding and removing participants, and leaving, only
+where the user may (see [WEB-UI.md](WEB-UI.md)).
 
 ## Acting on the channel as a whole
 

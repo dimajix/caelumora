@@ -169,9 +169,10 @@ A session's privacy is shown to everyone in it; its owner changes it (`PrivacyDi
 policy that lets other sessions read says that it holds for what is said from then on. The session's
 approval rules are changed by its owner from its menu, and its name, language and time zone by
 whoever may change it. Deleting a session or a channel asks once more, though it is only marked and
-can be restored. Who takes part in a session leaves it from its menu, asked once more (issue 590); a
-session the list fetches again and the user no longer reads - left, no longer shared - leaves the
-list, the owner's stays; one that cannot be fetched stays, and the failure is reported.
+can be restored. Who takes part in a session leaves it from its menu, asked once more, where the
+session says they may (`can_leave`, issue 590); a session the list fetches again and the user no
+longer reads - left, no longer shared - leaves the list, the owner's stays; one that cannot be
+fetched stays, and the failure is reported.
 
 The user's name at the foot of the sidebar opens their profile: how they introduce themselves to the
 agents - with the note that every agent in every channel they take part in is given it - the

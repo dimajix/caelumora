@@ -478,7 +478,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       {label: 'Approval rules', icon: ShieldAlert, onSelect: () => setRulesOf(session.id)},
                       {label: 'Workspace', icon: HardDrive, onSelect: () => setWorkspaceOf(session.id)},
                       {label: 'Project', icon: FolderKanban, onSelect: () => setProjectOf(session.id)},
-                      ...(session.participants.some(p => sameActor(p.id, me)) ? [
+                      ...(session.participants.some(p => p.can_leave && sameActor(p.id, me)) ? [
                         {label: 'Leave', icon: LogOut, danger: true, confirm: 'Leave session?', onSelect: () => void handleLeaveSession(session.id)},
                       ] : []),
                       {label: 'Delete', icon: Trash2, danger: true, confirm: 'Delete session?', onSelect: () => void handleDeleteSession(session.id)},

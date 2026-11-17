@@ -114,6 +114,9 @@ pub struct ParticipantSnapshot {
     pub id: ActorId,
     /// `None` for a user or agent that no longer exists.
     pub name: Option<String>,
+    /// Whether the viewer may take this participant out of the session by their own act
+    /// (`LeaveSession`, issue 590) - themselves, or an agent of theirs that exists.
+    pub can_leave: bool,
 }
 
 /// A channel as the viewer sees it.

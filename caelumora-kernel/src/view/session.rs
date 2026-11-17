@@ -609,8 +609,13 @@ impl SessionView {
         }
         let mut participants = Vec::with_capacity(self.session.participants.len());
         for participant in &self.session.participants {
-            let name = self.views.name_of(participant.actor_id()).await;
-            participants.push(ParticipantSnapshot { id: participant.actor_id(), name });
+            let id = participant.actor_id();
+            let (name, owner) = self.views.name_and_owner_of(id).await;
+            // Theirs to take out by their own act (`SessionLoop::leave`, issue 590): themselves,
+            // or an agent of theirs that exists, as for a channel (`ParticipantView::may_leave`);
+            // the policy is not asked - `LeaveSession` is asked as they leave.
+            let can_leave = owner == Some(self.views.context().principal_id);
+            participants.push(ParticipantSnapshot { id, name, can_leave });
         }
         // Absent, too, where it is gone or the viewer may not read it.
         let workspace = match self.session.workspace {

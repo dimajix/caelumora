@@ -871,19 +871,25 @@ impl Views {
     /// agent there, which acts with its owner's authority (issue 244), and reading something of a
     /// user's scope, which is theirs (issue 475).
     async fn name_of(&self, actor: ActorId) -> Option<String> {
+        self.name_and_owner_of(actor).await.0
+    }
+
+    /// The name of `actor`, as `name_of` reads it, and whom it answers to (issue 590): a user
+    /// themselves, an agent that exists its owner, from one read of its document; no owner for one
+    /// that no longer exists, nor for any other actor.
+    async fn name_and_owner_of(&self, actor: ActorId) -> (Option<String>, Option<ActorId>) {
         match actor {
-            ActorId::User(id) => self
-                .stores
-                .users
-                .get(&SecurityContext::system(), id)
-                .await
-                .ok()
-                .map(|user| user.username.to_string()),
+            ActorId::User(id) => {
+                let user = self.stores.users.get(&SecurityContext::system(), id).await.ok();
+                (user.map(|user| user.username.to_string()), Some(actor))
+            }
             ActorId::Agent(id) => match self.agent_of(id).await {
-                Some(agent) => Some(agent.name.to_string()),
-                None => self.deleted_agent_name(id).await.map(|name| name.to_string()),
+                Some(agent) => {
+                    (Some(agent.name.to_string()), Some(agent.security_attributes.owner_id))
+                }
+                None => (self.deleted_agent_name(id).await.map(|name| name.to_string()), None),
             },
-            other => other.fixed_name().map(str::to_string),
+            other => (other.fixed_name().map(str::to_string), None),
         }
     }
 
@@ -1027,7 +1033,7 @@ mod tests {
     use crate::channel::ChannelLoop;
     use crate::session::testing::*;
     use crate::session::{ChannelSpec, SessionError};
-    use crate::testing::{Script, ScriptedAgents, TestKernel};
+    use crate::testing::{Script, ScriptedAgents, TestKernel, World};
     use caelumora_api::error::AttachmentError;
     use caelumora_api::reader::{ChannelReader, SessionReader};
     use caelumora_domain::actor::Rejection;
@@ -1056,6 +1062,7 @@ mod tests {
     use caelumora_store::testing::stored_agent;
     use caelumora_store::Persistence;
     use chrono::Utc;
+    use std::collections::HashSet;
     use std::slice;
     use std::time::Duration;
     use tokio::time;
@@ -1452,6 +1459,29 @@ mod tests {
             view.participants.iter().all(|m| !m.can_read_context),
             "no participant is an agent"
         );
+    }
+
+    /// Issue 590: a session's snapshot says whom the viewer may take out of it by their own act -
+    /// themselves and an agent of theirs that exists, nobody else and no agent of another's.
+    #[tokio::test]
+    async fn a_session_shows_whom_the_viewer_may_take_out_of_it() {
+        let world = World::new().await;
+        let bobs = world.personality("his", Some(world.bob), &[]).await;
+        let alices = world.personality("hers", Some(world.alice), &[]).await;
+        let scout = world.agent("scout", world.bob, &bobs).await;
+        let aide = world.agent("aide", world.alice, &alices).await;
+        let gone = world.agent("gone", world.bob, &bobs).await;
+        // In the session alone, so that no actor of theirs runs.
+        let session = world.shared_session(&[], &[scout, aide, gone]).await;
+        let bob = World::as_user(world.bob);
+        let deleted = world.kernel.agent_manager().delete(&bob, gone).await.unwrap();
+        assert!(deleted, "deleted, it stays in the session");
+        let view = world.manager.views(Viewer::new(bob)).session(session.id()).await.unwrap();
+        let snapshot = view.snapshot(Detail::empty()).await;
+        let leaving: HashSet<ActorId> =
+            snapshot.participants.iter().filter(|p| p.can_leave).map(|p| p.id).collect();
+        assert_eq!(leaving, HashSet::from([ActorId::User(world.bob), ActorId::Agent(scout)]));
+        world.manager.stop(&World::as_user(world.alice), session.id()).await.unwrap();
     }
 
     #[tokio::test]

@@ -311,3 +311,8 @@ agents deleted or restored meanwhile.
   dialog yet: the web UI manages no session's participants. Not seen in a browser.
 - **2026-11-17** — Decided with the maintainer: whether one may leave a session is told by the
   session view, as for a channel (step 6b, *Plan*), from the finding of the review of step 6.
+- **2026-11-17** — Step 6b done, the interface agreed: a session's participant as the viewer sees
+  it carries `can_leave` (`ParticipantSnapshot`, `ParticipantResponse`) - themselves, or an agent
+  of theirs that exists -, decided by the session view as a channel's is, the policy not asked;
+  the web UI's session menu offers to leave by it. The views read an actor's name and whom it
+  answers to from one read (`Views::name_and_owner_of`), which `name_of` answers by.
